@@ -333,6 +333,45 @@ The Settings **Scenes** tab (about 760×640) has:
   - the legend.
 - It shows a spinner while the first read runs, and a sentence if a read fails.
 
+## Title-bar readouts: context and usage remaining (Usage/)
+
+Like Claude Code's desktop context indicator. Both read Claude Science's own
+API through `WebContainer.apiGET` (Web/WebAPI.swift): a GET made inside the
+page, in an isolated script world, so the page's cookie session carries it
+and Bench never holds the session. Only read-only paths are allowed.
+
+**Context ring (toolbar).**
+- Source: `GET /api/frames/<id>/token-series`, for
+  `WebContainer.currentFrameID` (the session the page shows).
+- It returns `{ window, turns: [{ ctx_total, … }], truncated }`, and used =
+  `turns.last.ctx_total / window`. That's the same number Claude Science's
+  "Context usage" view shows.
+- Read it when the shown session changes, when that session finishes a turn
+  or starts waiting (LabModel's transitions), and at most once per 15 s. It
+  scans the transcript, so never poll.
+- Look: a 16 pt ring in `.primary` at 15% for the track and clay for the
+  fill, with the percent beside it (11 pt, monospaced digits). The fill turns
+  clay at full strength past 80%. Hidden when no session is shown.
+- Tooltip: "Context: 42% (84K of 200K)".
+- Click: a glass popover with the numbers and a small line chart of
+  `ctx_total` per turn (the `window` as a dashed line).
+
+**Usage remaining (toolbar, the Usage button's label).**
+- Source: `GET /api/usage` (`?fresh=1` on a manual refresh). It returns
+  `five_hour`, `seven_day`, `seven_day_opus` and `seven_day_sonnet`, each
+  `{ utilization (percent used), resets_at }`, plus `extra_usage`.
+- Read it at launch, every 5 min while Bench is running, after each finished
+  turn, and when the popover opens (if over 60 s old).
+- Label: the tightest limit as what's left, e.g. "5h 66% left" or "Week 12%
+  left", with a thin capsule bar. It is secondary normally and turns clay
+  under 20% left. `chart.bar.xaxis` shows until the first read lands.
+- Popover (glass): a **Plan limits** section with a row per limit ("Current
+  session", "Weekly · all models", "Weekly · Opus", "Weekly · Sonnet"), each
+  with a bar, "% left" and "Resets in 2 h 14 m", plus extra usage when
+  enabled. Then the **Activity** section (the year graph), and a Refresh
+  button (`.glass`).
+- One Usage control, not two.
+
 ## Settings (⌘,)
 
 Two tabs: General (below) and Scenes (above).

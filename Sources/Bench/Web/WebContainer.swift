@@ -21,6 +21,9 @@ final class WebContainer: ObservableObject {
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
     @Published private(set) var status: Status = .starting
+    /// The session the page is showing (`/projects/<p>/frames/<id>`), or nil
+    /// anywhere else: what the context ring is about.
+    @Published private(set) var currentFrameID: String?
     @Published var isFindVisible = false
     /// Bumped on every ⌘F, so a find bar that is already open takes focus again.
     @Published private(set) var findRequest = 0
@@ -62,6 +65,10 @@ final class WebContainer: ObservableObject {
         webView.uiDelegate = uiDelegate
         webView.publisher(for: \.canGoBack).assign(to: &$canGoBack)
         webView.publisher(for: \.canGoForward).assign(to: &$canGoForward)
+        webView.publisher(for: \.url)
+            .map { Self.frameID(in: $0) }
+            .removeDuplicates()
+            .assign(to: &$currentFrameID)
         webView.pageZoom = Self.storedZoom()
     }
 
