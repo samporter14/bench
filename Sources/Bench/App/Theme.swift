@@ -29,6 +29,8 @@ enum SettingsKey {
     static let soundOnNeedsInput = "soundOnNeedsInput"
     static let panelWhileFront = "panelWhileFront"
     static let pageZoom = "pageZoom"
+    /// Which Settings tab is showing: "general" or "scenes".
+    static let settingsTab = "settingsTab"
 
     static func register() {
         UserDefaults.standard.register(defaults: [

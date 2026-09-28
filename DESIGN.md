@@ -48,14 +48,55 @@ third-party dependencies.
   about five times the Droppy pill. Measured cost is under 6 ms per second of
   frames at 96pt (`Bench --measure-sheets 48,72,96`).
 
+## Where the glass goes
+
+Sam's rule: our design language, with Liquid Glass wherever it can go.
+
+**Glass surfaces** (`.glassEffect`):
+- the scenes panel (one shape);
+- the toolbar (the system's own);
+- popovers (the system's own);
+- the find bar;
+- the Usage headline stat tiles (`.regular` in `.rect(cornerRadius: 16)`,
+  grouped in one `GlassEffectContainer`);
+- the graph's hover label;
+- the category chips (`.regular.interactive()` in `.capsule`; clay-tinted
+  when on: `.regular.tint(Theme.clay.opacity(0.35)).interactive()`);
+- the Size picker's live preview well;
+- the search field's capsule;
+- the hovered scene cell only.
+
+Group neighbouring glass (a row of chips, the stat tiles) in one
+`GlassEffectContainer(spacing:)` so the shapes blend.
+
+**Not glass:**
+- the 474 grid cells at rest. That many glass layers costs frames. They get
+  a quiet `Color.primary.opacity(0.05)` fill, and a clay check when on.
+- the page itself;
+- text.
+
+**Buttons:** `.glass` everywhere; `.glassProminent` with `.tint(Theme.clay)`
+only for the one primary action in view.
+
+**Colour:** clay stays the only accent: the on-state, the live dot, "needs
+you", and the graph's steps. No other hues, no gradients.
+
 ## Main window
 
 - One window, "Claude Science", with a default size of 1360×900, a minimum
   of 900×600 and an autosaved frame.
-- Toolbar (unified compact, system glass):
-  - Leading: Back, Forward and Reload, as SF Symbols.
-  - Trailing: the **Lab status capsule** (see Lab), then a button that shows
-    or hides the Lab panel.
+- Toolbar (unified compact, system glass). No back/forward/reload buttons:
+  Claude Science has its own navigation, and ⌘[ ⌘] ⌘R stay in the menus.
+  Trailing, left to right:
+  - the **Lab status capsule** (only while something works or waits);
+  - **Usage** (see Usage);
+  - **Scenes**, a split button. Its click toggles the scenes panel. It shows
+    a clay `flask.fill` and "Scenes" when on, and a secondary `flask` and
+    "Scenes off" when off, always as title and icon. Its menu has:
+    - "Show scenes panel" (⌘⇧L);
+    - a Size picker (Small, Medium, Large);
+    - one toggle per category (title and count);
+    - "Choose scenes…", which opens Settings on the Scenes tab.
   - The title is hidden, because the page has its own header.
 - The web view sits below the toolbar, not under it.
 - Closing the window hides it (the web view and its state survive). Clicking
@@ -249,7 +290,52 @@ A 18pt live scene plus a short text: "Working · 4:12", "2 need you" (in clay),
 or hidden when idle. Clicking it opens the first waiting session, otherwise
 the first working one.
 
+## Scenes settings (Lab/SceneSettings.swift)
+
+`SceneSettings.shared` holds three settings in UserDefaults:
+
+| Setting | Key | Values | Default |
+|---|---|---|---|
+| `size` | `sceneSize` | small 64, medium 88, large 120 (points) | medium |
+| `groups` | `sceneGroups` | `SceneGroup` raw values | all six |
+| `hidden` | `hiddenScenes` | scene names | none |
+
+`rotation` is `Rotation(LabScenes.spread(LabScenes.catalogue.filter { in a
+chosen group and not hidden }))`, or `Rotation.full` when nothing is filtered.
+At least one scene always stays on: the last one can't be switched off.
+
+The panel's well, and its width (base + size − 88), follow `size`. The
+panel's and the capsule's scenes play `rotation`.
+
+The Settings **Scenes** tab (about 760×640) has:
+- a Size segmented picker, with a live well at that size beside it;
+- category chips with counts, which toggle;
+- a search field;
+- "N of 474 on", with All and None (None keeps one on);
+- a LazyVGrid of every scene. Each cell is a 56 pt still, drawn with a Canvas
+  at 60% of the scene's duration, with the name under it, dimmed with no
+  check when off, and a clay check when on. A click toggles it, and hovering
+  plays it with `PlayedGlyph(tint:rotation: Rotation([scene]))`.
+
+## Usage (Usage/)
+
+- `UsageModel.shared` reads `CombinedScienceSource().activityHistory(days:
+  7 * 53)` off the main thread. It reads when the popover opens if the last
+  read is over 60 s old, and every 10 min while it is open.
+- The popover opens from a toolbar button, `chart.bar.xaxis`, titled "Usage",
+  about 780 wide. It holds:
+  - the headline: today's tokens and sessions, this week's sessions, and the
+    streak ("5-day streak · longest 12");
+  - a Sessions / Messages / Tokens segmented switch;
+  - the year graph, ported from the droplet's `ActivityGridView` (clay steps,
+    with a hover label showing the date and that day's sessions, messages and
+    tokens);
+  - the legend.
+- It shows a spinner while the first read runs, and a sentence if a read fails.
+
 ## Settings (⌘,)
+
+Two tabs: General (below) and Scenes (above).
 
 | Setting | Default |
 |---|---|

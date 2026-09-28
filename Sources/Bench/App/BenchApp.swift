@@ -90,24 +90,14 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
 /// The window's content: the web view, and the toolbar.
 struct MainView: View {
-    @ObservedObject private var web = WebContainer.shared
     @ObservedObject private var lab = LabModel.shared
-    @AppStorage(SettingsKey.showPanel) private var showPanel = true
 
     var body: some View {
         BrowserView()
             .frame(minWidth: 900, minHeight: 560)
+            // No back/forward/reload: Claude Science has its own navigation,
+            // and ⌘[ ⌘] ⌘R stay in the menus.
             .toolbar {
-                ToolbarItemGroup(placement: .navigation) {
-                    Button { web.goBack() } label: { Label("Back", systemImage: "chevron.backward") }
-                        .disabled(!web.canGoBack)
-                        .help("Back")
-                    Button { web.goForward() } label: { Label("Forward", systemImage: "chevron.forward") }
-                        .disabled(!web.canGoForward)
-                        .help("Forward")
-                    Button { web.reload() } label: { Label("Reload", systemImage: "arrow.clockwise") }
-                        .help("Reload")
-                }
                 // Only while something works or waits: an item with nothing in
                 // it would still draw an empty glass bubble.
                 if !lab.working.isEmpty || !lab.waiting.isEmpty {
@@ -116,10 +106,10 @@ struct MainView: View {
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button { showPanel.toggle() } label: {
-                        Label("Lab panel", systemImage: showPanel ? "rectangle.inset.bottomright.filled" : "rectangle.inset.bottomright")
-                    }
-                    .help(showPanel ? "Hide the Lab panel" : "Show the Lab panel")
+                    UsageToolbarButton()
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    ScenesToolbarButton()
                 }
             }
     }
@@ -138,7 +128,7 @@ struct BenchCommands: Commands {
             Button("Actual Size") { WebContainer.shared.resetZoom() }
                 .keyboardShortcut("0")
             Divider()
-            Button("Show Lab Panel") {
+            Button("Show Scenes Panel") {
                 let defaults = UserDefaults.standard
                 defaults.set(!defaults.bool(forKey: SettingsKey.showPanel), forKey: SettingsKey.showPanel)
             }
@@ -157,14 +147,27 @@ struct BenchCommands: Commands {
     }
 }
 
+/// Two tabs: General, and Scenes (which "Choose scenes…" opens).
 struct SettingsView: View {
+    /// Set to "scenes" before opening Settings to land on that tab.
+    @AppStorage(SettingsKey.settingsTab) private var tab = "general"
+
+    var body: some View {
+        TabView(selection: $tab) {
+            Tab("General", systemImage: "gearshape", value: "general") { GeneralSettingsView() }
+            Tab("Scenes", systemImage: "flask", value: "scenes") { SceneSettingsView() }
+        }
+    }
+}
+
+struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
     @AppStorage(SettingsKey.panelWhileFront) private var panelWhileFront = true
 
     var body: some View {
         Form {
-            Toggle("Show the Lab panel while a session works", isOn: $showPanel)
+            Toggle("Show the scenes panel while a session works", isOn: $showPanel)
             Toggle("Keep showing it while Bench is in front", isOn: $panelWhileFront)
                 .disabled(!showPanel)
             Toggle("Play a sound when a session needs you", isOn: $sound)
