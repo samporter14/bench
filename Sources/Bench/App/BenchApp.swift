@@ -91,6 +91,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 /// The window's content: the web view, and the toolbar.
 struct MainView: View {
     @ObservedObject private var web = WebContainer.shared
+    @ObservedObject private var lab = LabModel.shared
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
 
     var body: some View {
@@ -107,8 +108,12 @@ struct MainView: View {
                     Button { web.reload() } label: { Label("Reload", systemImage: "arrow.clockwise") }
                         .help("Reload")
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    LabStatusCapsule()
+                // Only while something works or waits: an item with nothing in
+                // it would still draw an empty glass bubble.
+                if !lab.working.isEmpty || !lab.waiting.isEmpty {
+                    ToolbarItem(placement: .primaryAction) {
+                        LabStatusCapsule()
+                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showPanel.toggle() } label: {
