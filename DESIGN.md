@@ -1,0 +1,291 @@
+# Bench — design
+
+Bench is a small native Mac app for Claude Science. It shows Claude Science's
+web UI in one native window, so there is never a Safari tab, and it plays the
+Science Status lab scenes in a floating Liquid Glass panel in the bottom-right
+corner while a session works. That panel is also where "needs your input"
+comes from. Internal only. macOS 26+, Swift 6, SwiftUI + AppKit, no
+third-party dependencies.
+
+## Principles
+
+1. **Lightweight and native.** One process, system frameworks only: SwiftUI,
+   AppKit, WebKit. No Electron, no web frameworks of our own, no timers
+   running while nothing happens.
+2. **Don't reinvent the wheel.** Use the system's own toolbar, menus,
+   buttons, materials and Liquid Glass. Our look comes from the palette and a
+   few deliberate choices, not custom chrome.
+3. **Claude Science owns the page.** We never restyle, inject into or scrape
+   its UI. The one exception is the notification bridge (below), which adds
+   an API WebKit lacks.
+4. **One Claude Science document, ever.** Claude Science works in one tab at a
+   time. Bench holds exactly one web view on the daemon's address, created
+   once and never recreated.
+
+## Look
+
+- Palette (Theme.swift): clay `#D97757` is the one accent. Slate `#141413` and
+  ivory `#F0EEE6` are the neutrals. Otherwise use system semantic colours
+  (`.primary`, `.secondary`) so light and dark both work. There are no
+  gradients, no drop shadows of our own, and no second accent hue. Clay marks
+  only the primary action, the live dot and "needs you".
+- Liquid Glass (macOS 26 SDK; these are the exact APIs):
+  - `.glassEffect(_ glass: Glass = .regular, in shape: some Shape)`
+  - `Glass.regular`, `Glass.clear`, `Glass.identity`, `.tint(Color?)`, `.interactive(Bool)`
+  - `GlassEffectContainer(spacing: CGFloat? = nil) { … }`, to group and morph glass shapes
+  - `.buttonStyle(.glass)`, `.buttonStyle(.glassProminent)` (with `.tint(Theme.clay)` for primary)
+  - AppKit: `NSGlassEffectView` (`contentView`, `cornerRadius`, `tintColor`)
+  The standard window toolbar is already glass on macOS 26, so don't build
+  our own.
+- Type: the system font. Titles are semibold, captions 11pt medium in
+  secondary, and times use monospaced digits.
+- Motion: springs (`.spring(duration: 0.35, bounce: 0.15)`) for the panel's
+  entrance and resize, and nothing else moves except the scenes. With
+  Reduce Motion on there are no springs, and a waiting glyph is still.
+- Scenes: the droplet's own. `PlayedGlyph(tint:rotation:)` for the working
+  rotation and `PlayedLoop(glyph:tint:)` for a waiting reason. They draw in
+  `.primary` ink with clay accents built in. The panel shows them at 88pt,
+  about five times the Droppy pill. Measured cost is under 6 ms per second of
+  frames at 96pt (`Bench --measure-sheets 48,72,96`).
+
+## Main window
+
+- One window, "Claude Science", with a default size of 1360×900, a minimum
+  of 900×600 and an autosaved frame.
+- Toolbar (unified compact, system glass):
+  - Leading: Back, Forward and Reload, as SF Symbols.
+  - Trailing: the **Lab status capsule** (see Lab), then a button that shows
+    or hides the Lab panel.
+  - The title is hidden, because the page has its own header.
+- The web view sits below the toolbar, not under it.
+- Closing the window hides it (the web view and its state survive). Clicking
+  the Dock icon brings it back. ⌘Q quits Bench but never stops the daemon.
+- Menus:
+  - View: Reload ⌘R, Zoom In ⌘+, Zoom Out ⌘−, Actual Size ⌘0, Find ⌘F,
+    Show Lab Panel ⌘⇧L.
+  - History: Back ⌘[, Forward ⌘].
+  - Window: the standard items.
+  - Settings ⌘,.
+- The Dock badge is the number of sessions waiting for input, or no badge.
+- URL scheme `bench://open?url=<percent-encoded daemon URL>`, and
+  `bench://session?project=<id>&frame=<id>`. Both show the window and
+  navigate the one web view. This is for the droplet to hand Open to Bench
+  later.
+
+## Daemon and sign-in (Web/DaemonController.swift)
+
+- Run `claude-science status` (shared `fetchCLIStatus`) off the main thread.
+  If the daemon isn't running, run `claude-science serve --no-browser
+  --detached` once, with no other flags, then poll `status` every 0.5 s for
+  up to 20 s.
+- Never run `stop` or `serve` while it is running, never pass
+  port/data-dir flags, never restart it.
+- Port: `status.port`. Daemon origins are `http://localhost:<port>` and
+  `http://127.0.0.1:<port>`. Any other localhost or 127.0.0.1 port is a
+  **preview origin** (Claude Science serves generated HTML previews on a
+  separate port, normally port+1).
+- Sign-in: load `http://localhost:<port>/?nonce=<fresh nonce>` (shared
+  `fetchLoginNonce()`; it is single use and lasts about 3 minutes). The
+  daemon sets its cookie and redirects. If a later main-frame response from
+  the daemon origin is HTTP 401, fetch a fresh nonce and reload the same path
+  with it, at most once per 30 s.
+- Use `WKWebsiteDataStore.default()` so cookies and localStorage persist.
+
+## Web routing policy (Web/)
+
+Every link goes through one function. The rules:
+
+| What | Where it goes |
+|---|---|
+| Main-frame navigation to a daemon origin | The main web view |
+| `window.open` / `_blank` to a daemon-origin URL | Cancel it, and load the URL in the **main** web view |
+| `window.open("about:blank" or "", name)` (Claude Science's pop-out window pool and connector OAuth pop-ups) | A real child `WKWebView` made from the configuration WebKit hands to `createWebViewWith`, in its own NSWindow (so `window.opener` and `postMessage` work). Close that window on `webViewDidClose`. |
+| Anything in a child/pop-up window (including OAuth to other sites) | Stays in that child window |
+| Iframes to a preview origin | Allowed |
+| New window or top-level nav to a preview origin | An in-app **Preview** window |
+| Any other http(s) (docs, GitHub, claude.ai, papers) | An in-app **Browser** window: a WKWebView with Back/Forward/Reload, the URL shown, and an "Open in Safari" button (the only way to reach Safari, and only on the user's click) |
+| `mailto:` / other schemes | `NSWorkspace.shared.open` |
+
+- `javaScriptCanOpenWindowsAutomatically = false`, as in Safari; the pop-ups
+  come from clicks. Change it only if the pool fails in testing.
+- `WKUIDelegate`:
+  - `runOpenPanelWith`: NSOpenPanel, honouring multiple selection and
+    directories.
+  - `runJavaScriptAlertPanel`, `Confirm` and `TextInput`: NSAlert sheets on
+    the webview's window.
+  - `requestMediaCapturePermissionFor`: grant for daemon origins only, deny
+    others. The app's Info.plist has `NSMicrophoneUsageDescription` and
+    `NSCameraUsageDescription`.
+  - `webViewDidClose`: close the pop-up window.
+- Downloads:
+  - `navigationAction.shouldPerformDownload` (blob URLs and the `download`
+    attribute) gives `.download`.
+  - `navigationResponse` gives `.download` when it isn't `canShowMIMEType`,
+    or on `Content-Disposition: attachment`.
+  - `WKDownloadDelegate` saves to ~/Downloads with a unique name, then posts
+    a "Saved <name>" item to the Lab panel with a Show in Finder action.
+- `isInspectable = true` (internal build).
+- `isElementFullscreenEnabled = true`.
+- Find (⌘F): a small find bar under the toolbar that uses
+  `WKWebView.find(_:configuration:completionHandler:)`, with Return/⇧Return
+  for next/previous and Esc to close.
+- Zoom: `pageZoom` in 0.1 steps between 0.5 and 3.0, persisted.
+
+## Notification bridge (Web/NotificationBridge.swift)
+
+WKWebView has no `Notification` API, so Claude Science's own desktop
+notifications (session done, needs input) are off in a plain web view.
+
+- A user script injected at document start, main frame only, defines
+  `window.Notification`:
+  - `permission` returns `"granted"`, and `requestPermission()` resolves
+    `"granted"`.
+  - `new Notification(title, {body, tag, requireInteraction})` posts
+    `{id, title, body, tag, requireInteraction}` to the message handler
+    `benchNotify`. It keeps the instance in a map by `id`; `close()` posts
+    `{id, closed: true}`.
+  - Native calls `window.__benchNotificationClicked(id)` to run that
+    instance's `onclick`.
+- Native side: forward it to the Router as a `WebNotification`. The Lab panel
+  shows it as an attention card, and Open shows the window and calls the
+  click. De-duplicate against the session engine. The tag is
+  `operon-<root_frame_id>`, so if the session engine already showed that
+  frame in the last 10 s, drop it.
+
+## Lab (Lab/)
+
+### LabModel
+
+A port of the droplet's watching loop, with no DroppyKit:
+
+- **Source.** `CombinedScienceSource()`: call `snapshot()` off the main
+  thread.
+- **When to read.** On every `DatabaseWatcher` change of `source.database`,
+  and on a fallback timer (3 s while something works, 30 s otherwise). Only
+  one read runs at a time; a change that arrives during a read triggers one
+  more read after it.
+- **Transitions.** `ScienceEngine(minDuration: 30).advance(to:)` gives the
+  `.started`, `.finished` and `.needsInput` transitions.
+- **Published state.** `snapshot`, `working: [SessionStatus]` (running) and
+  `waiting: [SessionStatus]` (needsInput).
+- **The card queue.** `cards: [LabCard]` is ordered with needs-input first,
+  then web notifications, then finished and saved-download cards. Cards
+  leave when they are acted on, dismissed or no longer true.
+- **The Dock badge** is the waiting count.
+- **Stop.** Everything stops in `stop()`.
+
+### LabCard
+
+```swift
+enum LabCard: Identifiable {
+  case needsInput(SessionStatus)
+  case finished(SessionStatus)
+  case web(WebNotification)
+  case saved(URL)
+}
+```
+
+- `needsInput` stays until the session stops waiting.
+- `finished` lasts 6 s.
+- `web` lasts until clicked or dismissed, or 8 s unless `requireInteraction`.
+- `saved` lasts 5 s.
+
+### The panel (LabPanelController + LabPanelView)
+
+The window:
+
+- `NSPanel` with `[.nonactivatingPanel, .borderless]`.
+- `level = .floating`.
+- `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]`.
+- `hidesOnDeactivate = false`, `isOpaque = false`, `backgroundColor = .clear`,
+  `hasShadow = false` (the glass carries its own).
+
+Position:
+
+- Bottom-right of the **menu-bar screen**'s `visibleFrame`
+  (`NSScreen.screens.first`), inset 20pt.
+- Follow screen changes (`didChangeScreenParametersNotification`).
+
+When it shows:
+
+- Whenever something works or a card is up, and the panel isn't turned off.
+- Otherwise it fades out and is ordered out: no window at all while idle.
+
+Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
+`.glassEffect(.regular, in: .rect(cornerRadius: 26))`, 16pt padding):
+
+- **Working (compact, about 336×120).**
+  - Left: an 88×88 scene well playing the rotation.
+  - Right column: a caption with a clay live dot and "Working"; the session
+    title (15pt semibold, 2 lines); a meta line with the project name, "·"
+    and the turn clock `m:ss` (monospaced digits); and "+N more" when
+    several work.
+- **Needs input (card, about 360×170).**
+  - Left well: the reason's waiting glyph (`PlayedLoop`) at 88pt.
+  - Caption in clay: `reason.sentence`.
+  - Title and project.
+  - Buttons: **Open** (`.glassProminent`, clay tint) and **Later** (`.glass`).
+- **Finished.**
+  - Left well: the flask, still.
+  - Caption: "Finished", then the duration and the tokens.
+  - Open.
+- **Web notification.** Claude Science's title as the caption, then the body,
+  then Open.
+- **Saved.** "Saved", the file name and Show in Finder.
+- **Several cards.** The top card shows, with a small "1 of 3" and a stack
+  hint (at most 2 edges peeking).
+- **Interaction.**
+  - Clicking the panel does what Open does.
+  - Hovering shows a small glass × at top-left, which dismisses the current
+    card (or hides the working panel until the next change).
+- **Sound.** When a needs-input card arrives, play `NSSound(named: "Glass")`
+  (a setting, on by default).
+- **Open.** Activate Bench, show the window and navigate the web view to the
+  session's `deepLink`, through the Router.
+
+### Lab status capsule (toolbar)
+
+A 18pt live scene plus a short text: "Working · 4:12", "2 need you" (in clay),
+or hidden when idle. Clicking it opens the first waiting session, otherwise
+the first working one.
+
+## Settings (⌘,)
+
+| Setting | Default |
+|---|---|
+| Show the Lab panel | on |
+| Play a sound when a session needs you | on |
+| Show the Lab panel while Bench is in front | on |
+
+## Files and ownership
+
+```
+Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
+Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Settings   (planner)
+Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge   (web agent)
+Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule   (lab agent)
+Sources/Bench/Shared/     SYMLINKS into the droplet. Read-only: never edit.
+```
+
+## Testing checklist ("every feature")
+
+Each item gets checked live, and the result goes in TESTING.md:
+
+- [ ] signs in on first launch
+- [ ] no Safari tab ever opens
+- [ ] file upload (single, multiple, folder)
+- [ ] drag files into the page
+- [ ] blob download and attachment download
+- [ ] pop-out windows (the pool)
+- [ ] connector OAuth pop-up round trip
+- [ ] HTML preview (iframe, and opening a preview)
+- [ ] external links go to the in-app Browser window
+- [ ] confirm/alert/prompt dialogs
+- [ ] clipboard copy
+- [ ] microphone/voice
+- [ ] Claude Science desktop notifications reach the panel
+- [ ] needs-input card appears, Open lands on the session
+- [ ] finished card
+- [ ] find, zoom and back/forward
+- [ ] the window closes and reopens without losing state
+- [ ] on-screen CPU with the panel playing

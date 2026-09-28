@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>Bench</string>
+    <key>CFBundleIdentifier</key><string>local.sam.bench</string>
+    <key>CFBundleName</key><string>Bench</string>
+    <key>CFBundleDisplayName</key><string>Bench</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleIconName</key><string>AppIcon</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSMicrophoneUsageDescription</key><string>Claude Science uses the microphone for voice input.</string>
+    <key>NSCameraUsageDescription</key><string>Claude Science may ask to use the camera.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>local.sam.bench</string>
+            <key>CFBundleURLSchemes</key><array><string>bench</string></array>
+        </dict>
+    </array>
+</dict>
+</plist>
