@@ -33,3 +33,26 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   notifications switched on in its own settings.
 - ⏳ **External link to the in-app Browser window, zoom, back/forward, and
   closing and reopening the window:** not tried while the user was typing.
+
+## 2026-09-28, second round (toolbar, scenes settings, usage, context)
+
+- ✅ **Toolbar:** it's on the right, with no back/forward.
+- ✅ **Scenes split button:** the flask is clay when on (a baked-colour NSImage,
+  because the toolbar templates symbols).
+- ✅ **Usage remaining:** "5h 57% left" in the toolbar. The popover shows the
+  current session at 57% and the week at 68% left with reset times, then the
+  activity tiles and the year graph. The `/api/usage` reply is `{ok, data}`
+  and is now unwrapped.
+- ✅ **Context ring:** it showed "8%" in a session and is hidden on the
+  dashboard.
+- ✅ **Settings → Scenes:**
+  - the size picker and glass preview well;
+  - clay glass chips with counts;
+  - glass search;
+  - the 474-scene grid, where the hovered cell lifts to glass and plays.
+  Sam: "looks good".
+- ⏳ **The scenes panel at Small/Medium/Large, the needs-input card and the
+  finished card:** these need a live session.
+- ⏳ **Waiting on Sam:** file upload (a dialog was open during testing, with
+  no report yet), downloads, microphone, connector OAuth, pop-outs, previews
+  and external links.
