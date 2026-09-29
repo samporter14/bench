@@ -94,7 +94,6 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 /// The window's content: the web view, and the toolbar.
 struct MainView: View {
     @ObservedObject private var lab = LabModel.shared
-    @ObservedObject private var context = ContextModel.shared
 
     var body: some View {
         BrowserView()
@@ -111,12 +110,10 @@ struct MainView: View {
                         LabStatusCapsule()
                     }
                 }
-                // The two readouts share one glass bubble.
-                ToolbarItemGroup {
-                    if context.figures != nil {
-                        ContextToolbarItem()
-                    }
-                    UsageToolbarButton()
+                // The two readouts share one glass capsule. A group of two
+                // items would get a bubble each.
+                ToolbarItem {
+                    TitleBarReadouts()
                 }
                 ToolbarSpacer(.fixed)
                 ToolbarItem {

@@ -1,6 +1,6 @@
 // ContextPopover.swift — what the context ring's click opens (DESIGN.md,
 // Title-bar readouts): the numbers, and a small line chart of the context at
-// each turn. The popover is glass on its own; the chart sits on its own glass.
+// each turn, on one glass card like the Usage popover's.
 import SwiftUI
 
 struct ContextPopover: View {
@@ -8,50 +8,61 @@ struct ContextPopover: View {
     @ObservedObject private var model = ContextModel.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Context")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Text("\(figures.usedOfWindow) tokens · \(figures.percent)%")
-                    .font(.system(size: 20, weight: .semibold))
-                    .monospacedDigit()
-            }
-
-            ContextChart(turns: model.turns, window: figures.window)
-                .frame(width: 320, height: 90)
-                .glassEffect(.regular, in: .rect(cornerRadius: 14))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.turns.count == 1 ? "1 turn" : "\(model.turns.count.formatted()) turns")
-                    .monospacedDigit()
-                if model.truncated {
-                    Text("Long session: the tail may be stale")
-                }
-            }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-
+        // Laid out like the Usage popover: a header with its button, then
+        // one glass card.
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                if let failure = model.failure {
-                    Text(failure)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Button("Retry") { model.refresh() }
-                } else {
-                    Button("Refresh") { model.refresh() }
-                }
+                Text("Context")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: 0)
                 if model.loading {
                     ProgressView()
                         .controlSize(.small)
                 }
+                Button(model.failure == nil ? "Refresh" : "Retry") { model.refresh() }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .disabled(model.loading)
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
-            .disabled(model.loading)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(figures.percent)%")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(figures.isHigh ? Theme.clay : Color.primary)
+                    Text("\(figures.usedOfWindow) tokens")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Text(model.turns.count == 1 ? "1 turn" : "\(model.turns.count.formatted()) turns")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .monospacedDigit()
+
+                // On the card's glass, not its own: no glass on glass.
+                ContextChart(turns: model.turns, window: figures.window)
+                    .frame(height: 90)
+
+                if model.truncated || model.failure != nil {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let failure = model.failure {
+                            Text(failure)
+                        }
+                        if model.truncated {
+                            Text("Long session: the tail may be stale")
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .glassEffect(.regular, in: .rect(cornerRadius: 16))
         }
         .padding(20)
-        .frame(width: 360)
+        .frame(width: 380)
     }
 }
 

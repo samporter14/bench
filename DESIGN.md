@@ -349,12 +349,18 @@ and Bench never holds the session. Only read-only paths are allowed.
 - Read it when the shown session changes, when that session finishes a turn
   or starts waiting (LabModel's transitions), and at most once per 15 s. It
   scans the transcript, so never poll.
-- Look: a 16 pt ring in `.primary` at 15% for the track and clay for the
-  fill, with the percent beside it (11 pt, monospaced digits). The fill turns
-  clay at full strength past 80%. Hidden when no session is shown.
+- Look: a 14 pt ring in `.primary` at 15% for the track and clay for the
+  fill, with the percent beside it (12 pt medium, monospaced digits,
+  secondary; clay past 80%). Hidden when no session is shown.
+- Both readouts share ONE toolbar item (`TitleBarReadouts`): one glass
+  capsule, ring half | hairline | usage half, like the Scenes split button.
+  Each half is a button in `ReadoutButtonStyle` (10 pt side padding, a faint
+  pill on hover), so nothing touches the capsule's edge. Everything sits on
+  one centered line: glyph, then figure.
 - Tooltip: "Context: 42% (84K of 200K)".
-- Click: a glass popover with the numbers and a small line chart of
-  `ctx_total` per turn (the `window` as a dashed line).
+- Click: a popover laid out like the Usage one: "Context" and Refresh, then
+  one glass card with the percent (26 pt), "18K of 200K tokens", the turn
+  count and a line chart of `ctx_total` per turn (the `window` dashed).
 
 **Usage remaining (toolbar, the Usage button's label).**
 - Source: `GET /api/usage` (`?fresh=1` on a manual refresh). It returns
@@ -363,11 +369,12 @@ and Bench never holds the session. Only read-only paths are allowed.
 - Read it at launch, every 5 min while Bench is running, after each finished
   turn, just after a limit resets, and when the popover opens (if over 60 s
   old).
-- Label: the tightest limit as what's left and when it resets, e.g. "66% left
-  · resets in 1h 12m" or "Week 12% left · resets Thu", with a thin capsule
-  bar. The session limit goes unnamed: "5h" read as five hours to go. The
-  countdown ticks each minute. It is secondary normally and turns clay under
-  20% left. `chart.bar.xaxis` shows until the first read lands.
+- Label: a 22×5 pt clay meter (what's left, draining like a battery), then
+  the tightest limit as what's left and when it resets, e.g. "66% left ·
+  resets in 1h 12m" or "Week 12% left · resets Thu". The session limit goes
+  unnamed: "5h" read as five hours to go. The countdown ticks each minute
+  and is tertiary; the figure is secondary and turns clay under 20% left.
+  `chart.bar.xaxis` shows until the first read lands.
 - Popover (glass): a **Plan limits** section with a row per limit ("Current
   session", "Weekly · all models", "Weekly · Opus", "Weekly · Sonnet"), each
   with a bar, "% left" and "Resets in 2 h 14 m", plus extra usage when

@@ -4,7 +4,8 @@
 // and the year graph.
 import SwiftUI
 
-/// The toolbar's Usage button. Its label is what is left of the plan's
+/// The toolbar's Usage button, the right half of TitleBarReadouts' capsule.
+/// Its label is what is left of the plan's
 /// tightest limit once that has been read. Opening its popover reads the
 /// plan and the activity if the last read is old, and keeps the activity
 /// fresh while the popover stays open.
@@ -19,10 +20,14 @@ struct UsageToolbarButton: View {
             if let tightest = plan.tightest {
                 PlanUsageLabel(limit: tightest)
             } else {
-                Label("Usage", systemImage: "chart.bar.xaxis")
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Usage")
             }
         }
-        .help("Your Claude Science activity")
+        .buttonStyle(ReadoutButtonStyle())
+        .help("Plan usage and activity")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             UsageView()
         }

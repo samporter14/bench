@@ -4,7 +4,7 @@
 import SwiftUI
 
 /// The ring and the percent, or nothing while no session is shown or no
-/// reading has arrived. Plain-styled, so the toolbar's own glass is the chrome.
+/// reading has arrived. The left half of TitleBarReadouts' capsule.
 struct ContextToolbarItem: View {
     @ObservedObject private var model = ContextModel.shared
 
@@ -32,17 +32,16 @@ private struct ContextButton: View {
         Button {
             showing.toggle()
         } label: {
-            HStack(spacing: 5) {
-                ContextRing(fraction: Double(figures.percent) / 100, isHigh: figures.isHigh)
+            HStack(spacing: 6) {
+                ContextRing(fraction: Double(figures.percent) / 100)
                     .animation(reduceMotion ? nil : Theme.spring, value: figures.percent)
                 Text("\(figures.percent)%")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(figures.isHigh ? Theme.clay : Color.secondary)
             }
-            .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ReadoutButtonStyle())
         .help("Context: \(figures.percent)% (\(figures.usedOfWindow))")
         .accessibilityLabel("Context")
         .accessibilityValue("\(figures.percent) percent")
@@ -57,26 +56,25 @@ private struct ContextButton: View {
     }
 }
 
-/// A 16 pt ring: a quiet track, and a clay fill that starts at the top.
+/// A 14 pt ring: a quiet track, and a clay fill that starts at the top. The
+/// figure beside it is what turns clay when the window is nearly full.
 private struct ContextRing: View {
     let fraction: Double
-    let isHigh: Bool
 
     private static let lineWidth: CGFloat = 2.5
 
     var body: some View {
-        // Inset by half the line, so the stroke stays inside the 16 pt.
+        // Inset by half the line, so the stroke stays inside the 14 pt.
         let circle = Circle().inset(by: Self.lineWidth / 2)
         ZStack {
             circle.stroke(Color.primary.opacity(0.15), lineWidth: Self.lineWidth)
             // Not drawn at 0%: a round cap on nothing would still leave a dot.
             if fraction > 0 {
                 circle.trim(from: 0, to: fraction)
-                    .stroke(Theme.clay.opacity(isHigh ? 1 : 0.7),
-                            style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round))
+                    .stroke(Theme.clay, style: StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
         }
-        .frame(width: 16, height: 16)
+        .frame(width: 14, height: 14)
     }
 }
