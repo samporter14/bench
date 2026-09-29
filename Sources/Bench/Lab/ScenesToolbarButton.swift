@@ -34,6 +34,7 @@ struct ScenesToolbarButton: View {
                 Section("Can't see your sessions") {
                     Text(problem.label)
                     Text(problem.hint)
+                    Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
                 }
             }
             Toggle("Show scenes panel", isOn: $showPanel)

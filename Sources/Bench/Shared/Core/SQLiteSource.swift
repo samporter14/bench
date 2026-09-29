@@ -10,36 +10,61 @@
 
 import Foundation
 
-/// Resolve the org database path without guessing:
+/// The org database the daemon is using, without guessing where its data
+/// lives (Bench's version; the droplet's looked only in ~/.claude-science):
 ///
-/// 1. `~/.claude-science/active-org.json` → `orgs/<uuid>/operon-cli.db`
-/// 2. Fallback: newest `~/.claude-science/orgs/*/operon-cli.db`
+/// 1. The folder the daemon's own `status` names (`data_dir`), then
+///    ~/.claude-science.
+/// 2. In it, the org in `active-org.json`, unless another org's database has
+///    been written clearly more recently: that one is the live one.
 func resolveDatabase() -> URL? {
-    let home = NSHomeDirectory()
-    let base = URL(fileURLWithPath: home + "/.claude-science")
+    let home = URL(fileURLWithPath: NSHomeDirectory() + "/.claude-science")
+    var bases: [URL] = []
+    if let known = ScienceDataDirectory.current { bases.append(known.standardizedFileURL) }
+    if !bases.contains(home.standardizedFileURL) { bases.append(home) }
+    for base in bases {
+        if let db = orgDatabases(in: base).picked { return db }
+    }
+    return nil
+}
+
+/// One org's database in a data folder.
+struct OrgDatabase {
+    let url: URL
+    let isActive: Bool
+    /// The later of the database's and its write-ahead log's modification
+    /// times: while the daemon works, the log is what changes.
+    let lastWrite: Date
+}
+
+/// Every readable org database under `base`, and the one to read.
+func orgDatabases(in base: URL) -> (all: [OrgDatabase], picked: URL?) {
+    var activeUUID: String?
     if
         let data = try? Data(contentsOf: base.appendingPathComponent("active-org.json")),
-        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-        let uuid = json["org_uuid"] as? String
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     {
-        let db = base.appendingPathComponent("orgs/\(uuid)/operon-cli.db")
-        if FileManager.default.isReadableFile(atPath: db.path) { return db }
+        activeUUID = json["org_uuid"] as? String
     }
+    let fm = FileManager.default
     let orgs = base.appendingPathComponent("orgs")
-    guard
-        let uuids = try? FileManager.default.contentsOfDirectory(atPath: orgs.path)
-    else { return nil }
-    var newest: (URL, Date)?
-    for uuid in uuids {
-        let db = orgs.appendingPathComponent("\(uuid)/operon-cli.db")
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: db.path),
-           let modified = attrs[.modificationDate] as? Date,
-           FileManager.default.isReadableFile(atPath: db.path)
-        {
-            if newest == nil || modified > newest!.1 { newest = (db, modified) }
-        }
+    let uuids = (try? fm.contentsOfDirectory(atPath: orgs.path)) ?? []
+    func modified(_ path: String) -> Date? {
+        (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date
     }
-    return newest?.0
+    let all: [OrgDatabase] = uuids.sorted().compactMap { uuid in
+        let db = orgs.appendingPathComponent("\(uuid)/operon-cli.db")
+        guard fm.isReadableFile(atPath: db.path), let written = modified(db.path) else { return nil }
+        let lastWrite = max(written, modified(db.path + "-wal") ?? .distantPast)
+        return OrgDatabase(url: db, isActive: uuid == activeUUID, lastWrite: lastWrite)
+    }
+    guard let newest = all.max(by: { $0.lastWrite < $1.lastWrite }) else { return (all, nil) }
+    // A minute's grace, so the active org keeps its place while two orgs
+    // are both idle and were last written about the same time.
+    if let active = all.first(where: \.isActive), active.lastWrite >= newest.lastWrite.addingTimeInterval(-60) {
+        return (all, active.url)
+    }
+    return (all, newest.url)
 }
 
 func resolveSqlite3() -> URL {

@@ -400,7 +400,10 @@ Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo,
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule   (lab agent)
 Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and ScienceCore. Don't edit here:
-                          change them in the droplet, then run Scripts/sync-shared.sh.
+                          change them in the droplet, then run Scripts/sync-shared.sh. Except
+                          Core/CLIStatus.swift and Core/SQLiteSource.swift, which are Bench's own
+                          since 0.1.2 (the database is found through the daemon's `data_dir` and
+                          the live org); the sync script keeps them.
 Resources/AppIcon.icon    a copy of the droplet's icon (synced by the same script)
 ```
 

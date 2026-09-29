@@ -84,3 +84,11 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   and `Bench --diagnose` prints each step (CLI, daemon, database, schema
   columns, the reads). On this Mac every step passes (Claude Science 0.1.54).
   Waiting on the other Mac's output.
+- 🔎 **Found it (0.1.1's `--diagnose` on the second Mac, macOS 27):** Claude
+  Science 0.1.54 was running, and `~/.claude-science` held one org database
+  of 3.1 MB with 0 sessions and 0 projects, while Sam has sessions there. So
+  Bench read an empty database. 0.1.2 finds the database through the
+  daemon's own `data_dir` (from `claude-science status`) and, among orgs,
+  the one written most recently, and the report lists every data folder and
+  org database with size, last write and session count. Waiting on the
+  second Mac to confirm.

@@ -63,11 +63,11 @@ running.
 
 If Bench ever opens on a "Sign in" screen, click **Sign in**.
 
-If the scenes or the "needs you" cards never show up, Bench can't read Claude
-Science's session list. It says so in its Scenes menu, and this command in
-Terminal shows which step fails, without naming any of your projects or
-sessions. It only works once macOS has let that version open, so open Bench
-normally first; before that, the command sits silently:
+If the scenes or the "needs you" cards never show up, open **Help → Bench
+Diagnostics**. It checks each step Bench takes to see your sessions and has a
+**Copy** button; nothing in it names your projects or sessions. The same
+report prints in Terminal with the command below, once macOS has let that
+version of Bench open:
 
 ```sh
 /Applications/Bench.app/Contents/MacOS/Bench --diagnose

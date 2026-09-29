@@ -14,14 +14,38 @@ public struct CLIStatus: Sendable, Equatable {
     /// The daemon's process, so later checks can ask the kernel whether it is
     /// still alive instead of running this command again.
     public let pid: Int32?
+    /// Where the daemon keeps its data (`daemon.data_dir`), when it says.
+    public let dataDir: String?
 
-    public init(running: Bool, activeFrames: Int, activeConversations: Int, version: String, port: Int, pid: Int32? = nil) {
+    public init(running: Bool, activeFrames: Int, activeConversations: Int, version: String, port: Int,
+                pid: Int32? = nil, dataDir: String? = nil) {
         self.running = running
         self.activeFrames = activeFrames
         self.activeConversations = activeConversations
         self.version = version
         self.port = port
         self.pid = pid
+        self.dataDir = dataDir
+    }
+}
+
+/// Where the running daemon keeps its data, as its last `status` said. The
+/// database is looked for there first: the daemon doesn't always use
+/// ~/.claude-science (on a Mac with macOS 27 the folder there held an empty
+/// database while the real one lived elsewhere). Bench's own addition.
+enum ScienceDataDirectory {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var known: URL?
+
+    static var current: URL? {
+        lock.lock(); defer { lock.unlock() }
+        return known
+    }
+
+    static func remember(_ path: String?) {
+        guard let path, !path.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }
+        known = URL(fileURLWithPath: path)
     }
 }
 
@@ -74,13 +98,16 @@ public func fetchCLIStatus(timeout: TimeInterval = 5) throws -> CLIStatus {
         ?? (daemon["activeConversations"] as? Int) ?? 0
     let version = (json["version"] as? String) ?? "unknown"
     let port = (json["port"] as? Int) ?? 8765
+    let dataDir = daemon["data_dir"] as? String
+    ScienceDataDirectory.remember(dataDir)
     return CLIStatus(
         running: true,
         activeFrames: activeFrames,
         activeConversations: activeConversations,
         version: version,
         port: port,
-        pid: (json["pid"] as? Int).map(Int32.init)
+        pid: (json["pid"] as? Int).map(Int32.init),
+        dataDir: dataDir
     )
 }
 

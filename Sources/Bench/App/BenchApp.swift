@@ -170,6 +170,9 @@ struct BenchCommands: Commands {
             Button("Find…") { WebContainer.shared.showFind() }
                 .keyboardShortcut("f")
         }
+        CommandGroup(after: .help) {
+            Button("Bench Diagnostics…") { DiagnosticsWindowController.shared.show() }
+        }
         CommandMenu("History") {
             Button("Back") { WebContainer.shared.goBack() }
                 .keyboardShortcut("[")
@@ -205,7 +208,7 @@ struct GeneralSettingsView: View {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Can't see your sessions: \(problem.label)")
-                            Text("\(problem.hint) For details, run Bench with --diagnose in Terminal.")
+                            Text("\(problem.hint) For details, open Help → Bench Diagnostics.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -219,6 +222,11 @@ struct GeneralSettingsView: View {
             Toggle("Keep showing it while Bench is in front", isOn: $panelWhileFront)
                 .disabled(!showPanel)
             Toggle("Play a sound when a session needs you", isOn: $sound)
+            Section {
+                LabeledContent("If scenes or cards don't show up") {
+                    Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 440)
