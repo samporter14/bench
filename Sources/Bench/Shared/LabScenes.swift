@@ -478,6 +478,9 @@ enum LabScenes {
         LabScene(name: "Colony formation", theme: .bench, duration: ColonyFormation.duration) { context, size, t, tint in
             ColonyFormation.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Freezing cells", theme: .bench, duration: FreezingCells.duration) { context, size, t, tint in
+            FreezingCells.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Molecular
         LabScene(name: "Chromatin breathing", theme: .molecular, duration: ChromatinBreathing.duration) { context, size, t, tint in
             ChromatinBreathing.draw(in: &context, size: size, time: t, tint: tint)
@@ -753,6 +756,9 @@ enum LabScenes {
         LabScene(name: "Notch checkerboard", theme: .cell, duration: NotchCheckerboard.duration) { context, size, t, tint in
             NotchCheckerboard.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Immunofluorescence", theme: .cell, duration: Immunofluorescence.duration) { context, size, t, tint in
+            Immunofluorescence.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Organisms
         LabScene(name: "Mouse sniff", theme: .organisms, duration: MouseSniff.duration) { context, size, t, tint in
             MouseSniff.draw(in: &context, size: size, time: t, tint: tint)
@@ -938,6 +944,24 @@ enum LabScenes {
         LabScene(name: "Standing waves", theme: .physics, duration: StandingWaves.duration) { context, size, t, tint in
             StandingWaves.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Prism", theme: .physics, duration: Prism.duration) { context, size, t, tint in
+            Prism.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Faraday coil", theme: .physics, duration: FaradayCoil.duration) { context, size, t, tint in
+            FaradayCoil.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Van de Graaff", theme: .physics, duration: VanDeGraaff.duration) { context, size, t, tint in
+            VanDeGraaff.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Half-life", theme: .physics, duration: HalfLife.duration) { context, size, t, tint in
+            HalfLife.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Gyroscope", theme: .physics, duration: Gyroscope.duration) { context, size, t, tint in
+            Gyroscope.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Newton's rings", theme: .physics, duration: NewtonsRings.duration) { context, size, t, tint in
+            NewtonsRings.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Chemistry
         LabScene(name: "Caffeine", theme: .chemistry, duration: Caffeine.duration) { context, size, t, tint in
             Caffeine.draw(in: &context, size: size, time: t, tint: tint)
@@ -1046,6 +1070,21 @@ enum LabScenes {
         },
         LabScene(name: "Turing pattern", theme: .chemistry, duration: TuringPattern.duration) { context, size, t, tint in
             TuringPattern.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Separatory funnel", theme: .chemistry, duration: SeparatoryFunnel.duration) { context, size, t, tint in
+            SeparatoryFunnel.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Büchner funnel", theme: .chemistry, duration: BuchnerFunnel.duration) { context, size, t, tint in
+            BuchnerFunnel.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Flame test", theme: .chemistry, duration: FlameTest.duration) { context, size, t, tint in
+            FlameTest.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Precipitate", theme: .chemistry, duration: Precipitate.duration) { context, size, t, tint in
+            Precipitate.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "pH rainbow", theme: .chemistry, duration: PHRainbow.duration) { context, size, t, tint in
+            PHRainbow.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Plants
         LabScene(name: "Seedling", theme: .plants, duration: Seedling.duration) { context, size, t, tint in

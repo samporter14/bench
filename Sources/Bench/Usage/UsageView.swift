@@ -74,7 +74,10 @@ struct UsageView: View {
             }
         }
         .padding(20)
-        .frame(width: 780)
+        // As wide as the activity graph, which grows a week at a time from
+        // Claude Science's launch, but never narrower than the plan limits
+        // need.
+        .frame(width: max(560, ActivityGraph.width()) + 40)
     }
 
     @ViewBuilder private var activity: some View {

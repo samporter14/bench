@@ -10,18 +10,43 @@ struct ActivityGraph: View {
     let history: ActivityHistory
     let metric: ActivityMetric
 
-    static let cell: CGFloat = 11
     static let gap: CGFloat = 3
-    /// 53 columns come to 739pt, one point inside the popover's 740.
-    static let weeks = 53
+    /// A year at most: 53 columns of 11 pt come to 739 pt.
+    static let maxWeeks = 53
+    /// Claude Science's public launch. No day before it can hold activity,
+    /// so the graph starts at its week instead of a year back.
+    static let launch = DateComponents(calendar: .current, year: 2026, month: 6, day: 30).date!
+
+    /// Columns from the launch week to this one, a year at most.
+    static func weeks(today: Date = Date(), calendar: Calendar = .current) -> Int {
+        let first = calendar.dateInterval(of: .weekOfYear, for: launch)?.start ?? launch
+        let last = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
+        let days = calendar.dateComponents([.day], from: first, to: last).day ?? 0
+        return min(maxWeeks, max(1, Int((Double(days) / 7).rounded()) + 1))
+    }
+
+    /// Bigger squares while there are few weeks, so a short history doesn't
+    /// sit small in the popover; a year's worth needs the smaller ones.
+    static func cell(forWeeks weeks: Int) -> CGFloat { weeks <= 30 ? 14 : 11 }
+
+    /// How wide the graph draws, for the popover to fit around.
+    static func width(today: Date = Date()) -> CGFloat {
+        let weeks = weeks(today: today)
+        return CGFloat(weeks) * (cell(forWeeks: weeks) + gap) - gap
+    }
 
     private let palette = ActivityPalette.standard
 
     var body: some View {
         if let counts = history[metric] {
-            let grid = ActivityGrid(counts: counts, today: Date(), weeks: Self.weeks)
+            let weeks = Self.weeks()
+            let grid = ActivityGrid(counts: counts, today: Date(), weeks: weeks)
+            let span = weeks < Self.maxWeeks
+                ? "since " + Self.launch.formatted(.dateTime.month(.wide).day())
+                : "in the last year"
             VStack(alignment: .leading, spacing: 10) {
-                ActivityGridView(grid: grid, history: history, cell: Self.cell, gap: Self.gap)
+                ActivityGridView(grid: grid, history: history, cell: Self.cell(forWeeks: weeks), gap: Self.gap,
+                                 start: Self.launch)
                     .id(metric)
                     .transition(.opacity)
                     // The hover label can reach past the squares. The footer
@@ -29,9 +54,9 @@ struct ActivityGraph: View {
                     // over the label.
                     .zIndex(1)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(metric.describe(grid.total)) in the last year, \(metric.describe(grid.thisWeek)) this week")
+                    .accessibilityLabel("\(metric.describe(grid.total)) \(span), \(metric.describe(grid.thisWeek)) this week")
                 HStack(spacing: 10) {
-                    Text("\(metric.describe(grid.total)) in the last year")
+                    Text("\(metric.describe(grid.total)) \(span)")
                         .font(.system(size: 11, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(palette.secondary)
@@ -53,6 +78,9 @@ struct ActivityGridView: View {
     let history: ActivityHistory
     let cell: CGFloat
     let gap: CGFloat
+    /// Days before this are left blank and can't be hovered: nothing could
+    /// have happened on them.
+    var start: Date? = nil
     @State private var hovered: Date?
 
     private let palette = ActivityPalette.standard
@@ -62,7 +90,7 @@ struct ActivityGridView: View {
             ForEach(Array(grid.weeks.enumerated()), id: \.offset) { _, week in
                 VStack(spacing: gap) {
                     ForEach(0..<7, id: \.self) { row in
-                        if let day = week[row] {
+                        if let day = week[row], shown(day.day) {
                             RoundedRectangle(cornerRadius: 2.5, style: .continuous)
                                 .fill(activityFill(day.level))
                                 .overlay {
@@ -85,11 +113,16 @@ struct ActivityGridView: View {
         .contentShape(Rectangle())
         .onContinuousHover { phase in
             switch phase {
-            case .active(let point): hovered = grid.day(at: point, cell: cell, gap: gap)
+            case .active(let point): hovered = grid.day(at: point, cell: cell, gap: gap).flatMap { shown($0) ? $0 : nil }
             case .ended: hovered = nil
             }
         }
         .overlay(alignment: .topLeading) { label }
+    }
+
+    private func shown(_ day: Date) -> Bool {
+        guard let start else { return true }
+        return day >= Calendar.current.startOfDay(for: start)
     }
 
     /// Where a day sits in the grid, and its square.

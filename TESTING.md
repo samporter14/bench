@@ -103,3 +103,16 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   confirm scenes and cards.
 - ✅ **Confirmed on the second Mac (macOS 27, Bench 0.1.3):** Sam: "I think
   that fixed everything": scenes and cards now show there.
+
+## 2026-09-29, Bench 0.1.4 (13 new scenes, activity since launch)
+
+- ✅ **Batch L scenes (487 in all):** Prism, Faraday coil, Van de Graaff,
+  Half-life, Gyroscope, Newton's rings, Separatory funnel, Büchner funnel,
+  Flame test, Precipitate, pH rainbow, Immunofluorescence and Freezing
+  cells. Each was checked on dark and light sheets at 48 and 16 pt; Faraday
+  coil (read as a face), Gyroscope (a knot head-on) and pH rainbow (a comb)
+  were redrawn once.
+- ✅ **Activity graph starts at Claude Science's launch (June 30):** seen in
+  `Bench --demo usage` (made-up history), with 14 columns of 14 pt squares,
+  Sunday and Monday of launch week blank, "N sessions since June 30", and a
+  600 pt wide popover in place of 780.

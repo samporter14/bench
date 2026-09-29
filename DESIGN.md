@@ -70,7 +70,7 @@ Group neighbouring glass (a row of chips, the stat tiles) in one
 `GlassEffectContainer(spacing:)` so the shapes blend.
 
 **Not glass:**
-- the 474 grid cells at rest. That many glass layers costs frames. They get
+- the 487 grid cells at rest. That many glass layers costs frames. They get
   a quiet `Color.primary.opacity(0.05)` fill, and a clay check when on.
 - the page itself;
 - text.
@@ -311,7 +311,7 @@ The Settings **Scenes** tab (about 760×640) has:
 - a Size segmented picker, with a live well at that size beside it;
 - category chips with counts, which toggle;
 - a search field;
-- "N of 474 on", with All and None (None keeps one on);
+- "N of 487 on", with All and None (None keeps one on);
 - a LazyVGrid of every scene. Each cell is a 56 pt still, drawn with a Canvas
   at 60% of the scene's duration, with the name under it, dimmed with no
   check when off, and a clay check when on. A click toggles it, and hovering
@@ -378,7 +378,7 @@ and Bench never holds the session. Only read-only paths are allowed.
 - Popover (glass): a **Plan limits** section with a row per limit ("Current
   session", "Weekly · all models", "Weekly · Opus", "Weekly · Sonnet"), each
   with a bar, "% left" and "Resets in 2 h 14 m", plus extra usage when
-  enabled. Then the **Activity** section (the year graph), and a Refresh
+  enabled. Then the **Activity** section (the graph from Claude Science's launch on June 30, 2026, a column per week up to a year; 14 pt squares while it spans 30 weeks or fewer, the days before launch blank; the popover is as wide as the graph needs, 600 pt at least), and a Refresh
   button (`.glass`).
 - One Usage control, not two.
 

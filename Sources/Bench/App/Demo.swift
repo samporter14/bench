@@ -33,6 +33,9 @@ enum Demo {
         case toolbar
         /// The real Settings window.
         case settings
+        /// The Usage popover's content in a window: plan limits and a made-up
+        /// activity history since Claude Science's launch.
+        case usage
     }
 
     /// Nil in a normal launch.
@@ -57,6 +60,8 @@ enum Demo {
             showToolbar()
         case .settings?:
             showSettings()
+        case .usage?:
+            showUsage()
         case nil:
             break
         }
@@ -144,6 +149,48 @@ enum Demo {
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.tabbingMode = .disallowed
+        windows.append(window)
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private static func showUsage() {
+        PlanUsageModel.shared.showDemo(limits: [
+            PlanLimit(kind: .session, usedPercent: 46, resetsAt: Date(timeIntervalSinceNow: 87 * 60)),
+            PlanLimit(kind: .week, usedPercent: 32, resetsAt: Date(timeIntervalSinceNow: 3 * 24 * 3600)),
+        ])
+        // A fixed, made-up pattern: busy weekdays, quiet weekends, a few gaps.
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.dateFormat = "yyyy-MM-dd"
+        var sessions: [String: Int] = [:], messages: [String: Int] = [:], tokens: [String: Int] = [:]
+        var day = calendar.startOfDay(for: ActivityGraph.launch)
+        var n = 0
+        while day <= Date() {
+            let weekday = calendar.component(.weekday, from: day)
+            let base = (weekday == 1 || weekday == 7) ? 0 : [1, 3, 0, 5, 2, 4, 6, 2, 0, 3][n % 10]
+            if base > 0 {
+                let key = formatter.string(from: day)
+                sessions[key] = base
+                messages[key] = base * 14 + n % 9
+                tokens[key] = base * 2_100_000 + (n % 7) * 350_000
+            }
+            n += 1
+            day = calendar.date(byAdding: .day, value: 1, to: day)!
+        }
+        UsageModel.shared.showDemo(history: ActivityHistory(
+            sessions: DailyCounts(counts: sessions),
+            messages: DailyCounts(counts: messages),
+            tokens: DailyCounts(counts: tokens)))
+
+        let hosting = NSHostingController(rootView: UsageView())
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Usage"
+        window.styleMask = [.titled, .closable]
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.isRestorable = false
         windows.append(window)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)

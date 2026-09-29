@@ -38,6 +38,13 @@ final class UsageModel: ObservableObject {
         refresh()
     }
 
+    /// Shows a made-up history, with no read. Only Demo calls it.
+    func showDemo(history: ActivityHistory) {
+        self.history = history
+        failure = nil
+        loading = false
+    }
+
     /// Reads now, unless a read is already running.
     func refresh() {
         // A demo has no activity to read (Demo.swift); the popover stays on its spinner.
