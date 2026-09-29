@@ -204,3 +204,4 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
 - ⚠️ A demo Settings window took keyboard focus while Sam was typing: the
   search field is focused when the tab opens. Don't open demo windows while
   Sam is typing.
+- ✅ **Sam, on his installed 0.1.11:** "right now its lookin good".
