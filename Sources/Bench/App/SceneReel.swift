@@ -24,7 +24,9 @@ enum SceneReel {
     private static let scale: CGFloat = 2
     private static let outerPadding: CGFloat = 16
     private static let gap: CGFloat = 12
-    private static let tilePadding: CGFloat = 16
+    /// None: a scene is drawn to be clipped by the edge of its well, as in
+    /// the panel, so the tile is the scene's own square.
+    private static let tilePadding: CGFloat = 0
     private static let tileCorner: CGFloat = 18
     private static let tileColor = CGColor(srgbRed: 0x26 / 255, green: 0x26 / 255, blue: 0x24 / 255, alpha: 1)
 
@@ -36,7 +38,7 @@ enum SceneReel {
         }
         guard let flag = args.firstIndex(of: "--render-scenes") else { return }
         guard flag + 1 < args.count, !args[flag + 1].hasPrefix("--") else {
-            fail("usage: Bench --render-scenes <out.gif> [--names \"A,B,…\"] [--columns 4] [--rows 2] [--size 96] [--seconds 4] [--fps 20]")
+            fail("usage: Bench --render-scenes <out.gif> [--names \"A,B,…\"] [--columns 4] [--rows 2] [--size 128] [--seconds 4] [--fps 20]")
         }
 
         func option(_ name: String, default fallback: Double) -> Double {
@@ -44,7 +46,7 @@ enum SceneReel {
             guard i + 1 < args.count, let value = Double(args[i + 1]), value > 0 else { fail("\(name) needs a positive number") }
             return value
         }
-        let size = option("--size", default: 96)
+        let size = option("--size", default: 128)
         let seconds = option("--seconds", default: 4)
         // GIF delays are whole centiseconds, so the frame rate is snapped to
         // what the file can say; timing then matches what a viewer sees.
@@ -127,13 +129,15 @@ enum SceneReel {
                 let scene = scenes[k]
                 // Each tile starts at its own point in its loop (a golden-ratio
                 // walk spreads them evenly), so the grid never beats in step.
-                let phase = (Double(k) * 0.618).truncatingRemainder(dividingBy: 1) * scene.duration
+                let phase = (Double(k + 1) * 0.618).truncatingRemainder(dividingBy: 1) * scene.duration
                 let local = (Double(i) / fps + phase).truncatingRemainder(dividingBy: scene.duration)
                 let index = min(frames.count - 1, max(0, Int(local * PlayedGlyphView.fps)))
                 // The image is upright in a y-down space, so flip it back
                 // about its own middle.
                 let target = box.insetBy(dx: tilePadding, dy: tilePadding)
                 context.saveGState()
+                context.addPath(CGPath(roundedRect: box, cornerWidth: tileCorner, cornerHeight: tileCorner, transform: nil))
+                context.clip()
                 context.translateBy(x: target.midX, y: target.midY)
                 context.scaleBy(x: 1, y: -1)
                 context.draw(frames[index], in: CGRect(x: -target.width / 2, y: -target.height / 2, width: target.width, height: target.height))
