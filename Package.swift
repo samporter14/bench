@@ -1,10 +1,11 @@
 // swift-tools-version: 6.2
 // Bench — a Mac app for Claude Science: its web UI in one native window, and
-// the lab scenes in a floating panel while a session works. Internal only.
+// the lab scenes in a floating panel while a session works.
 //
-// Sources/Bench/Shared holds symlinks to the Science Status droplet's
+// Sources/Bench/Shared holds copies of the Science Status droplet's
 // DroppyKit-free files (the scenes and the session reader), compiled into this
-// target. They belong to the droplet: never edit them from here.
+// target. They are written in the droplet: change them there, then run
+// Scripts/sync-shared.sh.
 import PackageDescription
 
 let package = Package(
