@@ -166,6 +166,13 @@ final class LabModel: ObservableObject {
         if !working.isEmpty { workingHidden = true }
     }
 
+    /// Shows made-up sessions and cards, with no reading. Only Demo calls it.
+    func showDemo(working: [SessionStatus], cards: [LabCard]) {
+        self.working = working
+        self.cards = cards
+        waiting = cards.compactMap(\.session).filter { $0.state == .needsInput }
+    }
+
     // MARK: Reading
 
     /// One read's worth, resolved together off the main thread: the database

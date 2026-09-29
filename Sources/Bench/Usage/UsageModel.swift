@@ -40,7 +40,8 @@ final class UsageModel: ObservableObject {
 
     /// Reads now, unless a read is already running.
     func refresh() {
-        guard !loading else { return }
+        // A demo has no activity to read (Demo.swift); the popover stays on its spinner.
+        guard Demo.mode == nil, !loading else { return }
         loading = true
         failure = nil
         let source = source
@@ -58,6 +59,7 @@ final class UsageModel: ObservableObject {
     /// Reads every ten minutes until `stopLiveUpdates()`, so a popover left
     /// open stays true. The popover's own open does the first read.
     func startLiveUpdates() {
+        guard Demo.mode == nil else { return }
         live?.cancel()
         live = Task { [weak self] in
             while !Task.isCancelled {

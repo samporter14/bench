@@ -10,6 +10,7 @@ struct BenchApp: App {
 
     init() {
         SheetCost.runIfAsked()
+        Demo.validate()
         SettingsKey.register()
     }
 
@@ -24,6 +25,11 @@ struct BenchApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A demo shows made-up data and starts nothing real (Demo.swift).
+        if Demo.mode != nil {
+            Demo.start()
+            return
+        }
         Router.shared.showWindow = { MainWindowController.shared.show() }
         MainWindowController.shared.show()
         WebContainer.shared.start()
@@ -35,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        MainWindowController.shared.show()
+        if Demo.mode == nil { MainWindowController.shared.show() }
         return true
     }
 
@@ -44,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        guard Demo.mode == nil else { return }
         for url in urls where url.scheme == "bench" {
             Router.shared.handle(benchURL: url, port: WebContainer.shared.port)
         }
@@ -93,11 +100,22 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
 /// The window's content: the web view, and the toolbar.
 struct MainView: View {
-    @ObservedObject private var lab = LabModel.shared
-
     var body: some View {
         BrowserView()
             .frame(minWidth: 900, minHeight: 560)
+            .benchToolbar()
+    }
+}
+
+/// The main window's toolbar, apart from MainView so the demo window
+/// (Demo.swift) shows exactly the same one. A modifier, not a ToolbarContent:
+/// it needs to watch the Lab model, and a view's modifier is where that is
+/// sure to work.
+struct BenchToolbar: ViewModifier {
+    @ObservedObject private var lab = LabModel.shared
+
+    func body(content: Content) -> some View {
+        content
             // No back/forward/reload: Claude Science has its own navigation,
             // and ⌘[ ⌘] ⌘R stay in the menus.
             .toolbar {
@@ -121,6 +139,10 @@ struct MainView: View {
                 }
             }
     }
+}
+
+extension View {
+    func benchToolbar() -> some View { modifier(BenchToolbar()) }
 }
 
 struct BenchCommands: Commands {

@@ -94,7 +94,8 @@ final class ContextModel: ObservableObject {
     /// toolbar that only adds the item once there is a reading, since an item
     /// that isn't there can't start the read that would put it there.
     func start() {
-        guard cancellables.isEmpty else { return }
+        // A demo shows made-up numbers and reads nothing (Demo.swift).
+        guard Demo.mode == nil, cancellables.isEmpty else { return }
         let web = WebContainer.shared
         let lab = LabModel.shared
         workingIDs = Set(lab.working.map(\.id))
@@ -142,6 +143,18 @@ final class ContextModel: ObservableObject {
         requestRead(force: true)
     }
 
+    /// Shows made-up figures for a made-up session, with no read. Only Demo
+    /// calls it.
+    func showDemo(used: Int, window: Int, turns: [Int]) {
+        frameID = "demo-1"
+        self.used = used
+        self.window = window
+        self.turns = turns
+        truncated = false
+        loading = false
+        failure = nil
+    }
+
     // MARK: What changed
 
     /// The page shows another session, or none. What was read belongs to the
@@ -179,7 +192,7 @@ final class ContextModel: ObservableObject {
     /// after) or the last was under 15 s ago (it waits for the gap to be up,
     /// so a turn that ends just after a read still updates the ring).
     private func requestRead(force: Bool = false) {
-        guard let frame = frameID, WebContainer.shared.status == .ready else { return }
+        guard Demo.mode == nil, let frame = frameID, WebContainer.shared.status == .ready else { return }
         guard !reading else {
             readAgain = true
             return

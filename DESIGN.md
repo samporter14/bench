@@ -396,7 +396,7 @@ Two tabs: General (below) and Scenes (above).
 
 ```
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
-Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Settings   (planner)
+Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo, Settings   (planner)
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule   (lab agent)
 Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and ScienceCore. Don't edit here:

@@ -90,7 +90,8 @@ final class PlanUsageModel: ObservableObject {
     /// after a session finishes a turn, and when a limit starts over. Safe to
     /// call again.
     func start() {
-        guard tasks.isEmpty else { return }
+        // A demo shows made-up limits and reads nothing (Demo.swift).
+        guard Demo.mode == nil, tasks.isEmpty else { return }
         tasks = [
             // Watching the status instead of polling: it reads the moment the
             // page is signed in, and again if Claude Science comes back after
@@ -132,6 +133,15 @@ final class PlanUsageModel: ObservableObject {
         read(fresh: true)
     }
 
+    /// Shows made-up limits, with no read. Only Demo calls it.
+    func showDemo(limits: [PlanLimit]) {
+        self.limits = limits
+        extra = nil
+        loading = false
+        failure = nil
+        lastRead = Date()
+    }
+
     // MARK: Reading
 
     /// Reads now, or once the spacing since the last read has passed. Reads
@@ -152,7 +162,8 @@ final class PlanUsageModel: ObservableObject {
     }
 
     private func read(fresh: Bool) {
-        guard !loading else { return }
+        // Every automatic read, the Refresh button and the popover come here.
+        guard Demo.mode == nil, !loading else { return }
         loading = true
         lastAttempt = Date()
         Task { [weak self] in

@@ -1,3 +1,4 @@
 .build/
 build/
 .swiftpm/
+.build-demo/
