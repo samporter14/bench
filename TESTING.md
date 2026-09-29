@@ -183,3 +183,13 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   reads at a glance, one line each.
 - ✅ **The ☀️/🌙 switch sets the whole Specimens tab** (window scheme), with
   no boards.
+- ✅ **On Sam's real Bench 0.1.10 (macOS 27), with background accessibility
+  presses:** the options popover opens with all six chips named and toggles,
+  "Choose specimens…" opens Settings, and 🌙 turns the whole Specimens tab
+  (title bar, tabs, chips, grid) dark, with every chip clearly on.
+- ❌ **The sign-in theory was wrong:** after the 0.1.10 install Bench came up
+  on "Sign in". `sessionLost` ran at 15:09:31 ("An API read was refused;
+  signing in again") and reloaded with a fresh `claude-science url` code,
+  and Claude Science still showed Sign in. So the card is Claude Science's
+  own sign-in after a restart, not Bench's local code. Next: ask Sam what
+  clicking Sign in does (instant, a pop-up, a claude.ai page).
