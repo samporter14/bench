@@ -11,6 +11,7 @@ struct BenchApp: App {
     init() {
         SheetCost.runIfAsked()
         SceneReel.runIfAsked()
+        Diagnose.runIfAsked()
         Demo.validate()
         SettingsKey.register()
     }
@@ -195,9 +196,25 @@ struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
     @AppStorage(SettingsKey.panelWhileFront) private var panelWhileFront = true
+    @ObservedObject private var lab = LabModel.shared
 
     var body: some View {
         Form {
+            if let problem = lab.problem {
+                Section {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Can't see your sessions: \(problem.label)")
+                            Text("\(problem.hint) For details, run Bench with --diagnose in Terminal.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundStyle(Theme.clay)
+                    }
+                }
+            }
             Toggle("Show the scenes panel while a session works", isOn: $showPanel)
             Toggle("Keep showing it while Bench is in front", isOn: $panelWhileFront)
                 .disabled(!showPanel)

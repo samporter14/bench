@@ -20,6 +20,7 @@ struct ScenesToolbarButton: View {
     }()
 
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
+    @ObservedObject private var lab = LabModel.shared
     @AppStorage(SettingsKey.settingsTab) private var settingsTab = "general"
     @ObservedObject private var settings = SceneSettings.shared
     @Environment(\.openSettings) private var openSettings
@@ -28,6 +29,13 @@ struct ScenesToolbarButton: View {
         Menu {
             // ⌘⇧L stays with the View menu's command: bound here too, the two
             // could both claim the key.
+            if let problem = lab.problem {
+                // Without the sessions there is nothing to play or announce.
+                Section("Can't see your sessions") {
+                    Text(problem.label)
+                    Text(problem.hint)
+                }
+            }
             Toggle("Show scenes panel", isOn: $showPanel)
             Section("Size") {
                 Picker("Size", selection: $settings.size) {
@@ -51,7 +59,11 @@ struct ScenesToolbarButton: View {
                 NSApp.activate()
             }
         } label: {
-            if showPanel {
+            if showPanel, lab.problem != nil {
+                Label("Scenes", systemImage: "exclamationmark.triangle")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(Theme.clay)
+            } else if showPanel {
                 // Only the symbol takes the accent: the word stays plain.
                 Label {
                     Text("Scenes")
@@ -67,7 +79,7 @@ struct ScenesToolbarButton: View {
         } primaryAction: {
             showPanel.toggle()
         }
-        .help("Show or hide the scenes panel")
+        .help(lab.problem.map { "Can't see your Claude Science sessions: \($0.label)" } ?? "Show or hide the scenes panel")
     }
 
     /// A category's switch. The last one on is disabled, and `toggle` refuses

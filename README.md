@@ -44,6 +44,15 @@ Claude Science installed.
 
 If Bench ever opens on a "Sign in" screen, click **Sign in**.
 
+If the scenes or the "needs you" cards never show up, Bench can't read Claude
+Science's session list. It says so in its Scenes menu, and this command in
+Terminal shows which step fails, without naming any of your projects or
+sessions:
+
+```sh
+/Applications/Bench.app/Contents/MacOS/Bench --diagnose
+```
+
 ## Build it yourself
 
 With Xcode 27 installed, run this from the repo's folder:

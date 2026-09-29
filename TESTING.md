@@ -73,3 +73,14 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   seen yet.
 - ⏳ **The readout capsule at the 900 pt minimum width** while the Lab
   capsule shows: not checked.
+
+## 2026-09-29, a second Mac (Bench 0.1.0 from the GitHub release)
+
+- ✅ **Download, install and Claude Science in the window** work on Sam's
+  other MacBook.
+- ❌ **No scenes panel and no needs-input cards there.** Both come from
+  reading Claude Science's session database, and Bench dropped that read's
+  errors silently. 0.1.1 shows the problem in the Scenes menu and Settings,
+  and `Bench --diagnose` prints each step (CLI, daemon, database, schema
+  columns, the reads). On this Mac every step passes (Claude Science 0.1.54).
+  Waiting on the other Mac's output.

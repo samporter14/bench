@@ -69,6 +69,10 @@ final class LabModel: ObservableObject {
     /// The user hid the working panel. It comes back when the set of working
     /// sessions changes, so the next session to start is not missed.
     @Published private(set) var workingHidden = false
+    /// Why the sessions can't be seen, while they can't. Without them there
+    /// are no scenes and no needs-input cards, so the Scenes menu and Settings
+    /// say so rather than staying quiet (`Bench --diagnose` has the details).
+    @Published private(set) var problem: ScienceError?
 
     private let source = CombinedScienceSource()
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
@@ -202,9 +206,14 @@ final class LabModel: ObservableObject {
         let source = source
         Task { [weak self] in
             let readout = await Task.detached(priority: .utility) { () -> Readout in
-                let snapshot = (try? source.snapshot()) ?? ScienceSnapshot(
-                    runningCount: nil, daemonVersion: nil, sessions: [],
-                    readError: .databaseUnreadable("read failed"))
+                let snapshot: ScienceSnapshot
+                do {
+                    snapshot = try source.snapshot()
+                } catch {
+                    snapshot = ScienceSnapshot(
+                        runningCount: nil, daemonVersion: nil, sessions: [],
+                        readError: (error as? ScienceError) ?? .databaseUnreadable("\(error)"))
+                }
                 return Readout(snapshot: snapshot, database: source.database)
             }.value
             guard let self, self.generation == epoch else { return }
@@ -222,6 +231,15 @@ final class LabModel: ObservableObject {
         let failed = snapshot.readError != nil && snapshot.sessions.isEmpty
         if !failed || snapshot.readError == .daemonNotRunning {
             update(from: snapshot)
+        }
+        let problem = failed ? snapshot.readError : nil
+        if problem != self.problem {
+            if let problem {
+                log.error("Can't see the sessions: \(String(describing: problem), privacy: .public)")
+            } else if self.problem != nil {
+                log.info("Sessions readable again")
+            }
+            self.problem = problem
         }
         if changedDuringRead {
             changedDuringRead = false
