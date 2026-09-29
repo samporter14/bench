@@ -90,5 +90,14 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   Bench read an empty database. 0.1.2 finds the database through the
   daemon's own `data_dir` (from `claude-science status`) and, among orgs,
   the one written most recently, and the report lists every data folder and
-  org database with size, last write and session count. Waiting on the
-  second Mac to confirm.
+  org database with size, last write and session count.
+- 🎯 **Real cause (a Claude on the second Mac, with 0.1.2's report):** the
+  data folder was right (`~/.claude-science`, one org, 8 sessions), but every
+  read returned 0 rows. macOS 27's `/usr/bin/sqlite3` is 3.54.0, where
+  `-list` resets the separator set before it, so Bench's
+  `-separator <US> -list` got "|"-joined rows and parsed nothing. Reproduced
+  here with Homebrew's sqlite3 3.53.3 (`1|2` against `1<US>2`). 0.1.3 passes
+  `-list` first; with 3.53.3 the report then reads 25 sessions and 7
+  projects. The report also names the sqlite3 version, and `BENCH_SQLITE3`
+  points Bench at another sqlite3 for tests. Waiting on the second Mac to
+  confirm scenes and cards.

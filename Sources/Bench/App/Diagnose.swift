@@ -84,7 +84,10 @@ enum Diagnose {
         }
         out.append("✓ Reading: \(tilde(db.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path)) (\(fileSize(db)))")
         let sqlite = resolveSqlite3()
-        out.append("✓ sqlite3: \(sqlite.path)")
+        let version = (try? runProcess(sqlite, ["--version"], timeout: 3)).map {
+            String(decoding: $0.output, as: UTF8.self).split(separator: " ").first.map(String.init) ?? "?"
+        } ?? "?"
+        out.append("✓ sqlite3: \(sqlite.path) (\(version))")
 
         // 3. Its layout: a table or column the queries need that isn't there
         // is the likeliest break after a Claude Science update.

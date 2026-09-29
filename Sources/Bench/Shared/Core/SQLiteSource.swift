@@ -68,6 +68,11 @@ func orgDatabases(in base: URL) -> (all: [OrgDatabase], picked: URL?) {
 }
 
 func resolveSqlite3() -> URL {
+    // For testing against another sqlite3 build (Bench's own addition).
+    if let path = ProcessInfo.processInfo.environment["BENCH_SQLITE3"],
+       FileManager.default.isExecutableFile(atPath: path) {
+        return URL(fileURLWithPath: path)
+    }
     for path in ["/usr/bin/sqlite3", "/opt/homebrew/bin/sqlite3"] {
         if FileManager.default.isExecutableFile(atPath: path) {
             return URL(fileURLWithPath: path)
@@ -81,8 +86,11 @@ func runReadOnlyQuery(db: URL, sql: String, timeout: TimeInterval = 8) throws ->
     let separator = "\u{1F}"
     let result: (status: Int32, output: Data)
     do {
+        // The mode before the separator: since sqlite3 3.52 or so, `-list`
+        // resets the separator to "|", so the other way round every row came
+        // back as one field and parsed as nothing (macOS 27 ships 3.54).
         result = try runProcess(
-            resolveSqlite3(), ["-separator", separator, "-list", "file:\(db.path)?mode=ro", sql],
+            resolveSqlite3(), ["-list", "-separator", separator, "file:\(db.path)?mode=ro", sql],
             timeout: timeout)
     } catch SubprocessFailure.timedOut {
         throw ScienceError.databaseUnreadable("query timed out")
