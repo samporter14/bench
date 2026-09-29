@@ -212,5 +212,8 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   exactly, a flask at 9 units, one bubble escaped at (152, 9.93). The
   compiled .icns looks right at 256 px. Bench has been added to Solanum's
   icon table, its tile-fig token and its Logos.
-- ⏳ **Automatic Sign in** (`sessionLost` presses Claude Science's Sign in
-  button): to test on the next restart that lands on the card.
+- ✅ **Automatic Sign in, live:** Sam's Bench restarted into the 0.1.12
+  install at 15:53:55. The first plan read was refused (401) at .900, Bench
+  pressed Sign in at .912, and the plan read succeeded at 15:54:00. The page
+  showed the projects and the toolbar the plan readout, with nothing to
+  click.
