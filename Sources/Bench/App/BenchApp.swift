@@ -27,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Router.shared.showWindow = { MainWindowController.shared.show() }
         MainWindowController.shared.show()
         WebContainer.shared.start()
+        // Started here, not by its toolbar item: the item only exists once
+        // the model has a reading.
+        ContextModel.shared.start()
         LabModel.shared.start()
         LabPanelController.shared.start()
     }
@@ -91,6 +94,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 /// The window's content: the web view, and the toolbar.
 struct MainView: View {
     @ObservedObject private var lab = LabModel.shared
+    @ObservedObject private var context = ContextModel.shared
 
     var body: some View {
         BrowserView()
@@ -98,17 +102,24 @@ struct MainView: View {
             // No back/forward/reload: Claude Science has its own navigation,
             // and ⌘[ ⌘] ⌘R stay in the menus.
             .toolbar {
+                // On the Mac, items start at the leading edge: push them right.
+                ToolbarSpacer(.flexible)
                 // Only while something works or waits: an item with nothing in
                 // it would still draw an empty glass bubble.
                 if !lab.working.isEmpty || !lab.waiting.isEmpty {
-                    ToolbarItem(placement: .primaryAction) {
+                    ToolbarItem {
                         LabStatusCapsule()
                     }
                 }
-                ToolbarItem(placement: .primaryAction) {
+                // The two readouts share one glass bubble.
+                ToolbarItemGroup {
+                    if context.figures != nil {
+                        ContextToolbarItem()
+                    }
                     UsageToolbarButton()
                 }
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarSpacer(.fixed)
+                ToolbarItem {
                     ScenesToolbarButton()
                 }
             }

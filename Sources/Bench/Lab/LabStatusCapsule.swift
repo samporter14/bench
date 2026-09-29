@@ -7,6 +7,7 @@ import SwiftUI
 /// waits on the user, otherwise the first that works.
 struct LabStatusCapsule: View {
     @ObservedObject private var model = LabModel.shared
+    @ObservedObject private var settings = SceneSettings.shared
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -25,13 +26,14 @@ struct LabStatusCapsule: View {
         }
     }
 
-    /// The waiting reason's glyph while anything waits, else the rotation.
+    /// The waiting reason's glyph while anything waits, else the chosen
+    /// rotation. It stays 18 pt whatever the panel's size.
     @ViewBuilder
     private func scene(for waiting: SessionStatus?) -> some View {
         if let waiting {
             PlayedLoop(glyph: (waiting.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
         } else {
-            PlayedGlyph(tint: colorScheme.sceneInk)
+            PlayedGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)
         }
     }
 

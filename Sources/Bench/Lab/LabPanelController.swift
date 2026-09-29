@@ -50,8 +50,12 @@ final class LabPanelController {
     private var hiding: Task<Void, Never>?
 
     /// Until the content reports its size, which it does in its first layout:
-    /// wide as the widest card, tall enough for the tallest, with its margin.
-    private static let provisionalSize = CGSize(width: 360 + 2 * LabPanelView.margin, height: 240)
+    /// wide as the widest card at the chosen size, tall enough for the
+    /// tallest, with its margin.
+    private var provisionalSize: CGSize {
+        let wider = max(0, SceneSettings.shared.size.points - Theme.sceneSize)
+        return CGSize(width: 360 + wider + 2 * LabPanelView.margin, height: 240)
+    }
 
     /// The two settings that decide whether the panel may show.
     private struct Preferences: Equatable {
@@ -124,7 +128,7 @@ final class LabPanelController {
         hosting.sizingOptions = []
         hosting.onHover = { [hover] inside in hover.isInside = inside }
 
-        let panel = LabPanel(contentRect: NSRect(origin: .zero, size: Self.provisionalSize),
+        let panel = LabPanel(contentRect: NSRect(origin: .zero, size: provisionalSize),
                              styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
         panel.contentView = hosting
         panel.level = .floating

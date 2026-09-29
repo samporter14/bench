@@ -46,6 +46,8 @@ struct LabPanelView: View {
 
     @ObservedObject var model: LabModel
     @ObservedObject var hover: PanelHover
+    /// The chosen size and rotation: a change resizes the live panel.
+    @ObservedObject private var settings = SceneSettings.shared
     /// Reports the window size the content wants, whenever it changes.
     let onFit: (CGSize) -> Void
 
@@ -61,11 +63,14 @@ struct LabPanelView: View {
         case working(SessionStatus, others: Int)
         case card(LabCard, count: Int)
 
-        var width: CGFloat {
-            switch self {
+        /// The panel grows and shrinks with the scene well: 336 or 360 at the
+        /// default 88 pt, plus however much larger or smaller the well is.
+        func width(well: CGFloat) -> CGFloat {
+            let base: CGFloat = switch self {
             case .working: 336
             case .card: 360
             }
+            return base + (well - Theme.sceneSize)
         }
 
         /// Changes when the panel should move: a different card, a different
@@ -85,6 +90,9 @@ struct LabPanelView: View {
         }
         return nil
     }
+
+    /// The scene well's side, from the size setting.
+    private var wellSide: CGFloat { settings.size.points }
 
     var body: some View {
         Group {
@@ -112,7 +120,7 @@ struct LabPanelView: View {
                 ForEach(1...min(count - 1, 2), id: \.self) { depth in
                     Capsule()
                         .fill(Color.primary.opacity(0.08))
-                        .frame(width: face.width - 28 * CGFloat(depth), height: 6)
+                        .frame(width: face.width(well: wellSide) - 28 * CGFloat(depth), height: 6)
                 }
             }
         }
@@ -131,7 +139,7 @@ struct LabPanelView: View {
             ZStack(alignment: .topLeading) {
                 content(face)
                     .padding(Theme.panelPadding)
-                    .frame(width: face.width)
+                    .frame(width: face.width(well: wellSide))
                 if hover.isInside {
                     dismissButton(face)
                 }
@@ -181,7 +189,7 @@ struct LabPanelView: View {
     }
 
     private func workingContent(_ session: SessionStatus, others: Int) -> some View {
-        Row(well: PlayedGlyph(tint: colorScheme.sceneInk)) {
+        Row(side: wellSide, well: PlayedGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)) {
             caption("Working", dot: true, trailing: others > 0 ? "+\(others) more" : nil)
             title(session.displayTitle)
             TurnClockText(prefix: session.projectName, since: session.startedAt)
@@ -197,7 +205,7 @@ struct LabPanelView: View {
         switch card {
         case .needsInput(let session):
             let reason = session.waitingReason ?? .other
-            Row(well: PlayedLoop(glyph: reason.glyph, tint: colorScheme.sceneInk)) {
+            Row(side: wellSide, well: PlayedLoop(glyph: reason.glyph, tint: colorScheme.sceneInk)) {
                 caption(reason.sentence, style: Theme.clay, weight: .semibold, trailing: position)
                 title(session.displayTitle)
                 detail(session.projectName)
@@ -210,7 +218,7 @@ struct LabPanelView: View {
                 }
             }
         case .finished(let session):
-            Row(well: finishedFlask) {
+            Row(side: wellSide, well: finishedFlask) {
                 caption("Finished", trailing: position)
                 title(session.displayTitle)
                 detail(Self.summary(of: session))
@@ -224,7 +232,7 @@ struct LabPanelView: View {
             // Claude Science's title is the caption; a notification with no
             // body has nothing under it, so its title takes the body's place.
             let hasBody = !notification.body.isEmpty
-            Row(well: symbol("bell")) {
+            Row(side: wellSide, well: symbol("bell")) {
                 caption(hasBody ? notification.title : "Claude Science", trailing: position)
                 title(hasBody ? notification.body : notification.title)
                 buttons {
@@ -234,7 +242,7 @@ struct LabPanelView: View {
                 }
             }
         case .saved(let url):
-            Row(well: symbol("arrow.down.circle")) {
+            Row(side: wellSide, well: symbol("arrow.down.circle")) {
                 caption("Saved", trailing: position)
                 title(url.lastPathComponent)
                 buttons {
@@ -248,12 +256,15 @@ struct LabPanelView: View {
 
     // MARK: Parts
 
-    /// The scene well on the left and the text column on the right.
+    /// The scene well on the left, `side` points square, and the text column
+    /// on the right.
     private struct Row<Well: View, Column: View>: View {
+        let side: CGFloat
         let well: Well
         @ViewBuilder let column: Column
 
-        init(well: Well, @ViewBuilder column: () -> Column) {
+        init(side: CGFloat, well: Well, @ViewBuilder column: () -> Column) {
+            self.side = side
             self.well = well
             self.column = column()
         }
@@ -261,7 +272,7 @@ struct LabPanelView: View {
         var body: some View {
             HStack(spacing: 14) {
                 well
-                    .frame(width: Theme.sceneSize, height: Theme.sceneSize)
+                    .frame(width: side, height: side)
                     .background(Color.primary.opacity(0.06))
                     .clipShape(.rect(cornerRadius: Theme.panelCorner - Theme.panelPadding))
                 VStack(alignment: .leading, spacing: 3) {
@@ -281,7 +292,7 @@ struct LabPanelView: View {
 
     private func symbol(_ name: String) -> some View {
         Image(systemName: name)
-            .font(.system(size: 30, weight: .light))
+            .font(.system(size: 30 * wellSide / Theme.sceneSize, weight: .light))
             .foregroundStyle(.secondary)
     }
 
