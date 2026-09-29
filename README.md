@@ -55,12 +55,19 @@ Claude Science installed.
    in one tab at a time. Bench starts Claude Science if it isn't running and
    signs you in.
 
+**Updating:** quit Bench first with **⌘Q**. Closing its window isn't enough,
+because Bench keeps running in the background to watch your sessions. Then
+replace it in Applications and open it. macOS asks for **Open Anyway** once
+more for each new version. **Bench → About Bench** shows which version is
+running.
+
 If Bench ever opens on a "Sign in" screen, click **Sign in**.
 
 If the scenes or the "needs you" cards never show up, Bench can't read Claude
 Science's session list. It says so in its Scenes menu, and this command in
 Terminal shows which step fails, without naming any of your projects or
-sessions:
+sessions. It only works once macOS has let that version open, so open Bench
+normally first; before that, the command sits silently:
 
 ```sh
 /Applications/Bench.app/Contents/MacOS/Bench --diagnose
