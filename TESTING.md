@@ -101,3 +101,5 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   projects. The report also names the sqlite3 version, and `BENCH_SQLITE3`
   points Bench at another sqlite3 for tests. Waiting on the second Mac to
   confirm scenes and cards.
+- ✅ **Confirmed on the second Mac (macOS 27, Bench 0.1.3):** Sam: "I think
+  that fixed everything": scenes and cards now show there.
