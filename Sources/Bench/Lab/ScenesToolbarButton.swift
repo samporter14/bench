@@ -114,29 +114,20 @@ private struct SpecimenOptions: View {
 
             Toggle("Show the specimens panel", isOn: $showPanel)
                 .toggleStyle(.switch)
+                .tint(Theme.clay)
                 .font(.system(size: 13, weight: .medium))
 
             VStack(alignment: .leading, spacing: 8) {
-                heading("Size")
-                Picker("Size", selection: $settings.size) {
-                    ForEach(SceneSize.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                Overline("Size")
+                SolanumSegmented(selection: $settings.size, options: SceneSize.allCases,
+                                 label: { Text($0.title) }, accessibilityName: "Size")
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                heading("Categories")
-                GlassEffectContainer(spacing: 8) {
-                    // Two columns keep the popover narrow.
-                    Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
-                        ForEach(0..<3, id: \.self) { row in
-                            GridRow {
-                                ForEach(SceneGroup.allCases[(row * 2)..<(row * 2 + 2)], id: \.self) { group in
-                                    CategoryChip(group: group)
-                                }
-                            }
-                        }
+                Overline("Categories")
+                FlowLayout(spacing: 8) {
+                    ForEach(SceneGroup.allCases, id: \.self) { group in
+                        CategoryChip(group: group)
                     }
                 }
                 .animation(reduceMotion ? nil : Theme.spring, value: settings.groups)
@@ -155,19 +146,12 @@ private struct SpecimenOptions: View {
         .padding(18)
         .frame(width: 350)
     }
-
-    private func heading(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary)
-    }
 }
 
-/// A category's switch: a glass capsule with the category's count. On shows
-/// a clay check and a clay fill of its own; off is plain, with grey text. The
-/// fill is drawn, not a glass tint: on macOS 27 the tint barely shows, and on
-/// and off looked the same. The last one on can't be switched off (`toggle`
-/// refuses).
+/// A category's switch, in Solanum: on is a clay tint and hairline with a
+/// check in clay-text; off is a raised capsule with grey words. Drawn, not a
+/// glass tint: on macOS 27 the tint barely showed, and on and off looked the
+/// same. The last one on can't be switched off (`toggle` refuses).
 struct CategoryChip: View {
     let group: SceneGroup
     @ObservedObject private var settings = SceneSettings.shared
@@ -181,27 +165,24 @@ struct CategoryChip: View {
                 if on {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Theme.clay)
+                        .foregroundStyle(Solanum.clayText)
                 }
                 Text(group.title)
-                    .foregroundStyle(on ? Color.primary : Color.secondary)
+                    .foregroundStyle(on ? Solanum.ink : Solanum.inkMuted)
                 Text("\(group.count)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Solanum.inkMuted)
                     .monospacedDigit()
             }
             .font(.system(size: 13, weight: .medium))
             .lineLimit(1)
             .fixedSize()
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(on ? Theme.clay.opacity(0.22) : Color.clear, in: .capsule)
-            .overlay {
-                if on { Capsule().strokeBorder(Theme.clay.opacity(0.55), lineWidth: 1) }
-            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(on ? Theme.clay.opacity(0.18) : Solanum.raised, in: .capsule)
+            .overlay(Capsule().strokeBorder(on ? Theme.clay.opacity(0.55) : Solanum.hairline))
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
         .help(settings.canToggle(group) ? group.title : "At least one specimen has to stay on")
         .accessibilityLabel(group.title)
         .accessibilityValue(on ? "On" : "Off")

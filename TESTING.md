@@ -193,3 +193,14 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   and Claude Science still showed Sign in. So the card is Claude Science's
   own sign-in after a restart, not Bench's local code. Next: ask Sam what
   clicking Sign in does (instant, a pop-up, a claude.ai page).
+
+## 2026-09-29, Bench 0.1.11 (Settings in Solanum)
+
+- ✅ **General and Specimens, redrawn to the Solanum design canvas.** Checked
+  in `--demo settings` for both tabs in Ivory and Slate: mono section labels,
+  hairline cards, a clay-tinted chip when on and a raised grey chip when off,
+  the Ivory/Slate switch under the preview, the serif heading and wordmark.
+  It builds with no warnings.
+- ⚠️ A demo Settings window took keyboard focus while Sam was typing: the
+  search field is focused when the tab opens. Don't open demo windows while
+  Sam is typing.

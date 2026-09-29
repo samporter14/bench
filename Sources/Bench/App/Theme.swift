@@ -56,8 +56,8 @@ enum BenchAppearance: String, CaseIterable {
     var title: String {
         switch self {
         case .system: "Match Mac"
-        case .light: "Light"
-        case .dark: "Dark"
+        case .light: "Ivory"
+        case .dark: "Slate"
         }
     }
 

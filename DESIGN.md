@@ -412,6 +412,18 @@ and Bench never holds the session. Only read-only paths are allowed.
   button (`.glass`).
 - One Usage control, not two.
 
+## Solanum (Settings, since 0.1.11)
+
+Bench is a Solanum product (https://claude.ai/artifact/BjQZQTY4NYmLcz39pHWmQE; the Settings design is
+the canvas https://claude.ai/artifact/3BmWVie7qUCxPpcTx5HrD4). Settings follows it: `Solanum.swift`
+holds its colours for both themes (page #FAF9F5 / #141413, raised #FFFFFF / #262625, ink, inkMuted,
+inkFaint, hairline, strong, clayText #9C4221 / #E4927A) and the pieces the tabs are built from:
+`Overline` (mono caps), `SettingsCard` / `SettingsRow`, `SolanumSegmented` (a raised segment, no accent),
+`SolanumButtonStyle`, `FlowLayout`. The rules: structure comes from hairline borders, not shadows; clay
+is a fill (switches are tinted clay, chips carry a clay tint), clay words use clayText; the serif is for
+display only (the tab headings and the Bench wordmark). The themes are named Match Mac, Ivory and Slate.
+Glass stays where macOS draws it (the window, the toolbar, popovers) and on the hovered specimen.
+
 ## Naming
 
 The animations are called **specimens** everywhere a user reads them (the Specimens tab, "Choose specimens…", the Specimens toolbar button). The code keeps its `Scene` names (LabScene, SceneSettings, the droplet's files).
