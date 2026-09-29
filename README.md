@@ -12,12 +12,15 @@ Anthropic. It talks only to the Claude Science daemon on your own Mac.
 
 - **One window.** Claude Science's web UI in a single WKWebView. Pop-outs,
   sign-in pop-ups, downloads, file uploads, the microphone and notifications
-  work in the app. Other sites open in an in-app browser window, which has an
-  "Open in Safari" button.
+  are all handled inside the app. Other sites open in an in-app browser
+  window, which has an "Open in Safari" button.
 - **Scenes panel.** While a session works, a glass panel in the bottom-right
   corner plays one of 474 animated lab scenes. When a session needs your
-  input, a card appears there, and clicking it opens that session. Size,
-  categories and individual scenes can be picked in Settings → Scenes.
+  input, a card appears there that opens that session. Size, categories and
+  individual scenes can be picked in Settings → Scenes.
+
+It's a work in progress: `TESTING.md` says which of these have been checked
+live so far.
 - **Title-bar readouts.** The toolbar shows how full the current session's
   context is and how much of your plan is left, with when it resets. Click
   either one for details and your activity graph.
