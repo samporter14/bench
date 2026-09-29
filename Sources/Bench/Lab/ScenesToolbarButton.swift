@@ -21,9 +21,7 @@ struct ScenesToolbarButton: View {
 
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
     @ObservedObject private var lab = LabModel.shared
-    @AppStorage(SettingsKey.settingsTab) private var settingsTab = "general"
     @ObservedObject private var settings = SceneSettings.shared
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         Menu {
@@ -54,11 +52,7 @@ struct ScenesToolbarButton: View {
                 }
             }
             Divider()
-            Button("Choose specimens…") {
-                settingsTab = "scenes"
-                openSettings()
-                NSApp.activate()
-            }
+            Button("Choose specimens…") { SettingsWindow.open(tab: "scenes") }
         } label: {
             if showPanel, lab.problem != nil {
                 Label("Specimens", systemImage: "exclamationmark.triangle")

@@ -70,7 +70,7 @@ Group neighbouring glass (a row of chips, the stat tiles) in one
 `GlassEffectContainer(spacing:)` so the shapes blend.
 
 **Not glass:**
-- the 487 grid cells at rest. That many glass layers costs frames. They get
+- the 487 grid cells. That many glass layers costs frames. They get
   a quiet `Color.primary.opacity(0.05)` fill, and a clay check when on.
 - the page itself;
 - text.
@@ -312,10 +312,17 @@ The Settings **Scenes** tab (about 760×640) has:
 - category chips with counts, which toggle;
 - a search field;
 - "N of 487 on", with All and None (None keeps one on);
-- a LazyVGrid of every scene. Each cell is a 56 pt still, drawn with a Canvas
-  at 60% of the scene's duration, with the name under it, dimmed with no
-  check when off, and a clay check when on. A click toggles it, and hovering
-  plays it with `PlayedGlyph(tint:rotation: Rotation([scene]))`.
+- a LazyVGrid of the scenes in the categories that are on (a category that
+  is off leaves the grid). Each cell is 56 pt with the name under it, dimmed
+  with no check when off, and a clay check when on; a click toggles it.
+  Cells on screen PLAY, drawn live by `SceneLive` (a TimelineView plus a
+  Canvas at 20 fps, 30 under the pointer, keeping no frames). The panel's
+  `PlayedGlyph` pre-renders about 1.5 s per scene, and 40 cells of that cost
+  about 320 MB more; live drawing costs about 11% of one core with no extra
+  memory. Off screen (the lazy grid's onDisappear), or with Reduce Motion
+  except under the pointer, a cell is a Canvas still at 60% of its duration.
+- the ☀️/🌙 switch under the preview well draws the well AND the grid on an
+  ivory or slate board, whatever the app's appearance; it starts on the app's.
 
 ## Usage (Usage/)
 

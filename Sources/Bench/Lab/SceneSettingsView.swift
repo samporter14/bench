@@ -2,7 +2,8 @@
 // "Where the glass goes"): the size, the categories, and every scene in a grid
 // to switch on or off. Glass is for the few surfaces that are touched (the
 // preview well, the chips, the search capsule, the buttons and the one cell
-// under the pointer); the 474 cells at rest are plain fills.
+// under the pointer); the grid's cells are plain fills. The cells on screen
+// play; the rest hold a still.
 import SwiftUI
 
 struct SceneSettingsView: View {
@@ -10,8 +11,10 @@ struct SceneSettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
-    /// Light or dark for the preview well only; nil follows the app.
+    /// Light or dark for the preview well and the grid; nil follows the app.
     @State private var previewScheme: ColorScheme?
+
+    private var shownScheme: ColorScheme { previewScheme ?? colorScheme }
 
     /// Every scene, each category's together so that a chip's switch reads as
     /// one block of the grid. Built once: the catalogue does not change.
@@ -64,7 +67,7 @@ struct SceneSettingsView: View {
 
     /// The preview well, with a switch under it for light or dark.
     private var preview: some View {
-        let scheme = Binding(get: { previewScheme ?? colorScheme }, set: { previewScheme = $0 })
+        let scheme = Binding(get: { shownScheme }, set: { previewScheme = $0 })
         return VStack(spacing: 8) {
             PreviewWell(size: settings.size, rotation: settings.rotation, side: Self.previewSide, spring: spring)
                 .environment(\.colorScheme, scheme.wrappedValue)
@@ -75,7 +78,7 @@ struct SceneSettingsView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .help("Preview on light or dark")
+            .help("Show the specimens on light or dark")
         }
     }
 
@@ -186,7 +189,13 @@ struct SceneSettingsView: View {
                             .equatable()
                     }
                 }
+                .padding(10)
             }
+            // The grid is a board in the chosen scheme, like the preview well,
+            // so the switch shows every specimen on light or dark.
+            .environment(\.colorScheme, shownScheme)
+            .background(shownScheme == .dark ? Theme.slate : Theme.ivory, in: .rect(cornerRadius: 16))
+            .clipShape(.rect(cornerRadius: 16))
         }
     }
 }
@@ -200,7 +209,11 @@ private struct SceneCell: View, Equatable {
     let toggle: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
+    /// On screen in the scroll view. The lazy grid says so as cells scroll
+    /// in and out, so only what can be seen plays, a few dozen at most.
+    @State private var visible = false
 
     nonisolated static func == (a: SceneCell, b: SceneCell) -> Bool {
         a.scene.name == b.scene.name && a.isOn == b.isOn
@@ -231,18 +244,20 @@ private struct SceneCell: View, Equatable {
             }
         }
         .onHover { hovering = $0 }
+        .onAppear { visible = true }
+        .onDisappear { visible = false }
         .help(scene.name)
         .accessibilityLabel(scene.name)
         .accessibilityValue(isOn ? "On" : "Off")
         .accessibilityAddTraits(.isToggle)
     }
 
-    /// The still, or the scene playing while the pointer is on it, with a clay
-    /// check at the corner when it is on.
+    /// The scene playing while it is on screen (a still with Reduce Motion,
+    /// except under the pointer), with a clay check at the corner when on.
     private var well: some View {
         ZStack {
-            if hovering {
-                PlayedGlyph(tint: colorScheme.sceneInk, rotation: Rotation([scene]))
+            if hovering || (visible && !reduceMotion) {
+                SceneLive(scene: scene, ink: colorScheme.sceneInk, fps: hovering ? 30 : 20)
             } else {
                 SceneStill(scene: scene, ink: colorScheme.sceneInk)
                     .equatable()
@@ -259,6 +274,25 @@ private struct SceneCell: View, Equatable {
                     .frame(width: 15, height: 15)
                     .background(Theme.clay, in: .circle)
                     .offset(x: 4, y: -4)
+            }
+        }
+    }
+}
+
+/// A scene drawn live, frame by frame. Nothing is kept between frames, so a
+/// grid of these costs a little CPU while on screen and no memory: the
+/// panel's player renders a second and more ahead, which a few dozen cells
+/// at once would turn into hundreds of megabytes.
+private struct SceneLive: View {
+    let scene: LabScene
+    let ink: Color
+    let fps: Double
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / fps)) { timeline in
+            Canvas { context, size in
+                let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: scene.duration)
+                LabScenes.draw(scene, in: &context, size: size, local: t, tint: ink)
             }
         }
     }

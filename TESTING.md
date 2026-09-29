@@ -134,3 +134,17 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
 - ✅ **"Scenes" is now "Specimens"** everywhere a user reads it: the Settings
   tab, the toolbar button and menu, search, the General toggles and the
   View menu. The README screenshot has been retaken.
+
+## 2026-09-29, Bench 0.1.7 (live grid, light/dark grid, Choose specimens…)
+
+- ✅ **"Choose specimens…" in the toolbar menu:** it now opens Settings through
+  `SettingsWindow.open(tab:)`, a hidden SwiftUI host calling `openSettings`.
+  The toolbar menu's own `openSettings` did nothing (Sam's report). The same
+  path opened Settings in `--demo settings`. The click in the real menu is
+  for Sam to confirm.
+- ✅ **The grid plays live while on screen:** measured on the Specimens tab
+  with all 487 on. The PlayedGlyph cells cost about 450 MB (130 MB with
+  stills) and were replaced; `SceneLive` cells come to about 135 MB and
+  about 11% of one core, and nothing once Settings closes.
+- ✅ **The ☀️/🌙 switch covers the grid:** the grid sits on an ivory or slate
+  board to match the well.

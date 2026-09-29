@@ -196,25 +196,10 @@ enum Demo {
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// `openSettings` is what the app's own "Choose scenes…" uses, so it is
-    /// asked the same way: from a SwiftUI view in an AppKit window. That one
-    /// is invisible, and closes once Settings has opened.
+    /// The same way "Choose specimens…" opens Settings. The tab comes from
+    /// the command line (`-settingsTab`), so nothing is written.
     private static func showSettings() {
-        let opener = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
-                              styleMask: .borderless, backing: .buffered, defer: false)
-        opener.contentViewController = NSHostingController(rootView: SettingsOpener { [weak opener] in
-            opener?.close()
-        })
-        opener.alphaValue = 0
-        opener.ignoresMouseEvents = true
-        opener.isOpaque = false
-        opener.backgroundColor = .clear
-        opener.hasShadow = false
-        opener.isReleasedWhenClosed = false
-        opener.isRestorable = false
-        windows.append(opener)
-        NSApp.activate()
-        opener.orderFrontRegardless()
+        SettingsWindow.open()
     }
 }
 
@@ -228,25 +213,6 @@ private struct DemoToolbarWindow: View {
     }
 }
 
-/// Opens Settings when it appears, then says it is done a moment later, so
-/// the window it opened from is not closed under the request.
-private struct SettingsOpener: View {
-    @Environment(\.openSettings) private var openSettings
-    let done: @MainActor () -> Void
-
-    var body: some View {
-        Color.clear
-            .frame(width: 1, height: 1)
-            .onAppear {
-                openSettings()
-                NSApp.activate()
-                Task {
-                    try? await Task.sleep(for: .seconds(1))
-                    done()
-                }
-            }
-    }
-}
 
 /// Ivory to a warm clay tint, or slate to a slightly lighter warm dark. It
 /// fades out at the top and left, where nothing sits on it, so it has no hard
