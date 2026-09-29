@@ -21,8 +21,8 @@ if [[ "$(uname -m)" != arm64 ]]; then
     echo "Bench needs a Mac with Apple silicon (M1 or later)." >&2
     exit 1
 fi
-if (( $(sw_vers -productVersion | cut -d. -f1) < 26 )); then
-    echo "Bench needs macOS 26 or later." >&2
+if (( $(sw_vers -productVersion | cut -d. -f1) < 27 )); then
+    echo "Bench needs macOS 27 or later." >&2
     exit 1
 fi
 

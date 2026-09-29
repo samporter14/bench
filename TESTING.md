@@ -162,3 +162,11 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
 - ⏳ **Sign-in recovery (`sessionLost` on an API 401):** built, but it only
   happens after an unlucky restart. It came up on the Sign in card again
   after the 0.1.7 install.
+
+## 2026-09-29, Bench 0.1.9 (macOS 27 only)
+
+- Sam's Mac is on macOS 27.0.1 now, and he wants Bench built for macOS 27
+  exclusively. The minimum is 27.0 in Package.swift, Info.plist, actool and
+  install.sh. The binary is minos 27.0 with SDK 27.0, and it builds with no
+  warnings.
+- ✅ Session reads on 27 (sqlite3 3.54.0): 25 recent sessions, 7 projects.

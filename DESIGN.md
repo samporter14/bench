@@ -4,7 +4,7 @@ Bench is a small native Mac app for Claude Science. It shows Claude Science's
 web UI in one native window, so there is never a Safari tab, and it plays the
 Science Status lab scenes in a floating Liquid Glass panel in the bottom-right
 corner while a session works. That panel is also where "needs your input"
-comes from. Internal only. macOS 26+, Swift 6, SwiftUI + AppKit, no
+comes from. Internal only. macOS 27 only (Sam, 2026-09-29: build against macOS 27 exclusively), Swift 6, SwiftUI + AppKit, no
 third-party dependencies.
 
 ## Principles

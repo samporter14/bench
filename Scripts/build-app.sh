@@ -34,7 +34,7 @@ if [ -d "$ICON" ]; then
     cp -R "$ICON" "$WORK/AppIcon.icon"
     xcrun actool "$WORK/AppIcon.icon" --compile "$APP/Contents/Resources" \
         --app-icon AppIcon --output-partial-info-plist "$WORK/partial.plist" \
-        --platform macosx --minimum-deployment-target 26.0 --target-device mac \
+        --platform macosx --minimum-deployment-target 27.0 --target-device mac \
         --output-format human-readable-text >/dev/null || echo "warning: icon not compiled"
     rm -rf "$WORK"
 fi

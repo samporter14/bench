@@ -4,7 +4,7 @@
 
 <img src="docs/scenes.gif" width="580" alt="Eight of Bench's animated lab specimens playing: a pipette aliquoting, a cell dividing, distillation, a kinesin motor, CRISPR, a curve fit, a centrifuge and planaria">
 
-**Install in one line**: paste into Terminal (Apple silicon, macOS 26 or later):
+**Install in one line**: paste into Terminal (Apple silicon, macOS 27):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh
@@ -47,7 +47,7 @@ in light or dark.
 
 ## Install
 
-You need a Mac with Apple silicon (M1 or later) on macOS 26 or later, with
+You need a Mac with Apple silicon (M1 or later) on macOS 27, with
 Claude Science installed. Close any Claude Science browser tab first, because
 Claude Science runs in one tab at a time. Bench starts Claude Science if it
 isn't running and signs you in.
