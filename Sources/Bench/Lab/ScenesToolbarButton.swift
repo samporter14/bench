@@ -153,7 +153,7 @@ private struct SpecimenOptions: View {
             .buttonStyle(.glass)
         }
         .padding(18)
-        .frame(width: 330)
+        .frame(width: 350)
     }
 
     private func heading(_ text: String) -> some View {
@@ -163,8 +163,11 @@ private struct SpecimenOptions: View {
     }
 }
 
-/// A category's switch: a glass capsule, clay-tinted while on, with the
-/// category's count. The last one on can't be switched off (`toggle` refuses).
+/// A category's switch: a glass capsule with the category's count. On shows
+/// a clay check and a clay fill of its own; off is plain, with grey text. The
+/// fill is drawn, not a glass tint: on macOS 27 the tint barely shows, and on
+/// and off looked the same. The last one on can't be switched off (`toggle`
+/// refuses).
 struct CategoryChip: View {
     let group: SceneGroup
     @ObservedObject private var settings = SceneSettings.shared
@@ -175,19 +178,32 @@ struct CategoryChip: View {
             settings.toggle(group)
         } label: {
             HStack(spacing: 6) {
+                if on {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Theme.clay)
+                }
                 Text(group.title)
+                    .foregroundStyle(on ? Color.primary : Color.secondary)
                 Text("\(group.count)")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
             .font(.system(size: 13, weight: .medium))
-            .padding(.horizontal, 14)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 10)
             .padding(.vertical, 8)
+            .background(on ? Theme.clay.opacity(0.22) : Color.clear, in: .capsule)
+            .overlay {
+                if on { Capsule().strokeBorder(Theme.clay.opacity(0.55), lineWidth: 1) }
+            }
+            .contentShape(.capsule)
         }
         .buttonStyle(.plain)
-        .glassEffect(on ? .regular.tint(Theme.clay.opacity(0.35)).interactive() : .regular.interactive(),
-                     in: .capsule)
+        .glassEffect(.regular.interactive(), in: .capsule)
         .help(settings.canToggle(group) ? group.title : "At least one specimen has to stay on")
+        .accessibilityLabel(group.title)
         .accessibilityValue(on ? "On" : "Off")
         .accessibilityAddTraits(.isToggle)
     }

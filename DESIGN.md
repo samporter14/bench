@@ -338,8 +338,14 @@ The Settings **Scenes** tab (about 760×640) has:
   about 320 MB more; live drawing costs about 11% of one core with no extra
   memory. Off screen (the lazy grid's onDisappear), or with Reduce Motion
   except under the pointer, a cell is a Canvas still at 60% of its duration.
-- the ☀️/🌙 switch under the preview well draws the well AND the grid on an
-  ivory or slate board, whatever the app's appearance; it starts on the app's.
+- the ☀️/🌙 switch under the preview well sets the WHOLE tab light or dark
+  (`.preferredColorScheme` on the tab, which sets its window's scheme while
+  the tab shows); it starts on the app's. No boards inside the tab (Sam: "the
+  entire panel should match… not a square around the glyphs").
+- Category chips (`CategoryChip`, shared with the Specimens popover): on is a
+  clay ✓ with a drawn clay fill (0.22) and a clay hairline; off is plain glass
+  with grey text. Not a glass tint: on macOS 27 `.glassEffect(.regular.tint(…))`
+  barely shows, and on and off looked the same.
 
 ## Usage (Usage/)
 

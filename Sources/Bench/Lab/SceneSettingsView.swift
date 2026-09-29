@@ -11,7 +11,8 @@ struct SceneSettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
-    /// Light or dark for the preview well and the grid; nil follows the app.
+    /// Light or dark for this whole tab (its window, while the tab shows);
+    /// nil follows the app.
     @State private var previewScheme: ColorScheme?
 
     private var shownScheme: ColorScheme { previewScheme ?? colorScheme }
@@ -39,6 +40,9 @@ struct SceneSettingsView: View {
         }
         .padding(20)
         .frame(width: 760, height: 640)
+        // The switch under the preview sets the window's scheme, so the whole
+        // tab shows the specimens on light or dark, not a board inside it.
+        .preferredColorScheme(previewScheme)
     }
 
     // MARK: Size
@@ -70,7 +74,6 @@ struct SceneSettingsView: View {
         let scheme = Binding(get: { shownScheme }, set: { previewScheme = $0 })
         return VStack(spacing: 8) {
             PreviewWell(size: settings.size, rotation: settings.rotation, side: Self.previewSide, spring: spring)
-                .environment(\.colorScheme, scheme.wrappedValue)
             Picker("Preview", selection: scheme) {
                 Image(systemName: "sun.max").accessibilityLabel("Light").tag(ColorScheme.light)
                 Image(systemName: "moon").accessibilityLabel("Dark").tag(ColorScheme.dark)
@@ -78,7 +81,7 @@ struct SceneSettingsView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .help("Show the specimens on light or dark")
+            .help("Show this tab in light or dark")
         }
     }
 
@@ -166,13 +169,7 @@ struct SceneSettingsView: View {
                             .equatable()
                     }
                 }
-                .padding(10)
             }
-            // The grid is a board in the chosen scheme, like the preview well,
-            // so the switch shows every specimen on light or dark.
-            .environment(\.colorScheme, shownScheme)
-            .background(shownScheme == .dark ? Theme.slate : Theme.ivory, in: .rect(cornerRadius: 16))
-            .clipShape(.rect(cornerRadius: 16))
         }
     }
 }
@@ -292,8 +289,7 @@ private struct SceneStill: View, Equatable {
     }
 }
 
-/// The panel's well as it will look, on light or dark (its colour scheme is
-/// the environment's, which the switch under it sets), playing what is on.
+/// The panel's well as it will look, playing what is on, in the tab's scheme.
 /// A new size fades in a new well instead of stretching the old one: a scene
 /// view draws its frames again at every size it is laid out in, so a spring
 /// would make it draw them again on every tick.
@@ -316,9 +312,6 @@ private struct PreviewWell: View {
         }
         .animation(spring, value: size)
         .frame(width: side, height: side)
-        // Its own backdrop in the chosen scheme, so light and dark read as
-        // such whatever the window is.
-        .background(colorScheme == .dark ? Theme.slate : Theme.ivory, in: .rect(cornerRadius: 20))
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
     }
 }

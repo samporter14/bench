@@ -170,3 +170,16 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   install.sh. The binary is minos 27.0 with SDK 27.0, and it builds with no
   warnings.
 - ✅ Session reads on 27 (sqlite3 3.54.0): 25 recent sessions, 7 projects.
+
+## 2026-09-29, Bench 0.1.10 (on macOS 27: chips that show on and off, whole-tab light/dark)
+
+- ✅ **The popover works on Sam's real Bench (0.1.9, macOS 27),** clicked
+  through with background accessibility presses. The options button opens
+  it; Earth toggled off and back on (settings and "463 of 487 on" followed);
+  "Choose specimens…" opened Settings → Specimens.
+- ❌→✅ **On and off looked the same on macOS 27:** the glass tint barely
+  showed, in the popover and in Settings. Chips now draw a clay ✓, fill and
+  hairline when on, and grey text when off. The demo panel with 4 of 6 on
+  reads at a glance, one line each.
+- ✅ **The ☀️/🌙 switch sets the whole Specimens tab** (window scheme), with
+  no boards.
