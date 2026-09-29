@@ -4,7 +4,13 @@
 
 <img src="docs/scenes.gif" width="580" alt="Eight of Bench's animated lab scenes playing: a pipette aliquoting, a cell dividing, distillation, a kinesin motor, CRISPR, a curve fit, a centrifuge and planaria">
 
-[**Download Bench for Mac**](https://github.com/samporter14/bench/releases/latest/download/Bench.zip): 3 MB, for Apple silicon on macOS 26
+**Install in one line**: paste into Terminal (Apple silicon, macOS 26 or later):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh
+```
+
+Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/download/Bench.zip) (3 MB); see [Install](#install).
 
 ## Why Bench
 
@@ -40,8 +46,25 @@ scenes one by one, in Settings → Scenes.
 
 ## Install
 
-You need a Mac with Apple silicon (M1 or later) on macOS 26, with
-Claude Science installed.
+You need a Mac with Apple silicon (M1 or later) on macOS 26 or later, with
+Claude Science installed. Close any Claude Science browser tab first, because
+Claude Science runs in one tab at a time. Bench starts Claude Science if it
+isn't running and signs you in.
+
+### Easiest: one line in Terminal
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh
+```
+
+It downloads the latest Bench from this page's releases, puts it in
+Applications (quitting and replacing an older one), and opens it. **Run the
+same line again to update.** macOS doesn't show its "can't verify" warning
+for apps installed this way, because it only flags apps downloaded through a
+web browser. You're trusting this page instead, so [install.sh](install.sh)
+is short enough to read first.
+
+### Or download it
 
 1. [Download Bench.zip](https://github.com/samporter14/bench/releases/latest/download/Bench.zip)
    and open it.
@@ -50,16 +73,14 @@ Claude Science installed.
 3. Open Bench. The first time, macOS blocks it because it isn't from the App
    Store or a registered developer. Click **Done**, then go to **System
    Settings → Privacy & Security**, scroll down, and click **Open Anyway**
-   next to Bench. You only do this once.
-4. Close any Claude Science browser tab first, because Claude Science runs
-   in one tab at a time. Bench starts Claude Science if it isn't running and
-   signs you in.
+   next to Bench.
 
-**Updating:** quit Bench first with **⌘Q**. Closing its window isn't enough,
-because Bench keeps running in the background to watch your sessions. Then
-replace it in Applications and open it. macOS asks for **Open Anyway** once
-more for each new version. **Bench → About Bench** shows which version is
-running.
+To update a downloaded copy, quit Bench first with **⌘Q**. Closing its window
+isn't enough, because Bench keeps running in the background to watch your
+sessions. Then replace it in Applications, open it, and click **Open Anyway**
+once more. **Bench → About Bench** shows which version is running.
+
+### If something's off
 
 If Bench ever opens on a "Sign in" screen, click **Sign in**.
 
