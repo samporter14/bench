@@ -2,6 +2,8 @@
 
 **Claude Science as a real Mac app.**
 
+<img src="docs/scenes.gif" width="580" alt="Eight of Bench's animated lab scenes playing: a pipette aliquoting, a cell dividing, distillation, a kinesin motor, CRISPR, a curve fit, a centrifuge and planaria">
+
 [**Download Bench for Mac**](https://github.com/samporter14/bench/releases/latest/download/Bench.zip): 3 MB, for Apple silicon on macOS 26
 
 ## Why Bench
@@ -22,8 +24,19 @@
 - **Know when it needs you.** While a session works, one of 474 little
   animated lab scenes plays in a glass panel in the corner of your screen.
   When a session needs your input, a card there takes you straight to it.
+
+  <img src="docs/panel-working.png" width="336" alt="The floating panel while a session works: a scene playing, and the session's name, project and running time"> <img src="docs/panel-card.png" width="360" alt="The panel's card when a session asked a question, with Open and Later buttons">
 - **Usage at a glance.** The title bar shows how full your session's context
   is and how much of your plan is left, with a countdown to when it resets.
+
+  <img src="docs/toolbar.png" width="418" alt="The title bar: a working session's timer, the context ring at 9%, and 54% of the plan left, resetting in 1 hour 28 minutes">
+
+## Make it yours
+
+Pick how big the scenes play, turn whole categories on or off, or choose
+scenes one by one, in Settings → Scenes.
+
+<img src="docs/scene-picker.png" width="520" alt="Settings, Scenes tab: a size picker, category chips and a grid of scenes to choose from">
 
 ## Install
 
@@ -70,6 +83,9 @@ It builds `build/Bench.app` and opens it.
   been checked live so far.
 - `DESIGN.md` is the spec: the look, where the glass goes, and how links are
   routed.
+- The screenshots use made-up sessions: `Bench --demo working|card|toolbar|settings`
+  shows the real UI with invented names, and `Bench --render-scenes` records
+  the scene GIF.
 - `Sources/Bench/Shared` and `Resources/AppIcon.icon` are copies from the
   Science Status droplet, where the scenes are written.
   `Scripts/sync-shared.sh` refreshes them.
