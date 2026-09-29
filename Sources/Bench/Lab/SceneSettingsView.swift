@@ -88,34 +88,11 @@ struct SceneSettingsView: View {
         GlassEffectContainer(spacing: 8) {
             HStack(spacing: 8) {
                 ForEach(SceneGroup.allCases, id: \.self) { group in
-                    chip(group)
+                    CategoryChip(group: group)
                 }
             }
         }
         .animation(spring, value: settings.groups)
-    }
-
-    private func chip(_ group: SceneGroup) -> some View {
-        let on = settings.groups.contains(group)
-        return Button {
-            settings.toggle(group)
-        } label: {
-            HStack(spacing: 6) {
-                Text(group.title)
-                Text("\(group.count)")
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .font(.system(size: 13, weight: .medium))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(.plain)
-        .glassEffect(on ? .regular.tint(Theme.clay.opacity(0.35)).interactive() : .regular.interactive(),
-                     in: .capsule)
-        .help(settings.canToggle(group) ? group.title : "At least one specimen has to stay on")
-        .accessibilityValue(on ? "On" : "Off")
-        .accessibilityAddTraits(.isToggle)
     }
 
     // MARK: Search and counts

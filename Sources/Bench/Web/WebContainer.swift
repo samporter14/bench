@@ -44,6 +44,7 @@ final class WebContainer: ObservableObject {
     /// that launched the app). It becomes the sign-in's destination.
     private var pendingURL: URL?
     private var lastSignInRetry: ContinuousClock.Instant?
+    private var lastSessionRecovery: ContinuousClock.Instant?
 
     private static let zoomRange = 0.5...3.0
     private static let zoomStep = 0.1
@@ -170,6 +171,24 @@ final class WebContainer: ObservableObject {
             webView.load(URLRequest(url: addingLoginNonce(nonce, to: url)))
         }
         return true
+    }
+
+    /// An API read from the page came back 401: the page is showing Claude
+    /// Science's "Sign in" card, because its session didn't take (seen now
+    /// and then right after a restart). Sign in again with a fresh code, on
+    /// the page that is showing, as a 401 page does. At most once in ten
+    /// minutes: if Claude Science's own account needs signing in, a new code
+    /// can't fix that, and reloading would get in the way of its Sign in.
+    func sessionLost() {
+        let now = ContinuousClock.now
+        if let last = lastSessionRecovery, now - last < .seconds(600) { return }
+        guard let url = webView.url, WebRoute.classify(url, daemonPort: port) == .daemon else { return }
+        lastSessionRecovery = now
+        Logger.web.info("An API read was refused; signing in again")
+        Task {
+            guard let nonce = await DaemonController.freshNonce() else { return }
+            webView.load(URLRequest(url: addingLoginNonce(nonce, to: Self.canonical(url))))
+        }
     }
 
     /// The first daemon page to finish loading means we are in.

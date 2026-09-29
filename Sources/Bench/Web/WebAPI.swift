@@ -25,8 +25,16 @@ extension WebContainer {
         if (!response.ok) { throw new Error("HTTP " + response.status); }
         return await response.text();
         """
-        let result = try await webView.callAsyncJavaScript(body, arguments: ["path": "/api" + path],
+        let result: Any?
+        do {
+            result = try await webView.callAsyncJavaScript(body, arguments: ["path": "/api" + path],
                                                            in: nil, contentWorld: .defaultClient)
+        } catch {
+            // Refused: the page's session didn't take. Sign in again.
+            let message = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String
+            if message?.contains("HTTP 401") == true { sessionLost() }
+            throw error
+        }
         guard let text = result as? String else { throw WebAPIError.badResponse }
         return Data(text.utf8)
     }

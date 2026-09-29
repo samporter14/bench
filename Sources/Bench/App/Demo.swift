@@ -41,6 +41,10 @@ enum Demo {
     /// Nil in a normal launch.
     static let mode: Mode? = parse()
 
+    /// `--open-options` with `--demo toolbar`: the Specimens options popover
+    /// opens by itself, for a screenshot.
+    static let opensSpecimenOptions = mode == .toolbar && CommandLine.arguments.contains("--open-options")
+
     /// Held so the windows stay up.
     private static var windows: [NSWindow] = []
 

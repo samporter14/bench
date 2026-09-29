@@ -26,7 +26,17 @@ struct BenchApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// SIGTERM (the installer's quit, or `kill`) quits the way ⌘Q does, so the
+    /// web view saves its session. Killed outright, a restart could come up
+    /// on Claude Science's Sign in card.
+    private var terminateSignal: DispatchSourceSignal?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { NSApp.terminate(nil) }
+        source.resume()
+        terminateSignal = source
         BenchAppearance.apply()
         // A demo shows made-up data and starts nothing real (Demo.swift).
         if Demo.mode != nil {

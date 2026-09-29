@@ -37,7 +37,8 @@ if [[ ! -d "$TMP/Bench.app" ]]; then
 fi
 
 # Only the copy being replaced is quit, by its path; any other Bench is left
-# alone.
+# alone. Bench (0.1.8 and later) takes the signal as ⌘Q, so its web view
+# saves its state before it goes.
 if pgrep -f "$APP/Contents/MacOS/Bench" >/dev/null; then
     echo "Quitting the running Bench…"
     pkill -TERM -f "$APP/Contents/MacOS/Bench" || true

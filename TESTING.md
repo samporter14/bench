@@ -148,3 +148,17 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   about 11% of one core, and nothing once Settings closes.
 - ✅ **The ☀️/🌙 switch covers the grid:** the grid sits on an ivory or slate
   board to match the well.
+
+## 2026-09-29, Bench 0.1.8 (Specimens popover, sign-in recovery)
+
+- ❌→✅ **Specimens dropdown:** reproduced on Sam's Bench with screen
+  control. The menu showed Medium with every category ticked while the real
+  settings were Small with Lab off; a click did toggle (Earth went off, and
+  was put back) but the ticks never changed. It is replaced by a live glass
+  popover. `--demo toolbar --open-options -sceneGroups '(chemistry,physics)'
+  -sceneSize large` shows Large and exactly those two chips, "93 of 487 on".
+- ✅ **SIGTERM quits like ⌘Q:** the log shows "Termination commencing /
+  complete" for a demo copy sent `kill -TERM`.
+- ⏳ **Sign-in recovery (`sessionLost` on an API 401):** built, but it only
+  happens after an unlucky restart. It came up on the Sign in card again
+  after the 0.1.7 install.

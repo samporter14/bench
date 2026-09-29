@@ -83,6 +83,14 @@ you", and the graph's steps. No other hues, no gradients.
 
 ## Main window
 
+- **Specimens split button** (Lab/ScenesToolbarButton.swift): one glass
+  capsule, with "🧪 Specimens" (a click shows or hides the panel) | ⌄. The
+  arrow opens a glass POPOVER with the panel switch, the size, the category
+  chips (the same `CategoryChip` as Settings), "N of 487 on" and "Choose
+  specimens…" (`SettingsWindow.open(tab:)`). It is not a SwiftUI Menu: in
+  this AppKit window's toolbar a Menu kept the ticks it was first drawn
+  with, and showed stale settings.
+
 - One window, "Claude Science", with a default size of 1360×900, a minimum
   of 900×600 and an autosaved frame.
 - Toolbar (unified compact, system glass). No back/forward/reload buttons:
@@ -114,6 +122,15 @@ you", and the graph's steps. No other hues, no gradients.
   later.
 
 ## Daemon and sign-in (Web/DaemonController.swift)
+
+- **Lost session.** Now and then, right after a restart, the page shows
+  Claude Science's own "Sign in" card, and its API reads come back 401.
+  When an in-page API read (`apiGET`) gets a 401, `WebContainer.sessionLost()`
+  loads the page again with a fresh `claude-science url` code, at most once
+  every ten minutes. A real account sign-out, which only Claude Science's own
+  Sign in button can fix, isn't reloaded over.
+- **SIGTERM quits like ⌘Q** (a DispatchSource in AppDelegate), so the web
+  view saves its session. The installer quits Bench with that signal.
 
 - Run `claude-science status` (shared `fetchCLIStatus`) off the main thread.
   If the daemon isn't running, run `claude-science serve --no-browser
