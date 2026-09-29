@@ -388,6 +388,7 @@ Two tabs: General (below) and Scenes (above).
 
 | Setting | Default |
 |---|---|
+| Appearance: Match Mac, Light or Dark (the whole app, via `NSApp.appearance`; the page follows while its own theme is System) | Match Mac |
 | Show the Lab panel | on |
 | Play a sound when a session needs you | on |
 | Show the Lab panel while Bench is in front | on |

@@ -1,5 +1,6 @@
 // Theme.swift — Bench's palette and measures (DESIGN.md, Look). Everything
 // else is the system's own: semantic colours, the system font, Liquid Glass.
+import AppKit
 import SwiftUI
 
 enum Theme {
@@ -31,6 +32,8 @@ enum SettingsKey {
     static let pageZoom = "pageZoom"
     /// Which Settings tab is showing: "general" or "scenes".
     static let settingsTab = "settingsTab"
+    /// "system" (follow the Mac), "light" or "dark": see `BenchAppearance`.
+    static let appearance = "appearance"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
@@ -38,6 +41,34 @@ enum SettingsKey {
             soundOnNeedsInput: true,
             panelWhileFront: true,
             pageZoom: 1.0,
+            appearance: BenchAppearance.system.rawValue,
         ])
+    }
+}
+
+/// Light or dark for the whole app, or whatever the Mac is set to. It is the
+/// app's appearance, so the window, Settings, the scenes panel and the web
+/// view all follow; the Claude Science page follows too while its own theme
+/// is set to System.
+enum BenchAppearance: String, CaseIterable {
+    case system, light, dark
+
+    var title: String {
+        switch self {
+        case .system: "Match Mac"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    /// Reads the setting and applies it. Called at launch and when it changes.
+    @MainActor
+    static func apply() {
+        let chosen = UserDefaults.standard.string(forKey: SettingsKey.appearance).flatMap(Self.init) ?? .system
+        switch chosen {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
     }
 }

@@ -116,3 +116,10 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   `Bench --demo usage` (made-up history), with 14 columns of 14 pt squares,
   Sunday and Monday of launch week blank, "N sessions since June 30", and a
   600 pt wide popover in place of 780.
+
+## 2026-09-29, Bench 0.1.5 (Appearance setting)
+
+- ✅ **Settings → General → Appearance (Match Mac, Light, Dark; Match Mac by
+  default):** with the Mac in Light, `--demo settings -appearance dark` came
+  up dark with Dark selected. The saved settings were unchanged apart from
+  the Settings window's position.

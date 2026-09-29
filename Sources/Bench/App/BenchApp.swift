@@ -27,6 +27,7 @@ struct BenchApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        BenchAppearance.apply()
         // A demo shows made-up data and starts nothing real (Demo.swift).
         if Demo.mode != nil {
             Demo.start()
@@ -199,6 +200,7 @@ struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
     @AppStorage(SettingsKey.panelWhileFront) private var panelWhileFront = true
+    @AppStorage(SettingsKey.appearance) private var appearance = BenchAppearance.system.rawValue
     @ObservedObject private var lab = LabModel.shared
 
     var body: some View {
@@ -218,6 +220,11 @@ struct GeneralSettingsView: View {
                     }
                 }
             }
+            Picker("Appearance", selection: $appearance) {
+                ForEach(BenchAppearance.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: appearance) { BenchAppearance.apply() }
             Toggle("Show the scenes panel while a session works", isOn: $showPanel)
             Toggle("Keep showing it while Bench is in front", isOn: $panelWhileFront)
                 .disabled(!showPanel)
