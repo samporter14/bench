@@ -4,6 +4,16 @@
 set -euo pipefail
 ROOT="${0:A:h:h}"
 cd "$ROOT"
+
+# One build at a time: a second run would delete the app while the first one
+# signs or opens it.
+mkdir -p build
+LOCK="$ROOT/build/.build-app.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+    echo "Another build-app.sh is already running. Wait for it to finish (or delete $LOCK if none is)." >&2
+    exit 1
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
 swift build -c release --product Bench
