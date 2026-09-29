@@ -74,6 +74,9 @@ final class PlanUsageModel: ObservableObject {
 
     private var tasks: [Task<Void, Never>] = []
     private var trailing: Task<Void, Never>?
+    /// Reads again just after the next limit starts over, so the toolbar
+    /// doesn't sit on "resets now" with the old percent.
+    private var atReset: Task<Void, Never>?
     private var lastAttempt: Date?
 
     private static let staleAfter: TimeInterval = 60
@@ -84,7 +87,8 @@ final class PlanUsageModel: ObservableObject {
     private init() {}
 
     /// Starts reading: once Claude Science is signed in, every five minutes,
-    /// and after a session finishes a turn. Safe to call again.
+    /// after a session finishes a turn, and when a limit starts over. Safe to
+    /// call again.
     func start() {
         guard tasks.isEmpty else { return }
         tasks = [
@@ -184,6 +188,20 @@ final class PlanUsageModel: ObservableObject {
             : nil
         lastRead = Date()
         failure = nil
+        scheduleReadAtReset()
+    }
+
+    private func scheduleReadAtReset() {
+        atReset?.cancel()
+        let now = Date()
+        guard let next = limits.compactMap(\.resetsAt).filter({ $0 > now }).min() else { return }
+        // A few seconds late, so Claude Science has the new window.
+        let wait = next.timeIntervalSince(now) + 5
+        atReset = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return }
+            self?.read(fresh: true)
+        }
     }
 
     private func fail(_ error: any Error) {

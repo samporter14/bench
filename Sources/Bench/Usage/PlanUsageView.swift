@@ -1,34 +1,58 @@
 // PlanUsageView.swift — what the plan's limits look like: the toolbar's
-// "5h 66% left" with its thin bar, and the popover's Plan limits section
-// (DESIGN.md, Title-bar readouts).
+// "66% left · resets in 1h 12m" with its thin bar, and the popover's Plan
+// limits section (DESIGN.md, Title-bar readouts).
 import SwiftUI
 
 /// The Usage button's label once the plan has been read: the tightest limit
-/// as what is left, secondary until under a fifth is, then clay.
+/// as what is left and when it starts over, secondary until under a fifth is
+/// left, then clay. The session limit goes unnamed: "5h" read as five hours
+/// to go, whatever the clock said.
 struct PlanUsageLabel: View {
     let limit: PlanLimit
 
     var body: some View {
         let colour = limit.isLow ? Theme.clay : Color.secondary
-        VStack(spacing: 3) {
-            Text("\(limit.kind.shortTitle) \(limit.leftPercent)% left")
+        // The countdown moves, so the label is redrawn each minute.
+        TimelineView(.everyMinute) { context in
+            VStack(spacing: 3) {
+                HStack(spacing: 0) {
+                    Text(name + "\(limit.leftPercent)% left")
+                    if let resetsAt = limit.resetsAt {
+                        Text(" · resets " + resetPhrase(resetsAt, now: context.date, compact: true))
+                            .foregroundStyle(colour.opacity(0.75))
+                    }
+                }
                 .font(.system(size: 12, weight: .medium))
                 .monospacedDigit()
                 .lineLimit(1)
-            // The bar drains as the limit is used up, like a battery.
-            PlanMeter(
-                fraction: Double(limit.leftPercent) / 100,
-                fill: colour,
-                track: Color.primary.opacity(0.15))
-                .frame(height: 3)
-                .accessibilityHidden(true)
+                // The bar drains as the limit is used up, like a battery.
+                PlanMeter(
+                    fraction: Double(limit.leftPercent) / 100,
+                    fill: colour,
+                    track: Color.primary.opacity(0.15))
+                    .frame(height: 3)
+                    .accessibilityHidden(true)
+            }
+            // The bar has no width of its own, so without this it would take
+            // all the toolbar offers. Fixed, it is as wide as the text above it.
+            .fixedSize()
+            .foregroundStyle(colour)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(spoken(now: context.date))
         }
-        // The bar has no width of its own, so without this it would take all
-        // the toolbar offers. Fixed, it is as wide as the text above it.
-        .fixedSize()
-        .foregroundStyle(colour)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Usage. \(limit.kind.title): \(limit.leftPercent)% left")
+    }
+
+    /// "Week ", "Opus week " and so on; nothing for the session.
+    private var name: String {
+        limit.kind == .session ? "" : limit.kind.shortTitle + " "
+    }
+
+    private func spoken(now: Date) -> String {
+        var text = "Usage. \(limit.kind.title): \(limit.leftPercent)% left"
+        if let resetsAt = limit.resetsAt {
+            text += ". " + resets(resetsAt, now: now)
+        }
+        return text
     }
 }
 
@@ -158,11 +182,22 @@ private struct PlanLimitRow: View {
 
 /// "Resets in 2 h 14 m", or the day and time once it is over a day away.
 private func resets(_ date: Date, now: Date) -> String {
+    "Resets " + resetPhrase(date, now: now, compact: false)
+}
+
+/// "in 2 h 14 m", "now", or "Thu 9:00 AM" past a day. Compact, for the
+/// toolbar: "in 2h 14m", or just the day.
+private func resetPhrase(_ date: Date, now: Date, compact: Bool) -> String {
     let seconds = date.timeIntervalSince(now)
-    guard seconds > 0 else { return "Resets now" }
+    guard seconds > 0 else { return "now" }
     guard seconds < 24 * 3600 else {
-        return "Resets " + date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        return compact
+            ? date.formatted(.dateTime.weekday(.abbreviated))
+            : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
     }
     let (hours, minutes) = Int((seconds / 60).rounded(.up)).quotientAndRemainder(dividingBy: 60)
-    return hours > 0 ? "Resets in \(hours) h \(minutes) m" : "Resets in \(minutes) m"
+    let space = compact ? "" : " "
+    return hours > 0
+        ? "in \(hours)\(space)h \(minutes)\(space)m"
+        : "in \(minutes)\(space)m"
 }

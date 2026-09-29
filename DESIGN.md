@@ -361,10 +361,13 @@ and Bench never holds the session. Only read-only paths are allowed.
   `five_hour`, `seven_day`, `seven_day_opus` and `seven_day_sonnet`, each
   `{ utilization (percent used), resets_at }`, plus `extra_usage`.
 - Read it at launch, every 5 min while Bench is running, after each finished
-  turn, and when the popover opens (if over 60 s old).
-- Label: the tightest limit as what's left, e.g. "5h 66% left" or "Week 12%
-  left", with a thin capsule bar. It is secondary normally and turns clay
-  under 20% left. `chart.bar.xaxis` shows until the first read lands.
+  turn, just after a limit resets, and when the popover opens (if over 60 s
+  old).
+- Label: the tightest limit as what's left and when it resets, e.g. "66% left
+  · resets in 1h 12m" or "Week 12% left · resets Thu", with a thin capsule
+  bar. The session limit goes unnamed: "5h" read as five hours to go. The
+  countdown ticks each minute. It is secondary normally and turns clay under
+  20% left. `chart.bar.xaxis` shows until the first read lands.
 - Popover (glass): a **Plan limits** section with a row per limit ("Current
   session", "Weekly · all models", "Weekly · Opus", "Weekly · Sonnet"), each
   with a bar, "% left" and "Resets in 2 h 14 m", plus extra usage when
