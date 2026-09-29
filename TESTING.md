@@ -56,3 +56,20 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
 - ⏳ **Waiting on Sam:** file upload (a dialog was open during testing, with
   no report yet), downloads, microphone, connector OAuth, pop-outs, previews
   and external links.
+
+## 2026-09-28, third round (usage countdown, readout capsule)
+
+- ✅ **Usage remaining shows the reset countdown:** "54% left · resets in
+  27m", then "53% left · resets in 19m" a few minutes later. The old "5h"
+  prefix read as five hours to go.
+- ✅ **One readout capsule:** the ring and usage share one glass capsule,
+  split by a hairline, level with the Scenes button, and neither touches
+  the capsule's edge. Sam: "looks good!"
+- ❌ **Sign-in after a restart, intermittent:** one restart came up on
+  Claude Science's "Sign in" screen instead of signing in on its own (the
+  usage read got a 401), and Sam signed in by hand. The next restart signed
+  in on its own. Cause not found yet.
+- ⏳ **The redone context popover** (header and Refresh, one glass card): not
+  seen yet.
+- ⏳ **The readout capsule at the 900 pt minimum width** while the Lab
+  capsule shows: not checked.

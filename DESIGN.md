@@ -399,7 +399,9 @@ Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
 Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Settings   (planner)
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule   (lab agent)
-Sources/Bench/Shared/     SYMLINKS into the droplet. Read-only: never edit.
+Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and ScienceCore. Don't edit here:
+                          change them in the droplet, then run Scripts/sync-shared.sh.
+Resources/AppIcon.icon    a copy of the droplet's icon (synced by the same script)
 ```
 
 ## Testing checklist ("every feature")

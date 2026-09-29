@@ -1,6 +1,6 @@
 #!/bin/zsh
-# build-app.sh — build Bench.app into ./build (release, universal not needed:
-# internal, this Mac only). Usage: Scripts/build-app.sh [--open]
+# build-app.sh — build Bench.app into ./build (release, this Mac's
+# architecture, ad-hoc signed). Usage: Scripts/build-app.sh [--open]
 set -euo pipefail
 ROOT="${0:A:h:h}"
 cd "$ROOT"
@@ -15,10 +15,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Bench"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 
-# The icon: the Science Status droplet's Icon Composer document, compiled.
-# actool is given absolute paths only (its helper resolves relative ones
-# against wherever another run started it).
-ICON="$ROOT/../droplets/science-status/ScienceStatus.icon"
+# The icon: an Icon Composer document (a copy of the Science Status
+# droplet's), compiled. actool is given absolute paths only (its helper
+# resolves relative ones against wherever another run started it).
+ICON="$ROOT/Resources/AppIcon.icon"
 if [ -d "$ICON" ]; then
     WORK="$(mktemp -d "${TMPDIR:-/private/tmp}/bench-icon.XXXXXX")"
     cp -R "$ICON" "$WORK/AppIcon.icon"
