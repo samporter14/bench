@@ -10,6 +10,7 @@ struct BenchApp: App {
 
     init() {
         SheetCost.runIfAsked()
+        SceneReel.runIfAsked()
         Demo.validate()
         SettingsKey.register()
     }
