@@ -25,8 +25,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Bench"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 
-# The icon: an Icon Composer document (a copy of the Science Status
-# droplet's), compiled. actool is given absolute paths only (its helper
+# The icon: an Icon Composer document, Bench's own in Solanum's product
+# family (fig tile, the broken ring, a flask, one bubble out of the gap),
+# compiled. actool is given absolute paths only (its helper
 # resolves relative ones against wherever another run started it).
 ICON="$ROOT/Resources/AppIcon.icon"
 if [ -d "$ICON" ]; then

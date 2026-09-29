@@ -205,3 +205,12 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   search field is focused when the tab opens. Don't open demo windows while
   Sam is typing.
 - ✅ **Sam, on his installed 0.1.11:** "right now its lookin good".
+
+## 2026-09-29, Bench 0.1.12 (Solanum icon, automatic Sign in)
+
+- ✅ **Icon in Solanum's product family:** the fig tile, the mark's ring
+  exactly, a flask at 9 units, one bubble escaped at (152, 9.93). The
+  compiled .icns looks right at 256 px. Bench has been added to Solanum's
+  icon table, its tile-fig token and its Logos.
+- ⏳ **Automatic Sign in** (`sessionLost` presses Claude Science's Sign in
+  button): to test on the next restart that lands on the card.

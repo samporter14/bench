@@ -1,5 +1,5 @@
 #!/bin/zsh
-# sync-shared.sh — refresh Sources/Bench/Shared and the icon from a checkout
+# sync-shared.sh — refresh Sources/Bench/Shared from a checkout
 # of the Science Status droplet, which is where the scenes and ScienceCore
 # are written. Bench keeps copies so it builds on its own.
 #
@@ -31,6 +31,5 @@ done
 for file in "$SRC"/*.swift; do
     [[ -e "$SHARED/${file:t}" ]] || echo "not shared: ${file:t}"
 done
-rm -rf "$ROOT/Resources/AppIcon.icon"
-cp -R "$DROPLET/ScienceStatus.icon" "$ROOT/Resources/AppIcon.icon"
-echo "Synced $count files and the icon from $DROPLET"
+# The icon is Bench's own now (Solanum's product family), so it isn't synced.
+echo "Synced $count files from $DROPLET"

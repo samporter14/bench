@@ -1,6 +1,8 @@
+<img src="docs/icon.png" width="96" alt="Bench's icon: a flask inside a broken ring, one bubble escaped through the gap">
+
 # Bench
 
-**Claude Science as a real Mac app.**
+**Claude Science as a real Mac app.** A Solanum product.
 
 <img src="docs/scenes.gif" width="580" alt="Eight of Bench's animated lab specimens playing: a pipette aliquoting, a cell dividing, distillation, a kinesin motor, CRISPR, a curve fit, a centrifuge and planaria">
 
@@ -115,6 +117,5 @@ It builds `build/Bench.app` and opens it.
 - The screenshots use made-up sessions: `Bench --demo working|card|toolbar|settings`
   shows the real UI with invented names, and `Bench --render-scenes` records
   the scene GIF.
-- `Sources/Bench/Shared` and `Resources/AppIcon.icon` are copies from the
-  Science Status droplet, where the scenes are written.
-  `Scripts/sync-shared.sh` refreshes them.
+- `Sources/Bench/Shared` holds copies from the Science Status droplet, where
+  the specimens are written; `Scripts/sync-shared.sh` refreshes them.

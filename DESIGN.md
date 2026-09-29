@@ -123,12 +123,14 @@ you", and the graph's steps. No other hues, no gradients.
 
 ## Daemon and sign-in (Web/DaemonController.swift)
 
-- **Lost session.** Now and then, right after a restart, the page shows
-  Claude Science's own "Sign in" card, and its API reads come back 401.
-  When an in-page API read (`apiGET`) gets a 401, `WebContainer.sessionLost()`
-  loads the page again with a fresh `claude-science url` code, at most once
-  every ten minutes. A real account sign-out, which only Claude Science's own
-  Sign in button can fix, isn't reloaded over.
+- **Lost session.** Often, right after a restart, the page shows Claude
+  Science's own "Sign in" card and its API reads come back 401. A fresh
+  `claude-science url` code does NOT fix it (tested 2026-09-29), but pressing
+  the card's Sign in button goes straight back in, with no password or
+  consent (Sam). So when `apiGET` gets a 401, `WebContainer.sessionLost()`
+  presses the first visible "Sign in" button, looking for it over 6 s, then
+  refreshes the plan readout. With no button it falls back to the fresh code.
+  At most once every ten minutes.
 - **SIGTERM quits like ⌘Q** (a DispatchSource in AppDelegate), so the web
   view saves its session. The installer quits Bench with that signal.
 
@@ -451,7 +453,9 @@ Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and Scie
                           Core/CLIStatus.swift and Core/SQLiteSource.swift, which are Bench's own
                           since 0.1.2 (the database is found through the daemon's `data_dir` and
                           the live org); the sync script keeps them.
-Resources/AppIcon.icon    a copy of the droplet's icon (synced by the same script)
+Resources/AppIcon.icon    Bench's own icon in Solanum's product family: the fig tile (#C46686), the
+                          Solanum ring exactly, a flask at 9 units, one bubble escaped at the mark's
+                          escaped node (152, 9.93). Drawn by code, not synced from the droplet.
 ```
 
 ## Testing checklist ("every feature")

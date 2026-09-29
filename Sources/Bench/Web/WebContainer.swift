@@ -173,22 +173,47 @@ final class WebContainer: ObservableObject {
         return true
     }
 
-    /// An API read from the page came back 401: the page is showing Claude
-    /// Science's "Sign in" card, because its session didn't take (seen now
-    /// and then right after a restart). Sign in again with a fresh code, on
-    /// the page that is showing, as a 401 page does. At most once in ten
-    /// minutes: if Claude Science's own account needs signing in, a new code
-    /// can't fix that, and reloading would get in the way of its Sign in.
+    /// An API read from the page came back 401: after a restart the page
+    /// often shows Claude Science's own "Sign in" card, and pressing its button
+    /// goes straight back in (Sam, 2026-09-29), with no password or consent
+    /// asked. So Bench presses it, as he would: the first visible button
+    /// reading "Sign in", looked for over six seconds while the page draws.
+    /// Without one, it signs in again with a fresh `claude-science url` code.
+    /// At most once in ten minutes, so it never keeps pressing or reloading.
     func sessionLost() {
         let now = ContinuousClock.now
         if let last = lastSessionRecovery, now - last < .seconds(600) { return }
         guard let url = webView.url, WebRoute.classify(url, daemonPort: port) == .daemon else { return }
         lastSessionRecovery = now
-        Logger.web.info("An API read was refused; signing in again")
         Task {
+            if await pressSignIn() {
+                Logger.web.info("Pressed Claude Science's Sign in after a refused API read")
+                try? await Task.sleep(for: .seconds(4))
+                PlanUsageModel.shared.refresh()
+                return
+            }
+            Logger.web.info("An API read was refused and no Sign in button showed; signing in again")
             guard let nonce = await DaemonController.freshNonce() else { return }
             webView.load(URLRequest(url: addingLoginNonce(nonce, to: Self.canonical(url))))
         }
+    }
+
+    /// Presses the page's visible "Sign in" button, if one appears within six
+    /// seconds. Runs in Bench's own script world, which sees the same page.
+    private func pressSignIn() async -> Bool {
+        let body = """
+        for (let i = 0; i < 12; i++) {
+            const target = [...document.querySelectorAll("button, a")].find(el => {
+                const box = el.getBoundingClientRect();
+                return (el.textContent || "").trim() === "Sign in" && box.width > 0 && box.height > 0;
+            });
+            if (target) { target.click(); return true; }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        return false;
+        """
+        let result = try? await webView.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .defaultClient)
+        return (result as? Bool) == true
     }
 
     /// The first daemon page to finish loading means we are in.

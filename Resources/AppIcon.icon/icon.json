@@ -1,68 +1,17 @@
 {
-  "fill-specializations": [
-    {
-      "value": {
-        "solid": "srgb:0.94118,0.93333,0.90196,1.00000"
-      }
-    },
-    {
-      "appearance": "dark",
-      "value": {
-        "solid": "srgb:0.07843,0.07843,0.07451,1.00000"
-      }
-    }
-  ],
+  "fill": {
+    "solid": "srgb:0.76863,0.40000,0.52549,1.00000"
+  },
   "groups": [
     {
       "layers": [
         {
-          "fill-specializations": [
-            {
-              "value": {
-                "solid": "srgb:0.85098,0.46667,0.34118,1.00000"
-              }
-            },
-            {
-              "appearance": "dark",
-              "value": {
-                "solid": "srgb:0.85098,0.46667,0.34118,1.00000"
-              }
-            }
-          ],
           "hidden": false,
-          "image-name": "dot.png",
-          "name": "status-dot",
+          "image-name": "bench-glyph.png",
+          "name": "ring-flask-escapee",
           "position": {
-            "scale": 0.84,
-            "translation-in-points": [
-              0,
-              0
-            ]
-          }
-        },
-        {
-          "fill-specializations": [
-            {
-              "value": {
-                "solid": "srgb:0.07843,0.07843,0.07451,1.00000"
-              }
-            },
-            {
-              "appearance": "dark",
-              "value": {
-                "solid": "srgb:0.94118,0.93333,0.90196,1.00000"
-              }
-            }
-          ],
-          "hidden": false,
-          "image-name": "mark.png",
-          "name": "flask-and-ring",
-          "position": {
-            "scale": 0.84,
-            "translation-in-points": [
-              0,
-              0
-            ]
+            "scale": 1.0,
+            "translation-in-points": [0, 0]
           }
         }
       ],
@@ -78,9 +27,7 @@
     }
   ],
   "supported-platforms": {
-    "circles": [
-      "watchOS"
-    ],
+    "circles": ["watchOS"],
     "squares": "shared"
   }
 }
