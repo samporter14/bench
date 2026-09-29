@@ -2,7 +2,7 @@
 
 **Claude Science as a real Mac app.**
 
-<img src="docs/scenes.gif" width="580" alt="Eight of Bench's animated lab scenes playing: a pipette aliquoting, a cell dividing, distillation, a kinesin motor, CRISPR, a curve fit, a centrifuge and planaria">
+<img src="docs/scenes.gif" width="580" alt="Eight of Bench's animated lab specimens playing: a pipette aliquoting, a cell dividing, distillation, a kinesin motor, CRISPR, a curve fit, a centrifuge and planaria">
 
 **Install in one line**: paste into Terminal (Apple silicon, macOS 26 or later):
 
@@ -28,10 +28,10 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
 - **Know when it needs you.** While a session works, one of 487 little
-  animated lab scenes plays in a glass panel in the corner of your screen.
+  animated lab specimens plays in a glass panel in the corner of your screen.
   When a session needs your input, a card there takes you straight to it.
 
-  <img src="docs/panel-working.png" width="336" alt="The floating panel while a session works: a scene playing, and the session's name, project and running time"> <img src="docs/panel-card.png" width="360" alt="The panel's card when a session asked a question, with Open and Later buttons">
+  <img src="docs/panel-working.png" width="336" alt="The floating panel while a session works: a specimen playing, and the session's name, project and running time"> <img src="docs/panel-card.png" width="360" alt="The panel's card when a session asked a question, with Open and Later buttons">
 - **Usage at a glance.** The title bar shows how full your session's context
   is and how much of your plan is left, with a countdown to when it resets.
 
@@ -39,10 +39,11 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 
 ## Make it yours
 
-Pick how big the scenes play, turn whole categories on or off, or choose
-scenes one by one, in Settings → Scenes.
+Pick how big the specimens play, turn whole categories on or off, or choose
+them one by one, in Settings → Specimens. The preview plays only what's on,
+in light or dark.
 
-<img src="docs/scene-picker.png" width="520" alt="Settings, Scenes tab: a size picker, category chips and a grid of scenes to choose from">
+<img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, category chips and a grid of specimens to choose from">
 
 ## Install
 
@@ -84,7 +85,7 @@ once more. **Bench → About Bench** shows which version is running.
 
 If Bench ever opens on a "Sign in" screen, click **Sign in**.
 
-If the scenes or the "needs you" cards never show up, open **Help → Bench
+If the specimens or the "needs you" cards never show up, open **Help → Bench
 Diagnostics**. It checks each step Bench takes to see your sessions and has a
 **Copy** button; nothing in it names your projects or sessions. The same
 report prints in Terminal with the command below, once macOS has let that

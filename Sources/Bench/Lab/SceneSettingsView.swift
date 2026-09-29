@@ -10,6 +10,8 @@ struct SceneSettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
+    /// Light or dark for the preview well only; nil follows the app.
+    @State private var previewScheme: ColorScheme?
 
     /// Every scene, each category's together so that a chip's switch reads as
     /// one block of the grid. Built once: the catalogue does not change.
@@ -51,7 +53,7 @@ struct SceneSettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 280)
-                Text("How large a scene plays in the panel.")
+                Text("How large a specimen plays in the panel.")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -60,22 +62,21 @@ struct SceneSettingsView: View {
         }
     }
 
-    /// The panel's well as it will look, playing what is switched on. A new
-    /// size fades in a new well instead of stretching the old one: a scene
-    /// view draws its frames again at every size it is laid out in, so a
-    /// spring would make it draw them again on every tick.
+    /// The preview well, with a switch under it for light or dark.
     private var preview: some View {
-        ZStack {
-            PlayedGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)
-                .frame(width: settings.size.points, height: settings.size.points)
-                .background(Color.primary.opacity(0.06))
-                .clipShape(.rect(cornerRadius: Theme.panelCorner - Theme.panelPadding))
-                .id(settings.size)
-                .transition(.opacity)
+        let scheme = Binding(get: { previewScheme ?? colorScheme }, set: { previewScheme = $0 })
+        return VStack(spacing: 8) {
+            PreviewWell(size: settings.size, rotation: settings.rotation, side: Self.previewSide, spring: spring)
+                .environment(\.colorScheme, scheme.wrappedValue)
+            Picker("Preview", selection: scheme) {
+                Image(systemName: "sun.max").accessibilityLabel("Light").tag(ColorScheme.light)
+                Image(systemName: "moon").accessibilityLabel("Dark").tag(ColorScheme.dark)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Preview on light or dark")
         }
-        .animation(spring, value: settings.size)
-        .frame(width: Self.previewSide, height: Self.previewSide)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
     }
 
     // MARK: Categories
@@ -109,7 +110,7 @@ struct SceneSettingsView: View {
         .buttonStyle(.plain)
         .glassEffect(on ? .regular.tint(Theme.clay.opacity(0.35)).interactive() : .regular.interactive(),
                      in: .capsule)
-        .help(settings.canToggle(group) ? group.title : "At least one scene has to stay on")
+        .help(settings.canToggle(group) ? group.title : "At least one specimen has to stay on")
         .accessibilityValue(on ? "On" : "Off")
         .accessibilityAddTraits(.isToggle)
     }
@@ -139,7 +140,7 @@ struct SceneSettingsView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("Search scenes", text: $query)
+            TextField("Search specimens", text: $query)
                 .textFieldStyle(.plain)
             if !query.isEmpty {
                 Button {
@@ -161,11 +162,14 @@ struct SceneSettingsView: View {
 
     // MARK: The grid
 
-    /// The scenes whose name holds the search text, in the grid's order.
+    /// The scenes in the categories that are on whose name holds the search
+    /// text, in the grid's order. A category that is off leaves the grid, so
+    /// the grid is what can play; its scenes come back with its chip.
     private var matching: [LabScene] {
+        let inGroups = Self.scenes.filter { settings.groups.contains($0.theme.group) }
         let needle = query.trimmingCharacters(in: .whitespaces)
-        guard !needle.isEmpty else { return Self.scenes }
-        return Self.scenes.filter { $0.name.localizedCaseInsensitiveContains(needle) }
+        guard !needle.isEmpty else { return inGroups }
+        return inGroups.filter { $0.name.localizedCaseInsensitiveContains(needle) }
     }
 
     @ViewBuilder
@@ -274,5 +278,36 @@ private struct SceneStill: View, Equatable {
         Canvas { context, size in
             LabScenes.draw(scene, in: &context, size: size, local: scene.duration * 0.6, tint: ink)
         }
+    }
+}
+
+/// The panel's well as it will look, on light or dark (its colour scheme is
+/// the environment's, which the switch under it sets), playing what is on.
+/// A new size fades in a new well instead of stretching the old one: a scene
+/// view draws its frames again at every size it is laid out in, so a spring
+/// would make it draw them again on every tick.
+private struct PreviewWell: View {
+    let size: SceneSize
+    let rotation: Rotation
+    let side: CGFloat
+    let spring: Animation?
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            PlayedGlyph(tint: colorScheme.sceneInk, rotation: rotation)
+                .frame(width: size.points, height: size.points)
+                .background(Color.primary.opacity(0.06))
+                .clipShape(.rect(cornerRadius: Theme.panelCorner - Theme.panelPadding))
+                .id(size)
+                .transition(.opacity)
+        }
+        .animation(spring, value: size)
+        .frame(width: side, height: side)
+        // Its own backdrop in the chosen scheme, so light and dark read as
+        // such whatever the window is.
+        .background(colorScheme == .dark ? Theme.slate : Theme.ivory, in: .rect(cornerRadius: 20))
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
     }
 }

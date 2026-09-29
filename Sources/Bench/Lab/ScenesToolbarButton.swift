@@ -13,7 +13,7 @@ struct ScenesToolbarButton: View {
     /// (not a template) keeps the clay.
     private static let clayFlask: NSImage = {
         let configuration = NSImage.SymbolConfiguration(paletteColors: [NSColor(Theme.clay)])
-        let image = NSImage(systemSymbolName: "flask.fill", accessibilityDescription: "Scenes on")?
+        let image = NSImage(systemSymbolName: "flask.fill", accessibilityDescription: "Specimens on")?
             .withSymbolConfiguration(configuration) ?? NSImage()
         image.isTemplate = false
         return image
@@ -37,7 +37,7 @@ struct ScenesToolbarButton: View {
                     Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
                 }
             }
-            Toggle("Show scenes panel", isOn: $showPanel)
+            Toggle("Show specimens panel", isOn: $showPanel)
             Section("Size") {
                 Picker("Size", selection: $settings.size) {
                     ForEach(SceneSize.allCases) { size in
@@ -54,33 +54,33 @@ struct ScenesToolbarButton: View {
                 }
             }
             Divider()
-            Button("Choose scenes…") {
+            Button("Choose specimens…") {
                 settingsTab = "scenes"
                 openSettings()
                 NSApp.activate()
             }
         } label: {
             if showPanel, lab.problem != nil {
-                Label("Scenes", systemImage: "exclamationmark.triangle")
+                Label("Specimens", systemImage: "exclamationmark.triangle")
                     .labelStyle(.titleAndIcon)
                     .foregroundStyle(Theme.clay)
             } else if showPanel {
                 // Only the symbol takes the accent: the word stays plain.
                 Label {
-                    Text("Scenes")
+                    Text("Specimens")
                 } icon: {
                     Image(nsImage: Self.clayFlask)
                 }
                 .labelStyle(.titleAndIcon)
             } else {
-                Label("Scenes off", systemImage: "flask")
+                Label("Specimens off", systemImage: "flask")
                     .labelStyle(.titleAndIcon)
                     .foregroundStyle(.secondary)
             }
         } primaryAction: {
             showPanel.toggle()
         }
-        .help(lab.problem.map { "Can't see your Claude Science sessions: \($0.label)" } ?? "Show or hide the scenes panel")
+        .help(lab.problem.map { "Can't see your Claude Science sessions: \($0.label)" } ?? "Show or hide the specimens panel")
     }
 
     /// A category's switch. The last one on is disabled, and `toggle` refuses

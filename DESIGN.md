@@ -382,6 +382,10 @@ and Bench never holds the session. Only read-only paths are allowed.
   button (`.glass`).
 - One Usage control, not two.
 
+## Naming
+
+The animations are called **specimens** everywhere a user reads them (the Specimens tab, "Choose specimens…", the Specimens toolbar button). The code keeps its `Scene` names (LabScene, SceneSettings, the droplet's files).
+
 ## Settings (⌘,)
 
 Two tabs: General (below) and Scenes (above).

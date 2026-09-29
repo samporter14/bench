@@ -161,7 +161,7 @@ struct BenchCommands: Commands {
             Button("Actual Size") { WebContainer.shared.resetZoom() }
                 .keyboardShortcut("0")
             Divider()
-            Button("Show Scenes Panel") {
+            Button("Show Specimens Panel") {
                 let defaults = UserDefaults.standard
                 defaults.set(!defaults.bool(forKey: SettingsKey.showPanel), forKey: SettingsKey.showPanel)
             }
@@ -191,7 +191,7 @@ struct SettingsView: View {
     var body: some View {
         TabView(selection: $tab) {
             Tab("General", systemImage: "gearshape", value: "general") { GeneralSettingsView() }
-            Tab("Scenes", systemImage: "flask", value: "scenes") { SceneSettingsView() }
+            Tab("Specimens", systemImage: "flask", value: "scenes") { SceneSettingsView() }
         }
     }
 }
@@ -225,12 +225,12 @@ struct GeneralSettingsView: View {
             }
             .pickerStyle(.segmented)
             .onChange(of: appearance) { BenchAppearance.apply() }
-            Toggle("Show the scenes panel while a session works", isOn: $showPanel)
+            Toggle("Show the specimens panel while a session works", isOn: $showPanel)
             Toggle("Keep showing it while Bench is in front", isOn: $panelWhileFront)
                 .disabled(!showPanel)
             Toggle("Play a sound when a session needs you", isOn: $sound)
             Section {
-                LabeledContent("If scenes or cards don't show up") {
+                LabeledContent("If specimens or cards don't show up") {
                     Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
                 }
             }

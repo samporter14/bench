@@ -123,3 +123,14 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   default):** with the Mac in Light, `--demo settings -appearance dark` came
   up dark with Dark selected. The saved settings were unchanged apart from
   the Settings window's position.
+
+## 2026-09-29, Bench 0.1.6 (Specimens)
+
+- ✅ **The grid follows the categories:** with only Chemistry on, the grid
+  shows its 41 scenes, not all 487. The preview already played only what's
+  on.
+- ✅ **Preview light/dark switch (☀️/🌙 under the well):** the well draws on
+  ivory or slate whatever the app's appearance, and starts on the app's.
+- ✅ **"Scenes" is now "Specimens"** everywhere a user reads it: the Settings
+  tab, the toolbar button and menu, search, the General toggles and the
+  View menu. The README screenshot has been retaken.
