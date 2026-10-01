@@ -12,6 +12,9 @@
 //   build/Bench.app/Contents/MacOS/Bench --demo toolbar
 //   build/Bench.app/Contents/MacOS/Bench --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
 //
+// Add `--quiet` (and launch with `open -g -n build/Bench.app --args …`) to keep
+// the demo from taking the keyboard: its windows open without activating.
+//
 // The `-key value` pairs are command-line defaults: they read like settings
 // and are never saved. The panel shows only when `showLabPanel` is on, and
 // while Bench is in front only when `panelWhileFront` is on. `settingsTab`
@@ -36,6 +39,10 @@ enum Demo {
         /// The Usage popover's content in a window: plan limits and a made-up
         /// activity history since Claude Science's launch.
         case usage
+        /// Settings > General, or Settings > Specimens, each in a plain
+        /// window: unlike the Settings scene, it opens without activating
+        /// Bench, so a quiet demo can be captured while you type elsewhere.
+        case general, specimens
     }
 
     /// Nil in a normal launch.
@@ -47,6 +54,16 @@ enum Demo {
 
     /// Held so the windows stay up.
     private static var windows: [NSWindow] = []
+
+    /// `--quiet`: the demo never makes Bench the active app, so its windows
+    /// come up behind whatever you are typing in, for `screencapture -l`.
+    /// Launch it with `open -g -n` so the launch doesn't either.
+    static let isQuiet = mode != nil && CommandLine.arguments.contains("--quiet")
+
+    /// NSApp.activate(), except in a quiet demo.
+    static func activateUnlessQuiet() {
+        if !isQuiet { NSApp.activate() }
+    }
 
     /// Reads `mode` at launch. A misspelt `--demo` value ends here: falling
     /// through to a normal start would load the real Claude Science.
@@ -66,6 +83,10 @@ enum Demo {
             showSettings()
         case .usage?:
             showUsage()
+        case .general?:
+            showPage(GeneralSettingsView(), title: "General")
+        case .specimens?:
+            showPage(SceneSettingsView(), title: "Specimens")
         case nil:
             break
         }
@@ -154,7 +175,7 @@ enum Demo {
         window.isRestorable = false
         window.tabbingMode = .disallowed
         windows.append(window)
-        NSApp.activate()
+        activateUnlessQuiet()
         window.makeKeyAndOrderFront(nil)
     }
 
@@ -196,8 +217,24 @@ enum Demo {
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         windows.append(window)
-        NSApp.activate()
+        activateUnlessQuiet()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private static func showPage<V: View>(_ view: V, title: String) {
+        let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+        window.title = title
+        window.styleMask = [.titled, .closable]
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.isRestorable = false
+        windows.append(window)
+        if isQuiet {
+            window.orderFrontRegardless()
+        } else {
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
     /// The same way "Choose specimens…" opens Settings. The tab comes from

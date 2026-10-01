@@ -29,7 +29,7 @@ enum SettingsWindow {
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         opener = window
-        NSApp.activate()
+        Demo.activateUnlessQuiet()
         window.orderFrontRegardless()
     }
 
@@ -42,7 +42,7 @@ enum SettingsWindow {
                 .frame(width: 1, height: 1)
                 .onAppear {
                     openSettings()
-                    NSApp.activate()
+                    Demo.activateUnlessQuiet()
                     Task {
                         try? await Task.sleep(for: .seconds(1))
                         done()

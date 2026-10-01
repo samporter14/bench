@@ -1,9 +1,8 @@
-// SceneSettingsView.swift — Settings > Specimens, in Solanum (DESIGN.md,
-// "Scenes settings"; the Bench Settings canvas): a serif heading, the size and
-// the preview with its light/dark switch, the category chips, search and
-// counts, and every specimen in a grid on a raised card to switch on or off.
-// Structure comes from hairline borders; the one cell under the pointer lifts
-// to glass. The cells on screen play; the rest hold a still.
+// SceneSettingsView.swift — Settings > Specimens (DESIGN.md, "Scenes
+// settings"), in the Mac's own controls: a heading, the size and the preview
+// with its light/dark switch, a checkbox per category, search and counts, and
+// every specimen in a grid to switch on or off. The one cell under the pointer
+// lifts to glass. The cells on screen play; the rest hold a still.
 import SwiftUI
 
 struct SceneSettingsView: View {
@@ -38,7 +37,6 @@ struct SceneSettingsView: View {
         .padding(.top, 24)
         .padding(.bottom, 24)
         .frame(width: 760, height: 700)
-        .background(Solanum.page)
         // The switch under the preview sets the window's scheme, so the whole
         // tab shows the specimens on light or dark, not a board inside it.
         .preferredColorScheme(previewScheme)
@@ -51,31 +49,32 @@ struct SceneSettingsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("What plays while you work")
-                        .font(Solanum.serif(26))
-                        .foregroundStyle(Solanum.ink)
+                        .font(.title2.weight(.semibold))
                     Text("One specimen at a time, in the panel at the corner of your screen.")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Solanum.inkMuted)
+                        .foregroundStyle(.secondary)
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    Overline("Size")
-                    SolanumSegmented(selection: $settings.size, options: SceneSize.allCases,
-                                     label: { Text($0.title) }, accessibilityName: "Size")
+                HStack(spacing: 10) {
+                    Text("Size")
+                    Picker("Size", selection: $settings.size) {
+                        ForEach(SceneSize.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
                 }
             }
             .padding(.top, 4)
             Spacer(minLength: 0)
             VStack(spacing: 10) {
                 PreviewWell(size: settings.size, rotation: settings.rotation, spring: spring)
-                SolanumSegmented(
-                    selection: Binding(get: { shownScheme }, set: { previewScheme = $0 }),
-                    options: [ColorScheme.light, .dark],
-                    label: { scheme in
-                        Image(systemName: scheme == .light ? "sun.max" : "moon")
-                            .accessibilityLabel(scheme == .light ? "Ivory" : "Slate")
-                    },
-                    accessibilityName: "Show this tab in")
-                    .help("Show this tab in Ivory or Slate")
+                Picker("Show this tab in", selection: Binding(get: { shownScheme }, set: { previewScheme = $0 })) {
+                    Image(systemName: "sun.max").accessibilityLabel("Ivory").tag(ColorScheme.light)
+                    Image(systemName: "moon").accessibilityLabel("Slate").tag(ColorScheme.dark)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Show this tab in Ivory or Slate")
             }
         }
     }
@@ -84,13 +83,14 @@ struct SceneSettingsView: View {
 
     private var categories: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Overline("Categories")
-            FlowLayout(spacing: 8) {
+            Text("Categories")
+                .font(.headline)
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(200), spacing: 12, alignment: .leading), count: 3),
+                      alignment: .leading, spacing: 6) {
                 ForEach(SceneGroup.allCases, id: \.self) { group in
                     CategoryChip(group: group)
                 }
             }
-            .animation(spring, value: settings.groups)
         }
     }
 
@@ -101,39 +101,18 @@ struct SceneSettingsView: View {
             search
             Spacer(minLength: 12)
             Text("\(settings.onCount) of \(LabScenes.catalogue.count) on")
-                .font(.system(size: 13))
-                .foregroundStyle(Solanum.inkMuted)
+                .foregroundStyle(.secondary)
                 .monospacedDigit()
             Button("All") { settings.setAll(on: true) }
                 .disabled(settings.onCount == LabScenes.catalogue.count)
             Button("None") { settings.setAll(on: false) }
         }
-        .buttonStyle(SolanumButtonStyle())
     }
 
     private var search: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(Solanum.inkMuted)
-            TextField("Search specimens", text: $query)
-                .textFieldStyle(.plain)
-                .foregroundStyle(Solanum.ink)
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(Solanum.inkMuted)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .font(.system(size: 13))
-        .padding(.horizontal, 12)
-        .frame(width: 260, height: 32)
-        .background(Solanum.raised, in: .capsule)
-        .overlay(Capsule().strokeBorder(Solanum.strong))
+        TextField("Search specimens", text: $query)
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 240)
     }
 
     // MARK: The grid
@@ -169,8 +148,9 @@ struct SceneSettingsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .solanumCard(radius: 14)
-        .clipShape(.rect(cornerRadius: 14))
+        .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: .separatorColor)))
+        .clipShape(.rect(cornerRadius: 10))
     }
 }
 
@@ -200,7 +180,6 @@ private struct SceneCell: View, Equatable {
                 tile
                 Text(scene.name)
                     .font(.system(size: 11))
-                    .foregroundStyle(Solanum.ink)
                     .multilineTextAlignment(.center)
                     .lineLimit(2, reservesSpace: true)
             }
@@ -237,9 +216,9 @@ private struct SceneCell: View, Equatable {
             }
         }
         .frame(width: 58, height: 58)
-        .background(Solanum.page, in: .rect(cornerRadius: 13))
+        .background(.background, in: .rect(cornerRadius: 13))
         .clipShape(.rect(cornerRadius: 13))
-        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Solanum.hairline))
+        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Color(nsColor: .separatorColor)))
         .overlay(alignment: .topTrailing) {
             if isOn {
                 // Slate on clay: 6:1, where white on clay would be under 3.
@@ -248,7 +227,7 @@ private struct SceneCell: View, Equatable {
                     .foregroundStyle(Theme.slate)
                     .frame(width: 17, height: 17)
                     .background(Theme.clay, in: .circle)
-                    .overlay(Circle().strokeBorder(Solanum.raised, lineWidth: 2).padding(-2))
+                    .overlay(Circle().strokeBorder(Color(nsColor: .controlBackgroundColor), lineWidth: 2).padding(-2))
                     .offset(x: 5, y: -5)
             }
         }
@@ -310,14 +289,15 @@ private struct PreviewWell: View {
         ZStack {
             PlayedGlyph(tint: colorScheme.sceneInk, rotation: rotation)
                 .frame(width: size.points, height: size.points)
-                .background(Solanum.page, in: .rect(cornerRadius: 14))
+                .background(.background, in: .rect(cornerRadius: 14))
                 .clipShape(.rect(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Solanum.hairline))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color(nsColor: .separatorColor)))
                 .id(size)
                 .transition(.opacity)
         }
         .animation(spring, value: size)
         .frame(width: Self.side, height: Self.side)
-        .solanumCard(radius: 18)
+        .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color(nsColor: .separatorColor)))
     }
 }

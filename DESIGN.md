@@ -414,17 +414,26 @@ and Bench never holds the session. Only read-only paths are allowed.
   button (`.glass`).
 - One Usage control, not two.
 
-## Solanum (Settings, since 0.1.11)
+## Native controls, Solanum where it counts (since 0.1.13)
 
-Bench is a Solanum product (https://claude.ai/artifact/BjQZQTY4NYmLcz39pHWmQE; the Settings design is
-the canvas https://claude.ai/artifact/3BmWVie7qUCxPpcTx5HrD4). Settings follows it: `Solanum.swift`
-holds its colours for both themes (page #FAF9F5 / #141413, raised #FFFFFF / #262625, ink, inkMuted,
-inkFaint, hairline, strong, clayText #9C4221 / #E4927A) and the pieces the tabs are built from:
-`Overline` (mono caps), `SettingsCard` / `SettingsRow`, `SolanumSegmented` (a raised segment, no accent),
-`SolanumButtonStyle`, `FlowLayout`. The rules: structure comes from hairline borders, not shadows; clay
-is a fill (switches are tinted clay, chips carry a clay tint), clay words use clayText; the serif is for
-display only (the tab headings and the Bench wordmark). The themes are named Match Mac, Ivory and Slate.
-Glass stays where macOS draws it (the window, the toolbar, popovers) and on the hovered specimen.
+Settings was drawn in Solanum (https://claude.ai/artifact/BjQZQTY4NYmLcz39pHWmQE) in 0.1.11 and
+0.1.12: ivory and slate grounds, mono overlines, hairline cards, a serif heading. Sam then asked for the
+menus and Settings to look like the Mac's own, even where that bends the brand, so since 0.1.13:
+
+- General is a grouped `Form`, as System Settings is: Bench's icon, name, version and the "Unofficial,
+  and not affiliated with Anthropic" line at the top, native switches, a segmented Theme picker, and
+  Diagnostics as a plain button. Its frame is fixed (600 × 640): a grouped form has no height of its
+  own, and the Settings window sizes to each tab.
+- Specimens keeps its heading, preview and live grid (cells on screen play, the rest hold a still; the
+  hovered one lifts to glass), with system controls around them: a segmented Size picker and light/dark
+  switch, a rounded search field, plain All/None buttons, and a checkbox per category. Checkboxes,
+  not chips: a tinted chip read the same on and off on macOS 27. The last category on stays checked and
+  greyed.
+- The toolbar's Specimens options stay a popover (a SwiftUI Menu there kept stale ticks), with the
+  same switch, segmented size and checkboxes.
+
+The brand stays in the app icon (Solanum's product family), in clay as the one accent (switches, the
+specimens' badges and the flask in the toolbar), and in the theme names Match Mac, Ivory and Slate.
 
 ## Naming
 
@@ -436,7 +445,7 @@ Two tabs: General (below) and Scenes (above).
 
 | Setting | Default |
 |---|---|
-| Appearance: Match Mac, Light or Dark (the whole app, via `NSApp.appearance`; the page follows while its own theme is System) | Match Mac |
+| Appearance: Match Mac, Ivory or Slate (the whole app, via `NSApp.appearance`; the page follows while its own theme is System) | Match Mac |
 | Show the Lab panel | on |
 | Play a sound when a session needs you | on |
 | Show the Lab panel while Bench is in front | on |

@@ -206,8 +206,8 @@ struct SettingsView: View {
     }
 }
 
-/// General, in Solanum: cards of settings under mono section labels, each
-/// with a line saying what it does, and Bench's name at the foot.
+/// General: a grouped form, as System Settings is, with Bench's name and
+/// version at the top.
 struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
@@ -220,108 +220,85 @@ struct GeneralSettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            if let problem = lab.problem {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(Solanum.clayText)
+        Form {
+            Section {
+                HStack(spacing: 14) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 52, height: 52)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Can't see your sessions: \(problem.label)")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Solanum.ink)
-                        Text("\(problem.hint) For details, open Help → Bench Diagnostics.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Solanum.inkMuted)
+                        Text("Bench")
+                            .font(.title2.weight(.semibold))
+                        Text("A Solanum product. Unofficial, and not affiliated with Anthropic.")
+                            .foregroundStyle(.secondary)
                     }
+                    Spacer(minLength: 0)
+                    Text(version)
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .solanumCard()
+                .padding(.vertical, 2)
             }
 
-            section("Appearance") {
-                SettingsCard {
-                    SettingsRow(title: "Theme", hint: "The window, the panel and the Claude Science page.") {
-                        SolanumSegmented(
-                            selection: Binding(get: { BenchAppearance(rawValue: appearance) ?? .system },
-                                               set: { appearance = $0.rawValue }),
-                            options: BenchAppearance.allCases,
-                            label: { Text($0.title) },
-                            accessibilityName: "Theme")
-                    }
-                }
-            }
-
-            section("Specimens panel") {
-                SettingsCard {
-                    SettingsRow(title: "Show the panel while a session works",
-                                hint: "A specimen plays in the corner of your screen until the session stops.") {
-                        clayToggle("Show the panel while a session works", isOn: $showPanel)
-                    }
-                    SettingsRow(title: "Keep showing it while Bench is in front",
-                                hint: "Off, the panel waits until you switch to another app.") {
-                        clayToggle("Keep showing it while Bench is in front", isOn: $panelWhileFront)
-                            .disabled(!showPanel)
+            if let problem = lab.problem {
+                Section {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Can't see your sessions: \(problem.label)")
+                            Text("\(problem.hint) For details, open Help → Bench Diagnostics.")
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
                     }
                 }
             }
 
-            section("When a session needs you") {
-                SettingsCard {
-                    SettingsRow(title: "Play a sound",
-                                hint: "Once, as the card comes up. The card stays until you answer.") {
-                        clayToggle("Play a sound when a session needs you", isOn: $sound)
-                    }
+            Section("Appearance") {
+                Picker(selection: Binding(get: { BenchAppearance(rawValue: appearance) ?? .system },
+                                          set: { appearance = $0.rawValue })) {
+                    ForEach(BenchAppearance.allCases, id: \.self) { Text($0.title).tag($0) }
+                } label: {
+                    Text("Theme")
+                    Text("The window, the panel and the Claude Science page.")
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Section("Specimens panel") {
+                Toggle(isOn: $showPanel) {
+                    Text("Show the panel while a session works")
+                    Text("A specimen plays in the corner of your screen until the session stops.")
+                }
+                Toggle(isOn: $panelWhileFront) {
+                    Text("Keep showing it while Bench is in front")
+                    Text("Off, the panel waits until you switch to another app.")
+                }
+                .disabled(!showPanel)
+            }
+
+            Section("When a session needs you") {
+                Toggle(isOn: $sound) {
+                    Text("Play a sound")
+                    Text("Once, as the card comes up. The card stays until you answer.")
                 }
             }
 
-            section("Help") {
-                SettingsCard {
-                    SettingsRow(title: "If specimens or cards don't show up",
-                                hint: "Checks each step Bench takes to see your sessions. Names no projects.") {
-                        Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
-                            .buttonStyle(SolanumButtonStyle())
-                    }
+            Section("Help") {
+                LabeledContent {
+                    Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
+                } label: {
+                    Text("If specimens or cards don't show up")
+                    Text("Checks each step Bench takes to see your sessions. Names no projects.")
                 }
             }
-
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("Bench")
-                    .font(Solanum.serif(22))
-                    .foregroundStyle(Solanum.ink)
-                Text(version)
-                    .font(.system(size: 11, design: .monospaced))
-                    .tracking(0.9)
-                    .foregroundStyle(Solanum.inkFaint)
-                Spacer(minLength: 12)
-                Text("A Solanum product. Unofficial, and not affiliated with Anthropic.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Solanum.inkMuted)
-            }
-            .padding(.top, 14)
-            .overlay(alignment: .top) { Rectangle().fill(Solanum.hairline).frame(height: 1) }
         }
-        .padding(.horizontal, 36)
-        .padding(.top, 26)
-        .padding(.bottom, 22)
-        .frame(width: 640)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(Solanum.page)
+        .formStyle(.grouped)
+        .toggleStyle(.switch)
+        .tint(Theme.clay)
+        .frame(width: 600, height: 640)
         .onChange(of: appearance) { BenchAppearance.apply() }
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Overline(title)
-            content()
-        }
-    }
-
-    /// A switch in clay, labelled for VoiceOver by the row it sits in.
-    private func clayToggle(_ label: String, isOn: Binding<Bool>) -> some View {
-        Toggle(label, isOn: isOn)
-            .toggleStyle(.switch)
-            .tint(Theme.clay)
-            .labelsHidden()
     }
 }

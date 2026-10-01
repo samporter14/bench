@@ -45,7 +45,7 @@ Pick how big the specimens play, turn whole categories on or off, or choose
 them one by one, in Settings → Specimens. The preview plays only what's on,
 in light or dark.
 
-<img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, category chips and a grid of specimens to choose from">
+<img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, a checkbox per category and a grid of specimens to choose from">
 
 ## Install
 
@@ -114,8 +114,10 @@ It builds `build/Bench.app` and opens it.
   been checked live so far.
 - `DESIGN.md` is the spec: the look, where the glass goes, and how links are
   routed.
-- The screenshots use made-up sessions: `Bench --demo working|card|toolbar|settings`
-  shows the real UI with invented names, and `Bench --render-scenes` records
-  the scene GIF.
+- The screenshots use made-up sessions: `Bench --demo working|card|toolbar|general|specimens`
+  shows the real UI with invented names (add `--quiet`, and launch with
+  `open -g -n`, to keep it from taking the keyboard), and
+  `Bench --render-scenes` records the scene GIF.
 - `Sources/Bench/Shared` holds copies from the Science Status droplet, where
   the specimens are written; `Scripts/sync-shared.sh` refreshes them.
+- MIT licensed; see [LICENSE](LICENSE).

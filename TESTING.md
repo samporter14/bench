@@ -217,3 +217,23 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   pressed Sign in at .912, and the plan read succeeded at 15:54:00. The page
   showed the projects and the toolbar the plan readout, with nothing to
   click.
+
+## 2026-10-01, Bench 0.1.13 (Mac-native Settings, MIT)
+
+- ✅ **Settings in the Mac's own controls**, at Sam's request ("more mac
+  native, even if its not exactly our brand"), checked on screen with
+  window captures of `--demo general`, `--demo specimens` and
+  `--demo toolbar --open-options`, all `--quiet` and launched with
+  `open -g -n`: the frontmost app stayed Sam's own throughout. General is a
+  grouped form with every row and the Help section visible at 600 × 640;
+  Specimens shows a checkbox per category, with counts, the segmented size
+  and light/dark pickers, and the live grid; the toolbar options fit at
+  400 pt.
+- ⚠️ `--demo settings` (SwiftUI's own Settings window) still activates
+  Bench even when quiet, through `openSettings`. Capture the pages with
+  `--demo general` and `--demo specimens` instead.
+- ✅ Builds with no warnings. `Solanum.swift` is gone; nothing used it.
+- ✅ **Licence:** MIT, matching Nidus and the droplets repository the
+  shared files come from.
+- **Signing:** `build-app.sh` signs with "Solanum Code Signing" when the
+  login keychain has it, else ad-hoc, as before. 0.1.13 went out ad-hoc.
