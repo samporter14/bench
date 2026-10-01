@@ -237,3 +237,14 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   shared files come from.
 - **Signing:** `build-app.sh` signs with "Solanum Code Signing" when the
   login keychain has it, else ad-hoc, as before. 0.1.13 went out ad-hoc.
+
+## 2026-10-01, Bench 0.1.14 (signed with Solanum Code Signing)
+
+- ✅ Sam made the "Solanum Code Signing" certificate in his login keychain
+  (self-signed, code signing, 10 years). `build-app.sh` now signs with it:
+  `codesign -d -r-` gives `identifier "local.sam.bench" and certificate root
+  = H"1c84e9c2…"`, the same for two builds with different binaries, where
+  ad-hoc gave a different `cdhash` every build. So the microphone and camera
+  permissions Claude Science asks for should now survive updates: approve
+  them once on 0.1.14, and they should hold on 0.1.15.
+- ✅ The signed build runs (`--diagnose`), and `codesign -v` verifies it.
