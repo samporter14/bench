@@ -268,6 +268,19 @@ struct LabPanelView: View {
                         .tint(Theme.clay)
                 }
             }
+        case .notice(let notice):
+            Row(side: wellSide, well: symbol(notice.symbol)) {
+                caption(notice.caption, trailing: position)
+                title(notice.title)
+                if !notice.detail.isEmpty { detail(notice.detail) }
+                if case .openSession = notice.action {
+                    buttons {
+                        Button("Open") { model.open(card) }
+                            .buttonStyle(.glassProminent)
+                            .tint(Theme.clay)
+                    }
+                }
+            }
         case .saved(let url):
             Row(side: wellSide, well: symbol("arrow.down.circle")) {
                 caption("Saved", trailing: position)

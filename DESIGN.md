@@ -350,6 +350,47 @@ The working specimen and the cards are separate settings since 0.2.0
 errors still come. Someone who had the whole panel off before keeps the cards
 off after updating. Under Reduce Motion the working specimen is a still.
 
+### Notices (Lab/LabNotice.swift, Lab/NoticeWatchers.swift, since 0.3.0)
+
+Cards that tell rather than ask. They queue after every session card, never
+play a sound, always time out on top, and respect "Show a card". When each is
+due is `NoticeRules`, pure and tested on made-up data.
+
+- **Plan:** one card per window when the 5-hour or the all-models weekly
+  limit has 10% or less left ("9% of your 5-hour limit left · Resets in 47
+  minutes"), keyed by the window's reset time to the minute; and "has reset"
+  only when Bench saw an announced window end in the last 10 minutes.
+- **Context:** one card per session when the session open in the web view
+  has used 85% of its context window, naming it.
+- **Week in review:** once a new week starts (the activity graph's calendar),
+  last week's sessions, messages and busiest day, read off the main thread
+  at launch and just after each midnight.
+- **While you focused:** see Nidus below.
+
+What has been announced (plan windows, context sessions, the reviewed week)
+is kept in Bench's settings so an update doesn't repeat it; demos keep
+nothing. Settings → General → Heads-up turns each off.
+
+### Nidus (Lab/NidusFocus.swift, since 0.3.0)
+
+Nidus, the Solanum focus app, writes `~/Library/Application Support/Nidus/
+focus.json` (`version`, `focusing`, `until`; never its goal) and posts
+`local.sam.nidus.focus` on this Mac when that changes. Bench counts a focus
+session as on only while the file says so, Nidus is running and `until`
+hasn't passed, so a file a crash left behind means nothing. While it is on,
+"Finished" cards wait (they still go to Recent, and Claude Science's own
+notification for the same finish is dropped as usual); questions and errors
+come at once. When it ends, the finishes come as one "While you focused"
+card.
+
+### Menu bar specimen (Lab/MenuBarSpecimen.swift, since 0.3.0)
+
+Off by default. While a session works, the specimen plays in the menu bar;
+while any waits, the waiting glyph and a count. Clicking it opens the
+activity list in a popover. Its ink follows the menu bar's appearance (the
+wallpaper's), not Bench's Ivory or Slate. Hidden, not removed, while nothing
+works, so it keeps its place. Measured at about 0–2% CPU while playing.
+
 ## Scenes settings (Lab/SceneSettings.swift)
 
 `SceneSettings.shared` holds three settings in UserDefaults:

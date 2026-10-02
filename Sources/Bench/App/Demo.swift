@@ -37,6 +37,8 @@ enum Demo {
         case failed
         /// One session working while the reads fail: "Not updating".
         case stale
+        /// A plan notice, then the week in review behind it.
+        case notice
         /// A window with only the toolbar, its readouts filled in.
         case toolbar
         /// The real Settings window.
@@ -102,6 +104,11 @@ enum Demo {
             showPanel(working: [], cards: [.needsInput(session(.needsInput))])
         case .failed?:
             showPanel(working: [], cards: [.failed(session(.error))])
+        case .notice?:
+            let plan = PlanLimit(kind: .session, usedPercent: 91, resetsAt: Date().addingTimeInterval(47 * 60))
+            let week = NoticeRules.Week(key: "demo", sessions: 23, messages: 640, busiestDay: "Wednesday")
+            showPanel(working: [], cards: NoticeRules.plan(limits: [plan], announced: [:], now: Date()).notices.map(LabCard.notice)
+                      + [.notice(NoticeRules.weekNotice(week))])
         case .stale?:
             LabModel.shared.showDemo(working: [session(.running)], cards: [],
                                      problem: .databaseUnreadable("demo"), staleSince: Date().addingTimeInterval(-3 * 60))
@@ -175,6 +182,8 @@ enum Demo {
         LabModel.shared.showDemo(working: working, cards: cards)
         showBackdrop()
         LabPanelController.shared.start()
+        // `-showMenuBarSpecimen YES` shows it too, for a look and a CPU check.
+        MenuBarSpecimen.shared.start()
     }
 
     /// The panel's glass samples whatever is behind it, which could be

@@ -40,6 +40,14 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   sessions is saved to disk: Recent lasts until Bench quits.
 
   <img src="docs/activity.png" width="390" alt="The activity list under the toolbar's 2 need you: two sessions waiting, one stopped with an error, two working with their clocks, and Recent below">
+- **A heads-up before you hit a wall.** A card when your plan is nearly
+  used up and when it resets, and when the session you have open has used
+  most of its context. Once a new week starts, a quiet week in review.
+- **Plays well with Nidus.** While a [Nidus](https://github.com/samporter14/nidus)
+  focus session runs, "Finished" cards wait until it ends and come as one;
+  questions and errors still come at once.
+- **Optional menu bar specimen.** Turn it on in Settings to see a session
+  working, or a count of those waiting, from the menu bar.
 - **Usage at a glance.** The title bar shows how full your session's context
   is and how much of your plan is left, with a countdown to when it resets.
 

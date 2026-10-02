@@ -53,6 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ContextModel.shared.start()
         LabModel.shared.start()
         LabPanelController.shared.start()
+        NidusFocus.shared.start()
+        NoticeWatchers.shared.start()
+        MenuBarSpecimen.shared.start()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -221,6 +224,10 @@ struct SettingsView: View {
 struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
     @AppStorage(SettingsKey.showCards) private var showCards = true
+    @AppStorage(SettingsKey.showMenuBarSpecimen) private var menuBarSpecimen = false
+    @AppStorage(SettingsKey.headsUpNotices) private var headsUp = true
+    @AppStorage(SettingsKey.weekInReview) private var weekInReview = true
+    @AppStorage(SettingsKey.holdDuringFocus) private var holdDuringFocus = true
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
     @AppStorage(SettingsKey.panelWhileFront) private var panelWhileFront = true
     @AppStorage(SettingsKey.appearance) private var appearance = BenchAppearance.system.rawValue
@@ -283,6 +290,10 @@ struct GeneralSettingsView: View {
                     Text("Show a specimen while a session works")
                     Text("It plays in the corner of your screen until the session stops. Off, cards still come.")
                 }
+                Toggle(isOn: $menuBarSpecimen) {
+                    Text("Show it in the menu bar too")
+                    Text("While a session works, or a count while any wait. Click it for every session.")
+                }
                 Toggle(isOn: $panelWhileFront) {
                     Text("Keep showing the panel while Bench is in front")
                     Text("Off, the panel waits until you switch to another app.")
@@ -301,6 +312,21 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            Section("Heads-up") {
+                Toggle(isOn: $headsUp) {
+                    Text("Plan and context")
+                    Text("A card when 10% of your 5-hour or weekly limit is left, and when it resets; and when the session you have open has used 85% of its context.")
+                }
+                Toggle(isOn: $weekInReview) {
+                    Text("Week in review")
+                    Text("Once a new week starts: last week's sessions, messages and busiest day.")
+                }
+                Toggle(isOn: $holdDuringFocus) {
+                    Text("Hold finishes while Nidus is focusing")
+                    Text("During a Nidus focus session, \u{201C}Finished\u{201D} cards wait for it to end, then come as one. Questions and errors still come at once.")
+                }
+            }
+
             Section("Help") {
                 LabeledContent {
                     Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
@@ -313,7 +339,7 @@ struct GeneralSettingsView: View {
         .formStyle(.grouped)
         .toggleStyle(.switch)
         .tint(Theme.clay)
-        .frame(width: 600, height: 640)
+        .frame(width: 600, height: 720)
         .onChange(of: appearance) { BenchAppearance.apply() }
     }
 }

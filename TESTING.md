@@ -321,3 +321,24 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-02, Bench 0.3.0 (heads-up notices, Nidus, menu bar specimen)
+
+- ✅ `swift test`: 28 tests in 11 suites. New: plan cards once per window
+  (a reset time a few seconds off is the same window), nothing below 90% or
+  for the per-model weeks, a reset card only for a reset seen happening;
+  context once per session; last week's totals and busiest day (which
+  caught the weekday being named in the local time zone instead of the
+  calendar's); focusing only while the file, Nidus running and `until`
+  agree; held finishes with a page notification for the same finish.
+- ✅ Captured quietly (`open -g -n … --quiet`, frontmost app unchanged):
+  `--demo notice` (the plan card, "1 of 2" with the week behind it) and
+  Settings → General's new switches and Heads-up section.
+- ✅ Menu bar specimen: with `-showMenuBarSpecimen YES`, System Events lists
+  the status item "Bench sessions"; with NO there is none. CPU while
+  playing: 0.0–2% (`top`, six one-second samples), the same as off apart
+  from one sample.
+- Not checked live: a real plan crossing 90%, a real context at 85%, a new
+  week's card, the specimen's ink on a dark and a light menu bar, and a real
+  Nidus focus session holding a real finish (Nidus 0.1.5 publishes; test it
+  with a session that blocks nothing of yours).
+

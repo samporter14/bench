@@ -15,6 +15,7 @@ enum LabCard: Identifiable, Equatable {
     case finished(SessionStatus)
     case web(WebNotification)
     case saved(URL)
+    case notice(LabNotice)
 
     var id: String {
         switch self {
@@ -23,6 +24,7 @@ enum LabCard: Identifiable, Equatable {
         case .finished(let s): "finished-\(s.id)"
         case .web(let n): "web-\(n.id)"
         case .saved(let url): "saved-\(url.path)"
+        case .notice(let n): "notice-\(n.id)"
         }
     }
 }
@@ -36,6 +38,7 @@ private extension LabCard {
         case .failed: 1
         case .web: 2
         case .finished, .saved: 3
+        case .notice: 4
         }
     }
 
@@ -49,6 +52,7 @@ private extension LabCard {
         case .finished: .seconds(6)
         case .web(let n): n.requireInteraction ? nil : .seconds(8)
         case .saved: .seconds(5)
+        case .notice(let n): n.lifetime
         }
     }
 
@@ -59,7 +63,7 @@ extension LabCard {
     var session: SessionStatus? {
         switch self {
         case .needsInput(let s), .failed(let s), .finished(let s): s
-        case .web, .saved: nil
+        case .web, .saved, .notice: nil
         }
     }
 }
@@ -127,6 +131,11 @@ final class LabModel: ObservableObject {
     static let recentLimit = 30
     /// Tests shorten the cards' lifetimes with this.
     var lifetimeScale = 1.0
+    /// Whether a Nidus focus session is on and finishes should wait for it
+    /// (`NidusFocus`); tests set their own.
+    var holdsFinishes: () -> Bool = { NidusFocus.shared.holding }
+    /// Finishes held during a focus session, shown as one card after it.
+    private(set) var heldFinishes: [SessionStatus] = []
 
     private let source = CombinedScienceSource()
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
@@ -208,6 +217,8 @@ final class LabModel: ObservableObject {
         case .needsInput(let session), .failed(let session), .finished(let session): Router.shared.open(session)
         case .web(let notification): Router.shared.open(notification)
         case .saved(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .notice(let notice):
+            if case .openSession(let session) = notice.action { Router.shared.open(session) }
         }
         dismiss(card)
     }
@@ -370,8 +381,12 @@ final class LabModel: ObservableObject {
                 remember(LabEvent(.failed, session: session))
             case .finished(let session):
                 supersedePageNotifications(by: session)
-                raise(.finished(session))
                 remember(LabEvent(.finished, session: session))
+                if holdsFinishes() {
+                    if !heldFinishes.contains(where: { $0.id == session.id }) { heldFinishes.append(session) }
+                } else {
+                    raise(.finished(session))
+                }
             case .started:
                 break
             }
@@ -456,6 +471,20 @@ final class LabModel: ObservableObject {
             guard !Task.isCancelled else { return }
             self?.dismiss(front)
         }
+    }
+
+    /// A notice from elsewhere in Bench (plan, context, the week, Nidus):
+    /// queued after the session cards, with no sound.
+    func post(_ notice: LabNotice) {
+        log.notice("Notice: \(notice.caption, privacy: .public)")
+        raise(.notice(notice))
+    }
+
+    /// The focus session ended: what finished during it, as one card.
+    func releaseHeldFinishes() {
+        guard let notice = NoticeRules.held(heldFinishes) else { return }
+        heldFinishes = []
+        post(notice)
     }
 
     /// Adds an event to Recent, once: a repeat of the same one (the same

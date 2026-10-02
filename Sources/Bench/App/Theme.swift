@@ -32,6 +32,14 @@ enum SettingsKey {
     /// Cards when a session needs you, fails or finishes, and page
     /// notifications.
     static let showCards = "showLabCards"
+    /// The working specimen in the menu bar too. Off by default.
+    static let showMenuBarSpecimen = "showMenuBarSpecimen"
+    /// Plan and context cards.
+    static let headsUpNotices = "headsUpNotices"
+    /// The week in review, once a new week starts.
+    static let weekInReview = "weekInReview"
+    /// Hold "Finished" cards while a Nidus focus session runs.
+    static let holdDuringFocus = "holdDuringNidusFocus"
     static let soundOnNeedsInput = "soundOnNeedsInput"
     static let panelWhileFront = "panelWhileFront"
     static let pageZoom = "pageZoom"
@@ -51,6 +59,10 @@ enum SettingsKey {
         defaults.register(defaults: [
             showPanel: true,
             showCards: true,
+            showMenuBarSpecimen: false,
+            headsUpNotices: true,
+            weekInReview: true,
+            holdDuringFocus: true,
             soundOnNeedsInput: true,
             panelWhileFront: true,
             pageZoom: 1.0,
