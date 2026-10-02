@@ -117,6 +117,11 @@ final class LabModel: ObservableObject {
     /// says it is not updating, rather than counting on as if it were.
     @Published private(set) var staleSince: Date?
     private var lastGoodRead: Date?
+    /// The sessions active most recently that neither work nor wait, from
+    /// the last read: the Dock menu's Latest, so it has something to open
+    /// even right after Bench starts.
+    @Published private(set) var latest: [SessionStatus] = []
+    static let latestLimit = 5
     /// What happened lately, newest first: the activity list's Recent.
     @Published private(set) var recent: [LabEvent] = []
     static let recentLimit = 30
@@ -382,6 +387,9 @@ final class LabModel: ObservableObject {
             running.insert(running.remove(at: index), at: 0)
         }
         // Assign only real changes: each one redraws the panel and re-fits the window.
+        let quiet = snapshot.sessions.filter { $0.state != .running && $0.state != .needsInput }
+        let newest = Array(quiet.sorted(by: recentFirst).prefix(Self.latestLimit))
+        if latest.map(\.id) != newest.map(\.id) { latest = newest }
         if workingHidden, Set(running.map(\.id)) != Set(working.map(\.id)) { workingHidden = false }
         if working != running { working = running }
         if waiting != parked {

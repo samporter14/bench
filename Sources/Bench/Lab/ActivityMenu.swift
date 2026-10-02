@@ -10,7 +10,9 @@ final class ActivityMenu: NSObject {
     /// How many Recent events the Dock menu lists; the popover has them all.
     private static let recentCount = 5
 
-    func make() -> NSMenu? {
+    /// Never nil: with nothing to list, the menu says so, rather than leaving
+    /// only the Dock's own items, which looks as if Bench added nothing.
+    func make() -> NSMenu {
         let model = LabModel.shared
         let menu = NSMenu()
         let failed = model.cards.compactMap { if case .failed(let session) = $0 { session } else { nil } }
@@ -39,7 +41,20 @@ final class ActivityMenu: NSObject {
                 }
             }
         }
-        return menu.items.isEmpty ? nil : menu
+        if model.waiting.isEmpty, failed.isEmpty, model.working.isEmpty {
+            let idle = NSMenuItem(title: "Nothing working right now", action: nil, keyEquivalent: "")
+            idle.isEnabled = false
+            menu.insertItem(idle, at: 0)
+        }
+        // Right after a start Recent is empty; the database still knows what
+        // ran last.
+        if recent.isEmpty, !model.latest.isEmpty {
+            menu.addItem(.sectionHeader(title: "Latest"))
+            for session in model.latest {
+                menu.addItem(item(session, subtitle: "\(session.state.label) · \(session.projectName)"))
+            }
+        }
+        return menu
     }
 
     private func item(_ session: SessionStatus, subtitle: String) -> NSMenuItem {
@@ -53,7 +68,8 @@ final class ActivityMenu: NSObject {
     @objc private func open(_ item: NSMenuItem) {
         guard let id = item.representedObject as? String else { return }
         let model = LabModel.shared
-        let all = model.waiting + model.working + model.cards.compactMap(\.session) + model.recent.compactMap(\.session)
+        let all = model.waiting + model.working + model.cards.compactMap(\.session)
+            + model.recent.compactMap(\.session) + model.latest
         if let session = all.first(where: { $0.id == id }) {
             model.open(session)
         }

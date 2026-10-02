@@ -23,6 +23,7 @@
 // real Bench shares. Don't click the Settings controls or the toolbar's Scenes
 // button: those are real settings and would be saved.
 import AppKit
+import OSLog
 import SwiftUI
 
 @MainActor
@@ -55,6 +56,21 @@ enum Demo {
     /// `--open-options` with `--demo toolbar`: the Specimens options popover
     /// opens by itself, for a screenshot.
     static let opensSpecimenOptions = mode == .toolbar && CommandLine.arguments.contains("--open-options")
+    /// `--log-dock-menu`: asks the app's delegate for the Dock menu the way
+    /// the Dock does, and logs what came back, to check SwiftUI passes the
+    /// request on.
+    static let logsDockMenu = mode != nil && CommandLine.arguments.contains("--log-dock-menu")
+
+    static func logDockMenu() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            let delegate = NSApp.delegate
+            let responds = delegate?.responds(to: #selector(NSApplicationDelegate.applicationDockMenu(_:))) ?? false
+            let menu = delegate?.applicationDockMenu?(NSApp)
+            Logger.app.notice("Dock menu check: delegate responds \(responds, privacy: .public), items \(menu?.items.map(\.title) ?? [], privacy: .public)")
+        }
+    }
+
     /// `--open-activity` with `--demo toolbar`: the activity list opens by
     /// itself, filled with made-up sessions.
     static let opensActivity = mode == .toolbar && CommandLine.arguments.contains("--open-activity")

@@ -2,6 +2,7 @@
 // the Web and Lab halves (DESIGN.md). The main window is AppKit-managed so
 // closing it only hides it and the one web view survives.
 import AppKit
+import OSLog
 import SwiftUI
 
 @main
@@ -41,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A demo shows made-up data and starts nothing real (Demo.swift).
         if Demo.mode != nil {
             Demo.start()
+            if Demo.logsDockMenu { Demo.logDockMenu() }
             return
         }
         Router.shared.showWindow = { MainWindowController.shared.show() }
@@ -76,7 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The Dock icon's menu: the activity list's sessions, so they can be
     /// opened with the window closed.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        ActivityMenu.shared.make()
+        let menu = ActivityMenu.shared.make()
+        Logger.app.notice("Dock menu: \(menu.items.count, privacy: .public) items")
+        return menu
     }
 }
 

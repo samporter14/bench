@@ -335,6 +335,11 @@ past tense, with when). Each row opens its session in the one web view and
 closes the list; a saved file shows in Finder. Both read `LabModel`, so
 nothing else polls.
 
+The Dock menu is never empty: with nothing working or waiting it says
+"Nothing working right now", and while Recent is still empty (right after a
+start) it lists **Latest**, the five sessions active most recently that
+neither work nor wait, from the last read.
+
 Recent is kept in memory only, so Bench still writes nothing about sessions to
 disk; it lasts until Bench quits. An event is the kind, the session and its
 turn (`startedAt`), so one turn's finish is one entry however often it is

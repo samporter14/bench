@@ -7,6 +7,8 @@ import os
 extension Logger {
     /// Everything in Web/ logs here.
     static let web = Logger(subsystem: "local.sam.bench", category: "web")
+    /// The app's own: the Dock menu.
+    static let app = Logger(subsystem: "local.sam.bench", category: "app")
 }
 
 /// What a URL is, judged against the daemon's port.

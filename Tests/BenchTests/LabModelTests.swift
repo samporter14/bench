@@ -95,3 +95,21 @@ struct LabModelTests {
         #expect(model.recent.count == 2)
     }
 }
+
+@MainActor
+struct LatestTests {
+    @Test func latestListsTheNewestSessionsThatNeitherWorkNorWait() {
+        let model = LabModel()
+        model.ingest(Fixture.snapshot(Fixture.session("a", .running), Fixture.session("b", .finished),
+                                      Fixture.session("c", .needsInput, reason: .question), Fixture.session("d", .error)))
+        #expect(Set(model.latest.map(\.id)) == ["b", "d"])
+    }
+
+    @Test func theDockMenuIsNeverEmpty() {
+        let model = LabModel()
+        #expect(model.latest.isEmpty && model.recent.isEmpty && model.working.isEmpty)
+        // ActivityMenu reads `shared`; an idle shared model still gets a menu
+        // with the idle line.
+        #expect(!ActivityMenu.shared.make().items.isEmpty)
+    }
+}

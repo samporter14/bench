@@ -305,3 +305,19 @@ yet checked live: a real failed session, and a real notification close.
   still specimen under Reduce Motion, and the activity list against real
   sessions.
 
+## 2026-10-02, Bench 0.2.1 (the Dock menu always has something)
+
+- ⚠️ Sam wasn't sure the Dock menu worked. It did: with `--demo toolbar
+  --open-activity --quiet --log-dock-menu`, asking the app's delegate the way
+  the Dock does returned all 11 items (the SwiftUI app delegate passes the
+  request on). But on Sam's Mac nothing was working or waiting and Recent
+  had just been emptied by the update, so Bench returned no menu, which looks
+  broken.
+- ✅ Now the menu says "Nothing working right now" when idle, and lists
+  Latest (the five most recently active sessions) until Recent has
+  something. 20 tests pass, two new: Latest's contents, and that the menu is
+  never empty.
+- Each Dock menu request logs its item count (`/usr/bin/log show --predicate
+  'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
+  zsh builtin).
+
