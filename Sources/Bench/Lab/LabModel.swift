@@ -11,6 +11,7 @@ private let log = Logger(subsystem: "local.sam.bench", category: "lab")
 
 enum LabCard: Identifiable, Equatable {
     case needsInput(SessionStatus)
+    case failed(SessionStatus)
     case finished(SessionStatus)
     case web(WebNotification)
     case saved(URL)
@@ -18,6 +19,7 @@ enum LabCard: Identifiable, Equatable {
     var id: String {
         switch self {
         case .needsInput(let s): "needs-\(s.id)"
+        case .failed(let s): "failed-\(s.id)"
         case .finished(let s): "finished-\(s.id)"
         case .web(let n): "web-\(n.id)"
         case .saved(let url): "saved-\(url.path)"
@@ -26,22 +28,24 @@ enum LabCard: Identifiable, Equatable {
 }
 
 private extension LabCard {
-    /// Where the card queues: needs-input first, then page notifications,
-    /// then the moments that pass on their own.
+    /// Where the card queues: needs-input first, then a session that failed,
+    /// then page notifications, then the moments that pass on their own.
     var rank: Int {
         switch self {
         case .needsInput: 0
-        case .web: 1
-        case .finished, .saved: 2
+        case .failed: 1
+        case .web: 2
+        case .finished, .saved: 3
         }
     }
 
-    /// How long it stays when nobody acts on it. Nil means until it stops
-    /// being true: a session waits until it doesn't, a page notification that
-    /// requires interaction until it is clicked or dismissed.
+    /// How long it stays on top when nobody acts on it. Nil means until it
+    /// stops being true: a session waits until it doesn't, a failure until it
+    /// is opened, dismissed or the session runs again, a page notification
+    /// that requires interaction until it is clicked, dismissed or closed.
     var lifetime: Duration? {
         switch self {
-        case .needsInput: nil
+        case .needsInput, .failed: nil
         case .finished: .seconds(6)
         case .web(let n): n.requireInteraction ? nil : .seconds(8)
         case .saved: .seconds(5)
@@ -50,7 +54,7 @@ private extension LabCard {
 
     var session: SessionStatus? {
         switch self {
-        case .needsInput(let s), .finished(let s): s
+        case .needsInput(let s), .failed(let s), .finished(let s): s
         case .web, .saved: nil
         }
     }
@@ -73,6 +77,10 @@ final class LabModel: ObservableObject {
     /// are no scenes and no needs-input cards, so the Scenes menu and Settings
     /// say so rather than staying quiet (`Bench --diagnose` has the details).
     @Published private(set) var problem: ScienceError?
+    /// While `problem` stands, when the sessions were last read: the panel
+    /// says it is not updating, rather than counting on as if it were.
+    @Published private(set) var staleSince: Date?
+    private var lastGoodRead: Date?
 
     private let source = CombinedScienceSource()
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
@@ -110,6 +118,7 @@ final class LabModel: ObservableObject {
         generation += 1
         Router.shared.webNotificationArrived = { [weak self] in self?.receive($0) }
         Router.shared.downloadSaved = { [weak self] in self?.raise(.saved($0)) }
+        Router.shared.webNotificationClosed = { [weak self] in self?.closeWebNotification($0) }
         log.info("Lab started")
         read()
     }
@@ -130,6 +139,7 @@ final class LabModel: ObservableObject {
         changedDuringRead = false
         Router.shared.webNotificationArrived = { _ in }
         Router.shared.downloadSaved = { _ in }
+        Router.shared.webNotificationClosed = { _ in }
         engine = ScienceEngine(minDuration: LabModel.minDuration)
         working = []
         waiting = []
@@ -145,7 +155,7 @@ final class LabModel: ObservableObject {
     /// file. A card that has been acted on has done its job, so it goes.
     func open(_ card: LabCard) {
         switch card {
-        case .needsInput(let session), .finished(let session): Router.shared.open(session)
+        case .needsInput(let session), .failed(let session), .finished(let session): Router.shared.open(session)
         case .web(let notification): Router.shared.open(notification)
         case .saved(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
         }
@@ -163,6 +173,7 @@ final class LabModel: ObservableObject {
         if cards.contains(where: { $0.id == card.id }) {
             cards.removeAll { $0.id == card.id }
         }
+        armFrontCard()
     }
 
     /// Hides the working panel until the set of working sessions changes.
@@ -171,9 +182,11 @@ final class LabModel: ObservableObject {
     }
 
     /// Shows made-up sessions and cards, with no reading. Only Demo calls it.
-    func showDemo(working: [SessionStatus], cards: [LabCard]) {
+    func showDemo(working: [SessionStatus], cards: [LabCard], problem: ScienceError? = nil, staleSince: Date? = nil) {
         self.working = working
         self.cards = cards
+        self.problem = problem
+        self.staleSince = staleSince
         waiting = cards.compactMap(\.session).filter { $0.state == .needsInput }
     }
 
@@ -232,7 +245,10 @@ final class LabModel: ObservableObject {
         if !failed || snapshot.readError == .daemonNotRunning {
             update(from: snapshot)
         }
+        if !failed { lastGoodRead = Date() }
         let problem = failed ? snapshot.readError : nil
+        let stale = problem == nil ? nil : (staleSince ?? lastGoodRead)
+        if stale != staleSince { staleSince = stale }
         if problem != self.problem {
             if let problem {
                 log.error("Can't see the sessions: \(String(describing: problem), privacy: .public)")
@@ -288,6 +304,9 @@ final class LabModel: ObservableObject {
             case .needsInput(let session):
                 supersedePageNotifications(by: session)
                 if raise(.needsInput(session)) { alert = true }
+            case .failed(let session):
+                supersedePageNotifications(by: session)
+                if raise(.failed(session)) { alert = true }
             case .finished(let session):
                 supersedePageNotifications(by: session)
                 raise(.finished(session))
@@ -313,10 +332,20 @@ final class LabModel: ObservableObject {
             NSApp.dockTile.badgeLabel = parked.isEmpty ? nil : String(parked.count)
         }
 
-        // A needs-input card is true for as long as its session waits.
-        let parkedIDs = Set(parked.map(\.id))
-        for case .needsInput(let session) in cards where !parkedIDs.contains(session.id) {
-            dismiss(.needsInput(session))
+        // A needs-input card is true for as long as its session waits, and says
+        // what it waits for now: a question can become a plan to approve.
+        let parkedByID = Dictionary(parked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for case .needsInput(let session) in cards {
+            if let now = parkedByID[session.id] {
+                if now != session { raise(.needsInput(now)) }
+            } else {
+                dismiss(.needsInput(session))
+            }
+        }
+        // A failure card goes once its session runs or waits again.
+        let failedIDs = Set(snapshot.sessions.filter { $0.state == .error }.map(\.id))
+        for case .failed(let session) in cards where !failedIDs.contains(session.id) {
+            dismiss(.failed(session))
         }
 
         if alert, !firstRead, UserDefaults.standard.bool(forKey: SettingsKey.soundOnNeedsInput) {
@@ -341,15 +370,33 @@ final class LabModel: ObservableObject {
             isNew = true
         }
         if cards != next { cards = next }
+        // A repeat on top starts its time again.
         expiries.removeValue(forKey: card.id)?.cancel()
-        if let lifetime = card.lifetime {
-            expiries[card.id] = Task { [weak self] in
-                try? await Task.sleep(for: lifetime)
-                guard !Task.isCancelled else { return }
-                self?.dismiss(card)
-            }
-        }
+        armFrontCard()
         return isNew
+    }
+
+    /// Only the card on top counts down. One queued behind another (a finish
+    /// behind a question) would otherwise run out without ever being seen;
+    /// its time starts when it reaches the top.
+    private func armFrontCard() {
+        let front = cards.first
+        for id in Array(expiries.keys) where id != front?.id {
+            expiries.removeValue(forKey: id)?.cancel()
+        }
+        guard let front, let lifetime = front.lifetime, expiries[front.id] == nil else { return }
+        expiries[front.id] = Task { [weak self] in
+            try? await Task.sleep(for: lifetime)
+            guard !Task.isCancelled else { return }
+            self?.dismiss(front)
+        }
+    }
+
+    /// The page closed one of its notifications: its card goes too.
+    private func closeWebNotification(_ id: String) {
+        for case .web(let notification) in cards where notification.id == id {
+            dismiss(.web(notification))
+        }
     }
 
     /// The page hears of a session's state change a moment before the

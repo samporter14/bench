@@ -188,14 +188,26 @@ struct LabPanelView: View {
         }
     }
 
+    @ViewBuilder
     private func workingContent(_ session: SessionStatus, others: Int) -> some View {
-        Row(side: wellSide, well: PlayedGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)) {
-            caption("Working", dot: true, trailing: others > 0 ? "+\(others) more" : nil)
-            title(session.displayTitle)
-            TurnClockText(prefix: session.projectName, since: session.startedAt)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        if model.problem != nil {
+            // The last read failed: say so, rather than count on as if the
+            // session were still known to be working.
+            Row(side: wellSide, well: symbol("exclamationmark.triangle")) {
+                caption("Not updating", trailing: others > 0 ? "+\(others) more" : nil)
+                title(session.displayTitle)
+                detail(model.staleSince.map { "Last checked at \($0.formatted(date: .omitted, time: .shortened))" }
+                       ?? "Can't check right now")
+            }
+        } else {
+            Row(side: wellSide, well: PlayedGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)) {
+                caption("Working", dot: true, trailing: others > 0 ? "+\(others) more" : nil)
+                title(session.displayTitle)
+                TurnClockText(prefix: session.projectName, since: session.startedAt)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -214,6 +226,19 @@ struct LabPanelView: View {
                         .buttonStyle(.glassProminent)
                         .tint(Theme.clay)
                     Button("Later") { model.dismiss(card) }
+                        .buttonStyle(.glass)
+                }
+            }
+        case .failed(let session):
+            Row(side: wellSide, well: symbol("exclamationmark.triangle")) {
+                caption("Stopped with an error", style: Theme.clay, weight: .semibold, trailing: position)
+                title(session.displayTitle)
+                detail(session.projectName)
+                buttons {
+                    Button("Open") { model.open(card) }
+                        .buttonStyle(.glassProminent)
+                        .tint(Theme.clay)
+                    Button("Dismiss") { model.dismiss(card) }
                         .buttonStyle(.glass)
                 }
             }

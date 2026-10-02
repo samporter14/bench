@@ -77,8 +77,9 @@ func resolveCLI() -> URL? {
 public func fetchCLIStatus(timeout: TimeInterval = 5) throws -> CLIStatus {
     guard let cli = resolveCLI() else { throw ScienceError.cliMissing }
     let data: Data
+    let status: Int32
     do {
-        data = try runProcess(cli, ["status"], timeout: timeout).output
+        (status, data) = try runProcess(cli, ["status"], timeout: timeout)
     } catch SubprocessFailure.timedOut {
         throw ScienceError.cliFailed("timed out")
     } catch {
@@ -88,7 +89,12 @@ public func fetchCLIStatus(timeout: TimeInterval = 5) throws -> CLIStatus {
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { throw ScienceError.cliFailed("unparseable output") }
 
-    let running = (json["running"] as? Bool) ?? false
+    // Only an explicit `"running": false` means stopped, and so permission
+    // to start one. Anything else (an error reply, a missing field) is a
+    // failed check: starting a daemon then could make a second one.
+    guard let running = json["running"] as? Bool else {
+        throw ScienceError.cliFailed("no running field (exit \(status))")
+    }
     guard running else { throw ScienceError.daemonNotRunning }
     let daemon = json["daemon"] as? [String: Any] ?? [:]
     // active_frames lives inside daemon; fall back to 0 (idle) when absent.

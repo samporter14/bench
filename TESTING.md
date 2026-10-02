@@ -248,3 +248,39 @@ The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
   permissions Claude Science asks for should now survive updates: approve
   them once on 0.1.14, and they should hold on 0.1.15.
 - ✅ The signed build runs (`--diagnose`), and `codesign -v` verifies it.
+
+## 2026-10-02, Bench 0.1.15 (fixes from a code review)
+
+A read-only review by Codex (findings kept outside the repo) found nine
+issues; all nine held up when checked against the code, and all are fixed:
+
+1. ✅ A session that failed mid-run vanished with no card: the engine now
+   emits `.failed`, and the panel shows "Stopped with an error" with Open
+   and Dismiss (`--demo failed`, captured on screen).
+2. ✅ Cards counted down while queued, so a finish behind a question expired
+   unseen: only the top card counts down now.
+3. ✅ A line break in a session or project name split its database row and
+   dropped the session: the query turns line breaks and the separator into
+   spaces.
+4. ✅ A failed read left the panel saying Working with a running clock: it
+   now says "Not updating" with the time of the last good read
+   (`--demo stale`, captured on screen).
+5. ✅ A `status` reply without a `running` field counted as "not running",
+   which could start a second daemon: only an explicit `"running": false`
+   does now.
+6. ✅ A waiting card kept its first reason (a question) when the session
+   moved to plan approval: it updates in place, and a new kind of request
+   returns after a dismissal.
+7. ✅ A notification the page closed left its card behind: closes now remove
+   it.
+8. ✅ `install.sh` matched the app's path as a pattern over whole command
+   lines (`pgrep -f`), so it could quit another copy: it compares the exact
+   executable path now. Tested matching against the running Bench and a
+   decoy path, and a full install into a scratch folder. Nidus's installer
+   has the same fix.
+9. ✅ A `bench://session` link that came before the daemon's port was known
+   was built for port 8765 and dropped if the daemon used another: it moves
+   to the real port.
+
+`ScienceEngine.swift` is now Bench's own (`sync-shared.sh` keeps it). Not
+yet checked live: a real failed session, and a real notification close.

@@ -39,6 +39,8 @@ final class Router {
 
     /// A page notification arrived.
     var webNotificationArrived: (WebNotification) -> Void = { _ in }
+    /// The page closed a notification it had shown (its id).
+    var webNotificationClosed: (String) -> Void = { _ in }
     /// A download finished saving.
     var downloadSaved: (URL) -> Void = { _ in }
 

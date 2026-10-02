@@ -36,17 +36,22 @@ if [[ ! -d "$TMP/Bench.app" ]]; then
     exit 1
 fi
 
-# Only the copy being replaced is quit, by its path; any other Bench is left
-# alone. Bench (0.1.8 and later) takes the signal as ⌘Q, so its web view
-# saves its state before it goes.
-if pgrep -f "$APP/Contents/MacOS/Bench" >/dev/null; then
+# Only the copy being replaced is quit: processes whose executable is
+# exactly this copy's, compared as text. (pgrep -f would read the path as a
+# pattern over whole command lines, so another copy could match.) Bench
+# takes the signal as ⌘Q.
+EXE="$APP/Contents/MacOS/Bench"
+target_pids() {
+    ps -axo pid=,comm= | awk -v exe="$EXE" '{ pid = $1; sub(/^ *[0-9]+ /, ""); if ($0 == exe) print pid }'
+}
+if [[ -n "$(target_pids)" ]]; then
     echo "Quitting the running Bench…"
-    pkill -TERM -f "$APP/Contents/MacOS/Bench" || true
+    kill -TERM $(target_pids) 2>/dev/null || true
     for _ in {1..20}; do
-        pgrep -f "$APP/Contents/MacOS/Bench" >/dev/null || break
+        [[ -z "$(target_pids)" ]] && break
         sleep 0.5
     done
-    if pgrep -f "$APP/Contents/MacOS/Bench" >/dev/null; then
+    if [[ -n "$(target_pids)" ]]; then
         echo "Bench is still running. Quit it with ⌘Q, then run this again." >&2
         exit 1
     fi

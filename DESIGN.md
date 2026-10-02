@@ -239,16 +239,32 @@ A port of the droplet's watching loop, with no DroppyKit:
 ```swift
 enum LabCard: Identifiable {
   case needsInput(SessionStatus)
+  case failed(SessionStatus)
   case finished(SessionStatus)
   case web(WebNotification)
   case saved(URL)
 }
 ```
 
-- `needsInput` stays until the session stops waiting.
-- `finished` lasts 6 s.
-- `web` lasts until clicked or dismissed, or 8 s unless `requireInteraction`.
-- `saved` lasts 5 s.
+The queue runs needs-input, then failed, then page notifications, then
+finished and saved. Only the card on top counts down: one queued behind
+another starts its time when it reaches the top, so a finish behind a
+question is still seen.
+
+- `needsInput` stays until the session stops waiting, and shows what it waits
+  for now: a question that becomes a plan to approve updates in place. A new
+  kind of request comes back even after the last one was dismissed (Later).
+- `failed` ("Stopped with an error", Open and Dismiss, with the sound) comes
+  when a working or waiting session ends in an error, and stays until it is
+  opened, dismissed, or the session runs again.
+- `finished` lasts 6 s on top.
+- `web` lasts until clicked, dismissed or closed by the page, or 8 s on top
+  unless `requireInteraction`.
+- `saved` lasts 5 s on top.
+
+While the sessions can't be read, the working panel says "Not updating" and
+when it last could, with a still symbol instead of the specimen and clock: the
+last good list stays as the baseline, but it is not shown as live.
 
 ### The panel (LabPanelController + LabPanelView)
 

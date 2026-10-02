@@ -8,6 +8,8 @@ public enum ScienceTransition: Sendable, Equatable {
     case started(SessionStatus)
     case finished(SessionStatus)
     case needsInput(SessionStatus)
+    /// A session that was working or waiting stopped with an error.
+    case failed(SessionStatus)
 }
 
 /// Pure state machine: diff the last snapshot against the new one and emit
@@ -16,6 +18,9 @@ public enum ScienceTransition: Sendable, Equatable {
 /// - Sessions shorter than `minDuration` never emit `.finished` (the
 ///   "don't HUD for sessions shorter than N seconds" setting).
 /// - `.needsInput` always emits: an approval card must never be swallowed.
+///   A waiting session that starts waiting for something else (a question,
+///   then a plan to approve) emits it again.
+/// - A working or waiting session that ends in an error emits `.failed`.
 /// - Unknown states never emit: fail visible in the widget, not via HUD.
 /// - A read that failed outright is not news: the last good snapshot stays
 ///   the baseline, so a finish during the gap still emits and a card that
@@ -40,11 +45,14 @@ public struct ScienceEngine: Sendable {
                 else if session.state == .needsInput { out.append(.needsInput(session)) }
                 continue
             }
-            guard previous.state != session.state else { continue }
+            let newRequest = session.state == .needsInput && previous.waitingReason != session.waitingReason
+            guard previous.state != session.state || newRequest else { continue }
             switch (previous.state, session.state) {
             case (.running, .finished), (.needsInput, .finished):
                 if let duration = session.duration, duration < minDuration { break }
                 out.append(.finished(session))
+            case (.running, .error), (.needsInput, .error):
+                out.append(.failed(session))
             case (_, .needsInput):
                 out.append(.needsInput(session))
             case (.needsInput, .running):

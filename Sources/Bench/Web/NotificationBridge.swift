@@ -47,8 +47,12 @@ final class NotificationBridge {
             Logger.web.notice("Ignored a notification message")
             return
         }
-        // A close has no card to remove: the Router only takes arrivals.
-        if body["closed"] as? Bool == true { return }
+        // The page withdrew it: its card goes, so Open can't call a
+        // notification that no longer exists.
+        if body["closed"] as? Bool == true {
+            Router.shared.webNotificationClosed(id)
+            return
+        }
 
         let tag = (body["tag"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         Router.shared.webNotificationArrived(WebNotification(

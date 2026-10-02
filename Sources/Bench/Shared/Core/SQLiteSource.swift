@@ -126,6 +126,13 @@ struct FrameRow: Equatable {
     var waitingSignal: String? = nil
 }
 
+/// A text column as one line: line breaks and the field separator become
+/// spaces, so a name with a newline can't split its row in two (and drop the
+/// session from view).
+private func oneLineSQL(_ column: String) -> String {
+    "replace(replace(replace(COALESCE(\(column),''), char(10), ' '), char(13), ' '), char(31), ' ')"
+}
+
 /// `alias`'s output JSON, from the frame row or else its blob.
 private func outputSQL(_ alias: String) -> String {
     """
@@ -174,7 +181,7 @@ private func sessionFilterSQL(_ alias: String) -> String {
 func fetchRecentFrames(db: URL, limit: Int = 25) throws -> [FrameRow] {
     let awaiting = "'awaiting_user_response','awaiting_plan_approval'"
     let sql = """
-        SELECT f.id, COALESCE(f.project_id,''), COALESCE(f.name,''), f.status,
+        SELECT f.id, COALESCE(f.project_id,''), \(oneLineSQL("f.name")), f.status,
                f.created_at, f.updated_at, COALESCE(f.completed_at,''),
                MAX(f.created_at, COALESCE(f.last_user_message_at, 0)),
                CASE WHEN f.status = 'processing' AND (\(pendingInputSQL("f")) OR EXISTS (
@@ -299,7 +306,7 @@ private func dailyCounts(db: URL, sql: String) throws -> [String: Int] {
 
 /// Project names for the ids we show. Never description/context (research).
 func fetchProjectNames(db: URL) throws -> [String: String] {
-    let rows = try runReadOnlyQuery(db: db, sql: "SELECT id, COALESCE(name,'') FROM projects;")
+    let rows = try runReadOnlyQuery(db: db, sql: "SELECT id, \(oneLineSQL("name")) FROM projects;")
     var out: [String: String] = [:]
     for cols in rows where cols.count >= 2 { out[cols[0]] = cols[1] }
     return out

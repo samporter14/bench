@@ -32,6 +32,10 @@ enum Demo {
         case working
         /// One session asking a question: the panel's card face.
         case card
+        /// One session that stopped with an error: the failure card.
+        case failed
+        /// One session working while the reads fail: "Not updating".
+        case stale
         /// A window with only the toolbar, its readouts filled in.
         case toolbar
         /// The real Settings window.
@@ -77,6 +81,13 @@ enum Demo {
             showPanel(working: [session(.running)], cards: [])
         case .card?:
             showPanel(working: [], cards: [.needsInput(session(.needsInput))])
+        case .failed?:
+            showPanel(working: [], cards: [.failed(session(.error))])
+        case .stale?:
+            LabModel.shared.showDemo(working: [session(.running)], cards: [],
+                                     problem: .databaseUnreadable("demo"), staleSince: Date().addingTimeInterval(-3 * 60))
+            showBackdrop()
+            LabPanelController.shared.start()
         case .toolbar?:
             showToolbar()
         case .settings?:

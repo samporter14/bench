@@ -113,12 +113,22 @@ final class WebContainer: ObservableObject {
             status = .failed("Couldn't build Claude Science's address.")
             return
         }
-        let requested = pendingURL.map(Self.canonical)
+        // A link that came before the port was known was built for the usual
+        // one; it belongs on the port the daemon actually uses.
+        let requested = pendingURL.map { Self.canonical(Self.moving($0, toPort: port)) }
         pendingURL = nil
         let destination = requested.flatMap { WebRoute.classify($0, daemonPort: port) == .daemon ? $0 : nil } ?? root
 
         let nonce = await DaemonController.freshNonce()
         webView.load(URLRequest(url: nonce.map { addingLoginNonce($0, to: destination) } ?? destination))
+    }
+
+    /// `url` on `port`, when it is a localhost address on another one.
+    private static func moving(_ url: URL, toPort port: Int) -> URL {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              ["localhost", "127.0.0.1"].contains(parts.host ?? ""), parts.port != port else { return url }
+        parts.port = port
+        return parts.url ?? url
     }
 
     // MARK: Navigation

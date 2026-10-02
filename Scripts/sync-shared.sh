@@ -14,8 +14,9 @@ SRC="$DROPLET/Sources/ScienceStatus"
 SHARED="$ROOT/Sources/Bench/Shared"
 # Bench's own versions, not overwritten: they find the database through the
 # daemon's reported data folder and the live org (Bench 0.1.2), which the
-# droplet doesn't yet.
-KEEP=(Core/CLIStatus.swift Core/SQLiteSource.swift)
+# droplet doesn't yet; and the engine's failure and changed-request
+# transitions (Bench 0.1.15).
+KEEP=(Core/CLIStatus.swift Core/SQLiteSource.swift Core/ScienceEngine.swift)
 count=0
 # Every file Bench already shares, from its place in the droplet.
 for file in "$SHARED"/*.swift; do
