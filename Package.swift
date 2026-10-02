@@ -16,5 +16,11 @@ let package = Package(
             name: "Bench",
             path: "Sources/Bench"
         ),
+        // Made-up sessions only: no daemon, no real database.
+        .testTarget(
+            name: "BenchTests",
+            dependencies: ["Bench"],
+            path: "Tests/BenchTests"
+        ),
     ]
 )

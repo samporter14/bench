@@ -55,6 +55,9 @@ enum Demo {
     /// `--open-options` with `--demo toolbar`: the Specimens options popover
     /// opens by itself, for a screenshot.
     static let opensSpecimenOptions = mode == .toolbar && CommandLine.arguments.contains("--open-options")
+    /// `--open-activity` with `--demo toolbar`: the activity list opens by
+    /// itself, filled with made-up sessions.
+    static let opensActivity = mode == .toolbar && CommandLine.arguments.contains("--open-activity")
 
     /// Held so the windows stay up.
     private static var windows: [NSWindow] = []
@@ -125,6 +128,31 @@ enum Demo {
             waitingReason: .question)
     }
 
+    /// Made-up sessions in every state, for the activity list.
+    private static func showActivity() {
+        func make(_ id: String, _ title: String, _ project: String, _ state: SessionState,
+                  _ reason: WaitingReason? = nil, minutes: Double) -> SessionStatus {
+            let now = Date()
+            return SessionStatus(id: id, projectID: "demo", projectName: project, title: title, state: state,
+                                 updatedAt: now, startedAt: now.addingTimeInterval(-minutes * 60), waitingReason: reason)
+        }
+        let question = make("d1", "Protein stability screen", "Example project", .needsInput, .question, minutes: 6)
+        let plan = make("d2", "Batch effect check", "Sequencing pilot", .needsInput, .plan, minutes: 12)
+        let failed = make("d3", "Figure 2 rebuild", "Example project", .error, minutes: 3)
+        let working = [make("d4", "Literature sweep", "Reading group", .running, minutes: 4.2),
+                       make("d5", "Plate layout", "Assay design", .running, minutes: 17.5)]
+        let finished = make("d6", "Primer design", "Cloning", .finished, minutes: 40)
+        let recent = [
+            LabEvent(.finished, session: finished, at: Date().addingTimeInterval(-9 * 60)),
+            LabEvent(.failed, session: failed, at: Date().addingTimeInterval(-2 * 60)),
+            LabEvent(.needsInput(.plan), session: plan, at: Date().addingTimeInterval(-11 * 60)),
+            LabEvent(.saved(URL(fileURLWithPath: "/tmp/example-results.csv")), session: nil,
+                     at: Date().addingTimeInterval(-25 * 60)),
+        ].sorted { $0.at > $1.at }
+        LabModel.shared.showDemo(working: working, cards: [.needsInput(question), .needsInput(plan), .failed(failed)],
+                                 recent: recent)
+    }
+
     // MARK: The modes
 
     private static func showPanel(working: [SessionStatus], cards: [LabCard]) {
@@ -169,7 +197,11 @@ enum Demo {
             PlanLimit(kind: .session, usedPercent: 46, resetsAt: Date(timeIntervalSinceNow: 87 * 60)),
             PlanLimit(kind: .week, usedPercent: 32, resetsAt: Date(timeIntervalSinceNow: 3 * 24 * 3600)),
         ])
-        LabModel.shared.showDemo(working: [session(.running)], cards: [])
+        if opensActivity {
+            showActivity()
+        } else {
+            LabModel.shared.showDemo(working: [session(.running)], cards: [])
+        }
 
         // Built like MainWindowController's window, with a placeholder where
         // the web view is, and no frame autosave: that would be a default.

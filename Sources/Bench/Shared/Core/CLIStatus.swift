@@ -85,6 +85,15 @@ public func fetchCLIStatus(timeout: TimeInterval = 5) throws -> CLIStatus {
     } catch {
         throw ScienceError.cliFailed("\(error)")
     }
+    let parsed = try parseCLIStatus(data, exitStatus: status)
+    ScienceDataDirectory.remember(parsed.dataDir)
+    return parsed
+}
+
+/// The fields Bench needs from `claude-science status`'s JSON. Only an
+/// explicit `"running": false` throws `daemonNotRunning`, the one answer that
+/// lets Bench start a daemon; anything else unexpected is `cliFailed`.
+func parseCLIStatus(_ data: Data, exitStatus status: Int32) throws -> CLIStatus {
     guard
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { throw ScienceError.cliFailed("unparseable output") }
@@ -105,7 +114,6 @@ public func fetchCLIStatus(timeout: TimeInterval = 5) throws -> CLIStatus {
     let version = (json["version"] as? String) ?? "unknown"
     let port = (json["port"] as? Int) ?? 8765
     let dataDir = daemon["data_dir"] as? String
-    ScienceDataDirectory.remember(dataDir)
     return CLIStatus(
         running: true,
         activeFrames: activeFrames,

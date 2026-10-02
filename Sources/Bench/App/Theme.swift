@@ -26,7 +26,12 @@ enum Theme {
 /// User settings (DESIGN.md, Settings), read with @AppStorage by the views
 /// and with UserDefaults by controllers.
 enum SettingsKey {
+    /// The working specimen (the panel while a session works). Before 0.2.0
+    /// it also turned the cards on and off; `showCards` does that now.
     static let showPanel = "showLabPanel"
+    /// Cards when a session needs you, fails or finishes, and page
+    /// notifications.
+    static let showCards = "showLabCards"
     static let soundOnNeedsInput = "soundOnNeedsInput"
     static let panelWhileFront = "panelWhileFront"
     static let pageZoom = "pageZoom"
@@ -36,8 +41,16 @@ enum SettingsKey {
     static let appearance = "appearance"
 
     static func register() {
-        UserDefaults.standard.register(defaults: [
+        let defaults = UserDefaults.standard
+        // From 0.1.x: someone who had switched the whole panel off had the
+        // cards off too, so they stay off rather than appearing after an
+        // update.
+        if defaults.object(forKey: showCards) == nil, let panel = defaults.object(forKey: showPanel) as? Bool {
+            defaults.set(panel, forKey: showCards)
+        }
+        defaults.register(defaults: [
             showPanel: true,
+            showCards: true,
             soundOnNeedsInput: true,
             panelWhileFront: true,
             pageZoom: 1.0,

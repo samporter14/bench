@@ -72,6 +72,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         LabModel.shared.stop()
     }
+
+    /// The Dock icon's menu: the activity list's sessions, so they can be
+    /// opened with the window closed.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        ActivityMenu.shared.make()
+    }
 }
 
 /// The one main window. Its content is SwiftUI; its toolbar is the system's
@@ -210,6 +216,7 @@ struct SettingsView: View {
 /// version at the top.
 struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
+    @AppStorage(SettingsKey.showCards) private var showCards = true
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
     @AppStorage(SettingsKey.panelWhileFront) private var panelWhileFront = true
     @AppStorage(SettingsKey.appearance) private var appearance = BenchAppearance.system.rawValue
@@ -269,20 +276,24 @@ struct GeneralSettingsView: View {
 
             Section("Specimens panel") {
                 Toggle(isOn: $showPanel) {
-                    Text("Show the panel while a session works")
-                    Text("A specimen plays in the corner of your screen until the session stops.")
+                    Text("Show a specimen while a session works")
+                    Text("It plays in the corner of your screen until the session stops. Off, cards still come.")
                 }
                 Toggle(isOn: $panelWhileFront) {
-                    Text("Keep showing it while Bench is in front")
+                    Text("Keep showing the panel while Bench is in front")
                     Text("Off, the panel waits until you switch to another app.")
                 }
-                .disabled(!showPanel)
+                .disabled(!showPanel && !showCards)
             }
 
             Section("When a session needs you") {
+                Toggle(isOn: $showCards) {
+                    Text("Show a card")
+                    Text("In the same corner: a question, a plan to approve, an error or a finish. Recent in the toolbar keeps them either way.")
+                }
                 Toggle(isOn: $sound) {
                     Text("Play a sound")
-                    Text("Once, as the card comes up. The card stays until you answer.")
+                    Text("Once, when a session needs you or stops with an error, with or without the card.")
                 }
             }
 

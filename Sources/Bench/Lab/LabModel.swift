@@ -52,11 +52,47 @@ private extension LabCard {
         }
     }
 
+}
+
+extension LabCard {
+    /// The session a card is about, if it is about one.
     var session: SessionStatus? {
         switch self {
         case .needsInput(let s), .failed(let s), .finished(let s): s
         case .web, .saved: nil
         }
+    }
+}
+
+/// Something that happened to a session, kept for the activity list after its
+/// card is gone. In memory only: nothing about sessions is written to disk.
+struct LabEvent: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case needsInput(WaitingReason?)
+        case failed
+        case finished
+        case saved(URL)
+    }
+
+    /// The kind, the session and its turn: one turn's finish is one event,
+    /// however many times the database or the page reports it.
+    let id: String
+    let kind: Kind
+    let session: SessionStatus?
+    let at: Date
+
+    init(_ kind: Kind, session: SessionStatus?, at: Date = Date()) {
+        self.kind = kind
+        self.session = session
+        self.at = at
+        let turn = session?.startedAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
+        let what: String = switch kind {
+        case .needsInput(let reason): "needs-\(reason?.rawValue ?? "")"
+        case .failed: "failed"
+        case .finished: "finished"
+        case .saved(let url): "saved-\(url.path)"
+        }
+        id = "\(what)-\(session?.id ?? "")-\(turn)"
     }
 }
 
@@ -81,6 +117,11 @@ final class LabModel: ObservableObject {
     /// says it is not updating, rather than counting on as if it were.
     @Published private(set) var staleSince: Date?
     private var lastGoodRead: Date?
+    /// What happened lately, newest first: the activity list's Recent.
+    @Published private(set) var recent: [LabEvent] = []
+    static let recentLimit = 30
+    /// Tests shorten the cards' lifetimes with this.
+    var lifetimeScale = 1.0
 
     private let source = CombinedScienceSource()
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
@@ -107,7 +148,8 @@ final class LabModel: ObservableObject {
     /// are the same moment (DESIGN.md, Notification bridge).
     private static let sameMoment: TimeInterval = 10
 
-    private init() {}
+    /// The app uses `shared`; tests make their own.
+    init() {}
 
     /// Starts watching; registers Router.webNotificationArrived and
     /// Router.downloadSaved.
@@ -117,7 +159,10 @@ final class LabModel: ObservableObject {
         firstRead = true
         generation += 1
         Router.shared.webNotificationArrived = { [weak self] in self?.receive($0) }
-        Router.shared.downloadSaved = { [weak self] in self?.raise(.saved($0)) }
+        Router.shared.downloadSaved = { [weak self] in
+            self?.raise(.saved($0))
+            self?.remember(LabEvent(.saved($0), session: nil))
+        }
         Router.shared.webNotificationClosed = { [weak self] in self?.closeWebNotification($0) }
         log.info("Lab started")
         read()
@@ -145,7 +190,7 @@ final class LabModel: ObservableObject {
         waiting = []
         cards = []
         workingHidden = false
-        NSApp.dockTile.badgeLabel = nil
+        NSApplication.shared.dockTile.badgeLabel = nil
         log.info("Lab stopped")
     }
 
@@ -182,9 +227,11 @@ final class LabModel: ObservableObject {
     }
 
     /// Shows made-up sessions and cards, with no reading. Only Demo calls it.
-    func showDemo(working: [SessionStatus], cards: [LabCard], problem: ScienceError? = nil, staleSince: Date? = nil) {
+    func showDemo(working: [SessionStatus], cards: [LabCard], problem: ScienceError? = nil, staleSince: Date? = nil,
+                  recent: [LabEvent] = []) {
         self.working = working
         self.cards = cards
+        self.recent = recent
         self.problem = problem
         self.staleSince = staleSince
         waiting = cards.compactMap(\.session).filter { $0.state == .needsInput }
@@ -232,6 +279,12 @@ final class LabModel: ObservableObject {
             guard let self, self.generation == epoch else { return }
             self.apply(readout)
         }
+    }
+
+    /// Takes a snapshot as if it had just been read. Tests feed it made-up
+    /// ones; the app's reads come through `read()`.
+    func ingest(_ snapshot: ScienceSnapshot) {
+        apply(Readout(snapshot: snapshot, database: nil))
     }
 
     private func apply(_ readout: Readout) {
@@ -297,19 +350,23 @@ final class LabModel: ObservableObject {
 
     // MARK: Turning a snapshot into state and cards
 
-    private func update(from snapshot: ScienceSnapshot) {
+    /// Internal for tests, which feed it made-up snapshots.
+    func update(from snapshot: ScienceSnapshot) {
         var alert = false
         for transition in engine.advance(to: snapshot) {
             switch transition {
             case .needsInput(let session):
                 supersedePageNotifications(by: session)
                 if raise(.needsInput(session)) { alert = true }
+                remember(LabEvent(.needsInput(session.waitingReason), session: session))
             case .failed(let session):
                 supersedePageNotifications(by: session)
                 if raise(.failed(session)) { alert = true }
+                remember(LabEvent(.failed, session: session))
             case .finished(let session):
                 supersedePageNotifications(by: session)
                 raise(.finished(session))
+                remember(LabEvent(.finished, session: session))
             case .started:
                 break
             }
@@ -329,7 +386,7 @@ final class LabModel: ObservableObject {
         if working != running { working = running }
         if waiting != parked {
             waiting = parked
-            NSApp.dockTile.badgeLabel = parked.isEmpty ? nil : String(parked.count)
+            NSApplication.shared.dockTile.badgeLabel = parked.isEmpty ? nil : String(parked.count)
         }
 
         // A needs-input card is true for as long as its session waits, and says
@@ -385,15 +442,23 @@ final class LabModel: ObservableObject {
             expiries.removeValue(forKey: id)?.cancel()
         }
         guard let front, let lifetime = front.lifetime, expiries[front.id] == nil else { return }
+        let scaled = lifetime * lifetimeScale
         expiries[front.id] = Task { [weak self] in
-            try? await Task.sleep(for: lifetime)
+            try? await Task.sleep(for: scaled)
             guard !Task.isCancelled else { return }
             self?.dismiss(front)
         }
     }
 
+    /// Adds an event to Recent, once: a repeat of the same one (the same
+    /// turn's finish, read again) is not news.
+    private func remember(_ event: LabEvent) {
+        guard !recent.contains(where: { $0.id == event.id }) else { return }
+        recent = Array(([event] + recent).prefix(Self.recentLimit))
+    }
+
     /// The page closed one of its notifications: its card goes too.
-    private func closeWebNotification(_ id: String) {
+    func closeWebNotification(_ id: String) {
         for case .web(let notification) in cards where notification.id == id {
             dismiss(.web(notification))
         }
@@ -413,7 +478,8 @@ final class LabModel: ObservableObject {
         }
     }
 
-    private func receive(_ notification: WebNotification) {
+    /// Internal for tests; the Router calls it in the app.
+    func receive(_ notification: WebNotification) {
         if let frame = notification.frameID, let at = sessionCardAt[frame],
            Date().timeIntervalSince(at) < Self.sameMoment {
             return

@@ -52,6 +52,8 @@ struct LabPanelView: View {
     let onFit: (CGSize) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(SettingsKey.showPanel) private var showWorking = true
+    @AppStorage(SettingsKey.showCards) private var showCards = true
     @Environment(\.colorScheme) private var colorScheme
     @State private var entered = false
     /// The last thing shown, so the panel keeps its look while it fades out
@@ -84,8 +86,8 @@ struct LabPanelView: View {
     }
 
     private var current: Face? {
-        if let card = model.cards.first { return .card(card, count: model.cards.count) }
-        if !model.workingHidden, let session = model.working.first {
+        if showCards, let card = model.cards.first { return .card(card, count: model.cards.count) }
+        if showWorking, !model.workingHidden, let session = model.working.first {
             return .working(session, others: model.working.count - 1)
         }
         return nil
@@ -200,7 +202,7 @@ struct LabPanelView: View {
                        ?? "Can't check right now")
             }
         } else {
-            Row(side: wellSide, well: PlayedGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)) {
+            Row(side: wellSide, well: WorkingGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)) {
                 caption("Working", dot: true, trailing: others > 0 ? "+\(others) more" : nil)
                 title(session.displayTitle)
                 TurnClockText(prefix: session.projectName, since: session.startedAt)

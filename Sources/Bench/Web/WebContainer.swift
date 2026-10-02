@@ -124,7 +124,7 @@ final class WebContainer: ObservableObject {
     }
 
     /// `url` on `port`, when it is a localhost address on another one.
-    private static func moving(_ url: URL, toPort port: Int) -> URL {
+    static func moving(_ url: URL, toPort port: Int) -> URL {
         guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
               ["localhost", "127.0.0.1"].contains(parts.host ?? ""), parts.port != port else { return url }
         parts.port = port

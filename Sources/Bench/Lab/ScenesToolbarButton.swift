@@ -111,7 +111,7 @@ private struct SpecimenOptions: View {
                 }
             }
 
-            Toggle("Show the specimens panel", isOn: $showPanel)
+            Toggle("Show the working specimen", isOn: $showPanel)
                 .toggleStyle(.switch)
                 .tint(Theme.clay)
                 .font(.system(size: 13, weight: .medium))

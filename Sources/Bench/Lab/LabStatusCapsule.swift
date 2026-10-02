@@ -3,26 +3,41 @@
 import SwiftUI
 
 /// The toolbar's live status: a small scene and "Working · 4:12" or
-/// "2 need you"; hidden when idle. Clicking it opens the first session that
-/// waits on the user, otherwise the first that works.
+/// "2 need you", or "Recent" once something has happened; hidden before
+/// then. Clicking it opens the activity list, where each session is a row.
 struct LabStatusCapsule: View {
     @ObservedObject private var model = LabModel.shared
     @ObservedObject private var settings = SceneSettings.shared
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showing = false
 
     var body: some View {
-        if let session = model.waiting.first ?? model.working.first {
+        if !model.waiting.isEmpty || !model.working.isEmpty || !model.recent.isEmpty || model.problem != nil {
             Button {
-                model.open(session)
+                showing.toggle()
             } label: {
                 HStack(spacing: 6) {
-                    scene(for: model.waiting.first)
-                        .frame(width: Theme.capsuleSceneSize, height: Theme.capsuleSceneSize)
+                    if model.waiting.isEmpty, model.working.isEmpty {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        scene(for: model.waiting.first)
+                            .frame(width: Theme.capsuleSceneSize, height: Theme.capsuleSceneSize)
+                    }
                     words
                         .font(.system(size: 12, weight: .medium))
                 }
             }
-            .help("Open the session")
+            .help("Show every session")
+            .popover(isPresented: $showing, arrowEdge: .bottom) {
+                ActivityList { showing = false }
+            }
+            .task {
+                if Demo.opensActivity {
+                    try? await Task.sleep(for: .seconds(1))
+                    showing = true
+                }
+            }
         }
     }
 
@@ -33,7 +48,7 @@ struct LabStatusCapsule: View {
         if let waiting {
             PlayedLoop(glyph: (waiting.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
         } else {
-            PlayedGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)
+            WorkingGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)
         }
     }
 
@@ -45,8 +60,11 @@ struct LabStatusCapsule: View {
                 .foregroundStyle(Theme.clay)
         } else if model.working.count == 1, let session = model.working.first {
             TurnClockText(prefix: "Working", since: session.startedAt)
-        } else {
+        } else if model.working.count > 1 {
             Text("\(model.working.count) working")
+        } else {
+            Text("Recent")
+                .foregroundStyle(.secondary)
         }
     }
 }

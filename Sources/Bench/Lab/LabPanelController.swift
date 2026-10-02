@@ -57,14 +57,17 @@ final class LabPanelController {
         return CGSize(width: 360 + wider + 2 * LabPanelView.margin, height: 240)
     }
 
-    /// The two settings that decide whether the panel may show.
+    /// The settings that decide whether the panel may show: the working
+    /// specimen and the cards are separate choices since 0.2.0.
     private struct Preferences: Equatable {
         let showPanel: Bool
+        let showCards: Bool
         let whileFront: Bool
 
         static func current() -> Preferences {
             let defaults = UserDefaults.standard
             return Preferences(showPanel: defaults.bool(forKey: SettingsKey.showPanel),
+                               showCards: defaults.bool(forKey: SettingsKey.showCards),
                                whileFront: defaults.bool(forKey: SettingsKey.panelWhileFront))
         }
     }
@@ -74,8 +77,8 @@ final class LabPanelController {
         guard subscriptions.isEmpty else { return }
         let center = NotificationCenter.default
 
-        let hasContent = Publishers.CombineLatest3(model.$working, model.$cards, model.$workingHidden)
-            .map { working, cards, hidden in !cards.isEmpty || (!working.isEmpty && !hidden) }
+        let content = Publishers.CombineLatest3(model.$working, model.$cards, model.$workingHidden)
+            .map { working, cards, hidden in (cards: !cards.isEmpty, working: !working.isEmpty && !hidden) }
         // Any change to any default posts this, from any thread; the map is cheap.
         let preferences = center.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: DispatchQueue.main)
@@ -86,9 +89,10 @@ final class LabPanelController {
             center.publisher(for: NSApplication.didResignActiveNotification).map { _ in false })
             .prepend(NSApp.isActive)
 
-        Publishers.CombineLatest3(hasContent, preferences, active)
-            .map { hasContent, preferences, active in
-                preferences.showPanel && hasContent && (preferences.whileFront || !active)
+        Publishers.CombineLatest3(content, preferences, active)
+            .map { content, preferences, active in
+                let has = (preferences.showCards && content.cards) || (preferences.showPanel && content.working)
+                return has && (preferences.whileFront || !active)
             }
             .removeDuplicates()
             // @Published publishes as a value is about to change, not after.

@@ -322,8 +322,28 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
 ### Lab status capsule (toolbar)
 
 A 18pt live scene plus a short text: "Working · 4:12", "2 need you" (in clay),
-or hidden when idle. Clicking it opens the first waiting session, otherwise
-the first working one.
+or "Recent" once something has happened; hidden before then. Clicking it opens
+the activity list.
+
+### Activity list (Lab/ActivityList.swift, Lab/ActivityMenu.swift, since 0.2.0)
+
+Every session at once, in a popover under the status capsule and in the Dock
+icon's menu: **Needs you** (waiting sessions with their reason, and failures
+not yet dismissed), **Working** (with each turn's clock) and **Recent** (the
+last 30 events: questions, plans, errors, finishes and saved downloads, in the
+past tense, with when). Each row opens its session in the one web view and
+closes the list; a saved file shows in Finder. Both read `LabModel`, so
+nothing else polls.
+
+Recent is kept in memory only, so Bench still writes nothing about sessions to
+disk; it lasts until Bench quits. An event is the kind, the session and its
+turn (`startedAt`), so one turn's finish is one entry however often it is
+read. Dismissing a card leaves its event in Recent.
+
+The working specimen and the cards are separate settings since 0.2.0
+(`showLabPanel`, `showLabCards`): the specimen can be off while questions and
+errors still come. Someone who had the whole panel off before keeps the cards
+off after updating. Under Reduce Motion the working specimen is a still.
 
 ## Scenes settings (Lab/SceneSettings.swift)
 

@@ -284,3 +284,24 @@ issues; all nine held up when checked against the code, and all are fixed:
 
 `ScienceEngine.swift` is now Bench's own (`sync-shared.sh` keeps it). Not
 yet checked live: a real failed session, and a real notification close.
+
+## 2026-10-02, Bench 0.2.0 (activity list, Recent, separate settings, tests)
+
+- ✅ **Tests:** `swift test` runs 18 tests in 5 suites, all made-up data
+  (no daemon, no real database): the engine's transitions (failure, a new
+  kind of request, a finish during a failed read), the card queue (a finish
+  behind a question waits its turn; a waiting card updates; a dismissed
+  request returns for a new kind; a failure stays until the session runs),
+  stale reads, a page closing its notification, Recent keeping each event
+  once, status parsing (only an explicit `running: false` means stopped),
+  a two-line name in a real sqlite3 file, and a session link moving to the
+  daemon's port.
+- ✅ **Activity list:** captured on screen from `--demo toolbar
+  --open-activity --quiet` (launched with `open -g -n`; the frontmost app
+  stayed Sam's): Needs you with two waiting sessions and a failure, Working
+  with two clocks, Recent below, scrolling.
+- ✅ Builds with no warnings.
+- Not yet checked live: the Dock menu, the new switches in Settings, the
+  still specimen under Reduce Motion, and the activity list against real
+  sessions.
+
