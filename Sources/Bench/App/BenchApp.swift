@@ -147,12 +147,10 @@ struct BenchToolbar: ViewModifier {
             .toolbar {
                 // On the Mac, items start at the leading edge: push them right.
                 ToolbarSpacer(.flexible)
-                // Only while something works or waits: an item with nothing in
-                // it would still draw an empty glass bubble.
-                if !lab.working.isEmpty || !lab.waiting.isEmpty {
-                    ToolbarItem {
-                        LabStatusCapsule()
-                    }
+                // Always there: what works or waits, else Recent, else a quiet
+                // Activity, so the list stays one click away when all is done.
+                ToolbarItem {
+                    LabStatusCapsule()
                 }
                 // The two readouts share one glass capsule. A group of two
                 // items would get a bubble each.
@@ -230,6 +228,7 @@ struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.holdDuringFocus) private var holdDuringFocus = true
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
     @AppStorage(SettingsKey.panelWhileFront) private var panelWhileFront = true
+    @AppStorage(SettingsKey.panelCorner) private var panelCorner = PanelCorner.bottomRight
     @AppStorage(SettingsKey.appearance) private var appearance = BenchAppearance.system.rawValue
     @ObservedObject private var lab = LabModel.shared
 
@@ -297,6 +296,13 @@ struct GeneralSettingsView: View {
                 Toggle(isOn: $panelWhileFront) {
                     Text("Keep showing the panel while Bench is in front")
                     Text("Off, the panel waits until you switch to another app.")
+                }
+                .disabled(!showPanel && !showCards)
+                Picker(selection: $panelCorner) {
+                    ForEach(PanelCorner.allCases) { Text($0.title).tag($0) }
+                } label: {
+                    Text("Corner")
+                    Text("Where the specimen and the cards sit, on the screen with the menu bar.")
                 }
                 .disabled(!showPanel && !showCards)
             }

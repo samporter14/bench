@@ -184,6 +184,9 @@ Every link goes through one function. The rules:
     or on `Content-Disposition: attachment`.
   - `WKDownloadDelegate` saves to ~/Downloads with a unique name, then posts
     a "Saved <name>" item to the Lab panel with a Show in Finder action.
+  - A download that fails (not one cancelled) says so in an alert, as a
+    sheet on the main window: "Couldn't download "name"" and the reason.
+    Before 0.3.1 it was only logged.
 - `isInspectable = true` (internal build).
 - `isElementFullscreenEnabled = true`.
 - Find (⌘F): a small find bar under the toolbar that uses
@@ -278,8 +281,11 @@ The window:
 
 Position:
 
-- Bottom-right of the **menu-bar screen**'s `visibleFrame`
-  (`NSScreen.screens.first`), inset 20pt.
+- A corner of the **menu-bar screen**'s `visibleFrame`
+  (`NSScreen.screens.first`), inset 20pt: bottom right unless Settings →
+  General → Corner (`panelCorner`, `PanelCorner`) says another, since 0.3.1.
+  The content is aligned to that corner and grows from it; a new corner moves
+  the panel at once.
 - Follow screen changes (`didChangeScreenParametersNotification`).
 
 When it shows:
@@ -322,8 +328,10 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
 ### Lab status capsule (toolbar)
 
 A 18pt live scene plus a short text: "Working · 4:12", "2 need you" (in clay),
-or "Recent" once something has happened; hidden before then. Clicking it opens
-the activity list.
+"Recent" once something has happened, or a quiet "Activity" before then. It is
+always in the toolbar since 0.3.1 (it used to vanish when nothing worked or
+waited), so the list stays one click away. Clicking it opens the activity
+list.
 
 ### Activity list (Lab/ActivityList.swift, Lab/ActivityMenu.swift, since 0.2.0)
 
@@ -338,7 +346,8 @@ nothing else polls.
 The Dock menu is never empty: with nothing working or waiting it says
 "Nothing working right now", and while Recent is still empty (right after a
 start) it lists **Latest**, the five sessions active most recently that
-neither work nor wait, from the last read.
+neither work nor wait, from the last read. The popover lists Latest the same
+way since 0.3.1.
 
 Recent is kept in memory only, so Bench still writes nothing about sessions to
 disk; it lasts until Bench quits. An event is the kind, the session and its
@@ -437,6 +446,9 @@ The Settings **Scenes** tab (760×700) has:
   check when off, and a clay check when on; a click toggles it, and its
   right-click menu has Play Only, Switch On/Off, and Switch On/Off All in its
   category.
+  Hovering a cell plays that specimen alone in the preview well, its name
+  under the well ("Playing what's on" otherwise); leaving goes back to the
+  rotation after 250 ms, so crossing between cells doesn't flash it.
   Cells on screen PLAY, drawn live by `SceneLive` (a TimelineView plus a
   Canvas at 20 fps, 30 under the pointer, keeping no frames). The panel's
   `PlayedGlyph` pre-renders about 1.5 s per scene, and 40 cells of that cost

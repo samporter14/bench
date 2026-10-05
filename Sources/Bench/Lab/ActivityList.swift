@@ -69,7 +69,19 @@ struct ActivityList: View {
                         }
                     }
                 }
-                if model.waiting.isEmpty, failed.isEmpty, model.working.isEmpty, model.recent.isEmpty, model.problem == nil {
+                // Until something happens while Bench is open, the sessions
+                // active last, as the Dock menu lists them.
+                if model.recent.isEmpty, !model.latest.isEmpty {
+                    section("Latest") {
+                        ForEach(model.latest) { session in
+                            row(session, line: nil, accent: false) {
+                                symbol("clock")
+                            }
+                        }
+                    }
+                }
+                if model.waiting.isEmpty, failed.isEmpty, model.working.isEmpty, model.recent.isEmpty, model.latest.isEmpty,
+                   model.problem == nil {
                     Text("Nothing yet. Sessions show up here while they work, and what they did stays under Recent.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

@@ -104,6 +104,18 @@ final class LabPanelController {
             }
             .store(in: &subscriptions)
 
+        // A new corner moves the panel at once.
+        center.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .map { _ in PanelCorner.current }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in
+                guard let self, let panel = self.panel else { return }
+                self.place(panel.frame.size)
+            }
+            .store(in: &subscriptions)
+
         center.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .sink { [weak self] _ in
                 guard let self, let panel = self.panel else { return }
@@ -210,14 +222,16 @@ final class LabPanelController {
         }
     }
 
-    /// Bottom-right of the menu-bar screen's visible frame, with the glass
-    /// (not the clear margin round it) `Theme.panelInset` from the corner.
+    /// In the chosen corner of the menu-bar screen's visible frame (bottom
+    /// right unless changed), with the glass (not the clear margin round it)
+    /// `Theme.panelInset` from the corner.
     private func place(_ size: CGSize) {
         guard let panel, let screen = NSScreen.screens.first else { return }
         let area = screen.visibleFrame
         let margin = LabPanelView.margin
-        let origin = CGPoint(x: area.maxX - Theme.panelInset + margin - size.width,
-                             y: area.minY + Theme.panelInset - margin)
+        let corner = PanelCorner.current
+        let origin = CGPoint(x: corner.isLeft ? area.minX + Theme.panelInset - margin : area.maxX - Theme.panelInset + margin - size.width,
+                             y: corner.isTop ? area.maxY - Theme.panelInset + margin - size.height : area.minY + Theme.panelInset - margin)
         let frame = NSRect(origin: origin, size: size)
         if panel.frame != frame { panel.setFrame(frame, display: true) }
     }

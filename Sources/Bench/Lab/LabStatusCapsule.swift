@@ -1,9 +1,9 @@
 // LabStatusCapsule.swift — the toolbar's live status (DESIGN.md, Lab status
-// capsule): a small scene and a few words, or nothing while idle.
+// capsule): a small scene and a few words, or a quiet Activity while idle.
 import SwiftUI
 
 /// The toolbar's live status: a small scene and "Working · 4:12" or
-/// "2 need you", or "Recent" once something has happened; hidden before
+/// "2 need you", or "Recent" once something has happened, "Activity" before
 /// then. Clicking it opens the activity list, where each session is a row.
 struct LabStatusCapsule: View {
     @ObservedObject private var model = LabModel.shared
@@ -12,31 +12,29 @@ struct LabStatusCapsule: View {
     @State private var showing = false
 
     var body: some View {
-        if !model.waiting.isEmpty || !model.working.isEmpty || !model.recent.isEmpty || model.problem != nil {
-            Button {
-                showing.toggle()
-            } label: {
-                HStack(spacing: 6) {
-                    if model.waiting.isEmpty, model.working.isEmpty {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        scene(for: model.waiting.first)
-                            .frame(width: Theme.capsuleSceneSize, height: Theme.capsuleSceneSize)
-                    }
-                    words
-                        .font(.system(size: 12, weight: .medium))
+        Button {
+            showing.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                if model.waiting.isEmpty, model.working.isEmpty {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .foregroundStyle(.secondary)
+                } else {
+                    scene(for: model.waiting.first)
+                        .frame(width: Theme.capsuleSceneSize, height: Theme.capsuleSceneSize)
                 }
+                words
+                    .font(.system(size: 12, weight: .medium))
             }
-            .help("Show every session")
-            .popover(isPresented: $showing, arrowEdge: .bottom) {
-                ActivityList { showing = false }
-            }
-            .task {
-                if Demo.opensActivity {
-                    try? await Task.sleep(for: .seconds(1))
-                    showing = true
-                }
+        }
+        .help("Show every session")
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            ActivityList { showing = false }
+        }
+        .task {
+            if Demo.opensActivity {
+                try? await Task.sleep(for: .seconds(1))
+                showing = true
             }
         }
     }
@@ -63,7 +61,7 @@ struct LabStatusCapsule: View {
         } else if model.working.count > 1 {
             Text("\(model.working.count) working")
         } else {
-            Text("Recent")
+            Text(model.recent.isEmpty ? "Activity" : "Recent")
                 .foregroundStyle(.secondary)
         }
     }

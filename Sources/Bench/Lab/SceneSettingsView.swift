@@ -2,8 +2,8 @@
 // settings"), in the Mac's own controls: a heading, the size and the preview
 // with its light/dark switch, a checkbox per category, search, a filter and
 // counts, and every specimen in a grid, a section per category, to switch on
-// or off one by one. The one cell under the pointer lifts to glass. The cells
-// on screen play; the rest hold a still.
+// or off one by one. The one cell under the pointer lifts to glass and plays
+// alone in the preview. The cells on screen play; the rest hold a still.
 import SwiftUI
 
 struct SceneSettingsView: View {
@@ -12,6 +12,10 @@ struct SceneSettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
     @State private var showing = Showing.all
+    /// The specimen under the pointer, which the preview plays alone so it
+    /// can be judged at the panel's size.
+    @State private var auditioning: LabScene?
+    @State private var endAudition: Task<Void, Never>?
     /// Light or dark for this whole tab (its window, while the tab shows);
     /// nil follows the app.
     @State private var previewScheme: ColorScheme?
@@ -74,7 +78,12 @@ struct SceneSettingsView: View {
             .padding(.top, 4)
             Spacer(minLength: 0)
             VStack(spacing: 10) {
-                PreviewWell(size: settings.size, rotation: settings.rotation, spring: spring)
+                PreviewWell(size: settings.size, rotation: auditioning.map { Rotation([$0]) } ?? settings.rotation, spring: spring)
+                Text(auditioning?.name ?? "Playing what’s on")
+                    .font(.callout)
+                    .foregroundStyle(auditioning == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                    .frame(width: PreviewWell.side)
                 Picker("Show this tab in", selection: Binding(get: { shownScheme }, set: { previewScheme = $0 })) {
                     Image(systemName: "sun.max").accessibilityLabel("Ivory").tag(ColorScheme.light)
                     Image(systemName: "moon").accessibilityLabel("Slate").tag(ColorScheme.dark)
@@ -169,7 +178,8 @@ struct SceneSettingsView: View {
                         ForEach(shown, id: \.group) { section in
                             Section {
                                 ForEach(section.scenes, id: \.name) { scene in
-                                    SceneCell(scene: scene, isOn: settings.isOn(scene)) { settings.toggle(scene) }
+                                    SceneCell(scene: scene, isOn: settings.isOn(scene), toggle: { settings.toggle(scene) },
+                                              hovered: { audition(scene, $0) })
                                         .equatable()
                                 }
                             } header: {
@@ -186,6 +196,21 @@ struct SceneSettingsView: View {
         .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: .separatorColor)))
         .clipShape(.rect(cornerRadius: 10))
+    }
+
+    /// The preview takes the hovered specimen at once, and goes back to the
+    /// rotation a moment after the pointer leaves, so crossing from one cell
+    /// to the next doesn't flash the rotation in between.
+    private func audition(_ scene: LabScene, _ hovering: Bool) {
+        endAudition?.cancel()
+        if hovering {
+            auditioning = scene
+        } else if auditioning?.name == scene.name {
+            endAudition = Task {
+                try? await Task.sleep(for: .milliseconds(250))
+                if !Task.isCancelled { auditioning = nil }
+            }
+        }
     }
 
     private func sectionHeader(_ group: SceneGroup) -> some View {
@@ -210,6 +235,8 @@ private struct SceneCell: View, Equatable {
     let scene: LabScene
     let isOn: Bool
     let toggle: () -> Void
+    /// Tells the tab the pointer came or went, for the preview.
+    let hovered: (Bool) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -245,7 +272,10 @@ private struct SceneCell: View, Equatable {
                 Color.clear.glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
             }
         }
-        .onHover { hovering = $0 }
+        .onHover {
+            hovering = $0
+            hovered($0)
+        }
         .contextMenu { menu }
         .onAppear { visible = true }
         .onDisappear { visible = false }
@@ -346,7 +376,7 @@ private struct PreviewWell: View {
     @Environment(\.colorScheme) private var colorScheme
 
     /// Holds the largest well, so nothing around it moves when the size does.
-    private static let side = SceneSize.large.points + 28
+    static let side = SceneSize.large.points + 28
 
     var body: some View {
         ZStack {

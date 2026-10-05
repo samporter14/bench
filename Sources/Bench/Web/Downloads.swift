@@ -1,7 +1,7 @@
 // Downloads.swift — saves what a page hands over as a file (DESIGN.md,
 // Downloads). One saver serves every web view, and one helper decides when a
 // navigation becomes a download, so no delegate can forget a case.
-import Foundation
+import AppKit
 import os
 import WebKit
 
@@ -61,8 +61,24 @@ final class Downloads: NSObject, WKDownloadDelegate {
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         Logger.web.error("Download failed: \(error.localizedDescription, privacy: .public)")
         // Take back the name, and the half-written file this download made.
-        if let target = destinations.removeValue(forKey: ObjectIdentifier(download)) {
-            try? FileManager.default.removeItem(at: target)
+        let target = destinations.removeValue(forKey: ObjectIdentifier(download))
+        if let target { try? FileManager.default.removeItem(at: target) }
+        // Cancelled is a choice, not a failure: say nothing.
+        let failure = error as NSError
+        guard !(failure.domain == NSURLErrorDomain && failure.code == NSURLErrorCancelled) else { return }
+        tell(failed: target?.lastPathComponent, because: error)
+    }
+
+    /// Says a download failed, on the window it came from when there is one.
+    private func tell(failed name: String?, because error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = name.map { "Couldn’t download “\($0)”" } ?? "Couldn’t download the file"
+        alert.informativeText = error.localizedDescription
+        if let window = NSApp.mainWindow ?? NSApp.keyWindow {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
         }
     }
 

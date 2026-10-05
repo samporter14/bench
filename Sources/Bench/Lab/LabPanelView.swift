@@ -54,6 +54,7 @@ struct LabPanelView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(SettingsKey.showPanel) private var showWorking = true
     @AppStorage(SettingsKey.showCards) private var showCards = true
+    @AppStorage(SettingsKey.panelCorner) private var corner = PanelCorner.bottomRight
     @Environment(\.colorScheme) private var colorScheme
     @State private var entered = false
     /// The last thing shown, so the panel keeps its look while it fades out
@@ -106,7 +107,7 @@ struct LabPanelView: View {
                 panel(face)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: corner.alignment)
         .onChange(of: current, initial: true) { _, face in
             if let face { held = face }
         }
@@ -134,7 +135,7 @@ struct LabPanelView: View {
         .fixedSize()
         .animation(reduceMotion ? nil : Theme.spring, value: face.motionKey)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { onFit($0) }
-        .scaleEffect(entered || reduceMotion ? 1 : 0.94, anchor: .bottomTrailing)
+        .scaleEffect(entered || reduceMotion ? 1 : 0.94, anchor: corner.anchor)
         .onAppear {
             withAnimation(reduceMotion ? nil : Theme.spring) { entered = true }
         }

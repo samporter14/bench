@@ -42,6 +42,8 @@ enum SettingsKey {
     static let holdDuringFocus = "holdDuringNidusFocus"
     static let soundOnNeedsInput = "soundOnNeedsInput"
     static let panelWhileFront = "panelWhileFront"
+    /// Which corner of the screen the panel sits in: see `PanelCorner`.
+    static let panelCorner = "panelCorner"
     static let pageZoom = "pageZoom"
     /// Which Settings tab is showing: "general" or "scenes".
     static let settingsTab = "settingsTab"
@@ -65,9 +67,51 @@ enum SettingsKey {
             holdDuringFocus: true,
             soundOnNeedsInput: true,
             panelWhileFront: true,
+            panelCorner: PanelCorner.bottomRight.rawValue,
             pageZoom: 1.0,
             appearance: BenchAppearance.system.rawValue,
         ])
+    }
+}
+
+/// The corner of the menu-bar screen the specimens panel sits in.
+enum PanelCorner: String, CaseIterable, Identifiable {
+    case bottomRight, bottomLeft, topRight, topLeft
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .bottomRight: "Bottom right"
+        case .bottomLeft: "Bottom left"
+        case .topRight: "Top right"
+        case .topLeft: "Top left"
+        }
+    }
+
+    var isTop: Bool { self == .topRight || self == .topLeft }
+    var isLeft: Bool { self == .bottomLeft || self == .topLeft }
+
+    /// Where the panel's content sits in its window, and grows from.
+    var alignment: SwiftUI.Alignment {
+        switch self {
+        case .bottomRight: .bottomTrailing
+        case .bottomLeft: .bottomLeading
+        case .topRight: .topTrailing
+        case .topLeft: .topLeading
+        }
+    }
+
+    var anchor: UnitPoint {
+        switch self {
+        case .bottomRight: .bottomTrailing
+        case .bottomLeft: .bottomLeading
+        case .topRight: .topTrailing
+        case .topLeft: .topLeading
+        }
+    }
+
+    static var current: PanelCorner {
+        UserDefaults.standard.string(forKey: SettingsKey.panelCorner).flatMap(PanelCorner.init(rawValue:)) ?? .bottomRight
     }
 }
 
