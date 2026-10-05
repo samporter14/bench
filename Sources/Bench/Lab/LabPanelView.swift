@@ -65,6 +65,10 @@ struct LabPanelView: View {
         case working(SessionStatus, others: Int)
         case card(LabCard, count: Int)
 
+        var isWorking: Bool {
+            if case .working = self { true } else { false }
+        }
+
         /// The panel grows and shrinks with the scene well: 336 or 360 at the
         /// default 88 pt, plus however much larger or smaller the well is.
         func width(well: CGFloat) -> CGFloat {
@@ -150,6 +154,7 @@ struct LabPanelView: View {
             .contentShape(.rect(cornerRadius: Theme.panelCorner))
             .onTapGesture { open(face) }
             .accessibilityAction(named: "Open") { open(face) }
+            .modifier(PlayingSpecimenMenu(active: face.isWorking && model.problem == nil, rotation: settings.rotation))
         }
     }
 

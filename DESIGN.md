@@ -391,31 +391,52 @@ activity list in a popover. Its ink follows the menu bar's appearance (the
 wallpaper's), not Bench's Ivory or Slate. Hidden, not removed, while nothing
 works, so it keeps its place. Measured at about 0–2% CPU while playing.
 
-## Scenes settings (Lab/SceneSettings.swift)
+## Scenes settings (Lab/SceneSettings.swift, Lab/SpecimenChoice.swift)
 
 `SceneSettings.shared` holds three settings in UserDefaults:
 
 | Setting | Key | Values | Default |
 |---|---|---|---|
 | `size` | `sceneSize` | small 64, medium 88, large 120 (points) | medium |
-| `groups` | `sceneGroups` | `SceneGroup` raw values | all six |
-| `hidden` | `hiddenScenes` | scene names | none |
+| `groups` | `sceneGroups` | `SceneGroup` raw values: the categories that are on | all six |
+| `hidden` | `hiddenScenes` | names switched off one by one, inside categories that are on | none |
 
-`rotation` is `Rotation(LabScenes.spread(LabScenes.catalogue.filter { in a
-chosen group and not hidden }))`, or `Rotation.full` when nothing is filtered.
-At least one scene always stays on: the last one can't be switched off.
+The rules live in `SpecimenChoice`, a value type with tests
+(`SpecimenChoiceTests`); `SceneSettings` keeps one and writes it back.
+- A specimen is on when its category is on and it isn't hidden.
+- A category's checkbox has three states: on (all of it), mixed (some, shown
+  as a dash with "N of M"), off (none). A click on on goes all off; on mixed
+  or off goes all on, as a Mac's mixed checkbox does.
+- Switching on a specimen in a category that is off turns on that specimen
+  alone (the category comes on with its other specimens hidden).
+- Switching off a category's last specimen switches the category off, so
+  specimens it gains in an update stay off too. Stored choices are tidied the
+  same way when read.
+- "Play Only" leaves one specimen on. None keeps the first specimen that is
+  on. At least one specimen always stays on: the last one can't be switched
+  off, nor the last category with any on.
+
+`rotation` is `Rotation(LabScenes.spread(the specimens that are on))`, or
+`Rotation.full` when everything is on.
 
 The panel's well, and its width (base + size − 88), follow `size`. The
-panel's and the capsule's scenes play `rotation`.
+panel's and the capsule's scenes play `rotation`. Right-clicking the working
+panel offers Don't Play "Name", Play Only "Name" (the specimen playing when
+the menu opens, followed with `SceneBoundarySchedule`) and Choose Specimens….
 
-The Settings **Scenes** tab (about 760×640) has:
-- a Size segmented picker, with a live well at that size beside it;
-- category chips with counts, which toggle;
-- a search field;
-- "N of 487 on", with All and None (None keeps one on);
-- a LazyVGrid of the scenes in the categories that are on (a category that
-  is off leaves the grid). Each cell is 56 pt with the name under it, dimmed
-  with no check when off, and a clay check when on; a click toggles it.
+The Settings **Scenes** tab (760×700) has:
+- a Size segmented picker, with a live well at that size beside it, and a
+  line saying a click switches a specimen on or off and a right-click plays
+  only it;
+- category checkboxes with counts (mixed when some are on);
+- a search field, an All / On / Off filter, "N of M on", and All and None
+  (None keeps one on);
+- a LazyVGrid of every specimen, one section per category headed "Name N of
+  M on", including categories that are off, so any specimen can be picked
+  from anywhere. Each cell is 58 pt with the name under it, dimmed with no
+  check when off, and a clay check when on; a click toggles it, and its
+  right-click menu has Play Only, Switch On/Off, and Switch On/Off All in its
+  category.
   Cells on screen PLAY, drawn live by `SceneLive` (a TimelineView plus a
   Canvas at 20 fps, 30 under the pointer, keeping no frames). The panel's
   `PlayedGlyph` pre-renders about 1.5 s per scene, and 40 cells of that cost
@@ -426,10 +447,10 @@ The Settings **Scenes** tab (about 760×640) has:
   (`.preferredColorScheme` on the tab, which sets its window's scheme while
   the tab shows); it starts on the app's. No boards inside the tab (Sam: "the
   entire panel should match… not a square around the glyphs").
-- Category chips (`CategoryChip`, shared with the Specimens popover): on is a
-  clay ✓ with a drawn clay fill (0.22) and a clay hairline; off is plain glass
-  with grey text. Not a glass tint: on macOS 27 `.glassEffect(.regular.tint(…))`
-  barely shows, and on and off looked the same.
+- Category checkboxes (`CategoryChip`, shared with the Specimens popover):
+  SwiftUI's `Toggle(sources:isOn:)` over two bindings (any on, all on) draws
+  the mixed dash; each binding writes the whole category, so a click changes
+  it once. The popover's way into the tab is "Choose specimens one by one…".
 
 ## Usage (Usage/)
 

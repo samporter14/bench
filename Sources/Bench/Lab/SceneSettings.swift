@@ -31,21 +31,15 @@ final class SceneSettings: ObservableObject {
         didSet { UserDefaults.standard.set(size.rawValue, forKey: Key.size) }
     }
 
-    /// The categories that are on. A scene plays only if its category is on
-    /// and it isn't in `hidden`.
-    @Published var groups: Set<SceneGroup> {
+    /// Which specimens play (SpecimenChoice has the rules), stored as the
+    /// categories that are on and the specimens switched off one by one.
+    @Published private(set) var choice: SpecimenChoice {
         didSet {
+            guard choice != oldValue else { return }
+            let defaults = UserDefaults.standard
             // In the enum's order, so the stored array doesn't shuffle between writes.
-            let stored = SceneGroup.allCases.filter(groups.contains).map(\.rawValue)
-            UserDefaults.standard.set(stored, forKey: Key.groups)
-            cachedRotation = nil
-        }
-    }
-
-    /// Names of the scenes switched off one by one.
-    @Published var hidden: Set<String> {
-        didSet {
-            UserDefaults.standard.set(hidden.sorted(), forKey: Key.hidden)
+            defaults.set(SceneGroup.allCases.filter(choice.groups.contains).map(\.rawValue), forKey: Key.groups)
+            defaults.set(choice.hidden.sorted(), forKey: Key.hidden)
             cachedRotation = nil
         }
     }
@@ -55,7 +49,7 @@ final class SceneSettings: ObservableObject {
     /// nothing is showing it. Views read it on every layout, so it is kept.
     var rotation: Rotation {
         if let cachedRotation { return cachedRotation }
-        let built = Self.rotation(groups: groups, hidden: hidden)
+        let built = choice.rotation
         cachedRotation = built
         return built
     }
@@ -64,88 +58,33 @@ final class SceneSettings: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
-        var groups = Set(SceneGroup.allCases)
-        if let stored = defaults.stringArray(forKey: Key.groups) {
-            groups = Set(stored.compactMap(SceneGroup.init(rawValue:)))
-        }
-        var hidden = Set(defaults.stringArray(forKey: Key.hidden) ?? [])
-        // A stored choice that leaves nothing playing (an edited plist, scenes
-        // renamed since) starts afresh: an empty rotation cannot be played.
-        if Self.count(groups: groups, hidden: hidden) == 0 {
-            groups = Set(SceneGroup.allCases)
-            hidden = []
-        }
+        let groups = defaults.stringArray(forKey: Key.groups).map { Set($0.compactMap(SceneGroup.init(rawValue:))) }
+        choice = SpecimenChoice(groups: groups ?? Set(SceneGroup.allCases), hidden: Set(defaults.stringArray(forKey: Key.hidden) ?? []))
         size = defaults.string(forKey: Key.size).flatMap(SceneSize.init(rawValue:)) ?? .medium
-        self.groups = groups
-        self.hidden = hidden
     }
 
     // MARK: Reading
 
-    func isOn(_ scene: LabScene) -> Bool {
-        groups.contains(scene.theme.group) && !hidden.contains(scene.name)
-    }
+    func isOn(_ scene: LabScene) -> Bool { choice.isOn(scene) }
 
     /// How many scenes are on.
-    var onCount: Int { Self.count(groups: groups, hidden: hidden) }
+    var onCount: Int { choice.onCount }
 
-    /// Whether the category can be flipped: switching off the one that holds
-    /// the last scenes would leave nothing to play.
-    func canToggle(_ group: SceneGroup) -> Bool {
-        !groups.contains(group) || Self.count(groups: groups.subtracting([group]), hidden: hidden) > 0
-    }
+    func state(of group: SceneGroup) -> SpecimenChoice.State { choice.state(of: group) }
+
+    func canTurnOff(_ group: SceneGroup) -> Bool { choice.canTurnOff(group) }
+
+    func canTurnOff(_ scene: LabScene) -> Bool { choice.canTurnOff(scene) }
 
     // MARK: Changing
 
-    func toggle(_ group: SceneGroup) {
-        guard canToggle(group) else { return }
-        if groups.contains(group) {
-            groups.remove(group)
-        } else {
-            groups.insert(group)
-        }
-    }
+    func toggle(_ group: SceneGroup) { choice.toggle(group) }
 
-    /// Flips one scene. In a category that is off, the scene shows dimmed and a
-    /// click brings the category back, this scene included. The last scene
-    /// that is on stays on.
-    func toggle(_ scene: LabScene) {
-        let group = scene.theme.group
-        if !groups.contains(group) {
-            hidden.remove(scene.name)
-            groups.insert(group)
-        } else if hidden.contains(scene.name) {
-            hidden.remove(scene.name)
-        } else if onCount > 1 {
-            hidden.insert(scene.name)
-        }
-    }
+    func set(_ group: SceneGroup, on: Bool) { choice.set(group, on: on) }
 
-    /// Everything on, or everything off but one scene: the first one that is
-    /// on now, so "None" leaves something the user chose to start from.
-    func setAll(on: Bool) {
-        guard !on else {
-            groups = Set(SceneGroup.allCases)
-            hidden = []
-            return
-        }
-        let keeper = LabScenes.catalogue.first(where: isOn) ?? LabScenes.catalogue[0]
-        let group = keeper.theme.group
-        groups = [group]
-        hidden = Set(LabScenes.catalogue.filter { $0.theme.group == group && $0.name != keeper.name }.map(\.name))
-    }
+    func toggle(_ scene: LabScene) { choice.toggle(scene) }
 
-    // MARK: Deriving
+    func playOnly(_ scene: LabScene) { choice.playOnly(scene) }
 
-    private static func count(groups: Set<SceneGroup>, hidden: Set<String>) -> Int {
-        LabScenes.catalogue.count(where: { groups.contains($0.theme.group) && !hidden.contains($0.name) })
-    }
-
-    /// The full rotation when nothing is filtered, so the everyday case is the
-    /// one already built. Never empty: nothing chosen falls back to everything.
-    private static func rotation(groups: Set<SceneGroup>, hidden: Set<String>) -> Rotation {
-        guard !hidden.isEmpty || groups.count < SceneGroup.allCases.count else { return .full }
-        let chosen = LabScenes.catalogue.filter { groups.contains($0.theme.group) && !hidden.contains($0.name) }
-        return chosen.isEmpty ? .full : Rotation(LabScenes.spread(chosen))
-    }
+    func setAll(on: Bool) { choice.setAll(on: on) }
 }

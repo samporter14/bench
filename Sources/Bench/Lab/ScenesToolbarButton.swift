@@ -140,7 +140,7 @@ private struct SpecimenOptions: View {
                     .monospacedDigit()
             }
 
-            Button("Choose specimens…") {
+            Button("Choose specimens one by one…") {
                 close()
                 SettingsWindow.open(tab: "scenes")
             }
@@ -151,19 +151,28 @@ private struct SpecimenOptions: View {
     }
 }
 
-/// A category's checkbox, with how many specimens it holds. Checked is
-/// unmistakable on every macOS, where a tinted chip was not. The last one on
-/// can't be switched off: its box stays checked and greyed (`toggle` refuses).
+/// A category's checkbox, with how many specimens it holds: checked when
+/// all are on, a dash when some are (picked one by one in Settings), clear
+/// when none are. Checked is unmistakable on every macOS, where a tinted chip
+/// was not. The last category on can't be switched off: its box stays
+/// checked and greyed (`set` refuses).
 struct CategoryChip: View {
     let group: SceneGroup
     @ObservedObject private var settings = SceneSettings.shared
 
     var body: some View {
-        let on = settings.groups.contains(group)
-        Toggle(isOn: Binding(get: { settings.groups.contains(group) }, set: { _ in settings.toggle(group) })) {
+        let state = settings.state(of: group)
+        // SwiftUI draws a mixed checkbox for a toggle over several sources:
+        // two, one on when any specimen is and one when all are. Each writes
+        // the whole category, so a click changes it once however many it sets.
+        let sources = [
+            Binding(get: { state != .off }, set: { settings.set(group, on: $0) }),
+            Binding(get: { state == .on }, set: { settings.set(group, on: $0) }),
+        ]
+        Toggle(sources: sources, isOn: \.self) {
             HStack(spacing: 5) {
                 Text(group.title)
-                Text("\(group.count)")
+                Text(state == .mixed ? "\(settings.choice.onCount(in: group)) of \(group.count)" : "\(group.count)")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
@@ -171,7 +180,7 @@ struct CategoryChip: View {
             .fixedSize()
         }
         .toggleStyle(.checkbox)
-        .disabled(on && !settings.canToggle(group))
-        .help(settings.canToggle(group) ? group.title : "At least one specimen has to stay on")
+        .disabled(state == .on && !settings.canTurnOff(group))
+        .help(state == .on && !settings.canTurnOff(group) ? "At least one specimen has to stay on" : group.title)
     }
 }

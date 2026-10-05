@@ -56,8 +56,11 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 ## Make it yours
 
 Pick how big the specimens play, turn whole categories on or off, or choose
-them one by one, in Settings → Specimens. The preview plays only what's on,
-in light or dark.
+them one by one, in Settings → Specimens: click a specimen to switch it on or
+off, or right-click it to play only that one. Show only the ones that are on
+or off to check your picks. The preview plays only what's on, in light or
+dark. Tired of the one playing right now? Right-click the panel and choose
+Don't Play.
 
 <img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, a checkbox per category and a grid of specimens to choose from">
 

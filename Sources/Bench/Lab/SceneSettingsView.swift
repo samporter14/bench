@@ -1,8 +1,9 @@
 // SceneSettingsView.swift — Settings > Specimens (DESIGN.md, "Scenes
 // settings"), in the Mac's own controls: a heading, the size and the preview
-// with its light/dark switch, a checkbox per category, search and counts, and
-// every specimen in a grid to switch on or off. The one cell under the pointer
-// lifts to glass. The cells on screen play; the rest hold a still.
+// with its light/dark switch, a checkbox per category, search, a filter and
+// counts, and every specimen in a grid, a section per category, to switch on
+// or off one by one. The one cell under the pointer lifts to glass. The cells
+// on screen play; the rest hold a still.
 import SwiftUI
 
 struct SceneSettingsView: View {
@@ -10,16 +11,22 @@ struct SceneSettingsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
+    @State private var showing = Showing.all
     /// Light or dark for this whole tab (its window, while the tab shows);
     /// nil follows the app.
     @State private var previewScheme: ColorScheme?
 
     private var shownScheme: ColorScheme { previewScheme ?? colorScheme }
 
-    /// Every scene, each category's together so that a chip's switch reads as
-    /// one block of the grid. Built once: the catalogue does not change.
-    private static let scenes: [LabScene] = SceneGroup.allCases.flatMap { group in
-        LabScenes.catalogue.filter { $0.theme.group == group }
+    /// Which specimens the grid shows.
+    private enum Showing: String, CaseIterable {
+        case all = "All", on = "On", off = "Off"
+    }
+
+    /// Every scene by category, in the catalogue's order within each. Built
+    /// once: the catalogue does not change.
+    private static let sections: [(group: SceneGroup, scenes: [LabScene])] = SceneGroup.allCases.map { group in
+        (group, LabScenes.catalogue.filter { $0.theme.group == group })
     }
 
     private static let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 8)
@@ -50,8 +57,9 @@ struct SceneSettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("What plays while you work")
                         .font(.title2.weight(.semibold))
-                    Text("One specimen at a time, in the panel at the corner of your screen.")
+                    Text("One specimen at a time, in the panel at the corner of your screen. Click a specimen below to switch it on or off, or right-click it to play only that one.")
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 10) {
                     Text("Size")
@@ -99,6 +107,13 @@ struct SceneSettingsView: View {
     private var controls: some View {
         HStack(spacing: 12) {
             search
+            Picker("Show", selection: $showing) {
+                ForEach(Showing.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Show every specimen, or only those on or off")
             Spacer(minLength: 12)
             Text("\(settings.onCount) of \(LabScenes.catalogue.count) on")
                 .foregroundStyle(.secondary)
@@ -117,14 +132,22 @@ struct SceneSettingsView: View {
 
     // MARK: The grid
 
-    /// The scenes in the categories that are on whose name holds the search
-    /// text, in the grid's order. A category that is off leaves the grid, so
-    /// the grid is what can play; its scenes come back with its chip.
-    private var matching: [LabScene] {
-        let inGroups = Self.scenes.filter { settings.groups.contains($0.theme.group) }
+    /// Each category's specimens that pass the filter and whose name holds
+    /// the search text, leaving out categories with none. Every category is
+    /// here, on or off, so a specimen can be picked from one that is off.
+    private var matching: [(group: SceneGroup, scenes: [LabScene])] {
         let needle = query.trimmingCharacters(in: .whitespaces)
-        guard !needle.isEmpty else { return inGroups }
-        return inGroups.filter { $0.name.localizedCaseInsensitiveContains(needle) }
+        return Self.sections.compactMap { section in
+            let scenes = section.scenes.filter { scene in
+                switch showing {
+                case .all: break
+                case .on: guard settings.isOn(scene) else { return false }
+                case .off: guard !settings.isOn(scene) else { return false }
+                }
+                return needle.isEmpty || scene.name.localizedCaseInsensitiveContains(needle)
+            }
+            return scenes.isEmpty ? nil : (section.group, scenes)
+        }
     }
 
     @ViewBuilder
@@ -132,14 +155,26 @@ struct SceneSettingsView: View {
         let shown = matching
         Group {
             if shown.isEmpty {
-                ContentUnavailableView.search(text: query)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    ContentUnavailableView(showing == .off ? "Every specimen is on" : "No specimens are on",
+                                           systemImage: "flask")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ContentUnavailableView.search(text: query)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 ScrollView {
                     LazyVGrid(columns: Self.columns, spacing: 12) {
-                        ForEach(shown, id: \.name) { scene in
-                            SceneCell(scene: scene, isOn: settings.isOn(scene)) { settings.toggle(scene) }
-                                .equatable()
+                        ForEach(shown, id: \.group) { section in
+                            Section {
+                                ForEach(section.scenes, id: \.name) { scene in
+                                    SceneCell(scene: scene, isOn: settings.isOn(scene)) { settings.toggle(scene) }
+                                        .equatable()
+                                }
+                            } header: {
+                                sectionHeader(section.group)
+                            }
                         }
                     }
                     .padding(.horizontal, 12)
@@ -151,6 +186,19 @@ struct SceneSettingsView: View {
         .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: .separatorColor)))
         .clipShape(.rect(cornerRadius: 10))
+    }
+
+    private func sectionHeader(_ group: SceneGroup) -> some View {
+        HStack(spacing: 6) {
+            Text(group.title)
+                .font(.headline)
+            Text("\(settings.choice.onCount(in: group)) of \(group.count) on")
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
     }
 }
 
@@ -198,12 +246,27 @@ private struct SceneCell: View, Equatable {
             }
         }
         .onHover { hovering = $0 }
+        .contextMenu { menu }
         .onAppear { visible = true }
         .onDisappear { visible = false }
         .help(scene.name)
         .accessibilityLabel(scene.name)
         .accessibilityValue(isOn ? "On" : "Off")
         .accessibilityAddTraits(.isToggle)
+    }
+
+    /// The right-click menu: this specimen alone, or its whole category.
+    @ViewBuilder private var menu: some View {
+        let settings = SceneSettings.shared
+        let group = scene.theme.group
+        Button("Play Only “\(scene.name)”") { settings.playOnly(scene) }
+        Button(isOn ? "Switch Off" : "Switch On", action: toggle)
+            .disabled(!settings.canTurnOff(scene))
+        Divider()
+        Button("Switch On All in \(group.title)") { settings.set(group, on: true) }
+            .disabled(settings.state(of: group) == .on)
+        Button("Switch Off All in \(group.title)") { settings.set(group, on: false) }
+            .disabled(settings.state(of: group) == .off || !settings.canTurnOff(group))
     }
 
     private var tile: some View {

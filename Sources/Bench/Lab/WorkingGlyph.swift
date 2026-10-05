@@ -28,3 +28,37 @@ private struct StillSpecimen: View {
         .accessibilityHidden(true)
     }
 }
+
+/// The working panel's right-click menu: stop the specimen that is playing,
+/// play only it, or choose in Settings. The menu follows the rotation, so it
+/// names whatever is playing when it opens.
+struct PlayingSpecimenMenu: ViewModifier {
+    let active: Bool
+    let rotation: Rotation
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        if !active {
+            content
+        } else if reduceMotion {
+            // A still flask plays nothing to name.
+            content.contextMenu { choose }
+        } else {
+            TimelineView(SceneBoundarySchedule(rotation: rotation)) { timeline in
+                let scene = rotation.scenes[rotation.scene(at: timeline.date.timeIntervalSinceReferenceDate).index]
+                content.contextMenu {
+                    let settings = SceneSettings.shared
+                    Button("Don’t Play “\(scene.name)”") { settings.toggle(scene) }
+                        .disabled(!settings.isOn(scene) || !settings.canTurnOff(scene))
+                    Button("Play Only “\(scene.name)”") { settings.playOnly(scene) }
+                    Divider()
+                    choose
+                }
+            }
+        }
+    }
+
+    private var choose: some View {
+        Button("Choose Specimens…") { SettingsWindow.open(tab: "scenes") }
+    }
+}
