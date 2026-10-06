@@ -7,6 +7,10 @@ struct WorkingGlyph: View {
     var rotation: Rotation = .full
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// The specimen under Reduce Motion: the first one, the flask. The
+    /// panel's caption line names it.
+    static var still: LabScene? { LabScenes.catalogue.first }
+
     var body: some View {
         if reduceMotion {
             StillSpecimen(tint: tint)
@@ -22,7 +26,7 @@ private struct StillSpecimen: View {
 
     var body: some View {
         Canvas { context, size in
-            guard let scene = LabScenes.catalogue.first else { return }
+            guard let scene = WorkingGlyph.still else { return }
             LabScenes.draw(scene, in: &context, size: size, local: scene.duration * 0.6, tint: tint)
         }
         .accessibilityHidden(true)

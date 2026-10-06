@@ -38,6 +38,34 @@ struct TurnClockText: View {
     }
 }
 
+/// "Kinesin · A motor protein on a microtubule": the specimen that's playing,
+/// on one quiet line. It follows the rotation as the panel's well does, by the
+/// clock, and ticks only when the rotation moves on. One line, cut at its end,
+/// so the panel keeps its size however long a caption is. Under Reduce Motion
+/// the well is a still flask, so the line names that.
+struct SpecimenCaptionLine: View {
+    let rotation: Rotation
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if reduceMotion {
+            line(WorkingGlyph.still)
+        } else {
+            TimelineView(SceneBoundarySchedule(rotation: rotation)) { timeline in
+                line(rotation.scenes[rotation.scene(at: timeline.date.timeIntervalSinceReferenceDate).index])
+            }
+        }
+    }
+
+    private func line(_ scene: LabScene?) -> some View {
+        Text(scene.map { SpecimenGuide.line(for: $0.name) } ?? "")
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+    }
+}
+
 struct LabPanelView: View {
     /// Clear space round the glass, so its own shadow and highlights are not
     /// cut off at the window's edge. The controller places the window so the
@@ -56,6 +84,7 @@ struct LabPanelView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(SettingsKey.showPanel) private var showWorking = true
     @AppStorage(SettingsKey.showCards) private var showCards = true
+    @AppStorage(SettingsKey.showSpecimenCaption) private var showSpecimenCaption = false
     @AppStorage(SettingsKey.panelCorner) private var corner = PanelCorner.bottomRight
     @Environment(\.colorScheme) private var colorScheme
     @State private var entered = false
@@ -217,6 +246,9 @@ struct LabPanelView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if showSpecimenCaption {
+                    SpecimenCaptionLine(rotation: settings.rotation)
+                }
             }
         }
     }
