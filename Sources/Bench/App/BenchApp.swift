@@ -55,6 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LabModel.shared.start()
         MacNotifications.shared.start()
         LabPanelController.shared.start()
+        // Reads a plan for its card, and approves it when asked (Lab/PlanApproval.swift).
+        PlanApprover.shared.start()
         NidusFocus.shared.start()
         NoticeWatchers.shared.start()
         MenuBarSpecimen.shared.start()
@@ -250,6 +252,7 @@ struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.weekInReview) private var weekInReview = true
     @AppStorage(SettingsKey.holdDuringFocus) private var holdDuringFocus = true
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
+    @AppStorage(SettingsKey.showPlansOnCard) private var plansOnCard = true
     @AppStorage(SettingsKey.panelWhileFront) private var panelWhileFront = true
     @AppStorage(SettingsKey.panelCorner) private var panelCorner = PanelCorner.bottomRight
     @AppStorage(SettingsKey.panelScreen) private var panelScreen = ""
@@ -366,6 +369,11 @@ struct GeneralSettingsView: View {
                     Text("Play a sound")
                     Text("Once, when a session needs you or stops with an error, with or without the card.")
                 }
+                Toggle(isOn: $plansOnCard) {
+                    Text("Show plans on the card, with Approve")
+                    Text("When a session asks you to approve its plan, the card shows the plan's summary and an Approve button. Bench checks it's still the same plan before approving; anything else opens the session.")
+                }
+                .disabled(!showCards)
             }
 
             MacNotificationsSection()
