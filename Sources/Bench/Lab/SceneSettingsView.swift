@@ -190,7 +190,7 @@ struct SceneSettingsView: View {
             if !SpecimenGuide.topics.isEmpty {
                 Menu {
                     ForEach(SpecimenGuide.topics, id: \.self) { topic in
-                        Toggle(topic, isOn: Binding(
+                        Toggle(SpecimenGuide.title(of: topic), isOn: Binding(
                             get: { SpecimenGuide.words(in: query) == SpecimenGuide.words(in: topic) },
                             set: { query = $0 ? topic : "" }))
                     }
@@ -522,9 +522,9 @@ private struct PreviewText: View {
                 .foregroundStyle(scene == nil ? .secondary : .primary)
                 .lineLimit(1)
             // A space, not an empty string: an empty Text reserves nothing.
-            Text(note?.caption ?? " ")
+            Text(note?.caption ?? (scene == nil ? "Hover a specimen to read about it." : " "))
                 .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(scene == nil ? .tertiary : .secondary)
                 .lineLimit(1, reservesSpace: true)
             Text(note?.note ?? " ")
                 .font(.system(size: 11))

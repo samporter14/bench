@@ -21,6 +21,12 @@ enum SpecimenGuide {
         return "\(name) · \(caption)"
     }
 
+    /// A topic as a menu shows it: its first letter capitalised, the rest as
+    /// written, so "cell biology" reads "Cell biology" and "PCR" stays.
+    static func title(of topic: String) -> String {
+        topic.prefix(1).uppercased() + topic.dropFirst()
+    }
+
     /// Every topic in use, once each, in alphabetical order. Taken from the
     /// table itself rather than listed here, so a new table brings its own.
     static let topics: [String] = topics(in: SpecimenNotes.all)

@@ -158,7 +158,7 @@ struct SpecimenGuideTests {
         #expect(SpecimenNotes.all.keys.filter { !names.contains($0) }.sorted().isEmpty)
     }
 
-    @Test(.disabled("until the notes table lands"))
+    @Test
     func everySpecimenHasANoteAndEveryNoteHasASpecimen() {
         let names = Set(LabScenes.catalogue.map(\.name))
         #expect(names.subtracting(SpecimenNotes.all.keys).sorted().isEmpty, "specimens with no note")

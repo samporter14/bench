@@ -57,12 +57,18 @@ struct SpecimenCaptionLine: View {
         }
     }
 
+    /// The name, then its caption: two lines at most, since the column is
+    /// too narrow for both on one and a cut caption says little.
     private func line(_ scene: LabScene?) -> some View {
-        Text(scene.map { SpecimenGuide.line(for: $0.name) } ?? "")
+        let caption = scene.flatMap { SpecimenGuide.note(for: $0.name)?.caption }
+        let name = Text(scene?.name ?? "").fontWeight(.medium)
+        let rest = Text(caption.map { " · \($0)" } ?? "")
+        return Text("\(name)\(rest)")
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
-            .lineLimit(1)
+            .lineLimit(2, reservesSpace: true)
             .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
