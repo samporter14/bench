@@ -50,6 +50,9 @@ struct QuickOpenSheet: View {
             }
         }
         .frame(width: 560)
+        // Focus on the field from the first frame, and again once the sheet
+        // is up, in case the web view took it back in between.
+        .defaultFocus($searching, true)
         .onExitCommand { dismiss() }
         .onAppear { searching = true }
         .onChange(of: query) { selectedID = nil }

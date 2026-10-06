@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// web view saves its session. Killed outright, a restart could come up
     /// on Claude Science's Sign in card.
     private var terminateSignal: DispatchSourceSignal?
+    private var quickOpenKey: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         signal(SIGTERM, SIG_IGN)
@@ -56,6 +57,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NidusFocus.shared.start()
         NoticeWatchers.shared.start()
         MenuBarSpecimen.shared.start()
+        // ⌘⇧O reaches Quick Open before the page: a web view offers key
+        // equivalents to the page first, and a page that binds ⌘⇧O itself
+        // would keep it from the menu.
+        quickOpenKey = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard modifiers == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "o",
+                  !QuickOpenPresenter.shared.isShowing else { return event }
+            QuickOpenPresenter.shared.show()
+            return nil
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
