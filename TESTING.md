@@ -321,6 +321,25 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-06, Bench 0.3.4 (approve plans, usage forecast, field guide)
+
+- ✅ `swift test`: 193 tests in 28 suites. New: `PlanApprovalTests` (58:
+  frame and plan shapes, wrong types, a sub-agent waiting, the version
+  changing at the press, every result code), `UsageForecastTests` (24) and
+  `SpecimenGuideTests` (17, with the completeness test on: every specimen has
+  a note).
+- ✅ Captured quietly: `--demo plan` (the plan card: summary, steps and
+  confidence, Approve / Open / Later); the panel with captions on; Settings
+  → Specimens with the field-guide preview text.
+- Notes: written per category, then fact-checked by two reviewers (41 fixes).
+- Approving was built from reading Claude Science's own UI code (the June 30
+  build in /Applications; the running daemon may be newer). It is gated on
+  the response shapes at run time and falls back to Open.
+- Not checked live: approving a real plan (needs a throwaway session whose
+  plan Sam is happy to approve: card, Approve, Approved ✓; a plan revised
+  before the press says it changed; after a daemon restart the CSRF retry);
+  the forecast line after 15 minutes of use; the Topics menu; hover notes.
+
 ## 2026-10-05, Bench 0.3.3 (screen, +N more, Quick Open, Mac notifications)
 
 - ✅ `swift test`: 94 tests in 16 suites. New: `QuickOpenTests` (15: empty
