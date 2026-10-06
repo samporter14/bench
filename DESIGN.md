@@ -110,6 +110,7 @@ you", and the graph's steps. No other hues, no gradients.
 - Closing the window hides it (the web view and its state survive). Clicking
   the Dock icon brings it back. ⌘Q quits Bench but never stops the daemon.
 - Menus:
+  - File: Open Session… ⌘⇧O (Quick Open, below).
   - View: Reload ⌘R, Zoom In ⌘+, Zoom Out ⌘−, Actual Size ⌘0, Find ⌘F,
     Show Lab Panel ⌘⇧L.
   - History: Back ⌘[, Forward ⌘].
@@ -383,6 +384,40 @@ The working specimen and the cards are separate settings since 0.2.0
 (`showLabPanel`, `showLabCards`): the specimen can be off while questions and
 errors still come. Someone who had the whole panel off before keeps the cards
 off after updating. Under Reduce Motion the working specimen is a still.
+
+### Quick Open (since 0.3.3)
+
+⌘⇧O, or File → Open Session…: type to jump to a session
+(Lab/QuickOpen.swift, Lab/QuickOpenSheet.swift). A sheet on the main window,
+560 wide and up to about 420 tall, in system controls: a search field with
+focus, and the recent sessions under it. The menu item shows the window first
+if it is closed or hidden. It is off in a demo, which has no main window.
+
+- **Rows.** A glyph for the state (the waiting reason's glyph while it waits,
+  the working specimen while it works, else a checkmark, a warning triangle
+  or a clock), the title over the project, and on the right "Needs you" (in
+  clay, the sheet's only accent), "Working · m:ss" or how long ago it was
+  last active ("Just now", "5 min. ago").
+- **Keys.** ↑ and ↓ move the highlight and stop at the ends, Return opens it,
+  Esc closes, and a click opens a row. The highlight follows its session by
+  id, so a read that reorders the list while you choose does not move it.
+  Typing puts it back on the first row.
+- **Which sessions.** Those of the latest read (the ~25 most recently
+  active), as `LabModel.sessions`. It holds every state, where `working`,
+  `waiting` and `latest` split them up, and like Recent it is in memory
+  only: Bench still writes nothing about sessions to disk, and nothing typed
+  is kept.
+- **Ranking (`QuickOpen.rank`, pure).** With nothing typed: the sessions that
+  need you, then those that work, then the rest, each by most recent
+  activity. With a query, only sessions whose title or project matches,
+  ignoring case and accents: the start of a word first (after a space or
+  punctuation too), then inside a word, then letters in order with others
+  between (fuzzy). Within each of those the order is the one for nothing
+  typed. A query of several words needs every word to match, in the title or
+  the project, and ranks by its worst.
+- **Opening.** `LabModel.open(session)`, as every row does: it navigates the
+  one web view, and clears that session's cards and reminder. Then the sheet
+  closes.
 
 ### Notices (Lab/LabNotice.swift, Lab/NoticeWatchers.swift, since 0.3.0)
 

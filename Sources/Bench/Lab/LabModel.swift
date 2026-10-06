@@ -158,6 +158,9 @@ final class LabModel: ObservableObject {
     /// even right after Bench starts.
     @Published private(set) var latest: [SessionStatus] = []
     static let latestLimit = 5
+    /// Every session of the last read (the ~25 most recently active), whatever
+    /// its state: what Quick Open searches. In memory only, like Recent.
+    @Published private(set) var sessions: [SessionStatus] = []
     /// What happened lately, newest first: the activity list's Recent.
     @Published private(set) var recent: [LabEvent] = []
     static let recentLimit = 30
@@ -485,6 +488,7 @@ final class LabModel: ObservableObject {
         let quiet = snapshot.sessions.filter { $0.state != .running && $0.state != .needsInput }
         let newest = Array(quiet.sorted(by: recentFirst).prefix(Self.latestLimit))
         if latest.map(\.id) != newest.map(\.id) { latest = newest }
+        if sessions != snapshot.sessions { sessions = snapshot.sessions }
         if workingHidden, Set(running.map(\.id)) != Set(working.map(\.id)) { workingHidden = false }
         if working != running { working = running }
         if waiting != parked {
