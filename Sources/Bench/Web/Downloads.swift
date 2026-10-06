@@ -75,8 +75,13 @@ final class Downloads: NSObject, WKDownloadDelegate {
         alert.alertStyle = .warning
         alert.messageText = name.map { "Couldn’t download “\($0)”" } ?? "Couldn’t download the file"
         alert.informativeText = error.localizedDescription
-        if let window = NSApp.mainWindow ?? NSApp.keyWindow {
+        // While Bench is in the background there is no main window, but the
+        // window the download came from is still there: the sheet waits on
+        // it, and the Dock icon bounces once to say so.
+        let window = NSApp.mainWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeMain }
+        if let window {
             alert.beginSheetModal(for: window)
+            if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
         } else {
             alert.runModal()
         }
