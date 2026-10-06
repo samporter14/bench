@@ -253,7 +253,29 @@ question is still seen.
 
 - `needsInput` stays until the session stops waiting, and shows what it waits
   for now: a question that becomes a plan to approve updates in place. A new
-  kind of request comes back even after the last one was dismissed (Later).
+  kind of request comes back even after the last one was dismissed (the ×
+  or Dismiss). Later puts a card off instead of dismissing it, below.
+- **Later** takes a `needsInput` card out of the queue and brings it back at
+  a time, a reminder kept in `LabModel` by session id.
+  - **When.** In 5 minutes (a click on Later itself), in 15 minutes, or
+    after the Nidus focus session that is on. That one is offered only while
+    `NidusFocus` says one is on, whether or not finishes are held for it; if
+    the session ended since the menu opened, it is the 5 minutes. A timed
+    reminder is a `Task.sleep` scaled by `lifetimeScale`, as the card
+    lifetimes are, cancelled with the reminder. A focus reminder is woken by
+    `focusEnded()`, which `NidusFocus` calls as the session ends. Nothing
+    polls.
+  - **Comes back only if the session still waits.** It returns as a
+    needs-input card saying what the session waits for now, with the sound
+    (when that setting is on). A session that stopped waiting (answered
+    elsewhere, finished or failed) drops its reminder at that read, silently.
+  - **A new kind of request** shows at once, as for any card, and clears the
+    reminder. Opening the session clears it too.
+  - **Dismiss is still for good.** The × and the Later menu's Dismiss do what
+    they did: the card goes, and only a new kind of request brings it back.
+  - **In memory only**, like Recent: nothing about sessions is written to
+    disk. A put-off session stays in the activity list's Needs you and in the
+    Dock badge, which count what waits, not what is on the panel.
 - `failed` ("Stopped with an error", Open and Dismiss, with the sound) comes
   when a working or waiting session ends in an error, and stays until it is
   opened, dismissed, or the session runs again.
@@ -300,7 +322,10 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
   - Left well: the reason's waiting glyph (`PlayedLoop`) at 88pt.
   - Caption in clay: `reason.sentence`.
   - Title and project.
-  - Buttons: **Open** (`.glassProminent`, clay tint) and **Later** (`.glass`).
+  - Buttons: **Open** (`.glassProminent`, clay tint) and **Later** (`.glass`),
+    a split pull-down `Menu(primaryAction:)`: a click on Later is "In 5
+    Minutes"; its menu has In 5 Minutes, In 15 Minutes, After My Focus
+    Session (only while Nidus reports a focus session), a divider and Dismiss.
 - **Finished.**
   - Left well: the flask, still.
   - Caption: "Finished", then the duration and the tokens.
@@ -313,7 +338,7 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
 - **Interaction.**
   - Clicking the panel does what Open does.
   - Hovering shows a small glass × at top-left, which dismisses the current
-    card (or hides the working panel until the next change).
+    card for good (or hides the working panel until the next change).
 - **Sound.** When a needs-input card arrives, play `NSSound(named: "Glass")`
   (a setting, on by default).
 - **Open.** Activate Bench, show the window and navigate the web view to the
@@ -381,7 +406,8 @@ hasn't passed, so a file a crash left behind means nothing. While it is on,
 "Finished" cards wait (they still go to Recent, and Claude Science's own
 notification for the same finish is dropped as usual); questions and errors
 come at once. When it ends, the finishes come as one "While you focused"
-card.
+card, and the cards put off with Later, After My Focus Session, come back if
+their sessions still wait.
 
 ### Menu bar specimen (Lab/MenuBarSpecimen.swift, since 0.3.0)
 

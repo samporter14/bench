@@ -68,6 +68,38 @@ extension LabCard {
     }
 }
 
+/// When a needs-input card put off with Later should come back.
+enum LabReminder: Equatable, Sendable {
+    case fiveMinutes
+    case fifteenMinutes
+    /// When the Nidus focus session that is on now ends.
+    case afterFocus
+
+    /// How long a timed reminder waits; nil for one that waits for focus to end.
+    var delay: Duration? {
+        switch self {
+        case .fiveMinutes: .seconds(5 * 60)
+        case .fifteenMinutes: .seconds(15 * 60)
+        case .afterFocus: nil
+        }
+    }
+}
+
+private enum PendingReminder {
+    /// Wakes when the task's sleep ends.
+    case timer(Task<Void, Never>)
+    /// Wakes when the focus session that is on ends.
+    case focus
+
+    func cancel() {
+        if case .timer(let task) = self { task.cancel() }
+    }
+
+    var waitsForFocus: Bool {
+        if case .focus = self { true } else { false }
+    }
+}
+
 /// Something that happened to a session, kept for the activity list after its
 /// card is gone. In memory only: nothing about sessions is written to disk.
 struct LabEvent: Identifiable, Equatable {
@@ -129,11 +161,15 @@ final class LabModel: ObservableObject {
     /// What happened lately, newest first: the activity list's Recent.
     @Published private(set) var recent: [LabEvent] = []
     static let recentLimit = 30
-    /// Tests shorten the cards' lifetimes with this.
+    /// Tests shorten the cards' lifetimes, and the reminders' waits, with this.
     var lifetimeScale = 1.0
     /// Whether a Nidus focus session is on and finishes should wait for it
     /// (`NidusFocus`); tests set their own.
     var holdsFinishes: () -> Bool = { NidusFocus.shared.holding }
+    /// Whether a Nidus focus session is on, for "After My Focus Session"
+    /// (`NidusFocus`); tests set their own. Unlike `holdsFinishes`, it doesn't
+    /// depend on the setting that holds finishes.
+    var isFocusing: () -> Bool = { NidusFocus.shared.focusing }
     /// Finishes held during a focus session, shown as one card after it.
     private(set) var heldFinishes: [SessionStatus] = []
 
@@ -143,6 +179,10 @@ final class LabModel: ObservableObject {
     private var watched: URL?
     private var fallback: Task<Void, Never>?
     private var expiries: [LabCard.ID: Task<Void, Never>] = [:]
+    /// Needs-input cards put off with Later, by session id. Kept apart from
+    /// `expiries`, which `armFrontCard` prunes to the front card. In memory
+    /// only, like Recent.
+    private var reminders: [String: PendingReminder] = [:]
     /// When each session last raised a needs-input or finished card, so the
     /// page's own notification for the same moment can be dropped.
     private var sessionCardAt: [String: Date] = [:]
@@ -193,6 +233,8 @@ final class LabModel: ObservableObject {
         fallback = nil
         expiries.values.forEach { $0.cancel() }
         expiries = [:]
+        reminders.values.forEach { $0.cancel() }
+        reminders = [:]
         sessionCardAt = [:]
         reading = false
         changedDuringRead = false
@@ -214,20 +256,56 @@ final class LabModel: ObservableObject {
     /// file. A card that has been acted on has done its job, so it goes.
     func open(_ card: LabCard) {
         switch card {
-        case .needsInput(let session), .failed(let session), .finished(let session): Router.shared.open(session)
-        case .web(let notification): Router.shared.open(notification)
+        case .needsInput(let session), .failed(let session), .finished(let session):
+            Router.shared.open(session)
+            forgetReminder(session.id)
+        case .web(let notification):
+            Router.shared.open(notification)
+            if let frame = notification.frameID { forgetReminder(frame) }
         case .saved(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
         case .notice(let notice):
-            if case .openSession(let session) = notice.action { Router.shared.open(session) }
+            if case .openSession(let session) = notice.action {
+                Router.shared.open(session)
+                forgetReminder(session.id)
+            }
         }
         dismiss(card)
     }
 
-    /// Opens a session, and clears its cards: the user is looking at it now.
+    /// Opens a session, and clears its cards and reminder: the user is
+    /// looking at it now.
     func open(_ session: SessionStatus) {
         Router.shared.open(session)
+        forgetReminder(session.id)
         for card in cards where card.session?.id == session.id { dismiss(card) }
     }
+
+    /// Later: the needs-input card leaves the queue now and comes back when
+    /// its time comes, if its session still waits. A question that changes
+    /// kind meanwhile shows at once instead (`update(from:)`).
+    func remind(_ card: LabCard, _ when: LabReminder) {
+        // A card that is already gone was dismissed, opened or answered:
+        // a late click on its menu must not bring it back.
+        guard case .needsInput(let session) = card, cards.contains(where: { $0.id == card.id }) else { return }
+        // A focus session that ended since the menu opened has nothing to wait for.
+        let when = when == .afterFocus && !isFocusing() ? .fiveMinutes : when
+        dismiss(card)
+        forgetReminder(session.id)
+        guard let delay = when.delay else {
+            reminders[session.id] = .focus
+            return
+        }
+        let scaled = delay * lifetimeScale
+        let id = session.id
+        reminders[id] = .timer(Task { [weak self] in
+            try? await Task.sleep(for: scaled)
+            guard !Task.isCancelled else { return }
+            self?.wake(id)
+        })
+    }
+
+    /// The sessions whose cards are put off, for tests.
+    var remindedSessionIDs: Set<String> { Set(reminders.keys) }
 
     func dismiss(_ card: LabCard) {
         expiries.removeValue(forKey: card.id)?.cancel()
@@ -372,6 +450,8 @@ final class LabModel: ObservableObject {
         for transition in engine.advance(to: snapshot) {
             switch transition {
             case .needsInput(let session):
+                // A new kind of request shows at once, whatever was put off.
+                forgetReminder(session.id)
                 supersedePageNotifications(by: session)
                 if raise(.needsInput(session)) { alert = true }
                 remember(LabEvent(.needsInput(session.waitingReason), session: session))
@@ -422,16 +502,25 @@ final class LabModel: ObservableObject {
                 dismiss(.needsInput(session))
             }
         }
+        // A reminder is dropped, silently, once its session stops waiting.
+        for id in Array(reminders.keys) where parkedByID[id] == nil {
+            forgetReminder(id)
+        }
         // A failure card goes once its session runs or waits again.
         let failedIDs = Set(snapshot.sessions.filter { $0.state == .error }.map(\.id))
         for case .failed(let session) in cards where !failedIDs.contains(session.id) {
             dismiss(.failed(session))
         }
 
-        if alert, !firstRead, UserDefaults.standard.bool(forKey: SettingsKey.soundOnNeedsInput) {
+        if alert, !firstRead { chime() }
+        firstRead = false
+    }
+
+    /// The needs-input sound, when the setting is on.
+    private func chime() {
+        if UserDefaults.standard.bool(forKey: SettingsKey.soundOnNeedsInput) {
             NSSound(named: "Glass")?.play()
         }
-        firstRead = false
     }
 
     // MARK: Cards
@@ -480,7 +569,35 @@ final class LabModel: ObservableObject {
         raise(.notice(notice))
     }
 
-    /// The focus session ended: what finished during it, as one card.
+    /// A reminder's time has come: the card returns if its session still
+    /// waits, and says what it waits for now. If it doesn't, the reminder is
+    /// dropped without a word.
+    private func wake(_ id: String) {
+        guard reminders.removeValue(forKey: id) != nil else { return }
+        guard let session = waiting.first(where: { $0.id == id }) else { return }
+        if raise(.needsInput(session)) { chime() }
+    }
+
+    private func forgetReminder(_ id: String) {
+        reminders.removeValue(forKey: id)?.cancel()
+    }
+
+    /// The focus session ended: the reminders that waited for it come back,
+    /// and what finished during it comes as one card.
+    func focusEnded() {
+        let due = Set(reminders.filter { $0.value.waitsForFocus }.keys)
+        due.forEach(forgetReminder)
+        // The most recently active session first, as the queue is. One that
+        // no longer waits has nothing to come back for.
+        var alert = false
+        for session in waiting where due.contains(session.id) {
+            if raise(.needsInput(session)) { alert = true }
+        }
+        if alert { chime() }
+        releaseHeldFinishes()
+    }
+
+    /// What finished during the focus session, as one card.
     func releaseHeldFinishes() {
         guard let notice = NoticeRules.held(heldFinishes) else { return }
         heldFinishes = []

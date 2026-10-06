@@ -64,7 +64,7 @@ final class NidusFocus: NSObject, ObservableObject {
         }
         if now != focusing {
             focusing = now
-            if !now { LabModel.shared.releaseHeldFinishes() }
+            if !now { LabModel.shared.focusEnded() }
         }
     }
 }
