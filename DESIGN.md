@@ -332,6 +332,17 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     several work, a button (since 0.3.3) that pops up the Dock's activity
     menu (`ActivityMenu`) under the pointer, without bringing Bench to the
     front.
+  - Optionally, one more quiet line (11pt, secondary) under the meta line:
+    the specimen that's playing, "Kinesin · A motor protein on a
+    microtubule". Settings → General → "Name the specimen that's playing"
+    (`showSpecimenCaption`), off by default. `SpecimenCaptionLine` follows
+    the rotation, a `TimelineView(SceneBoundarySchedule)` that ticks when the
+    specimen changes, and `SpecimenGuide.line(for:)` makes the text: a
+    specimen with no note is its name alone, so the line is always there
+    while the setting is on, and the panel keeps its size. One line, cut at
+    the end (the column is about 200pt, so most captions are). Under Reduce
+    Motion the well is the still flask, and the line names the flask. Not
+    shown under "Not updating", where the well is a warning symbol.
 - **Needs input (card, about 360×170).**
   - Left well: the reason's waiting glyph (`PlayedLoop`) at 88pt.
   - Caption in clay: `reason.sentence`.
@@ -602,19 +613,23 @@ just Remove from Favorites and Choose Specimens…. The toolbar popover has an
 "Only favorites" switch (off and greyed until something is starred), and
 its categories grey while favourites play.
 
-The Settings **Scenes** tab (760×700) has:
+The Settings **Scenes** tab (760×776) has:
 - a Size segmented picker, and a Play picker: "What's on" or "Only
   favorites", with a live well beside them ("Playing what's on" or "Playing
-  your favorites" under it) and a line saying what a click does: switch on
-  or off, or, while only favourites play, star;
+  your favorites" under it, or, under the pointer, what the field guide says
+  about that specimen) and a line saying what a click does: switch on or
+  off, or, while only favourites play, star;
 - category checkboxes with counts (mixed when some are on), greyed while
   favourites play;
-- a search field, an All / On / Off / ☆ filter (☆ shows the favourites; On
-  and Off mean in or out of what plays), "N of M on" with All and None (None
-  keeps one on), or "N favorites" while only favourites play;
+- a search field with a Topics menu (a tag button) beside it, an All / On /
+  Off / ☆ filter (☆ shows the favourites; On and Off mean in or out of what
+  plays), "N of M on" with All and None (None keeps one on), or "N favorites"
+  while only favourites play (see "Field guide" below for the search);
 - a LazyVGrid of every specimen, one section per category headed "Name N of
   M on" (or "N favorites"), including categories that are off, so any
-  specimen can be picked from anywhere. Each cell is 58 pt with the name
+  specimen can be picked from anywhere. While a search has words in it the
+  categories give way to one "Results" section, best match first, so a name
+  ranks above a note wherever each sits; the filter still applies. Each cell is 58 pt with the name
   under it, dimmed with no check when off, and a clay check when on; a click
   toggles it. A favourite has a clay star at the tile's top-left; under the
   pointer an empty star shows there, its own button, to star it. While only
@@ -623,8 +638,9 @@ The Settings **Scenes** tab (760×700) has:
   favourites play) Play Only, Switch On/Off, and Switch On/Off All in its
   category.
   Hovering a cell plays that specimen alone in the preview well, its name
-  under the well ("Playing what's on" otherwise); leaving goes back to the
-  rotation after 250 ms, so crossing between cells doesn't flash it.
+  under the well and then what the field guide says (below), "Playing what's
+  on" otherwise; leaving goes back to the rotation after 250 ms, so crossing
+  between cells doesn't flash it.
   Cells on screen PLAY, drawn live by `SceneLive` (a TimelineView plus a
   Canvas at 20 fps, 30 under the pointer, keeping no frames). The panel's
   `PlayedGlyph` pre-renders about 1.5 s per scene, and 40 cells of that cost
@@ -639,6 +655,40 @@ The Settings **Scenes** tab (760×700) has:
   SwiftUI's `Toggle(sources:isOn:)` over two bindings (any on, all on) draws
   the mixed dash; each binding writes the whole category, so a click changes
   it once. The popover's way into the tab is "Choose specimens one by one…".
+
+### Field guide (Lab/SpecimenNotes.swift, Lab/SpecimenGuide.swift)
+
+Words for every specimen, kept apart from the drawings.
+- `SpecimenNotes.all` maps a specimen's name to a `SpecimenNote`: a
+  **caption** (36 characters at most, for the panel's line), a **note** (one
+  sentence, 140 at most), **topics** (from a fixed list) and **also** (extra
+  words to search by that the name, caption and note don't use). The table
+  is generated into SpecimenNotes.swift, which holds nothing else, so a new
+  one drops in without touching the logic in SpecimenGuide.swift. It's a stub
+  of a few specimens until the full table lands. Neither file is in
+  Shared/, which the sync script overwrites.
+- **Search** is `SpecimenIndex.search`, a pure function with tests
+  (`SpecimenGuideTests`). The words typed and the guide's are folded alike
+  (case, accents, width, curly apostrophes, so "angstrom" finds "Ångström"),
+  and the index folds the table once. A specimen matches when every word of
+  the search is somewhere in its name, caption, note, topics or also words.
+  Ranked best first, ties in catalogue order: the search starts a word in the
+  name, is inside the name, is in a topic, in the also words, the caption, the
+  note, and last words spread over more than one of those. So "microscopy"
+  finds every specimen with that topic, topics first.
+- The **Topics** menu lists every topic in the table, once each in
+  alphabetical order (taken from the table, so a new one brings its own). A
+  click fills the search; the filled one has a check and clears it. It's an
+  icon alone, since the controls row has no room for a word more.
+- The preview's **text** is the name (callout, as before), the caption (12
+  pt, secondary) and the note (11 pt, secondary, four lines), centred in a
+  248 pt column. Each line reserves its height, so nothing moves whether the
+  specimen has a note or nothing is hovered (an empty `Text` reserves
+  nothing, so they hold a space). A specimen with no note shows its name
+  alone.
+- The completeness test (every catalogue name has a note, every note is for
+  a real specimen) is disabled until the full table lands. The key check and
+  the caption and note limits run now.
 
 ## Usage (Usage/)
 
@@ -743,6 +793,7 @@ Two tabs: General (below) and Scenes (above).
 | When a session finishes too (Mac notifications) | off |
 | Show session and project names (Mac notifications) | on |
 | Show the Lab panel while Bench is in front | on |
+| Name the specimen that's playing, in the panel (`showSpecimenCaption`) | off |
 
 ## Files and ownership
 
@@ -783,3 +834,4 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] find, zoom and back/forward
 - [ ] the window closes and reopens without losing state
 - [ ] on-screen CPU with the panel playing
+- [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption line (General, "Name the specimen that's playing")

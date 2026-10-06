@@ -34,6 +34,9 @@ enum SettingsKey {
     static let showCards = "showLabCards"
     /// The working specimen in the menu bar too. Off by default.
     static let showMenuBarSpecimen = "showMenuBarSpecimen"
+    /// A quiet line in the working panel naming the specimen that's playing,
+    /// with its caption from the field guide. Off by default.
+    static let showSpecimenCaption = "showSpecimenCaption"
     /// Plan and context cards.
     static let headsUpNotices = "headsUpNotices"
     /// The week in review, once a new week starts.
@@ -72,6 +75,7 @@ enum SettingsKey {
             showPanel: true,
             showCards: true,
             showMenuBarSpecimen: false,
+            showSpecimenCaption: false,
             headsUpNotices: true,
             weekInReview: true,
             holdDuringFocus: true,

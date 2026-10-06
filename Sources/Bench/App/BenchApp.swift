@@ -245,6 +245,7 @@ struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.showPanel) private var showPanel = true
     @AppStorage(SettingsKey.showCards) private var showCards = true
     @AppStorage(SettingsKey.showMenuBarSpecimen) private var menuBarSpecimen = false
+    @AppStorage(SettingsKey.showSpecimenCaption) private var showSpecimenCaption = false
     @AppStorage(SettingsKey.headsUpNotices) private var headsUp = true
     @AppStorage(SettingsKey.weekInReview) private var weekInReview = true
     @AppStorage(SettingsKey.holdDuringFocus) private var holdDuringFocus = true
@@ -314,6 +315,11 @@ struct GeneralSettingsView: View {
                     Text("Show a specimen while a session works")
                     Text("It plays in the corner of your screen until the session stops. Off, cards still come.")
                 }
+                Toggle(isOn: $showSpecimenCaption) {
+                    Text("Name the specimen that's playing")
+                    Text("Its name and a few words about it, under the session in the panel.")
+                }
+                .disabled(!showPanel)
                 Toggle(isOn: $menuBarSpecimen) {
                     Text("Show it in the menu bar too")
                     Text("While a session works, or a count while any wait. Click it for every session.")

@@ -1,10 +1,11 @@
 // SceneSettingsView.swift — Settings > Specimens (DESIGN.md, "Scenes
 // settings"), in the Mac's own controls: a heading, the size and the preview
-// with its light/dark switch, a checkbox per category, search, a filter and
-// counts, and every specimen in a grid, a section per category, to switch on
-// or off one by one and to star. With only favourites playing, a click stars
-// instead. The one cell under the pointer lifts to glass and plays alone in
-// the preview. The cells on screen play; the rest hold a still.
+// with its light/dark switch, a checkbox per category, search (by name and by
+// what the field guide says), a filter and counts, and every specimen in a
+// grid, a section per category, to switch on or off one by one and to star.
+// With only favourites playing, a click stars instead. The one cell under the
+// pointer lifts to glass and plays alone in the preview, with what the guide
+// says about it. The cells on screen play; the rest hold a still.
 import SwiftUI
 
 struct SceneSettingsView: View {
@@ -34,7 +35,18 @@ struct SceneSettingsView: View {
         (group, LabScenes.catalogue.filter { $0.theme.group == group })
     }
 
+    /// By name, to turn a search's ranked names back into specimens.
+    private static let byName: [String: LabScene] = Dictionary(
+        LabScenes.catalogue.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+
     private static let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 8)
+
+    /// A run of cells under one heading: a category, or, while searching, the
+    /// one ranked list of what was found (`group` nil).
+    private struct GridSection {
+        let group: SceneGroup?
+        let scenes: [LabScene]
+    }
 
     private var spring: Animation? { reduceMotion ? nil : Theme.spring }
 
@@ -48,7 +60,7 @@ struct SceneSettingsView: View {
         .padding(.horizontal, 32)
         .padding(.top, 24)
         .padding(.bottom, 24)
-        .frame(width: 760, height: 700)
+        .frame(width: 760, height: 776)
         // The switch under the preview sets the window's scheme, so the whole
         // tab shows the specimens on light or dark, not a board inside it.
         .preferredColorScheme(previewScheme)
@@ -90,11 +102,7 @@ struct SceneSettingsView: View {
             Spacer(minLength: 0)
             VStack(spacing: 10) {
                 PreviewWell(size: settings.size, rotation: auditioning.map { Rotation([$0]) } ?? settings.rotation, spring: spring)
-                Text(auditioning?.name ?? (settings.playsFavorites ? "Playing your favorites" : "Playing what’s on"))
-                    .font(.callout)
-                    .foregroundStyle(auditioning == nil ? .secondary : .primary)
-                    .lineLimit(1)
-                    .frame(width: PreviewWell.side)
+                PreviewText(scene: auditioning, resting: settings.playsFavorites ? "Playing your favorites" : "Playing what’s on")
                 Picker("Show this tab in", selection: Binding(get: { shownScheme }, set: { previewScheme = $0 })) {
                     Image(systemName: "sun.max").accessibilityLabel("Ivory").tag(ColorScheme.light)
                     Image(systemName: "moon").accessibilityLabel("Slate").tag(ColorScheme.dark)
@@ -171,31 +179,55 @@ struct SceneSettingsView: View {
         }
     }
 
+    /// The field, and beside it the Topics menu: a click on a topic fills the
+    /// search with it, and a click on the one that is filled clears it. Left
+    /// out when the guide has no topics.
     private var search: some View {
-        TextField("Search specimens", text: $query)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 200)
+        HStack(spacing: 6) {
+            TextField("Search specimens", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 170)
+            if !SpecimenGuide.topics.isEmpty {
+                Menu {
+                    ForEach(SpecimenGuide.topics, id: \.self) { topic in
+                        Toggle(topic, isOn: Binding(
+                            get: { SpecimenGuide.words(in: query) == SpecimenGuide.words(in: topic) },
+                            set: { query = $0 ? topic : "" }))
+                    }
+                } label: {
+                    Label("Topics", systemImage: "tag")
+                        .labelStyle(.iconOnly)
+                }
+                .fixedSize()
+                .help("Search by topic")
+            }
+        }
     }
 
     // MARK: The grid
 
-    /// Each category's specimens that pass the filter and whose name holds
-    /// the search text, leaving out categories with none. Every category is
-    /// here, on or off, so a specimen can be picked from one that is off.
-    private var matching: [(group: SceneGroup, scenes: [LabScene])] {
-        let needle = query.trimmingCharacters(in: .whitespaces)
-        return Self.sections.compactMap { section in
-            let scenes = section.scenes.filter { scene in
-                switch showing {
-                case .all: break
-                case .on: guard settings.isPlaying(scene) else { return false }
-                case .off: guard !settings.isPlaying(scene) else { return false }
-                case .favorites: guard settings.isFavorite(scene) else { return false }
-                }
-                return needle.isEmpty || scene.name.localizedCaseInsensitiveContains(needle)
+    /// The specimens that pass the filter, and match the search if there is
+    /// one. With none, each category's, leaving out categories with none;
+    /// every category is here, on or off, so a specimen can be picked from one
+    /// that is off. With a search, one list, best match first: a name before
+    /// a note, as `SpecimenIndex` ranks them, wherever they sit.
+    private var matching: [GridSection] {
+        func passes(_ scene: LabScene) -> Bool {
+            switch showing {
+            case .all: true
+            case .on: settings.isPlaying(scene)
+            case .off: !settings.isPlaying(scene)
+            case .favorites: settings.isFavorite(scene)
             }
-            return scenes.isEmpty ? nil : (section.group, scenes)
         }
+        guard !SpecimenGuide.words(in: query).isEmpty else {
+            return Self.sections.compactMap { section in
+                let scenes = section.scenes.filter(passes)
+                return scenes.isEmpty ? nil : GridSection(group: section.group, scenes: scenes)
+            }
+        }
+        let found = SpecimenGuide.index.search(query).compactMap { Self.byName[$0] }.filter(passes)
+        return found.isEmpty ? [] : [GridSection(group: nil, scenes: found)]
     }
 
     @ViewBuilder
@@ -203,7 +235,7 @@ struct SceneSettingsView: View {
         let shown = matching
         Group {
             if shown.isEmpty {
-                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                if SpecimenGuide.words(in: query).isEmpty {
                     Group {
                         switch showing {
                         case .favorites:
@@ -234,7 +266,11 @@ struct SceneSettingsView: View {
                                         .equatable()
                                 }
                             } header: {
-                                sectionHeader(section.group)
+                                if let group = section.group {
+                                    sectionHeader(group)
+                                } else {
+                                    resultsHeader(section.scenes.count)
+                                }
                             }
                         }
                     }
@@ -267,6 +303,19 @@ struct SceneSettingsView: View {
     private func favorites(in group: SceneGroup) -> String {
         let count = LabScenes.catalogue.count { $0.theme.group == group && settings.isFavorite($0) }
         return count == 1 ? "1 favorite" : "\(count) favorites"
+    }
+
+    private func resultsHeader(_ count: Int) -> some View {
+        HStack(spacing: 6) {
+            Text("Results")
+                .font(.headline)
+            Text(count == 1 ? "1 specimen" : "\(count) specimens")
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
     }
 
     private func sectionHeader(_ group: SceneGroup) -> some View {
@@ -456,6 +505,37 @@ private struct SceneStill: View, Equatable {
     }
 }
 
+/// What the preview says under the well. With a specimen under the pointer:
+/// its name, its caption and its note from the field guide, centred. Without
+/// one: `resting`, what the well is playing. The lines reserve their height,
+/// so nothing under them moves as the pointer crosses the grid, whether the
+/// specimen has a note or not.
+private struct PreviewText: View {
+    let scene: LabScene?
+    let resting: String
+
+    var body: some View {
+        let note = scene.flatMap { SpecimenGuide.note(for: $0.name) }
+        VStack(spacing: 2) {
+            Text(scene?.name ?? resting)
+                .font(.callout)
+                .foregroundStyle(scene == nil ? .secondary : .primary)
+                .lineLimit(1)
+            // A space, not an empty string: an empty Text reserves nothing.
+            Text(note?.caption ?? " ")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1, reservesSpace: true)
+            Text(note?.note ?? " ")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(4, reservesSpace: true)
+                .padding(.top, 4)
+        }
+        .multilineTextAlignment(.center)
+        .frame(width: PreviewWell.textWidth)
+    }
+}
 
 /// The panel's well as it will look, playing what is on, on a raised card in
 /// the tab's scheme. A new size fades in a new well instead of stretching the
@@ -470,6 +550,10 @@ private struct PreviewWell: View {
 
     /// Holds the largest well, so nothing around it moves when the size does.
     static let side = SceneSize.large.points + 28
+
+    /// The width of the text under it, wider than the well so a note takes
+    /// four lines at most.
+    static let textWidth: CGFloat = 248
 
     var body: some View {
         ZStack {

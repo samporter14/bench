@@ -69,7 +69,11 @@ off, or right-click it to play only that one. Star your favorites and switch
 Play to Only favorites to play just those; your other picks wait for when
 you switch back. Show only the ones that are on, off or starred to check
 your picks. The preview plays only what's on, in light or
-dark. Hover a specimen to see it play big. Tired of the one playing right
+dark. Hover a specimen to see it play big, with a few words about it. Search
+matches what a specimen is about as well as its name, and the Topics menu
+beside the search field finds a whole subject at once, "microscopy" say. Turn
+on Settings → General → Name the specimen that's playing for its name and a
+caption under the session in the panel. Tired of the one playing right
 now? Right-click the panel and choose Don't Play. The panel can sit in any
 corner of your screen, on any display: Settings → General → Corner and
 Screen.
