@@ -196,6 +196,11 @@ final class LabModel: ObservableObject {
     /// When each session last raised a needs-input or finished card, so the
     /// page's own notification for the same moment can be dropped.
     private var sessionCardAt: [String: Date] = [:]
+    /// Sessions whose plan is being approved from its card (`PlanApprover`):
+    /// the card stays up through the approval and its "Approved" moment, even
+    /// once the session runs on, until `releasePlanCard`. A new request from
+    /// the session, or the card going, lets it go.
+    private var planHolds: Set<String> = []
 
     private var started = false
     /// The first read after start: sessions already waiting then get their
@@ -246,6 +251,7 @@ final class LabModel: ObservableObject {
         reminders.values.forEach { $0.cancel() }
         reminders = [:]
         sessionCardAt = [:]
+        planHolds = []
         reading = false
         changedDuringRead = false
         Router.shared.webNotificationArrived = { _ in }
@@ -322,8 +328,40 @@ final class LabModel: ObservableObject {
         remove(card)
     }
 
+    /// A plan approved from its card (`PlanApprover`): keeps the session's
+    /// needs-input card up while the approval is sent and for its "Approved"
+    /// moment, even once the session stops waiting.
+    func holdPlanCard(_ sessionID: String) {
+        guard needsInputCard(for: sessionID) != nil else { return }
+        planHolds.insert(sessionID)
+    }
+
+    /// Whether the session's card is held for an approval.
+    func holdsPlanCard(_ sessionID: String) -> Bool {
+        planHolds.contains(sessionID)
+    }
+
+    /// The approval is over. Approved, the card goes as Open would take it,
+    /// without opening the session. Otherwise it stays only while the session
+    /// still waits. Nothing happens if the hold went already: a new request
+    /// from the session replaced the card, or the card was dismissed.
+    func releasePlanCard(_ sessionID: String, approved: Bool) {
+        guard planHolds.remove(sessionID) != nil, let card = needsInputCard(for: sessionID) else { return }
+        if approved {
+            forgetReminder(sessionID)
+            dismiss(card)
+        } else if !waiting.contains(where: { $0.id == sessionID }) {
+            dismiss(card)
+        }
+    }
+
+    private func needsInputCard(for sessionID: String) -> LabCard? {
+        cards.first { if case .needsInput(let session) = $0 { session.id == sessionID } else { false } }
+    }
+
     /// Takes a card off the queue without telling Mac notifications.
     private func remove(_ card: LabCard) {
+        if case .needsInput(let session) = card { planHolds.remove(session.id) }
         expiries.removeValue(forKey: card.id)?.cancel()
         if cards.contains(where: { $0.id == card.id }) {
             cards.removeAll { $0.id == card.id }
@@ -466,8 +504,10 @@ final class LabModel: ObservableObject {
         for transition in engine.advance(to: snapshot) {
             switch transition {
             case .needsInput(let session):
-                // A new kind of request shows at once, whatever was put off.
+                // A new kind of request shows at once, whatever was put off,
+                // and whatever approval its card was held for.
                 forgetReminder(session.id)
+                planHolds.remove(session.id)
                 supersedePageNotifications(by: session)
                 if raise(.needsInput(session)) { alert = true }
                 remember(LabEvent(.needsInput(session.waitingReason), session: session))
@@ -510,12 +550,13 @@ final class LabModel: ObservableObject {
         }
 
         // A needs-input card is true for as long as its session waits, and says
-        // what it waits for now: a question can become a plan to approve.
+        // what it waits for now: a question can become a plan to approve. One
+        // held for a plan approved from it stays until the approval lets it go.
         let parkedByID = Dictionary(parked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for case .needsInput(let session) in cards {
             if let now = parkedByID[session.id] {
                 if now != session { raise(.needsInput(now)) }
-            } else {
+            } else if !planHolds.contains(session.id) {
                 dismiss(.needsInput(session))
             }
         }

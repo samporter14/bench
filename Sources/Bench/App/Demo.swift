@@ -9,6 +9,7 @@
 //
 //   build/Bench.app/Contents/MacOS/Bench --demo working  -showLabPanel YES -panelWhileFront YES
 //   build/Bench.app/Contents/MacOS/Bench --demo card     -showLabPanel YES -panelWhileFront YES
+//   build/Bench.app/Contents/MacOS/Bench --demo plan     -showLabPanel YES -panelWhileFront YES
 //   build/Bench.app/Contents/MacOS/Bench --demo toolbar
 //   build/Bench.app/Contents/MacOS/Bench --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
 //
@@ -33,6 +34,10 @@ enum Demo {
         case working
         /// One session asking a question: the panel's card face.
         case card
+        /// One session with a plan to approve, its made-up summary on the
+        /// card with Approve. Approve shows the Approved state and sends
+        /// nothing anywhere.
+        case plan
         /// One session that stopped with an error: the failure card.
         case failed
         /// One session working while the reads fail: "Not updating".
@@ -105,6 +110,12 @@ enum Demo {
             showPanel(working: [session(.running)] + others, cards: [])
         case .card?:
             showPanel(working: [], cards: [.needsInput(session(.needsInput))])
+        case .plan?:
+            let waiting = session(.needsInput, reason: .plan)
+            PlanApprover.shared.showDemo(sessionID: waiting.id, preview: PlanPreview(
+                summary: "Screen 24 buffer conditions", steps: 6, confidence: "high",
+                versionID: "demo", artifactID: nil))
+            showPanel(working: [], cards: [.needsInput(waiting)])
         case .failed?:
             showPanel(working: [], cards: [.failed(session(.error))])
         case .notice?:
@@ -146,13 +157,14 @@ enum Demo {
     // MARK: Made-up data
 
     private static func session(_ state: SessionState, id: String = "demo-1",
-                                title: String = "Protein stability screen") -> SessionStatus {
+                                title: String = "Protein stability screen",
+                                reason: WaitingReason = .question) -> SessionStatus {
         let now = Date()
         return SessionStatus(
             id: id, projectID: "demo", projectName: "Example project",
             title: title, state: state,
             updatedAt: now, startedAt: now.addingTimeInterval(-(4 * 60 + 12)),
-            waitingReason: .question)
+            waitingReason: reason)
     }
 
     /// Made-up sessions in every state, for the activity list.

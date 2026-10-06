@@ -50,6 +50,8 @@ struct LabPanelView: View {
     @ObservedObject private var settings = SceneSettings.shared
     /// Whether a Nidus focus session is on: Later offers to wait for its end.
     @ObservedObject private var focus = NidusFocus.shared
+    /// A plan's card: its summary, and Approve (Lab/PlanApproval.swift).
+    @ObservedObject private var plans = PlanApprover.shared
     /// Reports the window size the content wants, whenever it changes.
     let onFit: (CGSize) -> Void
 
@@ -227,16 +229,14 @@ struct LabPanelView: View {
         switch card {
         case .needsInput(let session):
             let reason = session.waitingReason ?? .other
+            // Only a plan's card has one, and only while the setting is on.
+            let plan = reason == .plan ? plans.state(for: session.id) : nil
             Row(side: wellSide, well: PlayedLoop(glyph: reason.glyph, tint: colorScheme.sceneInk)) {
                 caption(reason.sentence, style: Theme.clay, weight: .semibold, trailing: position)
                 title(session.displayTitle)
                 detail(session.projectName)
-                buttons {
-                    Button("Open") { model.open(card) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
-                    later(card)
-                }
+                if let plan { planLines(plan) }
+                needsInputActions(card, session: session, plan: plan)
             }
         case .failed(let session):
             Row(side: wellSide, well: symbol("exclamationmark.triangle")) {
@@ -297,6 +297,80 @@ struct LabPanelView: View {
                         .buttonStyle(.glassProminent)
                         .tint(Theme.clay)
                 }
+            }
+        }
+    }
+
+    /// The plan under the title: its summary in two lines, then its steps
+    /// and confidence, or why it couldn't be approved here.
+    @ViewBuilder
+    private func planLines(_ plan: PlanCardState) -> some View {
+        switch plan {
+        case .loading:
+            detail("Loading the plan…")
+                .padding(.top, 4)
+        case .unavailable:
+            EmptyView()
+        case .ready(let preview), .approving(let preview), .approved(let preview):
+            planSummary(preview.summary)
+            if let line = preview.detail { detail(line) }
+        case .problem(let message, let preview):
+            planSummary(preview.summary)
+            detail(message)
+        }
+    }
+
+    private func planSummary(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12.5))
+            .lineLimit(2)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 4)
+    }
+
+    /// Open and Later, as on every needs-input card. A plan that is ready
+    /// adds Approve in front, the primary action, and Open steps back to
+    /// plain glass. Pressed, Approve becomes a spinner; approved, the row is
+    /// "Approved ✓" until the card goes.
+    @ViewBuilder
+    private func needsInputActions(_ card: LabCard, session: SessionStatus, plan: PlanCardState?) -> some View {
+        switch plan {
+        case .approved?:
+            HStack(spacing: 4) {
+                Text("Approved")
+                Image(systemName: "checkmark")
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Theme.clay)
+            .padding(.top, 8)
+            .accessibilityElement(children: .combine)
+        case .ready?:
+            buttons {
+                Button("Approve") { plans.approve(session.id) }
+                    .buttonStyle(.glassProminent)
+                    .tint(Theme.clay)
+                    .help("Approve this plan. Bench checks it's still the same plan first.")
+                Button("Open") { model.open(card) }
+                    .buttonStyle(.glass)
+                later(card)
+            }
+        case .approving?:
+            buttons {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(minWidth: 64)
+                    .accessibilityLabel("Approving")
+                Button("Open") { model.open(card) }
+                    .buttonStyle(.glass)
+                later(card)
+            }
+        default:
+            buttons {
+                Button("Open") { model.open(card) }
+                    .buttonStyle(.glassProminent)
+                    .tint(Theme.clay)
+                later(card)
             }
         }
     }

@@ -128,7 +128,8 @@ you", and the graph's steps. No other hues, no gradients.
   Science's own "Sign in" card and its API reads come back 401. A fresh
   `claude-science url` code does NOT fix it (tested 2026-09-29), but pressing
   the card's Sign in button goes straight back in, with no password or
-  consent (Sam). So when `apiGET` gets a 401, `WebContainer.sessionLost()`
+  consent (Sam). So when `apiGET` (or the one write, `apiPOST`) gets a 401,
+  `WebContainer.sessionLost()`
   presses the first visible "Sign in" button, looking for it over 6 s, then
   refreshes the plan readout. With no button it falls back to the fresh code.
   At most once every ten minutes.
@@ -188,6 +189,22 @@ Every link goes through one function. The rules:
   - A download that fails (not one cancelled) says so in an alert, as a
     sheet on the main window: "Couldn't download "name"" and the reason.
     Before 0.3.1 it was only logged.
+- **Calls to Claude Science's API** (Web/WebAPI.swift) are made from inside
+  the page with `callAsyncJavaScript`, in Bench's `.defaultClient` script
+  world, so the page's cookie session carries them and Bench never holds it:
+  - `apiGET` reads, and only under `/api/usage`, `/api/frames/` and (since
+    0.3.4, for a plan's card) `/api/artifacts/versions/`; never a path with
+    `..`.
+  - `apiPOST` is the **one write** (since 0.3.4). It accepts exactly one
+    route, `^/frames/[0-9a-f-]{36}/approve-plan$` (`WebContainer.isWritablePath`),
+    and its body is always exactly `{}`. It sends the `operon_csrf` cookie's
+    value as `x-operon-csrf`, with `credentials: "include"` and
+    `Content-Type: application/json`; the browser adds the page's `Origin`.
+    On 403 `{code: "csrf_stale"}` it calls `GET /api/csrf` (inside the same
+    script, not through `apiGET`) and retries once. It returns the status
+    and the JSON `code` (and whether the body says "No plan awaiting"), never
+    the body itself. A 401 calls `sessionLost()`, as `apiGET` does. See
+    Approving a plan from its card.
 - `isInspectable = true` (internal build).
 - `isElementFullscreenEnabled = true`.
 - Find (⌘F): a small find bar under the toolbar that uses
@@ -256,7 +273,11 @@ another starts its time when it reaches the top, so a finish behind a
 question is still seen.
 
 - `needsInput` stays until the session stops waiting, and shows what it waits
-  for now: a question that becomes a plan to approve updates in place. A new
+  for now: a question that becomes a plan to approve updates in place. A
+  plan's card approved from the panel stays a moment longer: `PlanApprover`
+  holds it through the approval and its "Approved ✓" (`holdPlanCard`,
+  `releasePlanCard`), and a new request from the session, or the card
+  going, ends the hold. A new
   kind of request comes back even after the last one was dismissed (the ×
   or Dismiss). Later puts a card off instead of dismissing it, below.
 - **Later** takes a `needsInput` card out of the queue and brings it back at
@@ -340,6 +361,14 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     a split pull-down `Menu(primaryAction:)`: a click on Later is "In 5
     Minutes"; its menu has In 5 Minutes, In 15 Minutes, After My Focus
     Session (only while Nidus reports a focus session), a divider and Dismiss.
+  - A plan to approve (since 0.3.4, with the setting on): under the project,
+    the plan's `task_summary` (12.5 pt, 2 lines, truncated) and "5 steps ·
+    high confidence" in secondary; "Loading the plan…" while it is read.
+    When it is ready the buttons are **Approve** (`.glassProminent`, clay,
+    the primary action), **Open** (`.glass`) and Later. Pressed, Approve is a
+    small spinner; approved, the row reads "Approved ✓" in clay. The card
+    keeps its width and grows taller; the panel measures its content, so the
+    window follows. See Approving a plan from its card.
 - **Finished.**
   - Left well: the flask, still.
   - Caption: "Finished", then the duration and the tokens.
@@ -530,6 +559,8 @@ The poster, `MacNotifications`, is thin and tests never use it.
   title and "and 2 more". With names off, "A session finished while you
   focused", or "Sessions finished while you focused". A click opens the
   session when there is one, else the window. No other notice is sent.
+- **Never with Approve.** A notification only opens its session; approving
+  a plan is on the panel's card alone (Approving a plan from its card).
 - **Sound.** Bench's own "Play a sound" on: the notification is silent, as
   the panel chimes. Off: the default sound.
 - **Identifier.** The card's id, so a question that becomes a plan to
@@ -563,6 +594,117 @@ The poster, `MacNotifications`, is thin and tests never use it.
 - Not done: notifications that outlive a quit are not checked against the
   sessions at the next launch, so one for a session answered meanwhile
   stays until it is clicked or cleared.
+
+### Approving a plan from its card (since 0.3.4)
+
+Bench's first and only write to Claude Science (Lab/PlanApproval.swift).
+Until 0.3.4 it only read. Plan approval only; every other kind of waiting
+keeps Open and Later.
+
+**The flow.** `PlanApprover` follows `LabModel.cards`:
+
+1. When the card on top is a needs-input card whose reason is `.plan`, it
+   reads that session's plan once, keyed by session id, while the card says
+   "Loading the plan…". It reads nothing while the setting or "Show a card"
+   is off, before the page is up, or in a demo.
+2. If every check holds, the card shows the summary and the steps line, and
+   offers **Approve**. If any check fails, the card is as before, Open and
+   Later.
+3. **Approve** goes to "approving" at once and shows a spinner, so a second
+   press finds nothing to do and nothing is posted twice. `LabModel` holds
+   the card up from here, even once the session runs on.
+4. Bench reads the root frame again, and posts only if it still waits for
+   the very plan shown.
+5. Approved: "Approved ✓" for about 1.5 s, then the card goes through
+   `LabModel`, as Open would take it (its reminder too), without opening the
+   session.
+6. Anything else keeps Open and Later and says why: "The plan changed: open
+   it to check", "Claude is still busy with it", or "Couldn't approve here".
+   There is no second Approve on that card.
+
+The plan state is dropped when the card goes, when it stops being about a
+plan (a new request replaced it), or when the setting is turned off; a card
+that comes back reads its plan afresh.
+
+**The checks** (`PlanCheck`, pure, tested on made-up JSON):
+
+- **Offer Approve** only when all of these hold: the **root** frame's own
+  `status` is `awaiting_plan_approval`; `_plan_approved` is not true (a
+  value that is neither true nor false counts against it); the version id is
+  a string fit for a path (`[A-Za-z0-9_-]`, at most 128); and the plan file
+  parses with a string, non-empty `task_summary`.
+- **The root only.** The card's session id is the root frame, and it must
+  be a full 36-character id (the daemon matches a shorter one by prefix). If
+  a sub-agent is the one waiting, the root's own status is `processing`:
+  no plan is read, and only Open.
+- **At the press**, the shallow frame again: still `awaiting_plan_approval`,
+  still not approved, the same version id, and the same artifact id when
+  both are known. Otherwise `.changed`, and nothing is posted. The approve
+  call carries no version, and the server approves whatever plan is pending,
+  so this check is Bench's to make, immediately before the POST. The window
+  left between the check and the POST is small: a new plan only appears
+  after the frame passes through `processing`.
+- **The answer:** 200 with JSON `status: "accepted"`, or 400
+  `plan_already_approved` (Claude Science's own UI counts that as success),
+  is `.approved`; 400 `plan_frame_processing` is `.busy`; 400 "No plan
+  awaiting approval…" is `.changed`; everything else (401, 403 after the
+  one CSRF retry, 404, 405, other codes, a body that isn't JSON, a thrown
+  call) is `.failed`.
+
+**The endpoints** (all under the daemon's `/api`, made from the page):
+
+```
+GET  /api/frames/<rootFrameId>?shallow=true
+     status
+     context_data._plan_version_id, _plan_artifact_id, _plan_approved
+     (else output_data.plan_version_id, plan_artifact_id, plan_approved)
+
+GET  /api/artifacts/versions/<_plan_version_id>
+     task_summary
+     phases[].delegations[].steps[]   (counted; older plans: top-level steps[])
+     feasibility.confidence           (when a short string)
+```
+
+```
+POST /api/frames/<rootFrameId>/approve-plan
+     Content-Type: application/json
+     x-operon-csrf: <the operon_csrf cookie>
+     body: {}
+200  {"root_frame_id", "frame_id", "status": "accepted"}
+403  {"code": "csrf_stale"}  →  GET /api/csrf, then the POST once more
+```
+
+The body is always `{}`: the session keeps its own settings, and the plan is
+never sent back (sending it as `edited_plan` would save a new version marked
+as a user edit).
+
+**Privacy.** This widens Bench's "never read content" rule by exactly the
+plan's summary, its step count and its confidence word, for the card. Only
+those fields are picked from the responses (the frame's `name`,
+`task_summary` and `input_data` are not), they are kept in memory only, for
+as long as the card is up, and they are never logged, saved or sent
+anywhere. The log says only how an approval ended ("approved", "changed"…).
+The demo and the tests use made-up plans.
+
+**Not in notifications, ever.** A Mac notification can be read, and acted
+on, far from the Mac (in Notification Center later, on an iPhone that
+mirrors the Mac, on a lock screen), without the plan in front of you and
+without the check against the plan you saw. So Mac notifications, the
+activity list and the Dock menu stay Open-only; Approve is only on the
+panel's card, where the summary shows.
+
+**The fallback is Open.** A setting turned off, a read that fails, a shape
+that doesn't match (a newer daemon, a 404 or 405, an unknown code), a
+sub-agent waiting, a changed plan: each leaves the card as it was before
+0.3.4, with Open taking you to the session to decide there.
+
+**Setting.** Settings → General → When a session needs you → **Show plans
+on the card, with Approve** (`showPlansOnCard`), on by default. Off, a plan's
+card is Open and Later, and no plan is read.
+
+**Demo.** `Bench --demo plan`: a made-up session whose made-up plan is
+ready ("Screen 24 buffer conditions", "6 steps · high confidence"). Its
+Approve shows the Approved state and calls nothing.
 
 ## Scenes settings (Lab/SceneSettings.swift, Lab/SpecimenChoice.swift)
 
@@ -666,7 +808,9 @@ The Settings **Scenes** tab (760×700) has:
 Like Claude Code's desktop context indicator. Both read Claude Science's own
 API through `WebContainer.apiGET` (Web/WebAPI.swift): a GET made inside the
 page, in an isolated script world, so the page's cookie session carries it
-and Bench never holds the session. Only read-only paths are allowed.
+and Bench never holds the session. Only the listed read paths are allowed;
+the one write Bench makes is a plan's Approve (Web routing policy, and
+Approving a plan from its card).
 
 **Context ring (toolbar).**
 - Source: `GET /api/frames/<id>/token-series`, for
@@ -761,6 +905,7 @@ Two tabs: General (below) and Scenes (above).
 | Appearance: Match Mac, Ivory or Slate (the whole app, via `NSApp.appearance`; the page follows while its own theme is System) | Match Mac |
 | Show the Lab panel | on |
 | Play a sound when a session needs you | on |
+| Show plans on the card, with Approve (`showPlansOnCard`, since 0.3.4) | on |
 | Also send a Mac notification (Mac notifications) | off |
 | When a session finishes too (Mac notifications) | off |
 | Show session and project names (Mac notifications) | on |
@@ -801,6 +946,7 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] microphone/voice
 - [ ] Claude Science desktop notifications reach the panel
 - [ ] needs-input card appears, Open lands on the session
+- [ ] a plan's card shows its summary, and Approve approves it (a throwaway session)
 - [ ] finished card
 - [ ] find, zoom and back/forward
 - [ ] the window closes and reopens without losing state

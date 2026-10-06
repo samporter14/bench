@@ -25,8 +25,9 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   (⌘F).
 - **Nothing collected.** No Bench account, no analytics, no telemetry, no
   update checks. Bench only talks to Claude Science running on your own Mac,
-  and other sites open only when you click a link. It reads Claude Science's
-  session list in read-only mode and saves nothing but its own settings.
+  and other sites open only when you click a link. Bench reads Claude
+  Science and changes nothing in it, except when you press Approve on a
+  plan's card. It saves nothing but its own settings.
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
 - **Know when it needs you.** While a session works, one of 507 little
@@ -35,6 +36,12 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   Later can remind you in 5 or 15 minutes, or after a Nidus focus session.
 
   <img src="docs/panel-working.png" width="336" alt="The floating panel while a session works: a specimen playing, and the session's name, project and running time"> <img src="docs/panel-card.png" width="360" alt="The panel's card when a session asked a question, with Open and Later buttons">
+- **Approve a plan from its card.** When a session asks you to approve its
+  plan, the card shows the plan's summary, how many steps it has and how
+  confident it is, with an **Approve** button. Bench checks it's still the
+  same plan just before approving; if anything is off, Open takes you to the
+  session instead. Never from a Mac notification. Turn it off in Settings →
+  General.
 - **Mac notifications, if you want them.** Off until you turn on **Also
   send a Mac notification** in Settings → General → Mac notifications. Then
   a session that needs you or stops with an error sends a notification too,
@@ -144,7 +151,7 @@ It builds `build/Bench.app` and opens it.
   been checked live so far.
 - `DESIGN.md` is the spec: the look, where the glass goes, and how links are
   routed.
-- The screenshots use made-up sessions: `Bench --demo working|card|toolbar|general|specimens`
+- The screenshots use made-up sessions: `Bench --demo working|card|plan|toolbar|general|specimens`
   shows the real UI with invented names (add `--quiet`, and launch with
   `open -g -n`, to keep it from taking the keyboard), and
   `Bench --render-scenes` records the scene GIF.

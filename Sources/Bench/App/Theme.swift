@@ -41,6 +41,9 @@ enum SettingsKey {
     /// Hold "Finished" cards while a Nidus focus session runs.
     static let holdDuringFocus = "holdDuringNidusFocus"
     static let soundOnNeedsInput = "soundOnNeedsInput"
+    /// A plan's card shows its summary and an Approve button (since 0.3.4).
+    /// Off, the card is Open and Later, and no plan is read.
+    static let showPlansOnCard = "showPlansOnCard"
     /// A Mac notification as well as the card. Off by default: macOS asks
     /// permission when it is turned on.
     static let macNotifications = "macNotifications"
@@ -76,6 +79,7 @@ enum SettingsKey {
             weekInReview: true,
             holdDuringFocus: true,
             soundOnNeedsInput: true,
+            showPlansOnCard: true,
             macNotifications: false,
             macNotifyFinishes: false,
             macNotifyNames: true,
