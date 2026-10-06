@@ -66,6 +66,9 @@ final class PlanUsageModel: ObservableObject {
     @Published private(set) var failure: String?
     /// When `limits` were read; only a successful read sets it.
     @Published private(set) var lastRead: Date?
+    /// What the pace of the last 45 minutes says for each limit in `limits`
+    /// (UsageForecast.swift); `.tooEarly` until there are reads enough.
+    @Published private(set) var forecasts: [PlanLimit.Kind: Forecast] = [:]
 
     /// The limit with the least left, which is the one the toolbar shows.
     var tightest: PlanLimit? {
@@ -78,6 +81,9 @@ final class PlanUsageModel: ObservableObject {
     /// doesn't sit on "resets now" with the old percent.
     private var atReset: Task<Void, Never>?
     private var lastAttempt: Date?
+    /// The reads of each limit's current window, for the forecast. In memory
+    /// only; a window starting over empties its reads.
+    private var samples: [PlanLimit.Kind: UsageSamples] = [:]
 
     private static let staleAfter: TimeInterval = 60
     private static let interval: Duration = .seconds(300)
@@ -135,6 +141,8 @@ final class PlanUsageModel: ObservableObject {
 
     /// Shows made-up limits, with no read. Only Demo calls it.
     func showDemo(limits: [PlanLimit]) {
+        samples = [:]
+        forecasts = [:]
         self.limits = limits
         extra = nil
         loading = false
@@ -188,18 +196,39 @@ final class PlanUsageModel: ObservableObject {
 
     private func apply(_ payload: Payload) {
         loading = false
-        limits = [
+        let read = Date()
+        let latest = [
             limit(.session, payload.fiveHour),
             limit(.week, payload.sevenDay),
             limit(.weekOpus, payload.sevenDayOpus),
             limit(.weekSonnet, payload.sevenDaySonnet),
         ].compactMap { $0 }
+        // Before `limits`, so whoever hears of the new limits finds the forecasts too.
+        forecast(latest, at: read)
+        limits = latest
         extra = payload.extraUsage?.isEnabled == true
             ? PlanExtraUsage(usedPercent: payload.extraUsage?.utilization.map(Self.percent))
             : nil
-        lastRead = Date()
+        lastRead = read
         failure = nil
         scheduleReadAtReset()
+    }
+
+    /// Adds this read to each limit's samples and works out its forecast.
+    /// A limit that has gone from the read loses its samples.
+    private func forecast(_ latest: [PlanLimit], at time: Date) {
+        var kept: [PlanLimit.Kind: UsageSamples] = [:]
+        var estimates: [PlanLimit.Kind: Forecast] = [:]
+        for limit in latest {
+            var window = samples[limit.kind] ?? UsageSamples()
+            window.record(usedPercent: limit.usedPercent, resetsAt: limit.resetsAt, at: time)
+            kept[limit.kind] = window
+            estimates[limit.kind] = limit.resetsAt.map {
+                UsageForecast.estimate(samples: window.points, resetsAt: $0, now: time)
+            } ?? .tooEarly
+        }
+        samples = kept
+        forecasts = estimates
     }
 
     private func scheduleReadAtReset() {

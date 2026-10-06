@@ -436,6 +436,11 @@ due is `NoticeRules`, pure and tested on made-up data.
   limit has 10% or less left ("9% of your 5-hour limit left · Resets in 47
   minutes"), keyed by the window's reset time to the minute; and "has reset"
   only when Bench saw an announced window end in the last 10 minutes.
+- **Plan forecast:** one card per window, "At this pace your 5-hour limit
+  runs out around 3:40 PM" (the weekly limit likewise), when the forecast
+  (see Title-bar readouts) puts the limit under 45 minutes away and it is
+  still under 90% used; the 90% card covers the rest. Its windows are kept
+  apart from the Plan ones, so a window can have both. Never in a demo.
 - **Context:** one card per session when the session open in the web view
   has used 85% of its context window, naming it.
 - **Week in review:** once a new week starts (the activity graph's calendar),
@@ -704,6 +709,23 @@ and Bench never holds the session. Only read-only paths are allowed.
   enabled. Then the **Activity** section (the graph from Claude Science's launch on June 30, 2026, a column per week up to a year; 14 pt squares while it spans 30 weeks or fewer, the days before launch blank; the popover is as wide as the graph needs, 600 pt at least), and a Refresh
   button (`.glass`).
 - One Usage control, not two.
+
+**Usage forecast (the popover, under each limit's bar).** "At this pace:
+limit around 3:40 PM", "At this pace: lasts until it resets", or nothing.
+`PlanUsageModel` keeps each limit's reads of its current window, a time and
+the whole percent (`UsageSamples`), in memory only and never on disk; they
+start over when `resets_at` moves by more than 5 minutes (it wobbles by
+seconds between reads). It adds no reads: the ones above are the samples,
+one every 5 minutes at least. `UsageForecast.estimate` is pure and tested:
+it takes the reads of the last 45 minutes (from the last drop in the
+percent on, a drop being a reset) and fits a line by least squares, so one
+read's rounding doesn't swing it. With fewer than 3 reads, less than 15
+minutes of them, or under 3 points of change (a flat line too), it is "too
+early" and nothing is said, and nothing is said either once the limit is at
+100%. Where the line reaches 100% after the reset, "lasts until it resets";
+otherwise the time, rounded to 5 minutes, with the day in front if it isn't
+today. The weekly rows use the same 45 minutes, so they speak only after a
+burst of use. The toolbar label doesn't change.
 
 ## Native controls, Solanum where it counts (since 0.1.13)
 

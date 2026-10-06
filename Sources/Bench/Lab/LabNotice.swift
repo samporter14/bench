@@ -1,7 +1,8 @@
 // LabNotice.swift — a card that tells rather than asks (DESIGN.md, Notices):
-// the plan nearly used up or reset, a session's context filling up, the week
-// in review, what finished during a Nidus focus session. Notices queue after
-// the cards about sessions, never play a sound, and always time out.
+// the plan nearly used up, on course to run out, or reset, a session's
+// context filling up, the week in review, what finished during a Nidus focus
+// session. Notices queue after the cards about sessions, never play a sound,
+// and always time out.
 //
 // `NoticeRules` decides when each one is due. It is pure, so the tests run it
 // on made-up limits, histories and focus states.
@@ -70,6 +71,41 @@ enum NoticeRules {
                 detail: "\(kind.leftPercent)% left", lifetime: .seconds(8)))
         }
         return (notices, kept)
+    }
+
+    // MARK: Plan forecast
+
+    /// A forecast card only for a limit the pace puts this close to running out.
+    static let forecastHorizon: TimeInterval = 45 * 60
+
+    /// The cards due for the pace so far (UsageForecast.swift), given the
+    /// windows already announced (key to reset time), and the announced
+    /// windows to keep from now on. A limit gets one in a window, while it
+    /// is still under the 90% card's threshold; that card covers the rest.
+    /// Kept apart from `plan`'s windows, so a window can have both.
+    static func forecast(limits: [PlanLimit], forecasts: [PlanLimit.Kind: Forecast], announced: [String: Date], now: Date)
+        -> (notices: [LabNotice], announced: [String: Date]) {
+        // Windows that have ended are forgotten.
+        var kept = announced.filter { $0.value > now }
+        var notices: [LabNotice] = []
+        for limit in limits where watches(limit.kind) {
+            guard let key = windowKey(limit), let resetsAt = limit.resetsAt, resetsAt > now,
+                  limit.usedPercent < planThreshold, kept[key] == nil,
+                  case .limitAround(let time)? = forecasts[limit.kind],
+                  time.timeIntervalSince(now) < forecastHorizon else { continue }
+            kept[key] = resetsAt
+            notices.append(runningOut(limit, around: time, resetsAt: resetsAt, now: now, key: key))
+        }
+        return (notices, kept)
+    }
+
+    private static func runningOut(_ limit: PlanLimit, around time: Date, resetsAt: Date, now: Date, key: String) -> LabNotice {
+        let which = limit.kind == .session ? "5-hour limit" : "weekly limit"
+        let resets = resetsAt.formatted(.relative(presentation: .named, unitsStyle: .wide))
+        return LabNotice(
+            id: "plan-forecast-\(key)", symbol: "chart.line.uptrend.xyaxis", caption: "Plan",
+            title: "At this pace your \(which) runs out around \(UsageForecast.clock(time, now: now))",
+            detail: "\(limit.leftPercent)% left · Resets \(resets)", lifetime: .seconds(10))
     }
 
     private static func nearLimit(_ limit: PlanLimit, now: Date) -> LabNotice {

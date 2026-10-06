@@ -121,7 +121,8 @@ struct PlanLimitsSection: View {
                             PlanLimitRow(
                                 title: limit.kind.title,
                                 usedPercent: limit.usedPercent,
-                                detail: limit.resetsAt.map { resets($0, now: context.date) })
+                                detail: limit.resetsAt.map { resets($0, now: context.date) },
+                                forecast: plan.forecasts[limit.kind]?.line(now: context.date))
                         }
                         if let extra = plan.extra {
                             PlanLimitRow(title: "Extra usage", usedPercent: extra.usedPercent, detail: nil)
@@ -139,14 +140,30 @@ struct PlanLimitsSection: View {
     }
 }
 
-/// Name, bar (clay for what is used), what is left, and when it starts over.
+/// Name, bar (clay for what is used), what is left, and when it starts over,
+/// with the pace's forecast in a quiet line under the bar when there is one.
 private struct PlanLimitRow: View {
     let title: String
     /// Nil when Claude Science gives no percent: extra usage can be on without one.
     let usedPercent: Int?
     let detail: String?
+    var forecast: String?
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            figures
+            if let forecast {
+                Text(forecast)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    // Under the bar: the title's width and the gap after it.
+                    .padding(.leading, 172)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var figures: some View {
         HStack(spacing: 12) {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
@@ -174,7 +191,6 @@ private struct PlanLimitRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 130, alignment: .trailing)
         }
-        .accessibilityElement(children: .combine)
     }
 }
 

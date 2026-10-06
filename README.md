@@ -49,8 +49,9 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 
   <img src="docs/activity.png" width="390" alt="The activity list under the toolbar's 2 need you: two sessions waiting, one stopped with an error, two working with their clocks, and Recent below">
 - **A heads-up before you hit a wall.** A card when your plan is nearly
-  used up and when it resets, and when the session you have open has used
-  most of its context. Once a new week starts, a quiet week in review.
+  used up, when at this pace it will run out within 45 minutes, and when it
+  resets, and when the session you have open has used most of its context.
+  Once a new week starts, a quiet week in review.
 - **Plays well with Nidus.** While a [Nidus](https://github.com/samporter14/nidus)
   focus session runs, "Finished" cards wait until it ends and come as one;
   questions and errors still come at once.

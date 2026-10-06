@@ -367,7 +367,7 @@ struct GeneralSettingsView: View {
             Section("Heads-up") {
                 Toggle(isOn: $headsUp) {
                     Text("Plan and context")
-                    Text("A card when 10% of your 5-hour or weekly limit is left, and when it resets; and when the session you have open has used 85% of its context.")
+                    Text("A card when your 5-hour or weekly limit has 10% left, is on pace to run out within 45 minutes, or resets; and when the session you have open has used 85% of its context.")
                 }
                 Toggle(isOn: $weekInReview) {
                     Text("Week in review")

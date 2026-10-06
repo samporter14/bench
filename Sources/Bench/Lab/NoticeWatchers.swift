@@ -1,9 +1,9 @@
 // NoticeWatchers.swift — what posts notices (DESIGN.md, Notices): the plan
-// nearly used up or reset, the shown session's context filling up, and the
-// week in review. Each watches a model Bench already has; none reads on its
-// own schedule except the weekly check, once a day. What has been announced
-// is kept in Bench's settings so an update doesn't announce it again; demos
-// keep nothing.
+// nearly used up, on course to run out, or reset, the shown session's context
+// filling up, and the week in review. Each watches a model Bench already has;
+// none reads on its own schedule except the weekly check, once a day. What
+// has been announced is kept in Bench's settings so an update doesn't
+// announce it again; demos keep nothing.
 import Combine
 import Foundation
 
@@ -17,6 +17,7 @@ final class NoticeWatchers {
 
     private enum Key {
         static let planWindows = "noticePlanWindows"
+        static let forecastWindows = "noticeForecastWindows"
         static let contextFrames = "noticeContextFrames"
         static let reviewedWeek = "noticeReviewedWeek"
     }
@@ -55,6 +56,19 @@ final class NoticeWatchers {
         if Demo.mode == nil {
             defaults.set(kept.mapValues(\.timeIntervalSince1970), forKey: Key.planWindows)
         }
+        if enabled { notices.forEach(LabModel.shared.post) }
+        forecastChanged(limits)
+    }
+
+    /// The pace card. A demo's made-up limits have no forecast, and never
+    /// get one here.
+    private func forecastChanged(_ limits: [PlanLimit]) {
+        guard Demo.mode == nil else { return }
+        let stored = (defaults.dictionary(forKey: Key.forecastWindows) as? [String: Double]) ?? [:]
+        let announced = stored.mapValues { Date(timeIntervalSince1970: $0) }
+        let (notices, kept) = NoticeRules.forecast(
+            limits: limits, forecasts: PlanUsageModel.shared.forecasts, announced: announced, now: Date())
+        defaults.set(kept.mapValues(\.timeIntervalSince1970), forKey: Key.forecastWindows)
         if enabled { notices.forEach(LabModel.shared.post) }
     }
 
