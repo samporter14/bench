@@ -426,6 +426,97 @@ activity list in a popover. Its ink follows the menu bar's appearance (the
 wallpaper's), not Bench's Ivory or Slate. Hidden, not removed, while nothing
 works, so it keeps its place. Measured at about 0–2% CPU while playing.
 
+### Mac notifications (since 0.3.3)
+
+A notification in Notification Center as well as the card, for the moments
+the card is for. **Opt-in**, off by default, and explained where it is
+turned on: what it does, that macOS asks once, that it names the session
+and project unless told not to, and where to turn it off.
+
+**Settings → General → Mac notifications**, right after "When a session
+needs you" (`MacNotificationsSection`, in Lab/MacNotifications.swift):
+
+- **Also send a Mac notification.** Off. Its subtitle says it comes as
+  well as the card, shows in full screen, with the panel off and on an
+  iPhone that shows the Mac's notifications, and that macOS asks permission
+  the first time. Turning it on asks macOS for alert and sound at once. If
+  the answer is no, the switch stays on and the Permission row says why.
+- **When a session finishes too.** Off. Without it, notifications come only
+  when a session needs you or stops with an error.
+- **Show session and project names.** On. Off, they read "A session needs
+  you", "A session stopped with an error" and "A session finished", with
+  nothing of the session's or project's in any field.
+- Both switches are disabled while the first is off.
+- **Permission**, read from `UNUserNotificationCenter` when the section
+  appears and whenever Bench becomes active, so a change made in System
+  Settings shows without reopening: "Allowed"; "Not allowed: turned off in
+  System Settings", with **Open Notification Settings…**
+  (`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=local.sam.bench`);
+  "macOS will ask when you turn this on", or "Waiting for your answer to
+  macOS's question" if it is on and macOS hasn't been answered.
+- **Send a Test Notification**, enabled only when notifications are on and
+  allowed. Made-up words ("This is how Bench tells you a session needs
+  you."), nothing of the user's. It banners even with Bench in front, which
+  it always is when sent from Settings.
+- A footer says it all again in one place: names are shown unless turned
+  off, and notifications stop by switching the first one off or by turning
+  Bench off in System Settings → Notifications.
+
+**What goes out.** `NotificationRules.content(for:settings:)` is pure and
+decides everything: nothing unless the setting is on and macOS allows it.
+The poster, `MacNotifications`, is thin and tests never use it.
+
+| Card | Title | Body |
+|---|---|---|
+| Needs input (a Later reminder coming back too) | the session's title | the reason sentence (`WaitingReason.sentence`), " · ", the project |
+| Failed | the session's title | "Stopped with an error · " and the project |
+| Finished, only with "When a session finishes too" | the session's title | "Finished · " and the project |
+
+- **Never** for a page's own notification (`LabCard.web`), a saved file or
+  a notice (but for the one below); on the first read after launch (as `chime` is not played);
+  in a `--demo` mode; or in tests.
+- **A finish held for a Nidus focus session** is not sent then: its card
+  waits, so does its notification. When the session ends, what finished
+  comes as one notification, as its "While you focused" card does, and only
+  with "When a session finishes too" on: the one session's title and
+  "While you focused · Finished", or "3 sessions finished" and the first
+  title and "and 2 more". With names off, "A session finished while you
+  focused", or "Sessions finished while you focused". A click opens the
+  session when there is one, else the window. No other notice is sent.
+- **Sound.** Bench's own "Play a sound" on: the notification is silent, as
+  the panel chimes. Off: the default sound.
+- **Identifier.** The card's id, so a question that becomes a plan to
+  approve replaces its notification (and is sent again) rather than
+  adding another. Told by `LabModel.cardRaised`, which fires for a card
+  that is new or asks something new, never on the first read.
+- **Taken back.** `LabModel.cardWithdrawn` removes the delivered
+  notification when its card (the "While you focused" one too) is opened or
+  dismissed, when its session stops
+  waiting, and when a failure's session runs again. A card that only times
+  out (a finish after 6 s) leaves its notification where it is, so it is
+  there to see later; opening it or clearing it in Notification Center
+  removes it.
+- **Clicking** one activates Bench and opens that session by id
+  (`LabModel.open(sessionID:)`: its card, the lists or Recent, else the
+  deep link kept in the notification, else just the window). A notification
+  from before a relaunch still opens its session. Bench is the
+  `UNUserNotificationCenterDelegate` from launch for this.
+- **With Bench in front** (`willPresent`) a notification goes to the list
+  only: no banner and no sound, since the user is already here.
+- **Safety.** `UNUserNotificationCenter.current()` crashes outside an app
+  bundle, so it is touched only when the bundle identifier is
+  `local.sam.bench` and no demo is running. `LabModel`'s two hooks do
+  nothing until `MacNotifications.start()` sets them at launch.
+- **What stays on the Mac.** Bench saves nothing about sessions, but
+  macOS keeps a delivered notification in Notification Center until it is
+  cleared, and an iPhone that mirrors the Mac's notifications shows it.
+  That is what "Show session and project names" is for. A notification also
+  carries the session's id and its link, opaque ids and no names, to open
+  it on a click.
+- Not done: notifications that outlive a quit are not checked against the
+  sessions at the next launch, so one for a session answered meanwhile
+  stays until it is clicked or cleared.
+
 ## Scenes settings (Lab/SceneSettings.swift, Lab/SpecimenChoice.swift)
 
 `SceneSettings.shared` holds three settings in UserDefaults:
@@ -606,6 +697,9 @@ Two tabs: General (below) and Scenes (above).
 | Appearance: Match Mac, Ivory or Slate (the whole app, via `NSApp.appearance`; the page follows while its own theme is System) | Match Mac |
 | Show the Lab panel | on |
 | Play a sound when a session needs you | on |
+| Also send a Mac notification (Mac notifications) | off |
+| When a session finishes too (Mac notifications) | off |
+| Show session and project names (Mac notifications) | on |
 | Show the Lab panel while Bench is in front | on |
 
 ## Files and ownership

@@ -41,6 +41,13 @@ enum SettingsKey {
     /// Hold "Finished" cards while a Nidus focus session runs.
     static let holdDuringFocus = "holdDuringNidusFocus"
     static let soundOnNeedsInput = "soundOnNeedsInput"
+    /// A Mac notification as well as the card. Off by default: macOS asks
+    /// permission when it is turned on.
+    static let macNotifications = "macNotifications"
+    /// Notifications for finishes too, not only for what needs you or failed.
+    static let macNotifyFinishes = "macNotifyFinishes"
+    /// The session and project names in a notification's words.
+    static let macNotifyNames = "macNotifyNames"
     static let panelWhileFront = "panelWhileFront"
     /// Which corner of the screen the panel sits in: see `PanelCorner`.
     static let panelCorner = "panelCorner"
@@ -66,6 +73,9 @@ enum SettingsKey {
             weekInReview: true,
             holdDuringFocus: true,
             soundOnNeedsInput: true,
+            macNotifications: false,
+            macNotifyFinishes: false,
+            macNotifyNames: true,
             panelWhileFront: true,
             panelCorner: PanelCorner.bottomRight.rawValue,
             pageZoom: 1.0,

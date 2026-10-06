@@ -35,6 +35,12 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   Later can remind you in 5 or 15 minutes, or after a Nidus focus session.
 
   <img src="docs/panel-working.png" width="336" alt="The floating panel while a session works: a specimen playing, and the session's name, project and running time"> <img src="docs/panel-card.png" width="360" alt="The panel's card when a session asked a question, with Open and Later buttons">
+- **Mac notifications, if you want them.** Off until you turn on **Also
+  send a Mac notification** in Settings → General → Mac notifications. Then
+  a session that needs you or stops with an error sends a notification too,
+  so you see it in full screen or on your iPhone, and finishes can as well.
+  macOS asks your permission once, and you can hide the session and project
+  names.
 - **Every session in one list.** Click the status in the toolbar, or
   right-click Bench in the Dock, for what needs you, what's working and what
   happened lately, each one click from its session. Nothing about your
