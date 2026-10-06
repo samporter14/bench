@@ -175,6 +175,13 @@ final class LabModel: ObservableObject {
     var isFocusing: () -> Bool = { NidusFocus.shared.focusing }
     /// Finishes held during a focus session, shown as one card after it.
     private(set) var heldFinishes: [SessionStatus] = []
+    /// Mac notifications (MacNotifications.swift): told of each card that
+    /// comes, new or asking something new, and of each that goes because it
+    /// was dealt with or stopped being true. Not of one that only timed out:
+    /// its notification stays in Notification Center. They do nothing until
+    /// `MacNotifications.start()` sets them, so tests and demos never notify.
+    var cardRaised: (LabCard) -> Void = { _ in }
+    var cardWithdrawn: (LabCard) -> Void = { _ in }
 
     private let source = CombinedScienceSource()
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
@@ -311,6 +318,12 @@ final class LabModel: ObservableObject {
     var remindedSessionIDs: Set<String> { Set(reminders.keys) }
 
     func dismiss(_ card: LabCard) {
+        cardWithdrawn(card)
+        remove(card)
+    }
+
+    /// Takes a card off the queue without telling Mac notifications.
+    private func remove(_ card: LabCard) {
         expiries.removeValue(forKey: card.id)?.cancel()
         if cards.contains(where: { $0.id == card.id }) {
             cards.removeAll { $0.id == card.id }
@@ -535,7 +548,10 @@ final class LabModel: ObservableObject {
     private func raise(_ card: LabCard) -> Bool {
         var next = cards
         let isNew: Bool
+        var asksSomethingNew = false
         if let index = next.firstIndex(where: { $0.id == card.id }) {
+            // A question that becomes a plan to approve is news again.
+            asksSomethingNew = next[index].session?.waitingReason != card.session?.waitingReason
             next[index] = card
             isNew = false
         } else {
@@ -546,6 +562,8 @@ final class LabModel: ObservableObject {
         // A repeat on top starts its time again.
         expiries.removeValue(forKey: card.id)?.cancel()
         armFrontCard()
+        // Not on the first read: what already waits at launch is not news.
+        if (isNew || asksSomethingNew), !firstRead { cardRaised(card) }
         return isNew
     }
 
@@ -562,7 +580,7 @@ final class LabModel: ObservableObject {
         expiries[front.id] = Task { [weak self] in
             try? await Task.sleep(for: scaled)
             guard !Task.isCancelled else { return }
-            self?.dismiss(front)
+            self?.remove(front)
         }
     }
 

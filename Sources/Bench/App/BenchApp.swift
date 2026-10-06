@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the model has a reading.
         ContextModel.shared.start()
         LabModel.shared.start()
+        MacNotifications.shared.start()
         LabPanelController.shared.start()
         NidusFocus.shared.start()
         NoticeWatchers.shared.start()
@@ -360,6 +361,8 @@ struct GeneralSettingsView: View {
                     Text("Once, when a session needs you or stops with an error, with or without the card.")
                 }
             }
+
+            MacNotificationsSection()
 
             Section("Heads-up") {
                 Toggle(isOn: $headsUp) {
