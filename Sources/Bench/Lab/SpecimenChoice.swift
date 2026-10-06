@@ -126,4 +126,15 @@ struct SpecimenChoice: Equatable {
         guard self != .all else { return .full }
         return Rotation(LabScenes.spread(LabScenes.catalogue.filter(isOn)))
     }
+
+    /// What plays with favourites in the picture. Favourites are kept apart
+    /// from what is on: with "only favourites" set, the favourites play
+    /// whatever is switched on or off, and the choice is there again when it
+    /// is unset. With no favourites (none starred yet, or all renamed since),
+    /// what is on plays.
+    func rotation(favorites: Set<String>, onlyFavorites: Bool) -> Rotation {
+        guard onlyFavorites else { return rotation }
+        let starred = LabScenes.catalogue.filter { favorites.contains($0.name) }
+        return starred.isEmpty ? rotation : Rotation(LabScenes.spread(starred))
+    }
 }

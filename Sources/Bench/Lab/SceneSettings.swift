@@ -25,6 +25,8 @@ final class SceneSettings: ObservableObject {
         static let size = "sceneSize"
         static let groups = "sceneGroups"
         static let hidden = "hiddenScenes"
+        static let favorites = "favoriteScenes"
+        static let onlyFavorites = "onlyFavoriteScenes"
     }
 
     @Published var size: SceneSize {
@@ -44,12 +46,32 @@ final class SceneSettings: ObservableObject {
         }
     }
 
+    /// Specimens starred, by name: kept apart from what is on, so a
+    /// favourite can be off in the everyday choice and still play when only
+    /// favourites do.
+    @Published private(set) var favorites: Set<String> {
+        didSet {
+            guard favorites != oldValue else { return }
+            UserDefaults.standard.set(favorites.sorted(), forKey: Key.favorites)
+            cachedRotation = nil
+        }
+    }
+
+    /// Play the favourites and nothing else.
+    @Published var onlyFavorites: Bool {
+        didSet {
+            guard onlyFavorites != oldValue else { return }
+            UserDefaults.standard.set(onlyFavorites, forKey: Key.onlyFavorites)
+            cachedRotation = nil
+        }
+    }
+
     /// What plays. Built when first read after a change, not on every change
     /// (a run of clicks in the grid asks for it once) and not at all while
     /// nothing is showing it. Views read it on every layout, so it is kept.
     var rotation: Rotation {
         if let cachedRotation { return cachedRotation }
-        let built = choice.rotation
+        let built = choice.rotation(favorites: favorites, onlyFavorites: onlyFavorites)
         cachedRotation = built
         return built
     }
@@ -61,6 +83,8 @@ final class SceneSettings: ObservableObject {
         let groups = defaults.stringArray(forKey: Key.groups).map { Set($0.compactMap(SceneGroup.init(rawValue:))) }
         choice = SpecimenChoice(groups: groups ?? Set(SceneGroup.allCases), hidden: Set(defaults.stringArray(forKey: Key.hidden) ?? []))
         size = defaults.string(forKey: Key.size).flatMap(SceneSize.init(rawValue:)) ?? .medium
+        favorites = Set(defaults.stringArray(forKey: Key.favorites) ?? [])
+        onlyFavorites = defaults.bool(forKey: Key.onlyFavorites)
     }
 
     // MARK: Reading
@@ -76,7 +100,29 @@ final class SceneSettings: ObservableObject {
 
     func canTurnOff(_ scene: LabScene) -> Bool { choice.canTurnOff(scene) }
 
+    func isFavorite(_ scene: LabScene) -> Bool { favorites.contains(scene.name) }
+
+    /// How many favourites there are among the specimens Bench has now.
+    var favoriteCount: Int { LabScenes.catalogue.count { favorites.contains($0.name) } }
+
+    /// Whether the favourites are what plays: asked for, and there are some.
+    var playsFavorites: Bool { onlyFavorites && favoriteCount > 0 }
+
+    /// Whether a specimen is in what plays: a favourite while only favourites
+    /// play, else on.
+    func isPlaying(_ scene: LabScene) -> Bool {
+        onlyFavorites ? isFavorite(scene) : isOn(scene)
+    }
+
     // MARK: Changing
+
+    func toggleFavorite(_ scene: LabScene) {
+        if favorites.contains(scene.name) {
+            favorites.remove(scene.name)
+        } else {
+            favorites.insert(scene.name)
+        }
+    }
 
     func toggle(_ group: SceneGroup) { choice.toggle(group) }
 

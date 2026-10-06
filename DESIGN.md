@@ -435,6 +435,8 @@ works, so it keeps its place. Measured at about 0–2% CPU while playing.
 | `size` | `sceneSize` | small 64, medium 88, large 120 (points) | medium |
 | `groups` | `sceneGroups` | `SceneGroup` raw values: the categories that are on | all six |
 | `hidden` | `hiddenScenes` | names switched off one by one, inside categories that are on | none |
+| `favorites` | `favoriteScenes` | names starred (since 0.3.2) | none |
+| `onlyFavorites` | `onlyFavoriteScenes` | play the favourites and nothing else | off |
 
 The rules live in `SpecimenChoice`, a value type with tests
 (`SpecimenChoiceTests`); `SceneSettings` keeps one and writes it back.
@@ -452,25 +454,40 @@ The rules live in `SpecimenChoice`, a value type with tests
   off, nor the last category with any on.
 
 `rotation` is `Rotation(LabScenes.spread(the specimens that are on))`, or
-`Rotation.full` when everything is on.
+`Rotation.full` when everything is on. With **only favourites** set and at
+least one favourite, it is the favourites instead, whatever is on or off
+(`SpecimenChoice.rotation(favorites:onlyFavorites:)`): favourites are kept
+apart from what is on, so switching back finds the choice as it was. With no
+favourites (none yet, or all renamed), what is on plays.
 
 The panel's well, and its width (base + size − 88), follow `size`. The
 panel's and the capsule's scenes play `rotation`. Right-clicking the working
-panel offers Don't Play "Name", Play Only "Name" (the specimen playing when
-the menu opens, followed with `SceneBoundarySchedule`) and Choose Specimens….
+panel offers Add "Name" to Favorites (or Remove), Don't Play "Name", Play Only
+"Name" (the specimen playing when the menu opens, followed with
+`SceneBoundarySchedule`) and Choose Specimens…; while only favourites play,
+just Remove from Favorites and Choose Specimens…. The toolbar popover has an
+"Only favorites" switch (off and greyed until something is starred), and
+its categories grey while favourites play.
 
 The Settings **Scenes** tab (760×700) has:
-- a Size segmented picker, with a live well at that size beside it, and a
-  line saying a click switches a specimen on or off and a right-click plays
-  only it;
-- category checkboxes with counts (mixed when some are on);
-- a search field, an All / On / Off filter, "N of M on", and All and None
-  (None keeps one on);
+- a Size segmented picker, and a Play picker: "What's on" or "Only
+  favorites", with a live well beside them ("Playing what's on" or "Playing
+  your favorites" under it) and a line saying what a click does: switch on
+  or off, or, while only favourites play, star;
+- category checkboxes with counts (mixed when some are on), greyed while
+  favourites play;
+- a search field, an All / On / Off / ☆ filter (☆ shows the favourites; On
+  and Off mean in or out of what plays), "N of M on" with All and None (None
+  keeps one on), or "N favorites" while only favourites play;
 - a LazyVGrid of every specimen, one section per category headed "Name N of
-  M on", including categories that are off, so any specimen can be picked
-  from anywhere. Each cell is 58 pt with the name under it, dimmed with no
-  check when off, and a clay check when on; a click toggles it, and its
-  right-click menu has Play Only, Switch On/Off, and Switch On/Off All in its
+  M on" (or "N favorites"), including categories that are off, so any
+  specimen can be picked from anywhere. Each cell is 58 pt with the name
+  under it, dimmed with no check when off, and a clay check when on; a click
+  toggles it. A favourite has a clay star at the tile's top-left; under the
+  pointer an empty star shows there, its own button, to star it. While only
+  favourites play, the checks go, non-favourites dim and a click stars. The
+  right-click menu has Add to/Remove from Favorites, then (unless only
+  favourites play) Play Only, Switch On/Off, and Switch On/Off All in its
   category.
   Hovering a cell plays that specimen alone in the preview well, its name
   under the well ("Playing what's on" otherwise); leaving goes back to the

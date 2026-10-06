@@ -125,6 +125,17 @@ private struct SpecimenOptions: View {
                 .fixedSize()
             }
 
+            Toggle(isOn: $settings.onlyFavorites) {
+                Text("Only favorites")
+                Text(settings.favoriteCount == 0
+                     ? "Star specimens in Settings → Specimens first."
+                     : settings.favoriteCount == 1 ? "Your 1 favorite plays." : "Your \(settings.favoriteCount) favorites play.")
+            }
+            .toggleStyle(.switch)
+            .tint(Theme.clay)
+            .font(.system(size: 13, weight: .medium))
+            .disabled(settings.favoriteCount == 0 && !settings.onlyFavorites)
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("Categories")
                     .font(.headline)
@@ -139,6 +150,8 @@ private struct SpecimenOptions: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
+            // What's on waits while only favourites play.
+            .disabled(settings.playsFavorites)
 
             Button("Choose specimens one by one…") {
                 close()

@@ -2,8 +2,9 @@
 // settings"), in the Mac's own controls: a heading, the size and the preview
 // with its light/dark switch, a checkbox per category, search, a filter and
 // counts, and every specimen in a grid, a section per category, to switch on
-// or off one by one. The one cell under the pointer lifts to glass and plays
-// alone in the preview. The cells on screen play; the rest hold a still.
+// or off one by one and to star. With only favourites playing, a click stars
+// instead. The one cell under the pointer lifts to glass and plays alone in
+// the preview. The cells on screen play; the rest hold a still.
 import SwiftUI
 
 struct SceneSettingsView: View {
@@ -24,7 +25,7 @@ struct SceneSettingsView: View {
 
     /// Which specimens the grid shows.
     private enum Showing: String, CaseIterable {
-        case all = "All", on = "On", off = "Off"
+        case all = "All", on = "On", off = "Off", favorites = "Favorites"
     }
 
     /// Every scene by category, in the catalogue's order within each. Built
@@ -61,7 +62,7 @@ struct SceneSettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("What plays while you work")
                         .font(.title2.weight(.semibold))
-                    Text("One specimen at a time, in the panel at the corner of your screen. Click a specimen below to switch it on or off, or right-click it to play only that one.")
+                    Text(hint)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -74,12 +75,22 @@ struct SceneSettingsView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+                HStack(spacing: 10) {
+                    Text("Play")
+                    Picker("Play", selection: $settings.onlyFavorites) {
+                        Text("What’s on").tag(false)
+                        Text("Only favorites").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
             }
             .padding(.top, 4)
             Spacer(minLength: 0)
             VStack(spacing: 10) {
                 PreviewWell(size: settings.size, rotation: auditioning.map { Rotation([$0]) } ?? settings.rotation, spring: spring)
-                Text(auditioning?.name ?? "Playing what’s on")
+                Text(auditioning?.name ?? (settings.playsFavorites ? "Playing your favorites" : "Playing what’s on"))
                     .font(.callout)
                     .foregroundStyle(auditioning == nil ? .secondary : .primary)
                     .lineLimit(1)
@@ -96,6 +107,17 @@ struct SceneSettingsView: View {
         }
     }
 
+    /// What a click does, which depends on what plays.
+    private var hint: String {
+        guard settings.onlyFavorites else {
+            return "One specimen at a time, in the panel at the corner of your screen. Click a specimen below to switch it on or off, or right-click it to play only that one. Star the ones you like best."
+        }
+        if settings.favoriteCount == 0 {
+            return "Only your favorites play, and you have none yet: click a specimen below to star it. Until then, what’s on plays."
+        }
+        return "Only your favorites play. Click a specimen below to star it or take its star away. What’s on is kept for when you switch back."
+    }
+
     // MARK: Categories
 
     private var categories: some View {
@@ -109,6 +131,8 @@ struct SceneSettingsView: View {
                 }
             }
         }
+        // They pick what's on, which waits while only favourites play.
+        .disabled(settings.playsFavorites)
     }
 
     // MARK: Search and counts
@@ -117,26 +141,40 @@ struct SceneSettingsView: View {
         HStack(spacing: 12) {
             search
             Picker("Show", selection: $showing) {
-                ForEach(Showing.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(Showing.allCases, id: \.self) { choice in
+                    // A star for favourites keeps the four segments narrow
+                    // enough for the row.
+                    if choice == .favorites {
+                        Image(systemName: "star").accessibilityLabel(choice.rawValue).tag(choice)
+                    } else {
+                        Text(choice.rawValue).tag(choice)
+                    }
+                }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .help("Show every specimen, or only those on or off")
+            .help("Show every specimen, only those on or off, or your favorites")
             Spacer(minLength: 12)
-            Text("\(settings.onCount) of \(LabScenes.catalogue.count) on")
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-            Button("All") { settings.setAll(on: true) }
-                .disabled(settings.onCount == LabScenes.catalogue.count)
-            Button("None") { settings.setAll(on: false) }
+            if settings.onlyFavorites {
+                Text(settings.favoriteCount == 1 ? "1 favorite" : "\(settings.favoriteCount) favorites")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            } else {
+                Text("\(settings.onCount) of \(LabScenes.catalogue.count) on")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Button("All") { settings.setAll(on: true) }
+                    .disabled(settings.onCount == LabScenes.catalogue.count)
+                Button("None") { settings.setAll(on: false) }
+            }
         }
     }
 
     private var search: some View {
         TextField("Search specimens", text: $query)
             .textFieldStyle(.roundedBorder)
-            .frame(width: 240)
+            .frame(width: 200)
     }
 
     // MARK: The grid
@@ -150,8 +188,9 @@ struct SceneSettingsView: View {
             let scenes = section.scenes.filter { scene in
                 switch showing {
                 case .all: break
-                case .on: guard settings.isOn(scene) else { return false }
-                case .off: guard !settings.isOn(scene) else { return false }
+                case .on: guard settings.isPlaying(scene) else { return false }
+                case .off: guard !settings.isPlaying(scene) else { return false }
+                case .favorites: guard settings.isFavorite(scene) else { return false }
                 }
                 return needle.isEmpty || scene.name.localizedCaseInsensitiveContains(needle)
             }
@@ -165,9 +204,16 @@ struct SceneSettingsView: View {
         Group {
             if shown.isEmpty {
                 if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                    ContentUnavailableView(showing == .off ? "Every specimen is on" : "No specimens are on",
-                                           systemImage: "flask")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Group {
+                        switch showing {
+                        case .favorites:
+                            ContentUnavailableView("No favorites yet", systemImage: "star",
+                                                   description: Text("Hover a specimen and click its star."))
+                        case .off: ContentUnavailableView("Every specimen is on", systemImage: "flask")
+                        default: ContentUnavailableView("No specimens are on", systemImage: "flask")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ContentUnavailableView.search(text: query)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -178,7 +224,12 @@ struct SceneSettingsView: View {
                         ForEach(shown, id: \.group) { section in
                             Section {
                                 ForEach(section.scenes, id: \.name) { scene in
-                                    SceneCell(scene: scene, isOn: settings.isOn(scene), toggle: { settings.toggle(scene) },
+                                    SceneCell(scene: scene, isOn: settings.isPlaying(scene), isFavorite: settings.isFavorite(scene),
+                                              choosesFavorites: settings.onlyFavorites,
+                                              toggle: {
+                                                  if settings.onlyFavorites { settings.toggleFavorite(scene) } else { settings.toggle(scene) }
+                                              },
+                                              star: { settings.toggleFavorite(scene) },
                                               hovered: { audition(scene, $0) })
                                         .equatable()
                                 }
@@ -213,11 +264,16 @@ struct SceneSettingsView: View {
         }
     }
 
+    private func favorites(in group: SceneGroup) -> String {
+        let count = LabScenes.catalogue.count { $0.theme.group == group && settings.isFavorite($0) }
+        return count == 1 ? "1 favorite" : "\(count) favorites"
+    }
+
     private func sectionHeader(_ group: SceneGroup) -> some View {
         HStack(spacing: 6) {
             Text(group.title)
                 .font(.headline)
-            Text("\(settings.choice.onCount(in: group)) of \(group.count) on")
+            Text(settings.onlyFavorites ? favorites(in: group) : "\(settings.choice.onCount(in: group)) of \(group.count) on")
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
             Spacer(minLength: 0)
@@ -227,14 +283,21 @@ struct SceneSettingsView: View {
     }
 }
 
-/// One specimen in the grid: its tile (playing while on screen), a clay badge
-/// when on, and its name. It takes plain values and compares by them, so a
+/// One specimen in the grid: its tile (playing while on screen), a clay check
+/// when on, a star when a favourite (and an empty one to click under the
+/// pointer), and its name. It takes plain values and compares by them, so a
 /// click re-runs only the cells that changed. Hover is the cell's own state
 /// for the same reason, and the hovered cell is the grid's one glass.
 private struct SceneCell: View, Equatable {
     let scene: LabScene
+    /// In what plays: on, or a favourite while only favourites play.
     let isOn: Bool
+    let isFavorite: Bool
+    /// Only favourites play: the click stars, and the check isn't shown,
+    /// since the star says the same.
+    let choosesFavorites: Bool
     let toggle: () -> Void
+    let star: () -> Void
     /// Tells the tab the pointer came or went, for the preview.
     let hovered: (Bool) -> Void
 
@@ -246,7 +309,8 @@ private struct SceneCell: View, Equatable {
     @State private var visible = false
 
     nonisolated static func == (a: SceneCell, b: SceneCell) -> Bool {
-        a.scene.name == b.scene.name && a.isOn == b.isOn
+        a.scene.name == b.scene.name && a.isOn == b.isOn && a.isFavorite == b.isFavorite
+            && a.choosesFavorites == b.choosesFavorites
     }
 
     var body: some View {
@@ -267,6 +331,26 @@ private struct SceneCell: View, Equatable {
             .contentShape(.rect(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        // The star is its own button, laid over the tile's top-left corner
+        // (the tile is 58 pt, centred, 6 pt down), so it isn't inside the
+        // cell's own button.
+        .overlay(alignment: .top) {
+            if isFavorite || hovering {
+                Button(action: star) {
+                    Image(systemName: isFavorite ? "star.fill" : "star")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(isFavorite ? AnyShapeStyle(Theme.clay) : AnyShapeStyle(.secondary))
+                        .frame(width: 17, height: 17)
+                        .background(Color(nsColor: .controlBackgroundColor), in: .circle)
+                        .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor)))
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .offset(x: -25.5, y: 1)
+                .help(isFavorite ? "Remove from favorites" : "Add to favorites")
+                .accessibilityLabel(isFavorite ? "Remove \(scene.name) from favorites" : "Add \(scene.name) to favorites")
+            }
+        }
         .background {
             if hovering {
                 Color.clear.glassEffect(.regular.interactive(), in: .rect(cornerRadius: 12))
@@ -281,14 +365,23 @@ private struct SceneCell: View, Equatable {
         .onDisappear { visible = false }
         .help(scene.name)
         .accessibilityLabel(scene.name)
-        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityValue([isOn ? "On" : "Off", isFavorite ? "Favorite" : nil].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(.isToggle)
     }
 
-    /// The right-click menu: this specimen alone, or its whole category.
+    /// The right-click menu: the star, then this specimen alone, or its whole
+    /// category (not while only favourites play, when what's on waits).
     @ViewBuilder private var menu: some View {
         let settings = SceneSettings.shared
         let group = scene.theme.group
+        Button(isFavorite ? "Remove from Favorites" : "Add to Favorites", action: star)
+        if !choosesFavorites {
+            Divider()
+            choiceItems(settings, group)
+        }
+    }
+
+    @ViewBuilder private func choiceItems(_ settings: SceneSettings, _ group: SceneGroup) -> some View {
         Button("Play Only “\(scene.name)”") { settings.playOnly(scene) }
         Button(isOn ? "Switch Off" : "Switch On", action: toggle)
             .disabled(!settings.canTurnOff(scene))
@@ -313,7 +406,7 @@ private struct SceneCell: View, Equatable {
         .clipShape(.rect(cornerRadius: 13))
         .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Color(nsColor: .separatorColor)))
         .overlay(alignment: .topTrailing) {
-            if isOn {
+            if isOn && !choosesFavorites {
                 // Slate on clay: 6:1, where white on clay would be under 3.
                 Image(systemName: "checkmark")
                     .font(.system(size: 8, weight: .heavy))

@@ -81,4 +81,26 @@ struct SpecimenChoiceTests {
     @Test func everythingOnIsTheFullRotation() {
         #expect(SpecimenChoice.all.rotation == .full)
     }
+
+    @Test func onlyFavoritesPlaysThemWhateverIsOn() throws {
+        var choice = SpecimenChoice.all
+        let starred = try #require(scenes(.data).first)
+        let other = try #require(scenes(.lab).first)
+        choice.set(.data, on: false)
+        let favorites: Set = [starred.name, other.name]
+        let names = Set(choice.rotation(favorites: favorites, onlyFavorites: true).scenes.map(\.name))
+        // A favourite switched off still plays; nothing else does.
+        #expect(names == favorites)
+        // Off again, what is on plays, the favourite that is off left out.
+        let everyday = choice.rotation(favorites: favorites, onlyFavorites: false)
+        #expect(!everyday.scenes.contains { $0.name == starred.name })
+        #expect(everyday.scenes.count == choice.onCount)
+    }
+
+    @Test func noFavoritesPlaysWhatIsOn() {
+        let choice = SpecimenChoice.all
+        #expect(choice.rotation(favorites: [], onlyFavorites: true) == .full)
+        // Names no specimen has any more count for nothing.
+        #expect(choice.rotation(favorites: ["Not a specimen"], onlyFavorites: true) == .full)
+    }
 }

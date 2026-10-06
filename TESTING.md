@@ -321,6 +321,20 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-05, Bench 0.3.2 (favourites)
+
+- ✅ `swift test`: 50 tests in 13 suites. New: only favourites plays them
+  whatever is on (a favourite switched off still plays; switching back plays
+  what's on); no favourites, or only unknown names, plays what's on.
+- ✅ Captured quietly with `-favoriteScenes (…)` and `-onlyFavoriteScenes
+  YES/NO`: stars on the favourites' tiles; the Play picker; the ☆ filter
+  segment (the four-segment row with text overflowed, so the favourites
+  segment is a star and the search field 200 wide); while only favourites
+  play, checks gone, non-favourites dimmed, categories greyed, "6
+  favorites", "Playing your favorites".
+- Not checked live: clicking a star (it is its own button over the cell's
+  button) and the panel's Add to Favorites.
+
 ## 2026-10-05, Bench 0.3.1 (one by one, Later reminders, 20 specimens)
 
 - ✅ `swift test`: 48 tests in 13 suites. New: `SpecimenChoiceTests` (a
