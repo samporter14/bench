@@ -37,8 +37,9 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   <img src="docs/panel-working.png" width="336" alt="The floating panel while a session works: a specimen playing, and the session's name, project and running time"> <img src="docs/panel-card.png" width="360" alt="The panel's card when a session asked a question, with Open and Later buttons">
 - **Every session in one list.** Click the status in the toolbar, or
   right-click Bench in the Dock, for what needs you, what's working and what
-  happened lately, each one click from its session. Nothing about your
-  sessions is saved to disk: Recent lasts until Bench quits.
+  happened lately, each one click from its session. Press ⌘⇧O to jump to any
+  recent session by typing part of its name. Nothing about your sessions is
+  saved to disk: Recent lasts until Bench quits.
 
   <img src="docs/activity.png" width="390" alt="The activity list under the toolbar's 2 need you: two sessions waiting, one stopped with an error, two working with their clocks, and Recent below">
 - **A heads-up before you hit a wall.** A card when your plan is nearly

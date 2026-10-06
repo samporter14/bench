@@ -126,10 +126,14 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
 /// The window's content: the web view, and the toolbar.
 struct MainView: View {
+    @ObservedObject private var quickOpen = QuickOpenPresenter.shared
+
     var body: some View {
         BrowserView()
             .frame(minWidth: 900, minHeight: 560)
             .benchToolbar()
+            // ⌘⇧O: type to jump to a session (Lab/QuickOpen.swift).
+            .sheet(isPresented: $quickOpen.isShowing) { QuickOpenSheet() }
     }
 }
 
@@ -171,6 +175,12 @@ extension View {
 
 struct BenchCommands: Commands {
     var body: some Commands {
+        CommandGroup(after: .newItem) {
+            // A demo has no main window to show it on.
+            Button("Open Session…") { QuickOpenPresenter.shared.show() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+                .disabled(Demo.mode != nil)
+        }
         CommandGroup(after: .toolbar) {
             Button("Reload") { WebContainer.shared.reload() }
                 .keyboardShortcut("r")
