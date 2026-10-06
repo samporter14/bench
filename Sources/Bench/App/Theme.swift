@@ -44,6 +44,9 @@ enum SettingsKey {
     static let panelWhileFront = "panelWhileFront"
     /// Which corner of the screen the panel sits in: see `PanelCorner`.
     static let panelCorner = "panelCorner"
+    /// Which screen the panel sits on, by its name; empty for the one with
+    /// the menu bar. See `PanelScreen`.
+    static let panelScreen = "panelScreen"
     static let pageZoom = "pageZoom"
     /// Which Settings tab is showing: "general" or "scenes".
     static let settingsTab = "settingsTab"
@@ -68,6 +71,7 @@ enum SettingsKey {
             soundOnNeedsInput: true,
             panelWhileFront: true,
             panelCorner: PanelCorner.bottomRight.rawValue,
+            panelScreen: "",
             pageZoom: 1.0,
             appearance: BenchAppearance.system.rawValue,
         ])
@@ -112,6 +116,20 @@ enum PanelCorner: String, CaseIterable, Identifiable {
 
     static var current: PanelCorner {
         UserDefaults.standard.string(forKey: SettingsKey.panelCorner).flatMap(PanelCorner.init(rawValue:)) ?? .bottomRight
+    }
+}
+
+/// The screen the specimens panel sits on: the one with the menu bar, or one
+/// chosen by name. A screen that isn't connected falls back to the menu bar's
+/// until it is again. By name, not display ID, which can change when a screen
+/// is unplugged and plugged back in.
+enum PanelScreen {
+    static var chosenName: String { UserDefaults.standard.string(forKey: SettingsKey.panelScreen) ?? "" }
+
+    @MainActor
+    static var current: NSScreen? {
+        let name = chosenName
+        return NSScreen.screens.first { !name.isEmpty && $0.localizedName == name } ?? NSScreen.screens.first
     }
 }
 

@@ -99,7 +99,10 @@ enum Demo {
     static func start() {
         switch mode {
         case .working?:
-            showPanel(working: [session(.running)], cards: [])
+            // `--several` adds two more, for the panel's "+2 more".
+            let others = CommandLine.arguments.contains("--several")
+                ? [session(.running, id: "demo-2", title: "Buffer screen"), session(.running, id: "demo-3", title: "Assay plan")] : []
+            showPanel(working: [session(.running)] + others, cards: [])
         case .card?:
             showPanel(working: [], cards: [.needsInput(session(.needsInput))])
         case .failed?:
@@ -142,11 +145,12 @@ enum Demo {
 
     // MARK: Made-up data
 
-    private static func session(_ state: SessionState) -> SessionStatus {
+    private static func session(_ state: SessionState, id: String = "demo-1",
+                                title: String = "Protein stability screen") -> SessionStatus {
         let now = Date()
         return SessionStatus(
-            id: "demo-1", projectID: "demo", projectName: "Example project",
-            title: "Protein stability screen", state: state,
+            id: id, projectID: "demo", projectName: "Example project",
+            title: title, state: state,
             updatedAt: now, startedAt: now.addingTimeInterval(-(4 * 60 + 12)),
             waitingReason: .question)
     }

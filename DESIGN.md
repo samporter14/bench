@@ -308,6 +308,11 @@ Position:
   General → Corner (`panelCorner`, `PanelCorner`) says another, since 0.3.1.
   The content is aligned to that corner and grows from it; a new corner moves
   the panel at once.
+- Settings → General → Screen (`panelScreen`, `PanelScreen`, since 0.3.3):
+  the screen with the menu bar (empty, the default) or one chosen by its
+  `localizedName` (display IDs can change on replugging). A chosen screen
+  that isn't connected falls back to the menu bar's and is listed as "(not
+  connected)", so the choice still reads true.
 - Follow screen changes (`didChangeScreenParametersNotification`).
 
 When it shows:
@@ -322,8 +327,10 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
   - Left: an 88×88 scene well playing the rotation.
   - Right column: a caption with a clay live dot and "Working"; the session
     title (15pt semibold, 2 lines); a meta line with the project name, "·"
-    and the turn clock `m:ss` (monospaced digits); and "+N more" when
-    several work.
+    and the turn clock `m:ss` (monospaced digits); and "+N more ⌄" when
+    several work, a button (since 0.3.3) that pops up the Dock's activity
+    menu (`ActivityMenu`) under the pointer, without bringing Bench to the
+    front.
 - **Needs input (card, about 360×170).**
   - Left well: the reason's waiting glyph (`PlayedLoop`) at 88pt.
   - Caption in clay: `reason.sentence`.

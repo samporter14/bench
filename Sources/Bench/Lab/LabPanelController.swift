@@ -104,10 +104,10 @@ final class LabPanelController {
             }
             .store(in: &subscriptions)
 
-        // A new corner moves the panel at once.
+        // A new corner or screen moves the panel at once.
         center.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: DispatchQueue.main)
-            .map { _ in PanelCorner.current }
+            .map { _ in "\(PanelCorner.current.rawValue) \(PanelScreen.chosenName)" }
             .removeDuplicates()
             .dropFirst()
             .sink { [weak self] _ in
@@ -222,11 +222,11 @@ final class LabPanelController {
         }
     }
 
-    /// In the chosen corner of the menu-bar screen's visible frame (bottom
-    /// right unless changed), with the glass (not the clear margin round it)
-    /// `Theme.panelInset` from the corner.
+    /// In the chosen corner of the chosen screen's visible frame (bottom right
+    /// of the menu bar's screen unless changed), with the glass (not the clear
+    /// margin round it) `Theme.panelInset` from the corner.
     private func place(_ size: CGSize) {
-        guard let panel, let screen = NSScreen.screens.first else { return }
+        guard let panel, let screen = PanelScreen.current else { return }
         let area = screen.visibleFrame
         let margin = LabPanelView.margin
         let corner = PanelCorner.current

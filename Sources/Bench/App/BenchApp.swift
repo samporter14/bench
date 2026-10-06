@@ -229,6 +229,9 @@ struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
     @AppStorage(SettingsKey.panelWhileFront) private var panelWhileFront = true
     @AppStorage(SettingsKey.panelCorner) private var panelCorner = PanelCorner.bottomRight
+    @AppStorage(SettingsKey.panelScreen) private var panelScreen = ""
+    /// The connected screens' names, kept up to date as screens come and go.
+    @State private var screens: [String] = NSScreen.screens.map(\.localizedName)
     @AppStorage(SettingsKey.appearance) private var appearance = BenchAppearance.system.rawValue
     @ObservedObject private var lab = LabModel.shared
 
@@ -302,9 +305,28 @@ struct GeneralSettingsView: View {
                     ForEach(PanelCorner.allCases) { Text($0.title).tag($0) }
                 } label: {
                     Text("Corner")
-                    Text("Where the specimen and the cards sit, on the screen with the menu bar.")
+                    Text("Where the specimen and the cards sit.")
                 }
                 .disabled(!showPanel && !showCards)
+                Picker(selection: $panelScreen) {
+                    Text("The one with the menu bar").tag("")
+                    Divider()
+                    ForEach(screens, id: \.self) { Text($0).tag($0) }
+                    // A screen chosen before and unplugged now: still listed,
+                    // so the choice reads true, and used again when it's back.
+                    if !panelScreen.isEmpty, !screens.contains(panelScreen) {
+                        Text("\(panelScreen) (not connected)").tag(panelScreen)
+                    }
+                } label: {
+                    Text("Screen")
+                    Text(screens.count > 1 || !panelScreen.isEmpty
+                         ? "Which display the panel shows on. One that isn't connected falls back to the menu bar's."
+                         : "Connect another display to put the panel there.")
+                }
+                .disabled(!showPanel && !showCards)
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+                    screens = NSScreen.screens.map(\.localizedName)
+                }
             }
 
             Section("When a session needs you") {

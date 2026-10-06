@@ -64,7 +64,8 @@ you switch back. Show only the ones that are on, off or starred to check
 your picks. The preview plays only what's on, in light or
 dark. Hover a specimen to see it play big. Tired of the one playing right
 now? Right-click the panel and choose Don't Play. The panel can sit in any
-corner of your screen: Settings → General → Corner.
+corner of your screen, on any display: Settings → General → Corner and
+Screen.
 
 <img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, a checkbox per category (Lab 130 of 131, Biology 211 of 214), a search field with an All, On and Off filter, and a grid of specimens under a Lab heading, each with a clay check when on">
 

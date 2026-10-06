@@ -211,7 +211,7 @@ struct LabPanelView: View {
             }
         } else {
             Row(side: wellSide, well: WorkingGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)) {
-                caption("Working", dot: true, trailing: others > 0 ? "+\(others) more" : nil)
+                caption("Working", dot: true, trailing: others > 0 ? "+\(others) more" : nil, showsEvery: true)
                 title(session.displayTitle)
                 TurnClockText(prefix: session.projectName, since: session.startedAt)
                     .font(.system(size: 12))
@@ -366,8 +366,11 @@ struct LabPanelView: View {
 
     /// The 11 pt caption row: an optional live dot, the text, and at the end
     /// what else is queued or working.
+    /// `showsEvery` makes the trailing text ("+2 more") a button that lists
+    /// every session, the Dock's menu, under the pointer: the panel can't
+    /// show them all, and the app needn't come to the front to.
     private func caption(_ text: String, dot: Bool = false, style: some ShapeStyle = .secondary,
-                         weight: Font.Weight = .medium, trailing: String? = nil) -> some View {
+                         weight: Font.Weight = .medium, trailing: String? = nil, showsEvery: Bool = false) -> some View {
         HStack(spacing: 5) {
             if dot {
                 Circle().fill(Theme.clay).frame(width: 6, height: 6)
@@ -377,7 +380,23 @@ struct LabPanelView: View {
                 .lineLimit(1)
                 .layoutPriority(1)
             Spacer(minLength: 6)
-            if let trailing {
+            if let trailing, showsEvery {
+                Button {
+                    ActivityMenu.shared.make().popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(trailing)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(.secondary)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Show every session")
+            } else if let trailing {
                 Text(trailing)
                     .foregroundStyle(.secondary)
                     .fontWeight(.medium)
