@@ -321,6 +321,27 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-05, Bench 0.3.3 (screen, +N more, Quick Open, Mac notifications)
+
+- ✅ `swift test`: 94 tests in 16 suites. New: `QuickOpenTests` (15: empty
+  query order, prefix > substring > fuzzy, diacritics and case, project
+  matches, several words, no matches, duplicates) and `NotificationRuleTests`
+  (28: each card kind, names hidden with nothing leaking, finishes only when
+  asked and never while held, none for page notifications, none without
+  permission, no sound when Bench chimes; the model's hooks: none on the
+  first read, one per new wait, withdrawn when opened, dismissed or no
+  longer waiting, a returning reminder sends again).
+- ✅ Captured quietly: the panel's "+2 more ⌄" (`--demo working --several`);
+  Settings → General → Screen ("Connect another display…" on one screen);
+  the Mac notifications section (scrolled by setting the scroll bar's value
+  through System Events, which moves no pointer).
+- ⌘⇧O is caught by a local key monitor before the web view, since a page
+  that binds it (claude.ai uses it for a new chat) would keep it from the
+  menu.
+- Not checked live: Quick Open's sheet (focus, ↑/↓, Return, Esc); the "+2
+  more" menu opening and its items; a second display; the real permission
+  prompt, a notification's banner, clicking one, and iPhone mirroring.
+
 ## 2026-10-05, Bench 0.3.2 (favourites)
 
 - ✅ `swift test`: 50 tests in 13 suites. New: only favourites plays them
