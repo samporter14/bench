@@ -321,6 +321,34 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-05, Bench 0.3.1 (one by one, Later reminders, 20 specimens)
+
+- ✅ `swift test`: 48 tests in 13 suites. New: `SpecimenChoiceTests` (a
+  specimen in a category that is off comes on alone; a category's last
+  specimen off turns the category off; mixed goes all on then all off; Play
+  Only; the last specimen stays on; None; stored choices tidied) and
+  `ReminderTests` (a put-off card returns after its time only while its
+  session still waits; a new kind of request shows at once; after focus
+  returns when Nidus focus ends; Dismiss is for good; a late click does
+  nothing; opening clears it).
+- ✅ Captured quietly (`open -g -n … --quiet`): Settings → Specimens with
+  mixed categories ("Lab 125 of 127"), the All/On/Off filter and a section per
+  category; the toolbar popover's mixed checkboxes; General → Corner; the
+  working panel in the top-left corner (`-panelCorner topLeft`: window at
+  x 4, just under the menu bar); the needs-input card with its Later split
+  button.
+- ✅ 20 new specimens (507): each drawn in a standalone harness that checks
+  coverage at 16 pt, cost, and that the loop's last frame matches its first;
+  then the droplet's `LabScenesTests` and `LabSceneOrderTests` (9 tests) and
+  a render through `RenderPreviews.testLabScenes`. `Bench --list-scenes` says
+  507; `--measure-sheets 88`: mean 3.4 ms per second of frames, none of the
+  new ones among the dearest.
+- ✅ Signed: `codesign -d -r-` shows the Solanum Code Signing root.
+- Not checked live: clicking Later's menu on a real card (the panel's own
+  tap-to-open sits behind it, as it does behind Open), the right-click menus
+  on the panel and the grid, hover audition, and a real download failing.
+  Check these on the first real card and in Settings.
+
 ## 2026-10-02, Bench 0.3.0 (heads-up notices, Nidus, menu bar specimen)
 
 - ✅ `swift test`: 28 tests in 11 suites. New: plan cards once per window

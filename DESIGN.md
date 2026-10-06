@@ -70,7 +70,7 @@ Group neighbouring glass (a row of chips, the stat tiles) in one
 `GlassEffectContainer(spacing:)` so the shapes blend.
 
 **Not glass:**
-- the 487 grid cells. That many glass layers costs frames. They get
+- the 507 grid cells. That many glass layers costs frames. They get
   a quiet `Color.primary.opacity(0.05)` fill, and a clay check when on.
 - the page itself;
 - text.
@@ -86,8 +86,8 @@ you", and the graph's steps. No other hues, no gradients.
 - **Specimens split button** (Lab/ScenesToolbarButton.swift): one glass
   capsule, with "🧪 Specimens" (a click shows or hides the panel) | ⌄. The
   arrow opens a glass POPOVER with the panel switch, the size, the category
-  chips (the same `CategoryChip` as Settings), "N of 487 on" and "Choose
-  specimens…" (`SettingsWindow.open(tab:)`). It is not a SwiftUI Menu: in
+  checkboxes (the same `CategoryChip` as Settings), "N of 507 on" and
+  "Choose specimens one by one…" (`SettingsWindow.open(tab:)`). It is not a SwiftUI Menu: in
   this AppKit window's toolbar a Menu kept the ticks it was first drawn
   with, and showed stale settings.
 
