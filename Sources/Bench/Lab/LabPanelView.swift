@@ -48,6 +48,8 @@ struct LabPanelView: View {
     @ObservedObject var hover: PanelHover
     /// The chosen size and rotation: a change resizes the live panel.
     @ObservedObject private var settings = SceneSettings.shared
+    /// Whether a Nidus focus session is on: Later offers to wait for its end.
+    @ObservedObject private var focus = NidusFocus.shared
     /// Reports the window size the content wants, whenever it changes.
     let onFit: (CGSize) -> Void
 
@@ -233,8 +235,7 @@ struct LabPanelView: View {
                     Button("Open") { model.open(card) }
                         .buttonStyle(.glassProminent)
                         .tint(Theme.clay)
-                    Button("Later") { model.dismiss(card) }
-                        .buttonStyle(.glass)
+                    later(card)
                 }
             }
         case .failed(let session):
@@ -298,6 +299,27 @@ struct LabPanelView: View {
                 }
             }
         }
+    }
+
+    /// Later, a native split pull-down: a click on the title is the five
+    /// minute reminder, the arrow offers the others and Dismiss, which is for
+    /// good, as the × is.
+    private func later(_ card: LabCard) -> some View {
+        Menu("Later") {
+            Button("In 5 Minutes") { model.remind(card, .fiveMinutes) }
+            Button("In 15 Minutes") { model.remind(card, .fifteenMinutes) }
+            if focus.focusing {
+                Button("After My Focus Session") { model.remind(card, .afterFocus) }
+            }
+            Divider()
+            Button("Dismiss") { model.dismiss(card) }
+        } primaryAction: {
+            model.remind(card, .fiveMinutes)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.glass)
+        .fixedSize()
+        .help("Remind me in 5 minutes")
     }
 
     // MARK: Parts

@@ -32,6 +32,7 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 - **Know when it needs you.** While a session works, one of 487 little
   animated lab specimens plays in a glass panel in the corner of your screen.
   When a session needs your input, a card there takes you straight to it.
+  Later can remind you in 5 or 15 minutes, or after a Nidus focus session.
 
   <img src="docs/panel-working.png" width="336" alt="The floating panel while a session works: a specimen playing, and the session's name, project and running time"> <img src="docs/panel-card.png" width="360" alt="The panel's card when a session asked a question, with Open and Later buttons">
 - **Every session in one list.** Click the status in the toolbar, or
