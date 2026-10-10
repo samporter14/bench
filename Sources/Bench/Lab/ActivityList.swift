@@ -34,8 +34,12 @@ struct ActivityList: View {
                 if !model.waiting.isEmpty || !failed.isEmpty {
                     section("Needs you") {
                         ForEach(model.waiting) { session in
-                            row(session, line: (session.waitingReason ?? .other).sentence, accent: true) {
-                                PlayedLoop(glyph: (session.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
+                            if let snoozed = model.snoozed.first(where: { $0.id == session.id }) {
+                                snoozedRow(snoozed)
+                            } else {
+                                row(session, line: (session.waitingReason ?? .other).sentence, accent: true) {
+                                    PlayedLoop(glyph: (session.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
+                                }
                             }
                         }
                         ForEach(failed) { session in
@@ -142,6 +146,54 @@ struct ActivityList: View {
         .accessibilityHint("Opens the session")
     }
 
+    /// A waiting session whose card is put off with Later: the reminder in
+    /// place of the reason, a clock on its glyph, and Show Now and Cancel
+    /// Reminder as buttons on the row and in its context menu. Clicking the
+    /// row still opens the session, which clears the reminder.
+    private func snoozedRow(_ snoozed: SnoozedReminder) -> some View {
+        let session = snoozed.session
+        return row(session, line: Self.line(for: snoozed), accent: false) {
+            PlayedLoop(glyph: (session.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
+                .opacity(0.55)
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(1.5)
+                        .background(.regularMaterial, in: .circle)
+                        .offset(x: 3, y: 3)
+                }
+        } trailing: {
+            // Room for the buttons below, which sit over the row so that
+            // they don't open the session.
+            Color.clear.frame(width: 44, height: 1)
+        }
+        .overlay(alignment: .trailing) {
+            HStack(spacing: 0) {
+                rowButton("Show Now", symbol: "bell") { model.showNow(session.id) }
+                rowButton("Cancel Reminder", symbol: "bell.slash") { model.cancelReminder(session.id) }
+            }
+            .padding(.trailing, 6)
+        }
+        .contextMenu {
+            Button("Show Now") { model.showNow(session.id) }
+            Button("Cancel Reminder") { model.cancelReminder(session.id) }
+        }
+    }
+
+    private func rowButton(_ title: String, symbol name: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 12))
+                .frame(width: 22, height: 22)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        .help(title)
+        .accessibilityLabel(title)
+    }
+
     @ViewBuilder
     private func recentRow(_ event: LabEvent) -> some View {
         let when = event.at.formatted(.relative(presentation: .named))
@@ -210,6 +262,13 @@ struct ActivityList: View {
         case .finished: "Finished"
         case .saved: "Saved"
         }
+    }
+
+    /// What a put-off session's row says in place of its reason: when the
+    /// reminder comes, or that it waits for the focus session.
+    static func line(for reminder: SnoozedReminder) -> String {
+        guard let due = reminder.due else { return "Reminds you after your focus session" }
+        return "Reminds you at \(due.formatted(date: .omitted, time: .shortened))"
     }
 
     static func symbol(for kind: LabEvent.Kind) -> String {

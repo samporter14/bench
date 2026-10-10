@@ -178,6 +178,7 @@ enum Demo {
         let question = make("d1", "Protein stability screen", "Example project", .needsInput, .question, minutes: 6)
         let plan = make("d2", "Batch effect check", "Sequencing pilot", .needsInput, .plan, minutes: 12)
         let failed = make("d3", "Figure 2 rebuild", "Example project", .error, minutes: 3)
+        let afterFocus = make("d7", "Gel quantification", "Assay design", .needsInput, .question, minutes: 9)
         let working = [make("d4", "Literature sweep", "Reading group", .running, minutes: 4.2),
                        make("d5", "Plate layout", "Assay design", .running, minutes: 17.5)]
         let finished = make("d6", "Primer design", "Cloning", .finished, minutes: 40)
@@ -188,8 +189,13 @@ enum Demo {
             LabEvent(.saved(URL(fileURLWithPath: "/tmp/example-results.csv")), session: nil,
                      at: Date().addingTimeInterval(-25 * 60)),
         ].sorted { $0.at > $1.at }
-        LabModel.shared.showDemo(working: working, cards: [.needsInput(question), .needsInput(plan), .failed(failed)],
-                                 recent: recent)
+        // The plan and the gel question were put off with Later. Their cards
+        // stay in the queue only because showDemo reads `waiting` from it.
+        let snoozed = [SnoozedReminder(session: plan, due: Date().addingTimeInterval(11 * 60)),
+                       SnoozedReminder(session: afterFocus, due: nil)]
+        LabModel.shared.showDemo(working: working,
+                                 cards: [.needsInput(question), .needsInput(plan), .needsInput(afterFocus), .failed(failed)],
+                                 recent: recent, snoozed: snoozed)
     }
 
     // MARK: The modes

@@ -12,15 +12,20 @@ final class ActivityMenu: NSObject {
 
     /// Never nil: with nothing to list, the menu says so, rather than leaving
     /// only the Dock's own items, which looks as if Bench added nothing.
-    func make() -> NSMenu {
-        let model = LabModel.shared
+    /// Tests pass their own model.
+    func make(model: LabModel = .shared) -> NSMenu {
         let menu = NSMenu()
         let failed = model.cards.compactMap { if case .failed(let session) = $0 { session } else { nil } }
 
         if !model.waiting.isEmpty || !failed.isEmpty {
             menu.addItem(.sectionHeader(title: "Needs you"))
             for session in model.waiting {
-                menu.addItem(item(session, subtitle: (session.waitingReason ?? .other).sentence))
+                // A session put off with Later says when it comes back. The
+                // item keeps opening the session; Show Now and Cancel Reminder
+                // are the popover's, so the menu stays one line a session.
+                let subtitle = model.snoozed.first { $0.id == session.id }
+                    .map { ActivityList.line(for: $0) } ?? (session.waitingReason ?? .other).sentence
+                menu.addItem(item(session, subtitle: subtitle))
             }
             for session in failed {
                 menu.addItem(item(session, subtitle: "Stopped with an error"))
