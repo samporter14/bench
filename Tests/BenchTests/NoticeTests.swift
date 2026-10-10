@@ -83,6 +83,22 @@ struct FocusTests {
         #expect(NoticeRules.isFocusing(openEnded, nidusRunning: true, now: now))
         #expect(!NoticeRules.isFocusing(nil, nidusRunning: true, now: now))
     }
+
+    @Test func aLockOrSleepPauseStillHolds() throws {
+        // Nidus pauses the clock while the Mac is locked or asleep but keeps
+        // blocking: it says `away`, not focusing, with no end time.
+        let away = NoticeRules.FocusFile(version: 1, focusing: false, until: nil, away: true)
+        #expect(NoticeRules.isFocusing(away, nidusRunning: true, now: now))
+        #expect(!NoticeRules.isFocusing(away, nidusRunning: false, now: now)) // left behind by a crash
+        // An older Nidus leaves the key out; a pause it writes still ends the hold.
+        let older = try JSONDecoder().decode(NoticeRules.FocusFile.self,
+                                             from: Data(#"{"version":1,"focusing":false}"#.utf8))
+        #expect(older.away == nil)
+        #expect(!NoticeRules.isFocusing(older, nidusRunning: true, now: now))
+        let newer = try JSONDecoder().decode(NoticeRules.FocusFile.self,
+                                             from: Data(#"{"version":1,"focusing":false,"away":true}"#.utf8))
+        #expect(NoticeRules.isFocusing(newer, nidusRunning: true, now: now))
+    }
 }
 
 @MainActor

@@ -560,6 +560,13 @@ come at once. When it ends, the finishes come as one "While you focused"
 card, and the cards put off with Later, After My Focus Session, come back if
 their sessions still wait.
 
+- **Locked or asleep (since 0.3.6):** Nidus pauses a session's clock while the
+  Mac is locked or asleep but keeps blocking, and from Nidus 0.3.1 says so with
+  `"away": true` in `focus.json` (`focusing` is false then, with no `until`).
+  Bench treats `away` as still focusing, so held finishes and after-focus
+  reminders don't come out behind the lock screen. An older Nidus leaves the
+  key out, and its pause ends the hold as before.
+
 ### Menu bar specimen (Lab/MenuBarSpecimen.swift, since 0.3.0)
 
 Off by default. While a session works, the specimen plays in the menu bar;

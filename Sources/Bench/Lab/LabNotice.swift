@@ -177,12 +177,20 @@ enum NoticeRules {
         var focusing: Bool
         /// Seconds since 1970; nil for an open-ended session.
         var until: Double?
+        /// The session is paused because the Mac is locked or asleep, and
+        /// still blocks (Nidus 0.3.1 and later; older ones leave it out). Its
+        /// clock waits, so there's no `until` then.
+        var away: Bool?
     }
 
-    /// Focusing only while the file says so, Nidus runs, and the session's
-    /// end hasn't passed: a file left behind by a crash means nothing.
+    /// Focusing while the file says so, Nidus runs, and the session's end
+    /// hasn't passed: a file left behind by a crash means nothing. A session
+    /// paused by a lock or sleep (`away`) still counts, so nothing held comes
+    /// out behind the lock screen.
     static func isFocusing(_ file: FocusFile?, nidusRunning: Bool, now: Date) -> Bool {
-        guard let file, file.focusing, nidusRunning else { return false }
+        guard let file, nidusRunning else { return false }
+        if file.away == true { return true }
+        guard file.focusing else { return false }
         if let until = file.until { return Date(timeIntervalSince1970: until) > now }
         return true
     }
