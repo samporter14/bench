@@ -406,7 +406,12 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     Session (only while Nidus reports a focus session), a divider and Dismiss.
   - A plan to approve (since 0.3.4, with the setting on): under the project,
     the plan's `task_summary` (12.5 pt, 2 lines, truncated) and "5 steps ·
-    high confidence" in secondary; "Loading the plan…" while it is read.
+    feasibility: high" in secondary (its tooltip: "Claude's own estimate of
+    how feasible the plan is"); "Loading the plan…" while it is read.
+    Under those, when the plan has step titles, a small chevron
+    button **Show steps** / **Hide steps** (11 pt, secondary), closed by
+    default. Open, it lists the first 8 titles as a numbered list (11 pt, one
+    line each, cut at the end), then "and N more…" when there are more.
     When it is ready the buttons are **Approve** (`.glassProminent`, clay,
     the primary action), **Open** (`.glass`) and Later. Pressed, Approve is a
     small spinner; approved, the row reads "Approved ✓" in clay. The card
@@ -722,7 +727,8 @@ GET  /api/frames/<rootFrameId>?shallow=true
 
 GET  /api/artifacts/versions/<_plan_version_id>
      task_summary
-     phases[].delegations[].steps[]   (counted; older plans: top-level steps[])
+     phases[].delegations[].steps[]   (counted, and each step's title kept;
+                                       older plans: top-level steps[])
      feasibility.confidence           (when a short string)
 ```
 
@@ -739,13 +745,29 @@ The body is always `{}`: the session keeps its own settings, and the plan is
 never sent back (sending it as `edited_plan` would save a new version marked
 as a user edit).
 
+**Steps on the card.** The step titles are read from the same
+plan file, in plan order, from the same shape that is counted (the phases'
+steps when they have any, else the top-level ones). A step's `description` is
+never read. A title that is not a string, or is empty, is left out of the
+list but its step still counts; any run of white space (line breaks too) in
+a title becomes one space, and a title is cut at 200 characters. A plan with
+no titles has no **Show steps** control and shows nothing extra. The cap is a
+pure helper (`PlanStepList`, 8 titles, "and N more…" counting the titles
+left out, not the steps), so a long plan can't grow the panel off a laptop
+screen: open, the list adds roughly 150 pt. Whether a card's list is open is kept by `PlanApprover`
+(`stepsOpen`, by session id), in memory: closed by default, per card, and
+dropped with the card's plan, so a card that comes back starts closed. The
+label reads "feasibility" rather than "Claude's feasibility estimate"
+because the longer wording is wider than the text column (226 pt at any
+size of the scene well); the tooltip says whose estimate it is.
+
 **Privacy.** This widens Bench's "never read content" rule by exactly the
-plan's summary, its step count and its confidence word, for the card. Only
-those fields are picked from the responses (the frame's `name`,
-`task_summary` and `input_data` are not), they are kept in memory only, for
-as long as the card is up, and they are never logged, saved or sent
-anywhere. The log says only how an approval ended ("approved", "changed"…).
-The demo and the tests use made-up plans.
+plan's summary, its step count, its steps' titles and its confidence word,
+for the card. Only those fields are picked from the responses (the frame's
+`name`, `task_summary` and `input_data` are not, nor a step's description),
+they are kept in memory only, for as long as the card is up, and they are
+never logged, saved or sent anywhere. The log says only how an approval
+ended ("approved", "changed"…). The demo and the tests use made-up plans.
 
 **Not in notifications, ever.** A Mac notification can be read, and acted
 on, far from the Mac (in Notification Center later, on an iPhone that
@@ -764,8 +786,9 @@ on the card, with Approve** (`showPlansOnCard`), on by default. Off, a plan's
 card is Open and Later, and no plan is read.
 
 **Demo.** `Bench --demo plan`: a made-up session whose made-up plan is
-ready ("Screen 24 buffer conditions", "6 steps · high confidence"). Its
-Approve shows the Approved state and calls nothing.
+ready ("Screen 24 buffer conditions", "10 steps · feasibility: high", with
+10 made-up step titles, so the list shows "and 2 more…", one of them long
+enough to be cut). Its Approve shows the Approved state and calls nothing.
 
 ## Scenes settings (Lab/SceneSettings.swift, Lab/SpecimenChoice.swift)
 

@@ -49,6 +49,19 @@ private enum Made {
     static let flatPlan = Data("""
     { "task_summary": "Count made-up colonies", "steps": [ { "title": "a" }, { "title": "b" }, { "title": "c" } ] }
     """.utf8)
+
+    /// A plan whose step titles are not in alphabetical order, in 3 phases,
+    /// so a test can tell the plan's order from a sorted one.
+    static let unsortedPlan = Data("""
+    {
+      "task_summary": "Order made-up reagents",
+      "phases": [
+        { "delegations": [ { "steps": [ { "title": "Zeta" }, { "title": "Alpha" } ] } ] },
+        { "delegations": [ { "steps": [ { "title": "Mu" } ] }, { "steps": [ { "title": "Beta" } ] } ] },
+        { "delegations": [ { "steps": [ { "title": "Omega" } ] } ] }
+      ]
+    }
+    """.utf8)
 }
 
 private func frame(_ data: Data) -> PlanFrame? { PlanFrame(json: data) }
@@ -179,6 +192,159 @@ struct PlanDocumentTests {
     }
 }
 
+// MARK: Reading the steps' titles
+
+struct PlanStepTitleTests {
+    @Test func thePhasesShapeGivesTitlesInPlanOrder() throws {
+        let read = try #require(PlanDocument(json: Made.phasedPlan))
+        #expect(read.stepTitles == ["One", "Two", "Three", "Four", "Five"])
+        #expect(read.stepTitles.count == read.steps)
+    }
+
+    @Test func theOlderShapeGivesTopLevelTitles() throws {
+        let read = try #require(PlanDocument(json: Made.flatPlan))
+        #expect(read.stepTitles == ["a", "b", "c"])
+    }
+
+    @Test func theOrderIsThePlansNotASortedOne() throws {
+        let read = try #require(PlanDocument(json: Made.unsortedPlan))
+        #expect(read.stepTitles == ["Zeta", "Alpha", "Mu", "Beta", "Omega"])
+        #expect(read.steps == 5)
+    }
+
+    @Test func aStepsDescriptionIsNotRead() throws {
+        // `phasedPlan`'s first step has one; only titles are kept anywhere.
+        let read = try #require(PlanDocument(json: Made.phasedPlan))
+        #expect(!read.stepTitles.contains("x"))
+        let described = plan(#"{"task_summary": "Made up", "steps": [{"description": "Only a made-up description"}]}"#)
+        #expect(described?.steps == 1)
+        #expect(described?.stepTitles == [])
+    }
+
+    @Test func aPlanWithoutTitlesStillHasItsCount() throws {
+        let read = try #require(plan(#"{"task_summary": "Made up", "steps": [{}, {}, {}]}"#))
+        #expect(read.steps == 3)
+        #expect(read.stepTitles == [])
+    }
+
+    @Test(arguments: [
+        #"{"task_summary": "Made up"}"#,
+        #"{"task_summary": "Made up", "steps": []}"#,
+        #"{"task_summary": "Made up", "phases": []}"#,
+        #"{"task_summary": "Made up", "phases": {"a": 1}}"#,
+        #"{"task_summary": "Made up", "steps": "One, Two"}"#,
+        #"{"task_summary": "Made up", "steps": {"title": "One"}}"#,
+        #"{"task_summary": "Made up", "phases": [{"delegations": {"steps": [{"title": "One"}]}}]}"#,
+        #"{"task_summary": "Made up", "phases": [{"delegations": [{"steps": {"title": "One"}}]}]}"#,
+        #"{"task_summary": "Made up", "phases": ["One", 2, null]}"#,
+    ])
+    func aShapeThatDoesNotMatchHasNoTitles(_ json: String) throws {
+        let read = try #require(plan(json))
+        #expect(read.stepTitles == [])
+    }
+
+    @Test func titlesOfTheWrongTypeOrEmptyAreLeftOutButTheStepsCount() throws {
+        let read = try #require(plan("""
+        {"task_summary": "Made up", "steps": [
+            {"title": 7}, {"title": null}, {"title": ["a"]}, {"title": {"a": 1}}, {"title": true},
+            {"title": ""}, {"title": "   \\n\\t "}, {"title": "Kept"}, "Bare text", 3, null, []
+        ]}
+        """))
+        #expect(read.steps == 12)
+        #expect(read.stepTitles == ["Kept"])
+    }
+
+    @Test func aTitleIsOneTrimmedLine() throws {
+        let read = try #require(plan(#"{"task_summary": "Made up", "steps": [{"title": "  Mix   the\nbuffers\t\r\nwell  "}]}"#))
+        #expect(read.stepTitles == ["Mix the buffers well"])
+    }
+
+    @Test func aVeryLongTitleIsCutAtTheLimit() throws {
+        let long = String(repeating: "a", count: PlanDocument.titleLimit + 50)
+        let read = try #require(plan(#"{"task_summary": "Made up", "steps": [{"title": "\#(long)"}]}"#))
+        #expect(read.stepTitles == [String(repeating: "a", count: PlanDocument.titleLimit)])
+    }
+
+    @Test func titlesComeFromTheShapeThatIsCounted() throws {
+        // Both shapes at once: the phases count, so only their titles do.
+        let both = try #require(plan("""
+        {"task_summary": "Made up",
+         "phases": [{"delegations": [{"steps": [{"title": "Phased"}]}]}],
+         "steps": [{"title": "Flat one"}, {"title": "Flat two"}]}
+        """))
+        #expect(both.steps == 1)
+        #expect(both.stepTitles == ["Phased"])
+        // Phases with no steps in them: the top-level steps are the plan's.
+        let empty = try #require(plan("""
+        {"task_summary": "Made up",
+         "phases": [{"delegations": [{"steps": []}]}],
+         "steps": [{"title": "Flat one"}, {"title": "Flat two"}]}
+        """))
+        #expect(empty.steps == 2)
+        #expect(empty.stepTitles == ["Flat one", "Flat two"])
+    }
+
+    @Test func aPlanWithoutTitlesIsStillOfferedAndShowsNoList() throws {
+        let untitled = PlanDocument(json: Data(#"{"task_summary": "Made up", "steps": [{}, {}]}"#.utf8))
+        let preview = try #require(PlanCheck.preview(frame: frame(Made.frame()), plan: untitled))
+        #expect(preview.detail == "2 steps")
+        #expect(preview.stepTitles == [])
+        #expect(preview.stepList == nil)
+    }
+
+    @Test func thePreviewCarriesTheTitlesAndTheirList() throws {
+        let preview = try #require(PlanCheck.preview(frame: frame(Made.frame()), plan: PlanDocument(json: Made.unsortedPlan)))
+        #expect(preview.stepTitles == ["Zeta", "Alpha", "Mu", "Beta", "Omega"])
+        #expect(preview.stepList == PlanStepList(["Zeta", "Alpha", "Mu", "Beta", "Omega"]))
+    }
+}
+
+// MARK: How many titles the card lists
+
+struct PlanStepListTests {
+    private func titles(_ count: Int) -> [String] { (0..<count).map { "Step \($0 + 1)" } }
+
+    @Test func theCapIsEight() {
+        #expect(PlanStepList.limit == 8)
+    }
+
+    @Test(arguments: [(0, 0, 0), (1, 1, 0), (7, 7, 0), (8, 8, 0), (9, 8, 1), (10, 8, 2), (100, 8, 92)])
+    func aLongPlanIsCutAtTheCap(_ count: Int, _ shown: Int, _ more: Int) {
+        let list = PlanStepList(titles(count))
+        #expect(list.shown == Array(titles(count).prefix(8)))
+        #expect(list.shown.count == shown)
+        #expect(list.more == more)
+        #expect(list.shown.count + list.more == count)
+    }
+
+    @Test func theFirstTitlesAreTheOnesShownInOrder() {
+        let list = PlanStepList(titles(10))
+        #expect(list.shown.first == "Step 1")
+        #expect(list.shown.last == "Step 8")
+    }
+
+    @Test func theMoreLineNamesHowManyAreLeftOut() {
+        #expect(PlanStepList(titles(10)).moreLine == "and 2 more…")
+        #expect(PlanStepList(titles(9)).moreLine == "and 1 more…")
+        #expect(PlanStepList(titles(8)).moreLine == nil)
+        #expect(PlanStepList(titles(3)).moreLine == nil)
+        #expect(PlanStepList([]).moreLine == nil)
+    }
+
+    @Test func theLimitCanBeAskedFor() {
+        let list = PlanStepList(titles(5), limit: 2)
+        #expect(list.shown == ["Step 1", "Step 2"])
+        #expect(list.more == 3)
+        #expect(PlanStepList(titles(5), limit: 0).shown == [])
+        #expect(PlanStepList(titles(5), limit: 0).more == 5)
+        // A limit below zero is no limit to cut at: nothing is shown.
+        #expect(PlanStepList(titles(5), limit: -3).shown == [])
+        #expect(PlanStepList(titles(5), limit: -3).more == 5)
+        // A limit above the count shows all.
+        #expect(PlanStepList(titles(5), limit: 50).shown.count == 5)
+    }
+}
+
 // MARK: Offering Approve
 
 struct PlanOfferTests {
@@ -189,7 +355,8 @@ struct PlanOfferTests {
         #expect(preview.summary == "Screen made-up buffers at two temperatures")
         #expect(preview.versionID == "ver-001")
         #expect(preview.artifactID == "art-001")
-        #expect(preview.detail == "5 steps · high confidence")
+        #expect(preview.detail == "5 steps · feasibility: high")
+        #expect(preview.stepTitles == ["One", "Two", "Three", "Four", "Five"])
     }
 
     @Test func aSubAgentWaitingLeavesTheRootProcessing() {
@@ -238,10 +405,10 @@ struct PlanOfferTests {
         func line(_ steps: Int?, _ confidence: String?) -> String? {
             PlanPreview(summary: "Made up", steps: steps, confidence: confidence, versionID: "v", artifactID: nil).detail
         }
-        #expect(line(5, "high") == "5 steps · high confidence")
-        #expect(line(1, "medium") == "1 step · medium confidence")
+        #expect(line(5, "high") == "5 steps · feasibility: high")
+        #expect(line(1, "medium") == "1 step · feasibility: medium")
         #expect(line(6, nil) == "6 steps")
-        #expect(line(nil, "low") == "low confidence")
+        #expect(line(nil, "low") == "feasibility: low")
         #expect(line(0, nil) == nil)
         #expect(line(nil, nil) == nil)
     }
@@ -423,7 +590,8 @@ struct PlanApproverTests {
             Issue.record("Approve was not offered")
             return
         }
-        #expect(preview.detail == "5 steps · high confidence")
+        #expect(preview.detail == "5 steps · feasibility: high")
+        #expect(preview.stepTitles == ["One", "Two", "Three", "Four", "Five"])
         #expect(daemon.reads == ["/frames/\(Made.root)?shallow=true", "/artifacts/versions/ver-001"])
         approver.sync()
         await approver.settled()
@@ -557,6 +725,70 @@ struct PlanApproverTests {
         approver.sync()
         #expect(approver.states.isEmpty)
         #expect(model.cards.map(\.id) == ["needs-\(Made.root)"])
+    }
+
+    @Test func theStepsStartClosedAndOpenForThatCardAlone() async throws {
+        let approver = try await ready()
+        #expect(!approver.isShowingSteps(Made.root))
+        approver.toggleSteps(Made.root)
+        #expect(approver.isShowingSteps(Made.root))
+        // Another session's card is not opened by it.
+        #expect(!approver.isShowingSteps(Made.other))
+        approver.toggleSteps(Made.root)
+        #expect(!approver.isShowingSteps(Made.root))
+    }
+
+    @Test func aCardWithNoPlanStateCannotBeOpened() {
+        let approver = PlanApprover(model: model, dependencies: daemon.dependencies())
+        approver.toggleSteps(Made.root)
+        #expect(!approver.isShowingSteps(Made.root))
+        #expect(approver.stepsOpen.isEmpty)
+    }
+
+    @Test func theCardGoingClosesItsSteps() async throws {
+        let approver = try await ready()
+        approver.toggleSteps(Made.root)
+        model.ingest(Fixture.snapshot(Fixture.session(Made.root, .running)))
+        approver.sync()
+        #expect(approver.states.isEmpty)
+        #expect(approver.stepsOpen.isEmpty)
+        // Back again, it reads afresh and starts closed.
+        model.ingest(Fixture.snapshot(waiting()))
+        approver.sync()
+        await approver.settled()
+        #expect(approver.state(for: Made.root) != nil)
+        #expect(!approver.isShowingSteps(Made.root))
+    }
+
+    @Test func turningTheSettingOffClosesTheSteps() async throws {
+        let approver = try await ready()
+        approver.toggleSteps(Made.root)
+        daemon.enabled = false
+        approver.sync()
+        #expect(approver.stepsOpen.isEmpty)
+    }
+
+    @Test func approvingKeepsTheStepsOpenThenClosesThemWhenTheCardGoes() async throws {
+        let approver = try await ready()
+        approver.toggleSteps(Made.root)
+        approver.approve(Made.root)
+        #expect(approver.isShowingSteps(Made.root))
+        await approver.settled()
+        #expect(approver.states.isEmpty)
+        #expect(approver.stepsOpen.isEmpty)
+    }
+
+    @Test func theDemoPlanShowsItsMoreLineAndOpens() {
+        model.showDemo(working: [], cards: [.needsInput(Fixture.session("demo-1", .needsInput, reason: .plan))])
+        let approver = PlanApprover(model: model, dependencies: daemon.dependencies())
+        let titles = (1...10).map { "Made-up step \($0)" }
+        let preview = PlanPreview(summary: "Made up", steps: 10, confidence: "high", stepTitles: titles,
+                                  versionID: "demo", artifactID: nil)
+        approver.showDemo(sessionID: "demo-1", preview: preview)
+        #expect(preview.stepList?.moreLine == "and 2 more…")
+        approver.toggleSteps("demo-1")
+        #expect(approver.isShowingSteps("demo-1"))
+        #expect(daemon.reads.isEmpty)
     }
 
     @Test func theDemoApprovesWithNothingSent() async {

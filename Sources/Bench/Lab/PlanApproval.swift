@@ -3,9 +3,9 @@
 //
 // The checks are pure (`PlanCheck`, on the small structs below) and tested on
 // made-up JSON. `PlanApprover` is the thin part that reads and posts through
-// the page. What it reads of a plan (its summary, how many steps, the
-// confidence word) lives in memory only, for the card, and is never logged or
-// saved.
+// the page. What it reads of a plan (its summary, how many steps, their
+// titles, the confidence word) lives in memory only, for the card, and is
+// never logged or saved.
 import Combine
 import Foundation
 import OSLog
@@ -99,20 +99,30 @@ struct PlanFrame: Equatable, Sendable {
 }
 
 /// What the card shows of a plan (`GET /api/artifacts/versions/<id>`): its
-/// `task_summary`, how many steps it has and its confidence word. The steps'
-/// own words are counted, never kept.
+/// `task_summary`, how many steps it has, the titles of those steps and its
+/// confidence word. A step's description is never read.
 struct PlanDocument: Equatable, Sendable {
+    /// The longest step title kept, in characters. The card cuts a title at
+    /// its line's end long before this; the limit only keeps an odd plan from
+    /// holding a page of text in memory.
+    static let titleLimit = 200
+
     /// `task_summary`, when it is a string with something in it.
     let summary: String?
     /// Every `phases[].delegations[].steps[]`, or an older plan's top-level
     /// `steps[]`.
     let steps: Int?
+    /// The `title` of each of those steps that has a string with something in
+    /// it, in plan order, each on one line. A step without one is left out of
+    /// this list but still counts in `steps`, so this can be shorter.
+    let stepTitles: [String]
     /// `feasibility.confidence`, when it is a short string ("high").
     let confidence: String?
 
-    init(summary: String?, steps: Int?, confidence: String?) {
+    init(summary: String?, steps: Int?, stepTitles: [String] = [], confidence: String?) {
         self.summary = summary
         self.steps = steps
+        self.stepTitles = stepTitles
         self.confidence = confidence
     }
 
@@ -121,24 +131,37 @@ struct PlanDocument: Equatable, Sendable {
         guard let root = JSONPick.parse(data) else { return nil }
         let summary = JSONPick.string(root["task_summary"])?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.summary = summary?.isEmpty == false ? summary : nil
-        steps = Self.countSteps(in: root)
+        let entries = Self.stepEntries(in: root)
+        steps = entries?.count
+        stepTitles = (entries ?? []).compactMap(Self.stepTitle)
         let feasibility = root["feasibility"] as? [String: Any]
         confidence = Self.confidenceWord(JSONPick.string(feasibility?["confidence"]))
     }
 
-    private static func countSteps(in root: [String: Any]) -> Int? {
-        var phased: Int?
+    /// The plan's steps in order, whatever each one holds: the phases'
+    /// delegations' steps when there are any, else an older plan's top-level
+    /// steps. The count and the titles both come from this one list, so they
+    /// are always about the same shape. Nil when the plan has neither.
+    private static func stepEntries(in root: [String: Any]) -> [Any]? {
+        var phased: [Any]?
         if let phases = root["phases"] as? [Any] {
-            phased = phases.reduce(0) { total, phase in
+            phased = phases.flatMap { phase -> [Any] in
                 let delegations = (phase as? [String: Any])?["delegations"] as? [Any] ?? []
-                return total + delegations.reduce(0) { sum, delegation in
-                    sum + (((delegation as? [String: Any])?["steps"] as? [Any])?.count ?? 0)
-                }
+                return delegations.flatMap { ($0 as? [String: Any])?["steps"] as? [Any] ?? [] }
             }
         }
-        if let phased, phased > 0 { return phased }
-        if let flat = root["steps"] as? [Any] { return flat.count }
+        if let phased, !phased.isEmpty { return phased }
+        if let flat = root["steps"] as? [Any] { return flat }
         return phased
+    }
+
+    /// A step's `title` as one line, when it is a string with something in
+    /// it. A step that isn't an object has none.
+    private static func stepTitle(_ step: Any) -> String? {
+        guard let text = JSONPick.string((step as? [String: Any])?["title"]) else { return nil }
+        // Any run of white space, line breaks included, becomes one space.
+        let line = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return line.isEmpty ? nil : String(line.prefix(titleLimit))
     }
 
     /// "high", from "High" or "high confidence"; nothing from a sentence.
@@ -152,21 +175,66 @@ struct PlanDocument: Equatable, Sendable {
     }
 }
 
+/// The step titles a card lists: the first few, and how many are left out.
+/// Pure, so the cap is tested. The panel measures its content and grows with
+/// it, so a long plan must not be able to grow it off a laptop screen.
+struct PlanStepList: Equatable, Sendable {
+    /// The most titles a card lists.
+    static let limit = 8
+
+    let shown: [String]
+    /// How many titles come after the ones shown.
+    let more: Int
+
+    init(_ titles: [String], limit: Int = PlanStepList.limit) {
+        shown = Array(titles.prefix(max(0, limit)))
+        more = titles.count - shown.count
+    }
+
+    /// "and 2 more…", when any are left out.
+    var moreLine: String? {
+        more > 0 ? "and \(more) more…" : nil
+    }
+}
+
 /// A plan the card may offer to approve: what it shows, and which version it
 /// is, to check against just before approving.
 struct PlanPreview: Equatable, Sendable {
+    /// The tooltip of the steps line, which names the confidence word
+    /// "feasibility": the column is too narrow for the longer wording.
+    static let feasibilityHelp = "Claude's own estimate of how feasible the plan is"
+
     let summary: String
     let steps: Int?
     let confidence: String?
+    /// The titles of the steps that have one, in plan order; empty when none
+    /// do. Held in memory only, for the card's list of steps.
+    let stepTitles: [String]
     let versionID: String
     let artifactID: String?
 
-    /// "5 steps · high confidence", or as much of it as is known.
+    init(summary: String, steps: Int?, confidence: String?, stepTitles: [String] = [],
+         versionID: String, artifactID: String?) {
+        self.summary = summary
+        self.steps = steps
+        self.confidence = confidence
+        self.stepTitles = stepTitles
+        self.versionID = versionID
+        self.artifactID = artifactID
+    }
+
+    /// "5 steps · feasibility: high", or as much of it as is known.
     var detail: String? {
         var parts: [String] = []
         if let steps, steps > 0 { parts.append(steps == 1 ? "1 step" : "\(steps) steps") }
-        if let confidence { parts.append("\(confidence) confidence") }
+        if let confidence { parts.append("feasibility: \(confidence)") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// What the card lists under "Show steps"; nil for a plan with no step
+    /// titles, which has no such control.
+    var stepList: PlanStepList? {
+        stepTitles.isEmpty ? nil : PlanStepList(stepTitles)
     }
 }
 
@@ -247,7 +315,7 @@ enum PlanCheck {
     static func preview(frame: PlanFrame?, plan: PlanDocument?) -> PlanPreview? {
         guard let versionID = versionToRead(frame), let frame, let plan, let summary = plan.summary else { return nil }
         return PlanPreview(summary: summary, steps: plan.steps, confidence: plan.confidence,
-                           versionID: versionID, artifactID: frame.artifactID)
+                           stepTitles: plan.stepTitles, versionID: versionID, artifactID: frame.artifactID)
     }
 
     /// Read again just before approving: still waiting, still not approved,
@@ -341,6 +409,10 @@ final class PlanApprover: ObservableObject {
 
     /// By session id: only sessions whose plan card is in the queue.
     @Published private(set) var states: [String: PlanCardState] = [:]
+    /// By session id: the cards whose list of steps is open. Closed unless
+    /// opened, and dropped with the card's plan, so a card that comes back
+    /// starts closed.
+    @Published private(set) var stepsOpen: Set<String> = []
 
     private let model: LabModel
     private let dependencies: Dependencies
@@ -356,6 +428,17 @@ final class PlanApprover: ObservableObject {
 
     func state(for sessionID: String) -> PlanCardState? {
         states[sessionID]
+    }
+
+    func isShowingSteps(_ sessionID: String) -> Bool {
+        stepsOpen.contains(sessionID)
+    }
+
+    /// Opens or closes one card's list of steps. Nothing for a card with no
+    /// plan state, so a card that has gone can't leave an open flag behind.
+    func toggleSteps(_ sessionID: String) {
+        guard states[sessionID] != nil else { return }
+        if !stepsOpen.insert(sessionID).inserted { stepsOpen.remove(sessionID) }
     }
 
     /// Follows the cards, the settings and the page. Never in a demo.
@@ -497,6 +580,7 @@ final class PlanApprover: ObservableObject {
                 // As Open would, without opening the session.
                 self.model.releasePlanCard(id, approved: true)
                 self.states[id] = nil
+                self.stepsOpen.remove(id)
                 self.tasks[id] = nil
             }
             return
@@ -508,6 +592,7 @@ final class PlanApprover: ObservableObject {
     private func discard(_ id: String) {
         tasks.removeValue(forKey: id)?.cancel()
         let state = states.removeValue(forKey: id)
+        stepsOpen.remove(id)
         demoSessions.remove(id)
         switch state {
         case .approving?, .approved?: model.releasePlanCard(id, approved: false)

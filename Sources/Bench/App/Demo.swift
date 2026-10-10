@@ -114,8 +114,22 @@ enum Demo {
             showPanel(working: [], cards: [.needsInput(session(.needsInput))])
         case .plan?:
             let waiting = session(.needsInput, reason: .plan)
+            // Ten steps, so the list shows "and 2 more…"; one title is long
+            // enough to be cut at the end of its line.
             PlanApprover.shared.showDemo(sessionID: waiting.id, preview: PlanPreview(
-                summary: "Screen 24 buffer conditions", steps: 6, confidence: "high",
+                summary: "Screen 24 buffer conditions", steps: 10, confidence: "high",
+                stepTitles: [
+                    "Prepare the buffer stocks",
+                    "Lay out the 24-well plate map",
+                    "Dispense buffers and protein into every well of the plate",
+                    "Equilibrate the plate at 20 °C",
+                    "Read the baseline absorbance",
+                    "Heat the plate to 37 °C",
+                    "Read the absorbance again",
+                    "Flag the wells that cloud over",
+                    "Rank the conditions by stability",
+                    "Write up the top three",
+                ],
                 versionID: "demo", artifactID: nil))
             showPanel(working: [], cards: [.needsInput(waiting)])
         case .failed?:
