@@ -114,6 +114,19 @@ you", and the graph's steps. No other hues, no gradients.
   - View: Reload ⌘R, Zoom In ⌘+, Zoom Out ⌘−, Actual Size ⌘0, Find ⌘F,
     Show Lab Panel ⌘⇧L.
   - History: Back ⌘[, Forward ⌘].
+  - Reload, Zoom, Find and Back/Forward act on **the page in front**
+    (Web/WebPageWindow.swift), not always the main window's. That is the key
+    window's web page if it has one: the main window's, a Browser or Preview
+    window's, or a pop-up's. A sheet or panel over a page (Quick Open, an
+    alert) leaves the page under it the target. A window with no page, such
+    as Settings or Diagnostics, dims these items, and so does having no
+    window in front. Open Session and Show Lab Panel are not about a page
+    and stay as they were. Each window has its own find bar and, apart from
+    the main window's, its own zoom (see Web routing policy).
+    `ActiveWebPage` watches the key and main windows and publishes whether
+    there is a page, for `.disabled`. It isn't `@FocusedValue`: the windows
+    are AppKit's and a web view is their first responder, so SwiftUI's focus
+    holds nothing for it to read.
   - Window: the standard items.
   - Settings ⌘,.
 - The Dock badge is the number of sessions waiting for input, or no badge.
@@ -209,8 +222,13 @@ Every link goes through one function. The rules:
 - `isElementFullscreenEnabled = true`.
 - Find (⌘F): a small find bar under the toolbar that uses
   `WKWebView.find(_:configuration:completionHandler:)`, with Return/⇧Return
-  for next/previous and Esc to close.
-- Zoom: `pageZoom` in 0.1 steps between 0.5 and 3.0, persisted.
+  for next/previous and Esc to close. The main window, every Browser and
+  Preview window and every pop-up has its own: `FindBar` over a `PageFinder`
+  per window. A pop-up's content is hosted in SwiftUI (`NSHostingView`, as the
+  Browser window's is) so the bar can sit over its web view.
+- Zoom: `pageZoom` in 0.1 steps between 0.5 and 3.0 (`PageZoom`). The main
+  window's is persisted. Every other window zooms on its own, starts at actual
+  size and isn't remembered.
 
 ## Notification bridge (Web/NotificationBridge.swift)
 
@@ -1072,7 +1090,8 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] needs-input card appears, Open lands on the session
 - [ ] a plan's card shows its summary, and Approve approves it (a throwaway session)
 - [ ] finished card
-- [ ] find, zoom and back/forward
+- [ ] find, zoom and back/forward, in the main window and in a Browser window
+- [ ] with Settings in front, Reload, Zoom, Find and Back/Forward are dimmed
 - [ ] the window closes and reopens without losing state
 - [ ] on-screen CPU with the panel playing
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption line (General, "Name the specimen that's playing")

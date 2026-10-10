@@ -9,7 +9,7 @@ import SwiftUI
 import WebKit
 
 @MainActor
-final class WebContainer: ObservableObject {
+final class WebContainer: ObservableObject, WebPageWindow {
     static let shared = WebContainer()
 
     enum Status: Equatable {
@@ -24,12 +24,10 @@ final class WebContainer: ObservableObject {
     /// The session the page is showing (`/projects/<p>/frames/<id>`), or nil
     /// anywhere else: what the context ring is about.
     @Published private(set) var currentFrameID: String?
-    @Published var isFindVisible = false
-    /// Bumped on every ⌘F, so a find bar that is already open takes focus again.
-    @Published private(set) var findRequest = 0
 
     /// The one web view on the daemon. Created once, never recreated.
     let webView: WKWebView
+    let finder: PageFinder
     /// The daemon's port, once known.
     private(set) var port: Int?
 
@@ -46,8 +44,6 @@ final class WebContainer: ObservableObject {
     private var lastSignInRetry: ContinuousClock.Instant?
     private var lastSessionRecovery: ContinuousClock.Instant?
 
-    private static let zoomRange = 0.5...3.0
-    private static let zoomStep = 0.1
     private static let signInRetryInterval = Duration.seconds(30)
 
     private init() {
@@ -60,6 +56,7 @@ final class WebContainer: ObservableObject {
 
         webView = WKWebView(frame: .zero, configuration: configuration)
         WebSetup.finish(webView)
+        finder = PageFinder(webView: webView)
 
         navigationDelegate.container = self
         webView.navigationDelegate = navigationDelegate
@@ -274,26 +271,20 @@ final class WebContainer: ObservableObject {
 
     // MARK: Zoom
 
-    func zoomIn() { setZoom(Double(webView.pageZoom) + Self.zoomStep) }
-    func zoomOut() { setZoom(Double(webView.pageZoom) - Self.zoomStep) }
-    func resetZoom() { setZoom(1.0) }
+    // The main window remembers its zoom; the other windows' is per window
+    // (WebPageWindow).
+    func zoomIn() { setZoom(PageZoom.zoomedIn(webView.pageZoom)) }
+    func zoomOut() { setZoom(PageZoom.zoomedOut(webView.pageZoom)) }
+    func resetZoom() { setZoom(PageZoom.actualSize) }
 
-    /// Steps are rounded to a tenth so repeated ±0.1 doesn't drift.
     private func setZoom(_ value: Double) {
-        let zoom = min(max((value * 10).rounded() / 10, Self.zoomRange.lowerBound), Self.zoomRange.upperBound)
+        let zoom = PageZoom.clamped(value)
         webView.pageZoom = zoom
         UserDefaults.standard.set(zoom, forKey: SettingsKey.pageZoom)
     }
 
     private static func storedZoom() -> Double {
-        let stored = UserDefaults.standard.object(forKey: SettingsKey.pageZoom) as? Double ?? 1.0
-        return min(max(stored, zoomRange.lowerBound), zoomRange.upperBound)
-    }
-
-    // MARK: Find
-
-    func showFind() {
-        isFindVisible = true
-        findRequest += 1
+        let stored = UserDefaults.standard.object(forKey: SettingsKey.pageZoom) as? Double ?? PageZoom.actualSize
+        return min(max(stored, PageZoom.range.lowerBound), PageZoom.range.upperBound)
     }
 }
