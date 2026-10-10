@@ -118,11 +118,14 @@ struct PlanLimitsSection: View {
                 TimelineView(.everyMinute) { context in
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(plan.limits) { limit in
+                            let reads = plan.samples[limit.kind]?.points ?? []
                             PlanLimitRow(
                                 title: limit.kind.title,
                                 usedPercent: limit.usedPercent,
                                 detail: limit.resetsAt.map { resets($0, now: context.date) },
-                                forecast: plan.forecasts[limit.kind]?.line(now: context.date))
+                                forecast: (plan.forecasts[limit.kind] ?? .tooEarly).line(
+                                    now: context.date, reads: reads, usedPercent: limit.usedPercent),
+                                trail: UsageSparkline.points(reads))
                         }
                         if let extra = plan.extra {
                             PlanLimitRow(title: "Extra usage", usedPercent: extra.usedPercent, detail: nil)
@@ -141,33 +144,55 @@ struct PlanLimitsSection: View {
 }
 
 /// Name, bar (clay for what is used), what is left, and when it starts over,
-/// with the pace's forecast in a quiet line under the bar when there is one.
+/// with a quiet line under the bar for the pace's forecast, and to its left
+/// a sparkline of the window's reads once there are two.
 private struct PlanLimitRow: View {
+    /// The columns the second line lines up with.
+    private static let titleWidth: CGFloat = 160
+    private static let gap: CGFloat = 12
+
     let title: String
     /// Nil when Claude Science gives no percent: extra usage can be on without one.
     let usedPercent: Int?
     let detail: String?
     var forecast: String?
+    /// The window's reads as `UsageSparkline.points`; empty for no sparkline.
+    var trail: [CGPoint] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             figures
-            if let forecast {
-                Text(forecast)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    // Under the bar: the title's width and the gap after it.
-                    .padding(.leading, 172)
+            if forecast != nil || !trail.isEmpty {
+                HStack(spacing: Self.gap) {
+                    if !trail.isEmpty {
+                        PlanSparkline(points: trail)
+                    }
+                    if let forecast {
+                        Text(forecast)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .help(UsageForecast.explanation)
+                    }
+                }
+                // The text sits under the bar: the title's width and the gap
+                // after it. The sparkline takes the space before it, so it
+                // ends where the title column does.
+                .padding(.leading, leading)
             }
         }
         .accessibilityElement(children: .combine)
     }
 
+    /// Where the second line starts.
+    private var leading: CGFloat {
+        trail.isEmpty ? Self.titleWidth + Self.gap : Self.titleWidth - PlanSparkline.size.width
+    }
+
     private var figures: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: Self.gap) {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
-                .frame(width: 160, alignment: .leading)
+                .frame(width: Self.titleWidth, alignment: .leading)
             if let usedPercent {
                 PlanMeter(
                     fraction: Double(usedPercent) / 100,
@@ -191,6 +216,37 @@ private struct PlanLimitRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 130, alignment: .trailing)
         }
+    }
+}
+
+/// A window's reads as a thin line in the secondary colour with a dot at the
+/// latest, time across and percent used up, on a fixed 0 to 100 scale. Drawn
+/// with Path, as the context chart is. Decorative: the bar and "% left" say
+/// the same figure.
+private struct PlanSparkline: View {
+    static let size = CGSize(width: 80, height: 18)
+
+    /// `UsageSparkline.points`: x and y each 0 through 1, y up.
+    let points: [CGPoint]
+
+    var body: some View {
+        Canvas { context, size in
+            guard points.count >= 2 else { return }
+            // Room for the dot at the ends and for the line at 0 and 100%.
+            let plot = CGRect(origin: .zero, size: size).insetBy(dx: 2, dy: 2)
+            let placed = points.map {
+                CGPoint(x: plot.minX + plot.width * $0.x, y: plot.maxY - plot.height * $0.y)
+            }
+            var line = Path()
+            line.addLines(placed)
+            context.stroke(line, with: .color(Color.secondary),
+                           style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+            let end = placed[placed.count - 1]
+            context.fill(Path(ellipseIn: CGRect(x: end.x - 2, y: end.y - 2, width: 4, height: 4)),
+                         with: .color(Color.secondary))
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+        .accessibilityHidden(true)
     }
 }
 

@@ -931,27 +931,54 @@ Approving a plan from its card).
   `chart.bar.xaxis` shows until the first read lands.
 - Popover (glass): a **Plan limits** section with a row per limit ("Current
   session", "Weekly · all models", "Weekly · Opus", "Weekly · Sonnet"), each
-  with a bar, "% left" and "Resets in 2 h 14 m", plus extra usage when
-  enabled. Then the **Activity** section (the graph from Claude Science's launch on June 30, 2026, a column per week up to a year; 14 pt squares while it spans 30 weeks or fewer, the days before launch blank; the popover is as wide as the graph needs, 600 pt at least), and a Refresh
+  with a bar, "% left" and "Resets in 2 h 14 m" (and the forecast line and
+  sparkline below), plus extra usage when enabled. Then the **Activity** section (the graph from Claude Science's launch on June 30, 2026, a column per week up to a year; 14 pt squares while it spans 30 weeks or fewer, the days before launch blank; the popover is as wide as the graph needs, 600 pt at least), and a Refresh
   button (`.glass`).
 - One Usage control, not two.
 
 **Usage forecast (the popover, under each limit's bar).** "At this pace:
-limit around 3:40 PM", "At this pace: lasts until it resets", or nothing.
+limit around 3:40 PM", "At this pace: lasts until it resets", or, while it
+has no pace yet, "Learning your current pace…".
 `PlanUsageModel` keeps each limit's reads of its current window, a time and
-the whole percent (`UsageSamples`), in memory only and never on disk; they
-start over when `resets_at` moves by more than 5 minutes (it wobbles by
-seconds between reads). It adds no reads: the ones above are the samples,
-one every 5 minutes at least. `UsageForecast.estimate` is pure and tested:
-it takes the reads of the last 45 minutes (from the last drop in the
-percent on, a drop being a reset) and fits a line by least squares, so one
-read's rounding doesn't swing it. With fewer than 3 reads, less than 15
-minutes of them, or under 3 points of change (a flat line too), it is "too
-early" and nothing is said, and nothing is said either once the limit is at
-100%. Where the line reaches 100% after the reset, "lasts until it resets";
-otherwise the time, rounded to 5 minutes, with the day in front if it isn't
-today. The weekly rows use the same 45 minutes, so they speak only after a
-burst of use. The toolbar label doesn't change.
+the whole percent (`UsageSamples`, published as `samples`), in memory only
+and never on disk; they start over when `resets_at` moves by more than 5
+minutes (it wobbles by seconds between reads). It adds no reads: the ones
+above are the samples, one every 5 minutes at least. `UsageForecast.estimate`
+is pure and tested: it takes the reads of the last 45 minutes
+(`UsageForecast.lookback`; from the last drop in the percent on, a drop
+being a reset) and fits a line by least squares, so one read's rounding
+doesn't swing it. With fewer than 3 reads, less than 15 minutes of them, or
+under 3 points of change (a flat line too), it is "too early". Where the
+line reaches 100% after the reset, "lasts until it resets"; otherwise the
+time, rounded to 5 minutes, with the day in front if it isn't today. The
+weekly rows use the same 45 minutes, so they name a time only after a
+burst of use, and are learning in between. The toolbar label doesn't
+change.
+
+- **Learning line.** A "too early" forecast says "Learning your current
+  pace…" when the window has at least one read and the limit isn't at 100%;
+  with no read yet, or once the limit is used up, nothing is said. This is
+  `Forecast.line(now:reads:usedPercent:)`; the forecast itself, and the
+  heads-up cards that read it, don't change. A window that stays flat reads
+  "Learning…" until the use picks up, as a flat line is still "too early".
+- **Help.** The forecast line has a tooltip: "Based on the last 45 minutes of
+  use in this window; it updates every few minutes." The 45 is
+  `UsageForecast.lookback`, so the wording follows the constant
+  (`UsageForecast.explanation`).
+- **Sparkline.** Once a window has 2 reads, its row shows an 80 × 18 pt
+  sparkline just left of the forecast line, ending where the title column
+  does so the line's text stays under the bar. It is a 1 pt line in the
+  secondary colour, round-capped, with a 4 pt dot at the latest read, drawn
+  with a Canvas like the context chart. Time runs across, from the window's
+  first kept read to the last. The reads kept are the last 90 minutes (twice
+  the lookback), so the line can reach back further than the 45 minutes the
+  pace uses. Percent used is up on a fixed 0 to 100 scale, so a slow climb
+  stays near the bottom or middle rather than being stretched to fill the
+  height. A drop in the percent starts it over, as it does the forecast. The
+  row grows by about 4 pt while it shows. `UsageSparkline.points` is pure and tested: it maps
+  the reads to a unit square (nothing below 2 reads), and the view only
+  places them. Hidden from VoiceOver: the bar and "% left" say the same
+  figure.
 
 ## Native controls, Solanum where it counts (since 0.1.13)
 
