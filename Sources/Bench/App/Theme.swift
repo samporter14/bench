@@ -61,6 +61,13 @@ enum SettingsKey {
     /// the menu bar. See `PanelScreen`.
     static let panelScreen = "panelScreen"
     static let pageZoom = "pageZoom"
+    /// Check GitHub once a day for a newer Bench. Off unless the user turns it
+    /// on, in Settings or the welcome window: it's the one request Bench makes
+    /// beyond this Mac that a click didn't ask for.
+    static let checkForUpdates = "checkForUpdates"
+    /// The welcome window has been shown (or was skipped for someone who used
+    /// Bench before it existed).
+    static let hasSeenWelcome = "hasSeenWelcome"
     /// Which Settings tab is showing: "general" or "scenes".
     static let settingsTab = "settingsTab"
     /// "system" (follow the Mac), "light" or "dark": see `BenchAppearance`.
@@ -89,6 +96,7 @@ enum SettingsKey {
             macNotifyNames: true,
             panelWhileFront: true,
             panelCorner: PanelCorner.bottomRight.rawValue,
+            checkForUpdates: false,
             panelScreen: "",
             pageZoom: 1.0,
             appearance: BenchAppearance.system.rawValue,
