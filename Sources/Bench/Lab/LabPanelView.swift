@@ -273,7 +273,7 @@ struct LabPanelView: View {
                 caption(reason.sentence, style: Theme.clay, weight: .semibold, trailing: position)
                 title(session.displayTitle)
                 detail(session.projectName)
-                if let plan { planLines(plan) }
+                if let plan { planLines(plan, sessionID: session.id) }
                 needsInputActions(card, session: session, plan: plan)
             }
         case .failed(let session):
@@ -340,9 +340,10 @@ struct LabPanelView: View {
     }
 
     /// The plan under the title: its summary in two lines, then its steps
-    /// and confidence, or why it couldn't be approved here.
+    /// and feasibility, with the steps' titles a click away, or why it
+    /// couldn't be approved here.
     @ViewBuilder
-    private func planLines(_ plan: PlanCardState) -> some View {
+    private func planLines(_ plan: PlanCardState, sessionID: String) -> some View {
         switch plan {
         case .loading:
             detail("Loading the plan…")
@@ -351,11 +352,78 @@ struct LabPanelView: View {
             EmptyView()
         case .ready(let preview), .approving(let preview), .approved(let preview):
             planSummary(preview.summary)
-            if let line = preview.detail { detail(line) }
+            stepsLine(preview)
+            if let list = preview.stepList { stepsDisclosure(list, sessionID: sessionID) }
         case .problem(let message, let preview):
             planSummary(preview.summary)
             detail(message)
         }
+    }
+
+    /// "6 steps · feasibility: high". The word "feasibility" is Claude's own
+    /// estimate, which the tooltip says: the column has no room to.
+    @ViewBuilder
+    private func stepsLine(_ preview: PlanPreview) -> some View {
+        if let line = preview.detail {
+            if preview.confidence != nil {
+                detail(line).help(PlanPreview.feasibilityHelp)
+            } else {
+                detail(line)
+            }
+        }
+    }
+
+    /// "Show steps" / "Hide steps", a small chevron button, and when open the
+    /// first few step titles. Closed unless opened, for this card alone
+    /// (`PlanApprover.stepsOpen`).
+    @ViewBuilder
+    private func stepsDisclosure(_ list: PlanStepList, sessionID: String) -> some View {
+        let isOpen = plans.isShowingSteps(sessionID)
+        Button {
+            withAnimation(reduceMotion ? nil : Theme.spring) { plans.toggleSteps(sessionID) }
+        } label: {
+            HStack(spacing: 3) {
+                Text(isOpen ? "Hide steps" : "Show steps")
+                Image(systemName: isOpen ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(.secondary)
+            .font(.system(size: 11, weight: .medium))
+            .lineLimit(1)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 2)
+        if isOpen {
+            stepRows(list)
+        }
+    }
+
+    /// The titles as a compact numbered list, one line each and cut at the
+    /// end, then "and N more…". The list is capped (`PlanStepList.limit`), so
+    /// the card stays a size a laptop screen holds.
+    private func stepRows(_ list: PlanStepList) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(list.shown.enumerated()), id: \.offset) { index, title in
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("\(index + 1).")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .frame(width: 14, alignment: .trailing)
+                    Text(title)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            if let more = list.moreLine {
+                Text(more)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 18)
+            }
+        }
+        .font(.system(size: 11))
+        .padding(.top, 2)
     }
 
     private func planSummary(_ text: String) -> some View {

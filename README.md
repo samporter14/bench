@@ -37,8 +37,9 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 
   <img src="docs/panel-working.png" width="336" alt="The floating panel while a session works: a specimen playing, and the session's name, project and running time"> <img src="docs/panel-card.png" width="360" alt="The panel's card when a session asked a question, with Open and Later buttons">
 - **Approve a plan from its card.** When a session asks you to approve its
-  plan, the card shows the plan's summary, how many steps it has and how
-  confident it is, with an **Approve** button. Bench checks it's still the
+  plan, the card shows the plan's summary, how many steps it has (their
+  titles one click away) and Claude's own feasibility estimate, with an
+  **Approve** button. Bench checks it's still the
   same plan just before approving; if anything is off, Open takes you to the
   session instead. Never from a Mac notification. Turn it off in Settings →
   General.
