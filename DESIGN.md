@@ -948,7 +948,21 @@ The animations are called **specimens** everywhere a user reads them (the Specim
 
 ## Settings (⌘,)
 
-Two tabs: General (below) and Scenes (above).
+Five tabs since 0.3.5 (`App/SettingsPages.swift`), each a grouped form at its
+own height (the window follows the tab):
+
+- **General** (`general`): Bench's name and version, a banner when it can't see
+  your sessions, Appearance, and Help → Diagnostics.
+- **Panel** (`panel`): the specimen while a session works (show it, name it,
+  the menu bar), where the panel sits (corner, screen, while Bench is in
+  front), and a way to the Specimens tab.
+- **Alerts** (`alerts`): on the panel (cards, plans with Approve, sound), Mac
+  notifications, and what waits while Nidus is focusing.
+- **Usage** (`usage`): heads-up cards (plan and context, week in review).
+- **Specimens** (`scenes`): what plays (above).
+
+`--demo general|panel-settings|alerts|usage-settings|specimens` shows each in a
+plain window that doesn't activate Bench.
 
 | Setting | Default |
 |---|---|

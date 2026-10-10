@@ -55,6 +55,8 @@ enum Demo {
         /// window: unlike the Settings scene, it opens without activating
         /// Bench, so a quiet demo can be captured while you type elsewhere.
         case general, specimens
+        /// Settings > Panel, Alerts and Usage, the same way.
+        case panelSettings = "panel-settings", alerts, usageSettings = "usage-settings"
     }
 
     /// Nil in a normal launch.
@@ -138,6 +140,12 @@ enum Demo {
             showPage(GeneralSettingsView(), title: "General")
         case .specimens?:
             showPage(SceneSettingsView(), title: "Specimens")
+        case .panelSettings?:
+            showPage(PanelSettingsView(), title: "Panel")
+        case .alerts?:
+            showPage(AlertSettingsView(), title: "Alerts")
+        case .usageSettings?:
+            showPage(UsageSettingsView(), title: "Usage")
         case nil:
             break
         }
