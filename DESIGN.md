@@ -955,7 +955,7 @@ weekly rows use the same 45 minutes, so they name a time only after a
 burst of use, and are learning in between. The toolbar label doesn't
 change.
 
-- **Learning line.** A "too early" forecast says "Learning your current
+- **Learning line.** (After 15 minutes of reads with under 3 points of change it says "Little use lately" instead, so a quiet week doesn't read "learning" for days.) A "too early" forecast says "Learning your current
   pace…" when the window has at least one read and the limit isn't at 100%;
   with no read yet, or once the limit is used up, nothing is said. This is
   `Forecast.line(now:reads:usedPercent:)`; the forecast itself, and the

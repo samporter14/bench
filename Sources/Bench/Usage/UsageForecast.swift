@@ -30,15 +30,23 @@ enum Forecast: Equatable {
         }
     }
 
-    /// `line(now:)`, except that a forecast still too early says the pace is
-    /// being learnt while the window has a read (`reads`, the window's) and
-    /// isn't used up. A limit at 100% has nothing left to forecast, so it
-    /// stays quiet.
+    /// `line(now:)`, except that a forecast still too early says why while
+    /// the window has a read (`reads`, the window's) and isn't used up: the
+    /// pace is still being learnt, or, after a long enough stretch with
+    /// barely any change, there's been little use to go on (else a quiet
+    /// week would say "learning" for days). A limit at 100% has nothing left
+    /// to forecast, so it stays quiet.
     func line(now: Date, reads: [UsageSample], usedPercent: Int) -> String? {
-        if self == .tooEarly, !reads.isEmpty, usedPercent < 100 {
-            return UsageForecast.learning
+        guard self == .tooEarly, !reads.isEmpty, usedPercent < 100 else { return line(now: now) }
+        let recent = UsageForecast.sinceLastDrop(reads.sorted { $0.time < $1.time })
+            .filter { $0.time >= now.addingTimeInterval(-UsageForecast.lookback) && $0.time <= now }
+        if let first = recent.first, let last = recent.last,
+           recent.count >= UsageForecast.minimumSamples,
+           last.time.timeIntervalSince(first.time) >= UsageForecast.minimumSpan,
+           last.usedPercent - first.usedPercent < UsageForecast.minimumChange {
+            return UsageForecast.littleUse
         }
-        return line(now: now)
+        return UsageForecast.learning
     }
 }
 
@@ -55,6 +63,8 @@ enum UsageForecast {
 
     /// The line while a window has reads but not yet a pace.
     static let learning = "Learning your current pace…"
+    /// The line when the window has been read long enough but barely moved.
+    static let littleUse = "Little use lately"
     /// The forecast line's tooltip. Built from `lookback`, so it stays true
     /// if that changes.
     static var explanation: String {

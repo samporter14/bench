@@ -184,20 +184,29 @@ struct ForecastLineTests {
     }
 
     @Test func aWindowWithReadsButNoPaceYetIsLearning() {
-        // One read is enough to say so, and so is a long flat stretch.
+        // One read is enough to say so.
         #expect(line(.tooEarly, reads([40]), used: 40) == "Learning your current pace…")
         #expect(line(.tooEarly, reads([40, 41]), used: 41) == "Learning your current pace…")
-        #expect(line(.tooEarly, reads(Array(repeating: 40, count: 10)), used: 40) == UsageForecast.learning)
+    }
+
+    @Test func aLongFlatStretchSaysLittleUseNotLearning() {
+        // A quiet week would otherwise say "learning" for days.
+        #expect(line(.tooEarly, reads(Array(repeating: 40, count: 10)), used: 40) == "Little use lately")
+        #expect(line(.tooEarly, reads([40, 40, 41, 41, 41, 42, 42, 42, 42, 42]), used: 42) == UsageForecast.littleUse)
     }
 
     @Test func theLearningLineFollowsTheForecastOnRealReads() {
         // Through `estimate` itself, so the two can't drift apart.
-        for percents in [[40], [40, 43], [40, 40, 40, 40, 40, 40, 40, 40, 40, 40]] {
+        for percents in [[40], [40, 43]] {
             let samples = reads(percents)
             let forecast = UsageForecast.estimate(samples: samples, resetsAt: at(300), now: now)
             #expect(forecast == .tooEarly)
             #expect(line(forecast, samples, used: percents.last ?? 0) == UsageForecast.learning)
         }
+        let flat = reads(Array(repeating: 40, count: 10))
+        let forecast = UsageForecast.estimate(samples: flat, resetsAt: at(300), now: now)
+        #expect(forecast == .tooEarly)
+        #expect(line(forecast, flat, used: 40) == UsageForecast.littleUse)
     }
 
     @Test func quietWithNoReadsOrAtOneHundredPercent() {
