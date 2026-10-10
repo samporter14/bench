@@ -69,6 +69,10 @@ final class PlanUsageModel: ObservableObject {
     /// What the pace of the last 45 minutes says for each limit in `limits`
     /// (UsageForecast.swift); `.tooEarly` until there are reads enough.
     @Published private(set) var forecasts: [PlanLimit.Kind: Forecast] = [:]
+    /// The reads of each limit's current window, for the forecast and the
+    /// popover's sparklines. In memory only; a window starting over empties
+    /// its reads.
+    @Published private(set) var samples: [PlanLimit.Kind: UsageSamples] = [:]
 
     /// The limit with the least left, which is the one the toolbar shows.
     var tightest: PlanLimit? {
@@ -81,9 +85,6 @@ final class PlanUsageModel: ObservableObject {
     /// doesn't sit on "resets now" with the old percent.
     private var atReset: Task<Void, Never>?
     private var lastAttempt: Date?
-    /// The reads of each limit's current window, for the forecast. In memory
-    /// only; a window starting over empties its reads.
-    private var samples: [PlanLimit.Kind: UsageSamples] = [:]
 
     private static let staleAfter: TimeInterval = 60
     private static let interval: Duration = .seconds(300)

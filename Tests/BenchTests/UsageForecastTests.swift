@@ -1,6 +1,6 @@
 // UsageForecastTests.swift — when a plan limit is forecast to run out, the
-// reads it is forecast from, and the heads-up card for it. Made-up reads and
-// limits only.
+// reads it is forecast from, the popover's line and sparkline for them, and
+// the heads-up card. Made-up reads and limits only.
 import Foundation
 import Testing
 @testable import Bench
@@ -175,6 +175,136 @@ struct UsageSamplesTests {
         }
         #expect(samples.points.count == 19)
         #expect(samples.points.first.map { $0.time >= at(Double(12 * 24 - 1) * 5 - 90) } == true)
+    }
+}
+
+struct ForecastLineTests {
+    private func line(_ forecast: Forecast, _ samples: [UsageSample], used: Int) -> String? {
+        forecast.line(now: now, reads: samples, usedPercent: used)
+    }
+
+    @Test func aWindowWithReadsButNoPaceYetIsLearning() {
+        // One read is enough to say so, and so is a long flat stretch.
+        #expect(line(.tooEarly, reads([40]), used: 40) == "Learning your current pace…")
+        #expect(line(.tooEarly, reads([40, 41]), used: 41) == "Learning your current pace…")
+        #expect(line(.tooEarly, reads(Array(repeating: 40, count: 10)), used: 40) == UsageForecast.learning)
+    }
+
+    @Test func theLearningLineFollowsTheForecastOnRealReads() {
+        // Through `estimate` itself, so the two can't drift apart.
+        for percents in [[40], [40, 43], [40, 40, 40, 40, 40, 40, 40, 40, 40, 40]] {
+            let samples = reads(percents)
+            let forecast = UsageForecast.estimate(samples: samples, resetsAt: at(300), now: now)
+            #expect(forecast == .tooEarly)
+            #expect(line(forecast, samples, used: percents.last ?? 0) == UsageForecast.learning)
+        }
+    }
+
+    @Test func quietWithNoReadsOrAtOneHundredPercent() {
+        #expect(line(.tooEarly, [], used: 40) == nil)
+        // Used up: nothing is left to forecast, and nothing is said.
+        #expect(line(.tooEarly, reads([97, 99, 100]), used: 100) == nil)
+        #expect(line(.tooEarly, reads([100]), used: 100) == nil)
+        // One short of it still has a pace to learn.
+        #expect(line(.tooEarly, reads([99]), used: 99) == UsageForecast.learning)
+    }
+
+    @Test func theOtherTwoOutcomesAreUnchanged() {
+        let samples = reads(Array(10...19))
+        #expect(line(.lastsUntilReset, samples, used: 19) == "At this pace: lasts until it resets")
+        #expect(line(.limitAround(at(30)), samples, used: 19)
+                == "At this pace: limit around " + UsageForecast.clock(at(30), now: now))
+        // They need no reads of their own to speak, as before.
+        #expect(line(.lastsUntilReset, [], used: 19) == Forecast.lastsUntilReset.line(now: now))
+        #expect(Forecast.tooEarly.line(now: now) == nil)
+    }
+
+    @Test func theTooltipNamesTheLookbackItUses() {
+        #expect(UsageForecast.lookback == 45 * 60)
+        #expect(UsageForecast.explanation
+                == "Based on the last 45 minutes of use in this window; it updates every few minutes.")
+    }
+}
+
+struct UsageSparklineTests {
+    @Test func noReadsNoLine() {
+        #expect(UsageSparkline.points([]).isEmpty)
+    }
+
+    @Test func oneReadIsNotYetALine() {
+        #expect(UsageSparkline.points(reads([40])).isEmpty)
+    }
+
+    @Test func readsAtOneMomentHaveNoTimeToSpreadOver() {
+        let samples = [UsageSample(time: at(0), usedPercent: 40), UsageSample(time: at(0), usedPercent: 41)]
+        #expect(UsageSparkline.points(samples).isEmpty)
+    }
+
+    @Test func timeRunsFromZeroToOneAndThePercentIsOnAFixedScale() {
+        // Reads at 0, 10 and 20 minutes: the middle one is halfway across,
+        // and 0%, 46% and 100% sit at 0, .46 and 1 up, not stretched to fit.
+        let samples = [
+            UsageSample(time: at(0), usedPercent: 0),
+            UsageSample(time: at(10), usedPercent: 46),
+            UsageSample(time: at(20), usedPercent: 100),
+        ]
+        #expect(UsageSparkline.points(samples) == [CGPoint(x: 0, y: 0), CGPoint(x: 0.5, y: 0.46), CGPoint(x: 1, y: 1)])
+    }
+
+    @Test func aLowFlatLineStaysLowInsteadOfFillingTheHeight() {
+        let points = UsageSparkline.points(reads([40, 41, 41, 42]))
+        #expect(points.count == 4)
+        #expect(points.map(\.y) == [0.4, 0.41, 0.41, 0.42])
+        #expect(points.first?.x == 0 && points.last?.x == 1)
+    }
+
+    @Test func unevenReadsAreSpacedByTime() {
+        // A burst, then a gap: the x of each is its share of the minutes.
+        let samples = [
+            UsageSample(time: at(0), usedPercent: 30),
+            UsageSample(time: at(5), usedPercent: 31),
+            UsageSample(time: at(10), usedPercent: 32),
+            UsageSample(time: at(40), usedPercent: 40),
+        ]
+        #expect(UsageSparkline.points(samples).map(\.x) == [0, 0.125, 0.25, 1])
+    }
+
+    @Test func readsOutOfOrderAreSorted() {
+        let samples = [
+            UsageSample(time: at(10), usedPercent: 50),
+            UsageSample(time: at(0), usedPercent: 40),
+            UsageSample(time: at(5), usedPercent: 45),
+        ]
+        #expect(UsageSparkline.points(samples) == [CGPoint(x: 0, y: 0.4), CGPoint(x: 0.5, y: 0.45), CGPoint(x: 1, y: 0.5)])
+    }
+
+    @Test func aDropInThePercentIsTheWindowStartingOver() {
+        // Four reads of the old window, then the new one's first three: only
+        // those are drawn, spread across the width.
+        let points = UsageSparkline.points(reads([80, 85, 90, 95, 2, 4, 6], step: 10))
+        #expect(points == [CGPoint(x: 0, y: 0.02), CGPoint(x: 0.5, y: 0.04), CGPoint(x: 1, y: 0.06)])
+        // Just after the reset there is one read, so nothing yet.
+        #expect(UsageSparkline.points(reads([80, 90, 2], step: 10)).isEmpty)
+    }
+
+    @Test func aWindowTheModelEmptiedStartsTheLineOver() {
+        var window = UsageSamples()
+        window.record(usedPercent: 50, resetsAt: at(60), at: at(-10))
+        window.record(usedPercent: 52, resetsAt: at(60), at: at(-5))
+        #expect(UsageSparkline.points(window.points).count == 2)
+        // The next window: one read, so no line, though the old ones were two.
+        window.record(usedPercent: 1, resetsAt: at(60 + 300), at: at(0))
+        #expect(UsageSparkline.points(window.points).isEmpty)
+        window.record(usedPercent: 3, resetsAt: at(60 + 300), at: at(5))
+        #expect(UsageSparkline.points(window.points) == [CGPoint(x: 0, y: 0.01), CGPoint(x: 1, y: 0.03)])
+    }
+
+    @Test func aPercentOutsideZeroToOneHundredStaysInFrame() {
+        let points = UsageSparkline.points([
+            UsageSample(time: at(0), usedPercent: -3),
+            UsageSample(time: at(5), usedPercent: 104),
+        ])
+        #expect(points.map(\.y) == [0, 1])
     }
 }
 
