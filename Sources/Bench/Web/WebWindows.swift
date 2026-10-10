@@ -3,6 +3,7 @@
 // This is the one owner that keeps them alive until they close.
 import AppKit
 import Combine
+import SwiftUI
 import WebKit
 
 @MainActor
@@ -58,8 +59,9 @@ final class WebWindows {
 
 /// A child window whose web view a page opened with `window.open`.
 @MainActor
-private final class PopupWindow: NSObject, NSWindowDelegate {
+private final class PopupWindow: NSObject, NSWindowDelegate, WebPageWindow {
     let webView: WKWebView
+    let finder: PageFinder
     let window: NSWindow
     private let uiDelegate = WebUIDelegate(role: .popup)
     private var titleObserver: AnyCancellable?
@@ -67,6 +69,7 @@ private final class PopupWindow: NSObject, NSWindowDelegate {
     init(configuration: WKWebViewConfiguration, features: WKWindowFeatures) {
         webView = WKWebView(frame: .zero, configuration: configuration)
         WebSetup.finish(webView)
+        finder = PageFinder(webView: webView)
 
         let width = features.width.map { CGFloat($0.doubleValue) } ?? 900
         let height = features.height.map { CGFloat($0.doubleValue) } ?? 700
@@ -75,7 +78,11 @@ private final class PopupWindow: NSObject, NSWindowDelegate {
                           backing: .buffered, defer: false)
         super.init()
 
-        window.contentView = webView
+        // SwiftUI hosts the web view so the find bar can sit over it, as in
+        // the Browser window. The window's size is ours, not the view's.
+        let hosting = NSHostingView(rootView: PopupWindowView(webView: webView, finder: finder))
+        hosting.sizingOptions = []
+        window.contentView = hosting
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         window.delegate = self
@@ -94,5 +101,18 @@ private final class PopupWindow: NSObject, NSWindowDelegate {
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         WebWindows.shared.forget(self)
+    }
+}
+
+/// A pop-up's content: its web view, and the find bar when shown.
+private struct PopupWindowView: View {
+    let webView: WKWebView
+    let finder: PageFinder
+
+    var body: some View {
+        WebViewHost(webView: webView)
+            .overlay(alignment: .top) {
+                FindOverlay(finder: finder)
+            }
     }
 }

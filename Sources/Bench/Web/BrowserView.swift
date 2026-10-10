@@ -11,10 +11,7 @@ struct BrowserView: View {
         // on it, so SwiftUI has no reason to rebuild it.
         WebViewHost(webView: web.webView)
             .overlay(alignment: .top) {
-                if web.isFindVisible {
-                    FindBar(web: web)
-                        .padding(.top, 10)
-                }
+                FindOverlay(finder: web.finder)
             }
             .overlay {
                 StatusOverlay(status: web.status, retry: web.start)

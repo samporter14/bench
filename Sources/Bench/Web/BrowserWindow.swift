@@ -1,14 +1,15 @@
 // BrowserWindow.swift — the in-app window for links that leave Claude Science
 // (DESIGN.md, Web routing policy): a plain web view with Back, Forward,
 // Reload, the address, and, for web links, "Open in Safari". The Preview
-// window is the same window with a fixed title and no Safari button.
+// window is the same window with a fixed title and no Safari button. Find and
+// zoom come from the menus, like the main window's (WebPageWindow).
 import AppKit
 import Combine
 import SwiftUI
 import WebKit
 
 @MainActor
-final class BrowserWindow: NSObject, NSWindowDelegate, ObservableObject {
+final class BrowserWindow: NSObject, NSWindowDelegate, ObservableObject, WebPageWindow {
     enum Kind {
         case browser
         case preview
@@ -16,6 +17,7 @@ final class BrowserWindow: NSObject, NSWindowDelegate, ObservableObject {
 
     let kind: Kind
     let webView: WKWebView
+    let finder: PageFinder
     let window: NSWindow
 
     @Published private(set) var canGoBack = false
@@ -31,6 +33,7 @@ final class BrowserWindow: NSObject, NSWindowDelegate, ObservableObject {
         // never the main view's, so nothing here can reach the daemon page.
         webView = WKWebView(frame: .zero, configuration: WebSetup.makeConfiguration())
         WebSetup.finish(webView)
+        finder = PageFinder(webView: webView)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
@@ -89,6 +92,9 @@ private struct BrowserWindowView: View {
 
     var body: some View {
         WebViewHost(webView: model.webView)
+            .overlay(alignment: .top) {
+                FindOverlay(finder: model.finder)
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .navigation) {
                     Button { model.webView.goBack() } label: { Label("Back", systemImage: "chevron.backward") }

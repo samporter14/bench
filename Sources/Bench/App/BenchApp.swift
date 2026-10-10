@@ -188,6 +188,11 @@ extension View {
 }
 
 struct BenchCommands: Commands {
+    /// Whether a window with a web page is in front. Reload, Zoom, Find and
+    /// Back/Forward act on that window's page, not always the main window's,
+    /// and go dim when there is none (Settings).
+    @ObservedObject private var active = ActiveWebPage.shared
+
     var body: some Commands {
         CommandGroup(after: .newItem) {
             // A demo has no main window to show it on.
@@ -196,15 +201,18 @@ struct BenchCommands: Commands {
                 .disabled(Demo.mode != nil)
         }
         CommandGroup(after: .toolbar) {
-            Button("Reload") { WebContainer.shared.reload() }
-                .keyboardShortcut("r")
-            Divider()
-            Button("Zoom In") { WebContainer.shared.zoomIn() }
-                .keyboardShortcut("+")
-            Button("Zoom Out") { WebContainer.shared.zoomOut() }
-                .keyboardShortcut("-")
-            Button("Actual Size") { WebContainer.shared.resetZoom() }
-                .keyboardShortcut("0")
+            Group {
+                Button("Reload") { ActiveWebPage.current?.reload() }
+                    .keyboardShortcut("r")
+                Divider()
+                Button("Zoom In") { ActiveWebPage.current?.zoomIn() }
+                    .keyboardShortcut("+")
+                Button("Zoom Out") { ActiveWebPage.current?.zoomOut() }
+                    .keyboardShortcut("-")
+                Button("Actual Size") { ActiveWebPage.current?.resetZoom() }
+                    .keyboardShortcut("0")
+            }
+            .disabled(!active.hasPage)
             Divider()
             Button("Show Specimens Panel") {
                 let defaults = UserDefaults.standard
@@ -213,17 +221,21 @@ struct BenchCommands: Commands {
             .keyboardShortcut("l", modifiers: [.command, .shift])
         }
         CommandGroup(after: .textEditing) {
-            Button("Find…") { WebContainer.shared.showFind() }
+            Button("Find…") { ActiveWebPage.current?.showFind() }
                 .keyboardShortcut("f")
+                .disabled(!active.hasPage)
         }
         CommandGroup(after: .help) {
             Button("Bench Diagnostics…") { DiagnosticsWindowController.shared.show() }
         }
         CommandMenu("History") {
-            Button("Back") { WebContainer.shared.goBack() }
-                .keyboardShortcut("[")
-            Button("Forward") { WebContainer.shared.goForward() }
-                .keyboardShortcut("]")
+            Group {
+                Button("Back") { ActiveWebPage.current?.goBack() }
+                    .keyboardShortcut("[")
+                Button("Forward") { ActiveWebPage.current?.goForward() }
+                    .keyboardShortcut("]")
+            }
+            .disabled(!active.hasPage)
         }
     }
 }
