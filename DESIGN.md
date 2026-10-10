@@ -327,10 +327,10 @@ Position:
 
 - A corner of the **menu-bar screen**'s `visibleFrame`
   (`NSScreen.screens.first`), inset 20pt: bottom right unless Settings →
-  General → Corner (`panelCorner`, `PanelCorner`) says another, since 0.3.1.
+  Panel → Corner (`panelCorner`, `PanelCorner`) says another, since 0.3.1.
   The content is aligned to that corner and grows from it; a new corner moves
   the panel at once.
-- Settings → General → Screen (`panelScreen`, `PanelScreen`, since 0.3.3):
+- Settings → Panel → Screen (`panelScreen`, `PanelScreen`, since 0.3.3):
   the screen with the menu bar (empty, the default) or one chosen by its
   `localizedName` (display IDs can change on replugging). A chosen screen
   that isn't connected falls back to the menu bar's and is listed as "(not
@@ -355,7 +355,7 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     front.
   - Optionally, one more quiet line (11pt, secondary) under the meta line:
     the specimen that's playing, "Kinesin · A motor protein on a
-    microtubule". Settings → General → "Name the specimen that's playing"
+    microtubule". Settings → Panel → "Name the specimen that's playing"
     (`showSpecimenCaption`), off by default. `SpecimenCaptionLine` follows
     the rotation, a `TimelineView(SceneBoundarySchedule)` that ticks when the
     specimen changes, and `SpecimenGuide.line(for:)` makes the text: a
@@ -490,7 +490,7 @@ due is `NoticeRules`, pure and tested on made-up data.
 
 What has been announced (plan windows, context sessions, the reviewed week)
 is kept in Bench's settings so an update doesn't repeat it; demos keep
-nothing. Settings → General → Heads-up turns each off.
+nothing. Settings → Usage → Heads-up turns each off.
 
 ### Nidus (Lab/NidusFocus.swift, since 0.3.0)
 
@@ -520,7 +520,7 @@ the card is for. **Opt-in**, off by default, and explained where it is
 turned on: what it does, that macOS asks once, that it names the session
 and project unless told not to, and where to turn it off.
 
-**Settings → General → Mac notifications**, right after "When a session
+**Settings → Alerts → Mac notifications**, right after "When a session
 needs you" (`MacNotificationsSection`, in Lab/MacNotifications.swift):
 
 - **Also send a Mac notification.** Off. Its subtitle says it comes as
@@ -709,7 +709,7 @@ that doesn't match (a newer daemon, a 404 or 405, an unknown code), a
 sub-agent waiting, a changed plan: each leaves the card as it was before
 0.3.4, with Open taking you to the session to decide there.
 
-**Setting.** Settings → General → When a session needs you → **Show plans
+**Setting.** Settings → Alerts → On the panel → **Show plans
 on the card, with Approve** (`showPlansOnCard`), on by default. Off, a plan's
 card is Open and Later, and no plan is read.
 

@@ -43,7 +43,7 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   session instead. Never from a Mac notification. Turn it off in Settings →
   General.
 - **Mac notifications, if you want them.** Off until you turn on **Also
-  send a Mac notification** in Settings → General → Mac notifications. Then
+  send a Mac notification** in Settings → Alerts → Mac notifications. Then
   a session that needs you or stops with an error sends a notification too,
   so you see it in full screen or on your iPhone, and finishes can as well.
   macOS asks your permission once, and you can hide the session and project
@@ -80,10 +80,10 @@ your picks. The preview plays only what's on, in light or
 dark. Hover a specimen to see it play big, with a few words about it. Search
 matches what a specimen is about as well as its name, and the Topics menu
 beside the search field finds a whole subject at once, "microscopy" say. Turn
-on Settings → General → Name the specimen that's playing for its name and a
+on Settings → Panel → Name the specimen that's playing for its name and a
 caption under the session in the panel. Tired of the one playing right
 now? Right-click the panel and choose Don't Play. The panel can sit in any
-corner of your screen, on any display: Settings → General → Corner and
+corner of your screen, on any display: Settings → Panel → Corner and
 Screen.
 
 <img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, a checkbox per category (Lab 130 of 131, Biology 211 of 214), a search field with an All, On and Off filter, and a grid of specimens under a Lab heading, each with a clay check when on">

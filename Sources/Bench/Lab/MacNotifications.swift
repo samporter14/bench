@@ -316,7 +316,7 @@ extension LabModel {
 
 // MARK: Settings
 
-/// Settings → General → Mac notifications: what they are, whether macOS lets
+/// Settings → Alerts → Mac notifications: what they are, whether macOS lets
 /// Bench send them, and where to turn them off. A section of its own, placed
 /// in the form by GeneralSettingsView.
 struct MacNotificationsSection: View {
