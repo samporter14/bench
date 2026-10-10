@@ -85,18 +85,40 @@ enum LabReminder: Equatable, Sendable {
     }
 }
 
+/// A needs-input card put off with Later, as the activity list and the Dock
+/// menu show it. In memory only, like the reminder it describes.
+struct SnoozedReminder: Identifiable, Equatable {
+    /// The session that waits, as the last read left it.
+    let session: SessionStatus
+    /// When the reminder wakes; nil for one that waits for the focus session
+    /// to end.
+    let due: Date?
+
+    var id: String { session.id }
+}
+
+private extension Duration {
+    var seconds: TimeInterval {
+        TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
+    }
+}
+
 private enum PendingReminder {
-    /// Wakes when the task's sleep ends.
-    case timer(Task<Void, Never>)
+    /// Wakes when the task's sleep ends, at `due`.
+    case timer(Task<Void, Never>, due: Date)
     /// Wakes when the focus session that is on ends.
     case focus
 
     func cancel() {
-        if case .timer(let task) = self { task.cancel() }
+        if case .timer(let task, _) = self { task.cancel() }
     }
 
     var waitsForFocus: Bool {
         if case .focus = self { true } else { false }
+    }
+
+    var due: Date? {
+        if case .timer(_, let due) = self { due } else { nil }
     }
 }
 
@@ -161,6 +183,10 @@ final class LabModel: ObservableObject {
     /// Every session of the last read (the ~25 most recently active), whatever
     /// its state: what Quick Open searches. In memory only, like Recent.
     @Published private(set) var sessions: [SessionStatus] = []
+    /// The waiting sessions whose cards are put off with Later and when each
+    /// comes back, in the order they wait: the activity list and the Dock menu
+    /// show them. In memory only, like Recent.
+    @Published private(set) var snoozed: [SnoozedReminder] = []
     /// What happened lately, newest first: the activity list's Recent.
     @Published private(set) var recent: [LabEvent] = []
     static let recentLimit = 30
@@ -192,7 +218,9 @@ final class LabModel: ObservableObject {
     /// Needs-input cards put off with Later, by session id. Kept apart from
     /// `expiries`, which `armFrontCard` prunes to the front card. In memory
     /// only, like Recent.
-    private var reminders: [String: PendingReminder] = [:]
+    private var reminders: [String: PendingReminder] = [:] {
+        didSet { syncSnoozed() }
+    }
     /// When each session last raised a needs-input or finished card, so the
     /// page's own notification for the same moment can be dropped.
     private var sessionCardAt: [String: Date] = [:]
@@ -313,11 +341,29 @@ final class LabModel: ObservableObject {
         }
         let scaled = delay * lifetimeScale
         let id = session.id
+        let due = Date().addingTimeInterval(scaled.seconds)
         reminders[id] = .timer(Task { [weak self] in
             try? await Task.sleep(for: scaled)
             guard !Task.isCancelled else { return }
             self?.wake(id)
-        })
+        }, due: due)
+    }
+
+    /// Show Now: a reminder's time brought forward to this moment. The card
+    /// returns if the session still waits, quietly, as the user asked for it.
+    func showNow(_ sessionID: String) {
+        guard let pending = reminders[sessionID] else { return }
+        // Its timer must not outlive it: a later Later on the same session
+        // would be woken by the old one.
+        pending.cancel()
+        wake(sessionID, chiming: false)
+    }
+
+    /// Cancel Reminder: the reminder goes, silently, and the card does not
+    /// return. The session stays dismissed, as after Dismiss, until it asks
+    /// something new.
+    func cancelReminder(_ sessionID: String) {
+        forgetReminder(sessionID)
     }
 
     /// The sessions whose cards are put off, for tests.
@@ -376,10 +422,11 @@ final class LabModel: ObservableObject {
 
     /// Shows made-up sessions and cards, with no reading. Only Demo calls it.
     func showDemo(working: [SessionStatus], cards: [LabCard], problem: ScienceError? = nil, staleSince: Date? = nil,
-                  recent: [LabEvent] = []) {
+                  recent: [LabEvent] = [], snoozed: [SnoozedReminder] = []) {
         self.working = working
         self.cards = cards
         self.recent = recent
+        self.snoozed = snoozed
         self.problem = problem
         self.staleSince = staleSince
         waiting = cards.compactMap(\.session).filter { $0.state == .needsInput }
@@ -564,6 +611,7 @@ final class LabModel: ObservableObject {
         for id in Array(reminders.keys) where parkedByID[id] == nil {
             forgetReminder(id)
         }
+        syncSnoozed()
         // A failure card goes once its session runs or waits again.
         let failedIDs = Set(snapshot.sessions.filter { $0.state == .error }.map(\.id))
         for case .failed(let session) in cards where !failedIDs.contains(session.id) {
@@ -635,14 +683,24 @@ final class LabModel: ObservableObject {
     /// A reminder's time has come: the card returns if its session still
     /// waits, and says what it waits for now. If it doesn't, the reminder is
     /// dropped without a word.
-    private func wake(_ id: String) {
+    private func wake(_ id: String, chiming: Bool = true) {
         guard reminders.removeValue(forKey: id) != nil else { return }
         guard let session = waiting.first(where: { $0.id == id }) else { return }
-        if raise(.needsInput(session)) { chime() }
+        if raise(.needsInput(session)), chiming { chime() }
     }
 
     private func forgetReminder(_ id: String) {
         reminders.removeValue(forKey: id)?.cancel()
+    }
+
+    /// Rebuilds `snoozed` from the reminders and the sessions that wait. A
+    /// reminder whose session isn't in the last read is left out: the read
+    /// that dropped the session drops it too.
+    private func syncSnoozed() {
+        let next = waiting.compactMap { session in
+            reminders[session.id].map { SnoozedReminder(session: session, due: $0.due) }
+        }
+        if snoozed != next { snoozed = next }
     }
 
     /// The focus session ended: the reminders that waited for it come back,

@@ -298,9 +298,23 @@ question is still seen.
     reminder. Opening the session clears it too.
   - **Dismiss is still for good.** The × and the Later menu's Dismiss do what
     they did: the card goes, and only a new kind of request brings it back.
+  - **Seen and managed.** `LabModel` keeps each reminder's due
+    time with it: the `Date` it wakes, or none for After My Focus Session.
+    `snoozed` publishes the put-off sessions that still wait as
+    `SnoozedReminder`s (the session as last read, and its due time), in the
+    order they wait; the activity list and the Dock menu show them. A session
+    that stops waiting leaves `snoozed` with its reminder.
+    - `showNow(sessionID)` brings a reminder forward: its timer is cancelled
+      (an old one must not wake a later reminder on the same session) and the
+      card returns at once if the session still waits, saying what it waits
+      for now. No sound: the user asked for it.
+    - `cancelReminder(sessionID)` drops the reminder silently. The card does
+      not return and the session stays dismissed, as after Dismiss, until it
+      asks something new.
   - **In memory only**, like Recent: nothing about sessions is written to
-    disk. A put-off session stays in the activity list's Needs you and in the
-    Dock badge, which count what waits, not what is on the panel.
+    disk, due times included. A put-off session stays in the activity list's
+    Needs you and in the Dock badge, which count what waits, not what is on
+    the panel.
 - `failed` ("Stopped with an error", Open and Dismiss, with the sound) comes
   when a working or waiting session ends in an error, and stays until it is
   opened, dismissed, or the session runs again.
@@ -415,6 +429,24 @@ last 30 events: questions, plans, errors, finishes and saved downloads, in the
 past tense, with when). Each row opens its session in the one web view and
 closes the list; a saved file shows in Finder. Both read `LabModel`, so
 nothing else polls.
+
+A session put off with Later (see Later) keeps its row in **Needs you**,
+quieter:
+
+- Where the reason was, a secondary line: "Reminds you at 2:15 PM" (the time
+  in the Mac's own format) or "Reminds you after your focus session".
+- Its glyph is dimmed, with a small clock on it.
+- Two borderless icon buttons at the row's right, with tooltips: **Show Now**
+  (`bell`) and **Cancel Reminder** (`bell.slash`). The same two are in the
+  row's context menu, with their names. They sit over the row, so they don't
+  open the session, and they leave the list open: the row turns back into a
+  plain one as the reminder goes.
+- A click on the rest of the row still opens the session, which clears the
+  reminder.
+
+The Dock menu item's subtitle is the same line. Show Now and Cancel Reminder
+are the popover's only: a submenu on the item would take the click that opens
+the session, and items of their own would triple the section.
 
 The Dock menu is never empty: with nothing working or waiting it says
 "Nothing working right now", and while Recent is still empty (right after a
