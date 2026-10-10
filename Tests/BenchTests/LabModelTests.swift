@@ -13,6 +13,14 @@ struct LabModelTests {
         return model
     }
 
+    /// Waits for `condition`, up to a few seconds, rather than for a fixed
+    /// time: a busy test run can make a 60 ms card take longer than 200 ms.
+    private func until(_ condition: () -> Bool) async throws {
+        for _ in 0..<300 where !condition() {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     @Test func aFinishQueuedBehindAQuestionWaitsItsTurn() async throws {
         let model = model()
         model.ingest(Fixture.snapshot(Fixture.session("a", .running), Fixture.session("b", .running)))
@@ -24,7 +32,7 @@ struct LabModelTests {
         #expect(model.cards.map(\.id) == ["needs-a", "finished-b"])
         model.dismiss(model.cards[0])
         #expect(model.cards.map(\.id) == ["finished-b"])
-        try await Task.sleep(for: .milliseconds(200))
+        try await until { model.cards.isEmpty }
         #expect(model.cards.isEmpty)
     }
 
@@ -90,7 +98,7 @@ struct LabModelTests {
                                       Fixture.session("b", .finished)))
         #expect(model.recent.count == 2)
         model.dismiss(model.cards[0])
-        try await Task.sleep(for: .milliseconds(200))
+        try await until { model.cards.isEmpty }
         #expect(model.cards.isEmpty)
         #expect(model.recent.count == 2)
     }

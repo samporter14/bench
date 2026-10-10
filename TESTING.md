@@ -321,6 +321,26 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-10, Bench 0.3.5 (quick wins from a ChatGPT list)
+
+- ✅ `swift test`: 256 tests in 33 suites, three runs in a row. New: step
+  titles and the 8-step cap (`PlanStepTitleTests`, `PlanStepListTests`),
+  snoozed reminders (`ReminderTests` +14), the sparkline and the learning /
+  little-use lines (`UsageForecastTests` +16), the active page for menu
+  commands (`WebPageTests`, 10). `recentKeepsEachEventOnceAndOutlivesItsCard`
+  and its sibling now wait for the card to go instead of a fixed 200 ms,
+  which a busy parallel run could outlast.
+- ✅ Captured quietly: `--demo plan` (10 steps · feasibility: high, Show
+  steps); `--demo toolbar --open-activity` (snoozed rows with "Reminds you at
+  …" / "after your focus session" and the bell buttons); Settings → General,
+  Panel, Alerts and Usage (`--demo general|panel-settings|alerts|usage-settings`).
+- Process note: two agents in separate worktrees both used `git stash`,
+  which every worktree of a repo shares, and popped each other's work. It
+  was recovered byte for byte. Agents must never use `git stash` here.
+- Not checked live: menu commands in a Browser or pop-up window and dimmed
+  in Settings; Show steps opening on a real plan; the sparkline after real
+  reads; Show Now / Cancel on a real reminder.
+
 ## 2026-10-06, Bench 0.3.4 (approve plans, usage forecast, field guide)
 
 - ✅ `swift test`: 193 tests in 28 suites. New: `PlanApprovalTests` (58:
