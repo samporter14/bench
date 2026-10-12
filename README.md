@@ -46,7 +46,8 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 - **Mac notifications, if you want them.** Off until you turn on **Also
   send a Mac notification** in Settings → Alerts → Mac notifications. Then
   a session that needs you or stops with an error sends a notification too,
-  so you see it in full screen or on your iPhone, and finishes can as well.
+  so you see it in full screen or with the panel off, and finishes can as
+  well.
   macOS asks your permission once, and you can hide the session and project
   names.
 - **Every session in one list.** Click the status in the toolbar, or

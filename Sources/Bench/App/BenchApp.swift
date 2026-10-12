@@ -67,10 +67,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⌘⇧O reaches Quick Open before the page: a web view offers key
         // equivalents to the page first, and a page that binds ⌘⇧O itself
         // would keep it from the menu.
+        // Only in the Claude Science window: a Browser window shows other
+        // sites, which may use ⌘⇧O themselves. Caps Lock doesn't count.
         quickOpenKey = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
             guard modifiers == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "o",
-                  !QuickOpenPresenter.shared.isShowing else { return event }
+                  !QuickOpenPresenter.shared.isShowing,
+                  event.window != nil, event.window === MainWindowController.shared.windowIfLoaded else { return event }
             QuickOpenPresenter.shared.show()
             return nil
         }
@@ -111,7 +114,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class MainWindowController: NSObject, NSWindowDelegate {
     static let shared = MainWindowController()
 
+    /// The window once it exists, without making it: for checks like "is
+    /// this event in the main window?" that must not create one.
+    var windowIfLoaded: NSWindow? { isLoaded ? window : nil }
+    private var isLoaded = false
+
     private lazy var window: NSWindow = {
+        isLoaded = true
         let hosting = NSHostingController(rootView: MainView())
         hosting.sceneBridgingOptions = [.toolbars]
         let window = NSWindow(contentViewController: hosting)

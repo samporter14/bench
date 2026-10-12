@@ -417,6 +417,11 @@ final class PlanApprover: ObservableObject {
     private let model: LabModel
     private let dependencies: Dependencies
     private var tasks: [String: Task<Void, Never>] = [:]
+    /// When each card's plan last failed to read: a read that failed (a 401
+    /// before the page signed back in, say) is tried again a while later,
+    /// rather than leaving the card without Approve for as long as it's up.
+    private var unavailableSince: [String: Date] = [:]
+    static let retryAfter: TimeInterval = 15
     /// `--demo plan`'s made-up session: approving it posts nothing.
     private var demoSessions: Set<String> = []
     private var subscriptions = Set<AnyCancellable>()
@@ -482,8 +487,17 @@ final class PlanApprover: ObservableObject {
             if !keep { discard(id) }
         }
         guard enabled, case .needsInput(let session)? = model.cards.first, session.waitingReason == .plan,
-              states[session.id] == nil, dependencies.isReady() else { return }
-        load(session.id)
+              dependencies.isReady() else { return }
+        switch states[session.id] {
+        case nil:
+            load(session.id)
+        case .unavailable?:
+            if Date().timeIntervalSince(unavailableSince[session.id] ?? .distantPast) >= Self.retryAfter {
+                load(session.id)
+            }
+        default:
+            break
+        }
     }
 
     /// Approve, once: only from `ready`, which it leaves at once, so a second
@@ -535,6 +549,7 @@ final class PlanApprover: ObservableObject {
             let preview = await self.readPlan(id)
             guard !Task.isCancelled, self.states[id] == .loading else { return }
             self.states[id] = preview.map(PlanCardState.ready) ?? .unavailable
+            if preview == nil { self.unavailableSince[id] = Date() } else { self.unavailableSince[id] = nil }
         }
     }
 
@@ -592,6 +607,7 @@ final class PlanApprover: ObservableObject {
     private func discard(_ id: String) {
         tasks.removeValue(forKey: id)?.cancel()
         let state = states.removeValue(forKey: id)
+        unavailableSince.removeValue(forKey: id)
         stepsOpen.remove(id)
         demoSessions.remove(id)
         switch state {

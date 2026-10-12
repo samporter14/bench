@@ -40,7 +40,9 @@ extension WebContainer {
             throw WebAPIError.notAllowed
         }
         let body = """
-        const response = await fetch(path, { credentials: "include", headers: { "Accept": "application/json" } });
+        // no-store: what's read here (usage, a plan) is never kept in WebKit's
+        // cache on disk.
+        const response = await fetch(path, { credentials: "include", cache: "no-store", headers: { "Accept": "application/json" } });
         if (!response.ok) { throw new Error("HTTP " + response.status); }
         return await response.text();
         """

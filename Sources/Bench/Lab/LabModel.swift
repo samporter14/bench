@@ -584,14 +584,20 @@ final class LabModel: ObservableObject {
         if let head = working.first, let index = running.firstIndex(where: { $0.id == head.id }), index > 0 {
             running.insert(running.remove(at: index), at: 0)
         }
+        // A daemon that isn't running says nothing works, so nothing is shown
+        // working; but a session waiting for you still waits when it comes
+        // back, and the engine keeps its baseline over the gap, so it won't
+        // announce them again. Its cards, reminders and lists stay until a
+        // read that works says otherwise.
+        let daemonDown = snapshot.readError == .daemonNotRunning
         // Assign only real changes: each one redraws the panel and re-fits the window.
         let quiet = snapshot.sessions.filter { $0.state != .running && $0.state != .needsInput }
         let newest = Array(quiet.sorted(by: recentFirst).prefix(Self.latestLimit))
-        if latest.map(\.id) != newest.map(\.id) { latest = newest }
-        if sessions != snapshot.sessions { sessions = snapshot.sessions }
+        if !daemonDown, latest.map(\.id) != newest.map(\.id) { latest = newest }
+        if !daemonDown, sessions != snapshot.sessions { sessions = snapshot.sessions }
         if workingHidden, Set(running.map(\.id)) != Set(working.map(\.id)) { workingHidden = false }
         if working != running { working = running }
-        if waiting != parked {
+        if !daemonDown, waiting != parked {
             waiting = parked
             NSApplication.shared.dockTile.badgeLabel = parked.isEmpty ? nil : String(parked.count)
         }
@@ -600,6 +606,10 @@ final class LabModel: ObservableObject {
         // what it waits for now: a question can become a plan to approve. One
         // held for a plan approved from it stays until the approval lets it go.
         let parkedByID = Dictionary(parked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        if daemonDown {
+            if alert, !firstRead { chime() }
+            return
+        }
         for case .needsInput(let session) in cards {
             if let now = parkedByID[session.id] {
                 if now != session { raise(.needsInput(now)) }
@@ -619,7 +629,9 @@ final class LabModel: ObservableObject {
         }
 
         if alert, !firstRead { chime() }
-        firstRead = false
+        // Only a read that worked ends the first one: Bench may start before
+        // the daemon, and what waits then is not news when it first reads it.
+        if snapshot.readError == nil { firstRead = false }
     }
 
     /// The needs-input sound, when the setting is on.
@@ -633,8 +645,10 @@ final class LabModel: ObservableObject {
 
     /// Adds a card, or replaces the one with its id where it stands: a repeat
     /// neither reorders the queue nor counts as new. Says whether it is new.
+    /// `announcing` false keeps it off Mac notifications: for a card the user
+    /// just asked to see (Show Now), which is no news to them.
     @discardableResult
-    private func raise(_ card: LabCard) -> Bool {
+    private func raise(_ card: LabCard, announcing: Bool = true) -> Bool {
         var next = cards
         let isNew: Bool
         var asksSomethingNew = false
@@ -652,7 +666,7 @@ final class LabModel: ObservableObject {
         expiries.removeValue(forKey: card.id)?.cancel()
         armFrontCard()
         // Not on the first read: what already waits at launch is not news.
-        if (isNew || asksSomethingNew), !firstRead { cardRaised(card) }
+        if (isNew || asksSomethingNew), !firstRead, announcing { cardRaised(card) }
         return isNew
     }
 
@@ -686,7 +700,8 @@ final class LabModel: ObservableObject {
     private func wake(_ id: String, chiming: Bool = true) {
         guard reminders.removeValue(forKey: id) != nil else { return }
         guard let session = waiting.first(where: { $0.id == id }) else { return }
-        if raise(.needsInput(session)), chiming { chime() }
+        // Show Now (`chiming` false) is the user asking: no sound, no notification.
+        if raise(.needsInput(session), announcing: chiming), chiming { chime() }
     }
 
     private func forgetReminder(_ id: String) {

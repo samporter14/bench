@@ -238,6 +238,13 @@ final class MacNotifications: NSObject, ObservableObject {
         center?.removeDeliveredNotifications(withIdentifiers: [card.id])
     }
 
+    /// Clears every notification Bench has delivered: when names are turned
+    /// off (those already shown named their sessions) or notifications are.
+    func clearDelivered() {
+        waiting.removeAll()
+        center?.removeAllDeliveredNotifications()
+    }
+
     private static func settings(authorized: Bool) -> NotificationRules.Settings {
         NotificationRules.Settings(authorized: authorized, holdingFinishes: NidusFocus.shared.holding)
     }
@@ -337,7 +344,7 @@ struct MacNotificationsSection: View {
         Section {
             Toggle(isOn: $enabled) {
                 Text("Also send a Mac notification")
-                Text("As well as the card: a notification in Notification Center, so you see it in full screen, with the panel off, and on your iPhone if it shows your Mac's notifications. macOS asks your permission the first time.")
+                Text("As well as the card: a notification in Notification Center, so you see it in full screen or with the panel off. macOS asks your permission the first time.")
             }
             Toggle(isOn: $finishes) {
                 Text("When a session finishes too")
@@ -349,6 +356,10 @@ struct MacNotificationsSection: View {
                 Text("Off, they read \u{201C}A session needs you\u{201D}, and so on.")
             }
             .disabled(!enabled)
+            // Those already in Notification Center named their sessions, or
+            // shouldn't linger once notifications are off.
+            .onChange(of: names) { _, on in if !on { notifications.clearDelivered() } }
+            .onChange(of: enabled) { _, on in if !on { notifications.clearDelivered() } }
             LabeledContent {
                 if notifications.authorization == .denied {
                     Button("Open Notification Settings…") { NSWorkspace.shared.open(MacNotifications.settingsURL) }

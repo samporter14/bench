@@ -216,9 +216,12 @@ struct AlertSettingsView: View {
                     Text("Hold finishes")
                     Text("During a Nidus focus session, \u{201C}Finished\u{201D} cards wait for it to end, then come as one. Questions and errors still come at once.")
                 }
+                // Off mid-session: what's held comes now, rather than waiting
+                // for a focus session it no longer waits for.
+                .onChange(of: holdDuringFocus) { _, on in if !on { LabModel.shared.releaseHeldFinishes() } }
             }
         }
-        .settingsPage(height: 800)
+        .settingsPage(height: 740)
     }
 }
 

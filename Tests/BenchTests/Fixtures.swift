@@ -19,4 +19,7 @@ enum Fixture {
 
     static let failedRead = ScienceSnapshot(runningCount: nil, daemonVersion: nil, sessions: [],
                                             readError: .databaseUnreadable("test"))
+
+    static let daemonDown = ScienceSnapshot(runningCount: nil, daemonVersion: nil, sessions: [],
+                                            readError: .daemonNotRunning)
 }

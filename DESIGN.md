@@ -385,15 +385,16 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     several work, a button (since 0.3.3) that pops up the Dock's activity
     menu (`ActivityMenu`) under the pointer, without bringing Bench to the
     front.
-  - Optionally, one more quiet line (11pt, secondary) under the meta line:
-    the specimen that's playing, "Kinesin · A motor protein on a
-    microtubule". Settings → Panel → "Name the specimen that's playing"
-    (`showSpecimenCaption`), off by default. `SpecimenCaptionLine` follows
-    the rotation, a `TimelineView(SceneBoundarySchedule)` that ticks when the
-    specimen changes, and `SpecimenGuide.line(for:)` makes the text: a
-    specimen with no note is its name alone, so the line is always there
-    while the setting is on, and the panel keeps its size. One line, cut at
-    the end (the column is about 200pt, so most captions are). Under Reduce
+  - Optionally, up to two more quiet lines (11pt, secondary) under the meta
+    line: the specimen that's playing, its name in medium weight then its
+    caption, "**Kinesin** · A motor protein on a microtubule". Settings →
+    Panel → "Name the specimen that's playing" (`showSpecimenCaption`), off
+    by default. `SpecimenCaptionLine` follows the rotation, a
+    `TimelineView(SceneBoundarySchedule)` that ticks when the specimen
+    changes; a specimen with no note is its name alone. Two lines are kept
+    (`lineLimit(2, reservesSpace: true)`), so the panel keeps its size while
+    the setting is on: the column is about 200pt, too narrow for both on
+    one, and a cut caption says little. Under Reduce
     Motion the well is the still flask, and the line names the flask. Not
     shown under "Not updating", where the well is a warning symbol.
 - **Needs input (card, about 360×170).**
@@ -586,9 +587,10 @@ and project unless told not to, and where to turn it off.
 needs you" (`MacNotificationsSection`, in Lab/MacNotifications.swift):
 
 - **Also send a Mac notification.** Off. Its subtitle says it comes as
-  well as the card, shows in full screen, with the panel off and on an
-  iPhone that shows the Mac's notifications, and that macOS asks permission
-  the first time. Turning it on asks macOS for alert and sound at once. If
+  well as the card, shows in full screen and with the panel off, and that
+  macOS asks permission the first time. (Until 0.3.6 it also said "on your
+  iPhone": macOS doesn't send a Mac's notifications to an iPhone, only the
+  other way, so that went.) Turning it on asks macOS for alert and sound at once. If
   the answer is no, the switch stays on and the Permission row says why.
 - **When a session finishes too.** Off. Without it, notifications come only
   when a session needs you or stops with an error.
@@ -660,8 +662,9 @@ The poster, `MacNotifications`, is thin and tests never use it.
   nothing until `MacNotifications.start()` sets them at launch.
 - **What stays on the Mac.** Bench saves nothing about sessions, but
   macOS keeps a delivered notification in Notification Center until it is
-  cleared, and an iPhone that mirrors the Mac's notifications shows it.
-  That is what "Show session and project names" is for. A notification also
+  cleared. That is what "Show session and project names" is for; turning
+  names, or notifications, off clears the ones already delivered (since
+  0.3.6). A notification also
   carries the session's id and its link, opaque ids and no names, to open
   it on a click.
 - Not done: notifications that outlive a quit are not checked against the
@@ -777,8 +780,8 @@ never logged, saved or sent anywhere. The log says only how an approval
 ended ("approved", "changed"…). The demo and the tests use made-up plans.
 
 **Not in notifications, ever.** A Mac notification can be read, and acted
-on, far from the Mac (in Notification Center later, on an iPhone that
-mirrors the Mac, on a lock screen), without the plan in front of you and
+on, away from the card (in Notification Center later, on a lock screen),
+without the plan in front of you and
 without the check against the plan you saw. So Mac notifications, the
 activity list and the Dock menu stay Open-only; Approve is only on the
 panel's card, where the summary shows.
@@ -1296,5 +1299,5 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] on-screen CPU with the panel playing
 - [ ] update check: with the switch off nothing asks GitHub (no request in Little Snitch or `nettop` for a day); Check Now and Bench → Check for Updates… do; with it on, a first check comes within a minute and the next a day later, not at the next launch
 - [ ] update check against a real newer release: the card comes once, Settings shows "Bench 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Bench in /Applications) quits Bench, installs it and reopens it. Bench started from a build folder offers no Install
-- [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption line (General, "Name the specimen that's playing")
+- [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption lines (Panel, "Name the specimen that's playing")
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Bench settings already stored; Help → Welcome to Bench shows it again; Return and Esc work; the updates switch stays off until turned on

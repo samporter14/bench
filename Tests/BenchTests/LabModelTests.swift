@@ -105,6 +105,48 @@ struct LabModelTests {
 }
 
 @MainActor
+struct DaemonRestartTests {
+    @Test func aWaitingCardOutlivesTheDaemonGoingAway() {
+        let model = LabModel()
+        var raised: [String] = []
+        model.cardRaised = { raised.append($0.id) }
+        model.ingest(Fixture.snapshot(Fixture.session("a", .running)))
+        model.ingest(Fixture.snapshot(Fixture.session("a", .needsInput, reason: .question)))
+        #expect(model.cards.map(\.id) == ["needs-a"])
+        #expect(raised == ["needs-a"])
+        // The daemon stops: nothing works, but the session still waits for you.
+        model.ingest(Fixture.daemonDown)
+        #expect(model.cards.map(\.id) == ["needs-a"])
+        #expect(model.working.isEmpty)
+        #expect(model.waiting.map(\.id) == ["a"])
+        // It comes back with the same question: the card is there, and isn't news again.
+        model.ingest(Fixture.snapshot(Fixture.session("a", .needsInput, reason: .question)))
+        #expect(model.cards.map(\.id) == ["needs-a"])
+        #expect(raised == ["needs-a"])
+        // And it goes once the session stops waiting, as ever.
+        model.ingest(Fixture.snapshot(Fixture.session("a", .running)))
+        #expect(model.cards.isEmpty)
+    }
+
+    @Test func startingWhileTheDaemonIsDownIsNoBurst() {
+        let model = LabModel()
+        var raised: [String] = []
+        model.cardRaised = { raised.append($0.id) }
+        model.ingest(Fixture.daemonDown)
+        model.ingest(Fixture.snapshot(Fixture.session("a", .needsInput, reason: .question),
+                                      Fixture.session("b", .needsInput, reason: .plan)))
+        // The first read that works shows what waits, without a notification each.
+        #expect(Set(model.cards.map(\.id)) == ["needs-a", "needs-b"])
+        #expect(raised.isEmpty)
+        // After that, a new one is news.
+        model.ingest(Fixture.snapshot(Fixture.session("a", .needsInput, reason: .question),
+                                      Fixture.session("b", .needsInput, reason: .plan),
+                                      Fixture.session("c", .needsInput, reason: .question)))
+        #expect(raised == ["needs-c"])
+    }
+}
+
+@MainActor
 struct LatestTests {
     @Test func latestListsTheNewestSessionsThatNeitherWorkNorWait() {
         let model = LabModel()
