@@ -23,11 +23,11 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 - **Truly Mac native.** Written in Swift with SwiftUI and AppKit: Liquid
   Glass, a real toolbar, menus, keyboard shortcuts, Settings (⌘,) and Find
   (⌘F).
-- **Nothing collected.** No Bench account, no analytics, no telemetry, no
-  update checks. Bench only talks to Claude Science running on your own Mac,
-  and other sites open only when you click a link. Bench reads Claude
-  Science and changes nothing in it, except when you press Approve on a
-  plan's card. It saves nothing but its own settings.
+- **Nothing collected.** No Bench account, no analytics, no telemetry. Bench
+  talks to nothing beyond your Mac except links you click and, only if you
+  turn it on, a once-a-day check with GitHub for a newer Bench. Bench reads
+  Claude Science and changes nothing in it, except when you press Approve on
+  a plan's card. It saves nothing but its own settings.
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
 - **Know when it needs you.** While a session works, one of 507 little
@@ -108,6 +108,17 @@ same line again to update.** macOS doesn't show its "can't verify" warning
 for apps installed this way, because it only flags apps downloaded through a
 web browser. You're trusting this page instead, so [install.sh](install.sh)
 is short enough to read first.
+
+**Updates.** Off until you turn on **Settings → General → Updates → Check for
+updates once a day**: then Bench asks GitHub for its latest release about once
+a day, and a card and Settings say when a newer one is out. The request
+carries only the name `Bench` and its version, nothing about you or your
+sessions, though GitHub sees your IP address as any site you visit does.
+**Bench → Check for Updates…** and **Check Now** ask at once, with
+the switch off too. **Install Update** runs the line above for you, after
+telling you that Bench will quit, download the new version from GitHub and
+reopen. A copy that isn't in Applications can't replace itself, so it offers
+only the release notes.
 
 ### Or download it
 

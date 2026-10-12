@@ -59,6 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PlanApprover.shared.start()
         NidusFocus.shared.start()
         NoticeWatchers.shared.start()
+        // The opt-in daily look for a newer Bench (App/UpdateCheck.swift).
+        UpdateChecker.shared.start()
         MenuBarSpecimen.shared.start()
         // ⌘⇧O reaches Quick Open before the page: a web view offers key
         // equivalents to the page first, and a page that binds ⌘⇧O itself
@@ -194,6 +196,10 @@ struct BenchCommands: Commands {
     @ObservedObject private var active = ActiveWebPage.shared
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { UpdatePrompts.checkFromMenu() }
+                .disabled(Demo.mode != nil)
+        }
         CommandGroup(after: .newItem) {
             // A demo has no main window to show it on.
             Button("Open Session…") { QuickOpenPresenter.shared.show() }

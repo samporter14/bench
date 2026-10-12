@@ -33,7 +33,7 @@ private extension View {
 }
 
 /// General: Bench's name and version, anything keeping it from your
-/// sessions, the theme, and help.
+/// sessions, the theme, updates and help.
 struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.appearance) private var appearance = BenchAppearance.system.rawValue
     @ObservedObject private var lab = LabModel.shared
@@ -90,6 +90,8 @@ struct GeneralSettingsView: View {
                 .pickerStyle(.segmented)
             }
 
+            UpdatesSection()
+
             Section("Help") {
                 LabeledContent {
                     Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
@@ -99,7 +101,7 @@ struct GeneralSettingsView: View {
                 }
             }
         }
-        .settingsPage(height: 340)
+        .settingsPage(height: 500)
         .onChange(of: appearance) { BenchAppearance.apply() }
     }
 }
