@@ -321,6 +321,37 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-12, Bench 0.3.6 (lock fix, review fixes, update check, welcome)
+
+- ✅ `swift test`: 316 tests in 41 suites. New:
+  - `DaemonRestartTests`: a waiting card outlives the daemon going away;
+    starting while it's down is no burst.
+  - The Nidus `away` focus file.
+  - `UpdateCheckTests` (41): version compare, GitHub JSON, once per version,
+    scheduling, no request with the switch off.
+  - `WelcomeTests` (16): existing users by stored keys only, shown once,
+    the page flow.
+- ✅ Two read-only Opus reviews of b1f4360..e8c4e76: 0 critical or high,
+  3 medium (2 the same) and 21 low. Fixed:
+  - both mediums;
+  - Show Now's notification;
+  - ⌘⇧O scope and Caps Lock;
+  - `no-store` on API reads;
+  - the plan read retry;
+  - clearing delivered notifications when names go off;
+  - releasing held finishes when the hold goes off;
+  - the Alerts height;
+  - the iPhone claim (macOS doesn't send Mac notifications to an iPhone).
+- Window captures failed this time ("could not create image from window"
+  for every window): Screen Recording for the host app seems to have been
+  reset. The welcome pages were checked from the agent's off-screen renders.
+- Not checked live:
+  - Install Update from /Applications (the detached script outliving Bench);
+  - the welcome on a fresh install (`defaults delete local.sam.bench` on a
+    test account);
+  - the daemon-restart behaviour on a real restart;
+  - Nidus `away` (needs Nidus's away-flag branch).
+
 ## 2026-10-10, Bench 0.3.5 (quick wins from a ChatGPT list)
 
 - ✅ `swift test`: 256 tests in 33 suites, three runs in a row. New: step
