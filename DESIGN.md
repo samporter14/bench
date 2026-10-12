@@ -1053,13 +1053,128 @@ specimens' badges and the flask in the toolbar), and in the theme names Match Ma
 
 The animations are called **specimens** everywhere a user reads them (the Specimens tab, "Choose specimens…", the Specimens toolbar button). The code keeps its `Scene` names (LabScene, SceneSettings, the droplet's files).
 
+## Update check (App/UpdateCheck.swift, App/UpdatePrompts.swift, since 0.3.6)
+
+Bench can ask GitHub whether a newer Bench is out, and install it. **Off by
+default**: it is the one request Bench makes beyond this Mac that no click
+asked for, so it needs the switch (Settings → General → Updates → **Check for
+updates once a day**, `checkForUpdates`), which the welcome window can also
+turn on. README's promise reads: Bench talks to nothing beyond your Mac
+except links you click and, only if you turn it on, a once-a-day check with
+GitHub for a newer Bench.
+
+**What is sent.** One `GET https://api.github.com/repos/samporter14/bench/releases/latest`
+through an ephemeral `URLSession` (no cookies, no cache, no credentials,
+`httpShouldHandleCookies` off), with exactly three headers: `Accept:
+application/vnd.github+json`, `User-Agent: Bench/<version>` and a fixed
+`Accept-Language: en`, so the system's language preferences aren't sent. No
+identifier, no account, nothing about sessions, projects or the machine.
+GitHub does see the connection's IP address, as any site does. It is
+`UpdateRules.request`, and a test pins the headers. It is the only
+`URLSession` in Bench.
+
+**What is read.** `tag_name`, `html_url` and whether `assets` has a
+`Bench.zip`; `draft` and `prerelease`. Nothing else is decoded.
+- *Version compare* (`BenchVersion`, `UpdateRules.isNewer`): one to four
+  numbers compared one by one (0.3.10 is newer than 0.3.9; 0.3 equals 0.3.0),
+  a leading `v` ignored. A tag with anything else in it (`-beta`, `latest`,
+  an empty string) isn't a version and is never newer, and a draft or
+  pre-release is skipped. A running copy with no version (an unbundled run)
+  can't compare: the check says so.
+- *No Bench.zip, no offer.* The installer downloads that file, so a newer
+  release without it isn't offered yet; the check says up to date and the
+  release is offered once the file is there.
+- `html_url` is opened in a browser, so it is trusted only as an https
+  `github.com/samporter14/bench/releases…` page. Anything else falls back to
+  the tag's page, `…/releases/tag/v<version>`.
+
+**When it runs.**
+- Automatically, only with the switch on, never in a `--demo`: once, 30
+  seconds after launch, and then when a day has passed since the last answer
+  (`UpdateRules.isDue`, pure: never checked is due; 24 h is due; a last check
+  in the future, from a clock moved back, is due). A launch an hour after a
+  check doesn't ask again.
+- The day counts from the last time GitHub *responded* (`updateLastAsked`),
+  whatever it said: a rate limit, a 404 or JSON that isn't a release still
+  count as the day's ask, so a refusing GitHub is asked once a day, not
+  hourly. Settings says why it failed, and Check Now tries again. Only a try
+  that never reached GitHub (offline, no route: nothing left the Mac) isn't
+  counted and is repeated an hour later, so a Mac that was offline at launch
+  still gets its check the same day.
+- With the switch off nothing is scheduled at all: no timer, no wake-up.
+  Turning it on (here or in the welcome window) is noticed through
+  `UserDefaults.didChangeNotification` and starts the schedule, with a first
+  look after 3 seconds; turning it off cancels it.
+- When asked: **Check Now** in Settings and **Bench → Check for Updates…**
+  (after About) ask at once, switch or not. A check already under way answers
+  for both, so there is never a second request. Neither works in a demo
+  (the menu item and the button are dimmed).
+
+**What is kept** (UserDefaults, the only place): the time GitHub last
+responded (`updateLastAsked`, the schedule's), the time of the last answer
+it gave (`updateLastChecked`, Settings' "Last checked"), the newest installable version seen
+(`updateNewestVersion`, forgotten when a check finds nothing newer) and the
+last version announced (`updateAnnouncedVersion`). At launch Settings
+shows an update seen last time while it is still newer than the running one,
+and "up to date" after a check that found none, without asking.
+
+**When there is a newer one.**
+- *Card, once per version* (`UpdateRules.shouldAnnounce`): "Bench 0.3.6 is
+  available", "Choose Bench → Check for Updates… to install it". Only from an
+  automatic check; one you asked for shows its answer itself and counts as
+  telling you. A newer version gets its own card. **The card has no buttons**:
+  a notice's action can only be Open on a session (`LabNotice.Action`,
+  `LabModel.open` and the panel's card are written for that), so Install and
+  Release Notes live in Settings and the menu's alert. Giving the card two
+  actions means a new `Action` case and changes in `LabModel.swift` and
+  `LabPanelView.swift`.
+- *Settings → General → Updates:* the status line ("Asking GitHub…", "Bench
+  is up to date (0.3.5)", "Bench 0.3.6 is available" or why a check failed)
+  with **Check Now**, which reads "Checking…" and is dimmed while it runs,
+  and under the status, in small secondary text, when the last answer came. When one is out, a row beneath says what Install will do, with
+  **Release Notes** and **Install Update**.
+- *The menu's alert:* up to date; or "Bench 0.3.6 is available" with
+  **Install**, **Release Notes** and **Later** (Esc); or why the check
+  failed. Its text is the install sentence, so Install needs no second
+  question. Settings' **Install Update** asks first, with the same words.
+- **Release Notes** opens the page in the in-app Browser window, as any
+  other link to a website does (Web routing policy: GitHub is "any other
+  http(s)"), where "Open in Safari" is one click away.
+
+**Install.** `UpdateInstaller` runs the README's line, exactly, as `/bin/zsh -c
+"curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh
+| zsh"`. The line is a constant (`UpdateRules.installLine`, with a test that
+README.md contains it) and nothing the network says ever becomes part of it.
+It is started with its input and output on /dev/null and not waited for;
+`install.sh` takes it from there: SIGTERM quits this Bench the way ⌘Q does
+(`AppDelegate`), the new one is moved into /Applications and opened. The
+confirmation says: "Bench will quit, download 0.3.6 from GitHub and reopen."
+- It is offered only to the copy that is /Applications/Bench.app
+  (`canInstall`). The script replaces that path and quits only that copy, so
+  from a build folder or Downloads it would open a second Bench beside the
+  first. Those copies get Release Notes and the sentence "This copy of Bench
+  isn't in Applications, so it can't replace itself."
+- `BENCH_INSTALL_DIR` (the script's testing switch) is removed from the
+  environment it gets.
+- If the installer ends while Bench is still running, nothing was replaced (a
+  success quits Bench before the script ends), and an alert says so and points
+  to the README's line. The script can't tell Bench about a failed download
+  (`curl | zsh` ends 0), so this is the only failure it shows.
+
+**Tests** (`UpdateCheckTests`): version compare, the JSON from made-up
+fixtures, the once-per-version card, "not due yet", the setting off meaning
+no request (an injected fetch that records its calls), the request's headers,
+failures, a check shared by two callers, and the install line matching the
+README. No test goes online or runs the installer; the checker keeps its
+state in a scratch `UserDefaults` suite.
+
 ## Settings (⌘,)
 
 Five tabs since 0.3.5 (`App/SettingsPages.swift`), each a grouped form at its
 own height (the window follows the tab):
 
 - **General** (`general`): Bench's name and version, a banner when it can't see
-  your sessions, Appearance, and Help → Diagnostics.
+  your sessions, Appearance, Updates (since 0.3.6) and Help → Diagnostics.
 - **Panel** (`panel`): the specimen while a session works (show it, name it,
   the menu bar), where the panel sits (corner, screen, while Bench is in
   front), and a way to the Specimens tab.
@@ -1082,6 +1197,7 @@ plain window that doesn't activate Bench.
 | Show session and project names (Mac notifications) | on |
 | Show the Lab panel while Bench is in front | on |
 | Name the specimen that's playing, in the panel (`showSpecimenCaption`) | off |
+| Check for updates once a day (`checkForUpdates`, since 0.3.6; see Update check) | off |
 
 ## Welcome window (since 0.3.6)
 
@@ -1178,5 +1294,7 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] with Settings in front, Reload, Zoom, Find and Back/Forward are dimmed
 - [ ] the window closes and reopens without losing state
 - [ ] on-screen CPU with the panel playing
+- [ ] update check: with the switch off nothing asks GitHub (no request in Little Snitch or `nettop` for a day); Check Now and Bench → Check for Updates… do; with it on, a first check comes within a minute and the next a day later, not at the next launch
+- [ ] update check against a real newer release: the card comes once, Settings shows "Bench 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Bench in /Applications) quits Bench, installs it and reopens it. Bench started from a build folder offers no Install
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption line (General, "Name the specimen that's playing")
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Bench settings already stored; Help → Welcome to Bench shows it again; Return and Esc work; the updates switch stays off until turned on
