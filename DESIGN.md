@@ -1076,11 +1076,65 @@ plain window that doesn't activate Bench.
 | Show the Lab panel while Bench is in front | on |
 | Name the specimen that's playing, in the panel (`showSpecimenCaption`) | off |
 
+## Welcome window (since 0.3.6)
+
+A short welcome for someone who has just installed Bench (`App/Welcome.swift`),
+so the panel, the cards and the one setting that reaches beyond this Mac are
+explained once, in Bench's own words. It is a plain titled, closable window,
+560 × 460 and fixed in size, centred, hosting SwiftUI. No tabs, no toolbar. The
+main Claude Science window opens behind it as usual.
+
+- **When it shows.** On the first launch only: `hasSeenWelcome` is false and
+  this isn't someone who used Bench before the welcome existed. That is
+  someone with any of `sceneGroups`, `settingsTab`, `appearance` or
+  `showLabPanel` stored: Bench writes those only when a setting is changed, so
+  one being there means this Mac has run and used Bench. Such a user has
+  `hasSeenWelcome` set at launch and never sees the window.
+  - The check reads what is *stored* (`persistentDomain(forName:)`), not
+    `object(forKey:)`: Bench registers defaults for `appearance` and
+    `showLabPanel` at launch, so `object(forKey:)` would find them on every
+    install and the welcome would never show.
+  - `WelcomeGate` is pure apart from one thin wrapper over a `UserDefaults`
+    (`isExistingUser`, `shouldShow`, `shouldShowAtLaunch`), and tested with
+    throwaway suites.
+  - Never in a demo: the launch hook is past the demo's early return.
+- **Marked as seen** when the window closes, by Get Started, Esc or the close
+  button alike (`windowWillClose`), not when it opens. Quit with it still open
+  and it shows again next launch.
+- **Help → Welcome to Bench** shows it again at any time, from the first page.
+  Already open, it only comes forward. The item is dimmed in a demo.
+- **Pages**, with Back, Next and page dots (`WelcomeFlow`: both ends stop):
+  1. *Welcome.* The app icon, "Bench keeps Claude Science in one window, and
+     lets you know when a session needs you.", and the small line "A Solanum
+     product. Unofficial, and not affiliated with Anthropic."
+  2. *The panel.* A specimen playing at 88 pt (`Theme.sceneSize`) in a glass
+     well, the panel's own `WorkingGlyph` with the current rotation (a still
+     flask under Reduce Motion). What the panel and its cards do, and that the
+     corner, the screen and which specimens play are in Settings.
+  3. *Getting around.* Four rows with SF Symbols: Quick Open ⌘⇧O (type to jump
+     to a session), the toolbar's activity list, favorites in Settings →
+     Specimens, and Mac notifications in Settings → Alerts (off unless turned on).
+  4. *Updates and privacy.* Bench reads your sessions on this Mac and changes
+     nothing in Claude Science, except when you press Approve on a plan. One
+     switch, "Check for updates once a day" (`checkForUpdates`, the same
+     setting as Settings' update check), off by default and left off unless
+     it is turned on: showing the page writes nothing. Its subtitle says what
+     is asked of GitHub and that nothing about you or your sessions is sent.
+- **Keys.** Return is the default action: Next, and Get Started on the last
+  page. Esc closes. Get Started closes the window.
+- **Look.** System controls: `.glass` Back, and the one `.glassProminent` in
+  clay for Next / Get Started. Clay is also the current switch's tint; the page
+  dots are neutral. Nothing animates but the specimen.
+- **Demo.** `--demo welcome` shows the real window, with `--page N` (1 to 4)
+  to start on a page. As with the other plain-window demos, `--quiet` keeps
+  it from activating Bench, and closing it records nothing: it never writes
+  `hasSeenWelcome`. Its switch is the real setting, so don't click it.
+
 ## Files and ownership
 
 ```
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
-Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo, Settings   (planner)
+Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo, Settings, Welcome   (planner)
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule   (lab agent)
 Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and ScienceCore. Don't edit here:
@@ -1118,3 +1172,4 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] the window closes and reopens without losing state
 - [ ] on-screen CPU with the panel playing
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption line (General, "Name the specimen that's playing")
+- [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Bench settings already stored; Help → Welcome to Bench shows it again; Return and Esc work; the updates switch stays off until turned on

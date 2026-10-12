@@ -12,6 +12,7 @@
 //   build/Bench.app/Contents/MacOS/Bench --demo plan     -showLabPanel YES -panelWhileFront YES
 //   build/Bench.app/Contents/MacOS/Bench --demo toolbar
 //   build/Bench.app/Contents/MacOS/Bench --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
+//   build/Bench.app/Contents/MacOS/Bench --demo welcome --page 2
 //
 // Add `--quiet` (and launch with `open -g -n build/Bench.app --args …`) to keep
 // the demo from taking the keyboard: its windows open without activating.
@@ -57,10 +58,21 @@ enum Demo {
         case general, specimens
         /// Settings > Panel, Alerts and Usage, the same way.
         case panelSettings = "panel-settings", alerts, usageSettings = "usage-settings"
+        /// The first-run welcome in its plain window. Closing it doesn't mark
+        /// it as seen. Its updates switch is the real setting, so leave it be.
+        case welcome
     }
 
     /// Nil in a normal launch.
     static let mode: Mode? = parse()
+
+    /// `--page N` with `--demo welcome`: starts on page N of 4, counting from
+    /// 1, for a screenshot of each.
+    static let welcomePage: Int? = {
+        let arguments = CommandLine.arguments
+        guard mode == .welcome, let flag = arguments.firstIndex(of: "--page") else { return nil }
+        return arguments.dropFirst(flag + 1).first.flatMap { Int($0) }
+    }()
 
     /// `--open-options` with `--demo toolbar`: the Specimens options popover
     /// opens by itself, for a screenshot.
@@ -160,6 +172,8 @@ enum Demo {
             showPage(AlertSettingsView(), title: "Alerts")
         case .usageSettings?:
             showPage(UsageSettingsView(), title: "Usage")
+        case .welcome?:
+            WelcomeWindowController.shared.showDemo(page: welcomePage, quiet: isQuiet)
         case nil:
             break
         }
