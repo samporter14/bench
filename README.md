@@ -94,7 +94,8 @@ Screen.
 You need a Mac with Apple silicon (M1 or later) on macOS 27, with
 Claude Science installed. Close any Claude Science browser tab first, because
 Claude Science runs in one tab at a time. Bench starts Claude Science if it
-isn't running and signs you in.
+isn't running and signs you in. The first time, a short welcome shows you
+around; Help → Welcome to Bench shows it again.
 
 ### Easiest: one line in Terminal
 

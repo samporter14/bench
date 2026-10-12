@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Router.shared.showWindow = { MainWindowController.shared.show() }
         MainWindowController.shared.show()
+        // The first launch only, in front of the main window (App/Welcome.swift).
+        WelcomeWindowController.shared.showIfFirstLaunch()
         WebContainer.shared.start()
         // Started here, not by its toolbar item: the item only exists once
         // the model has a reading.
@@ -226,6 +228,9 @@ struct BenchCommands: Commands {
                 .disabled(!active.hasPage)
         }
         CommandGroup(after: .help) {
+            // A demo has its own welcome (`--demo welcome`), which records nothing.
+            Button("Welcome to Bench") { WelcomeWindowController.shared.show() }
+                .disabled(Demo.mode != nil)
             Button("Bench Diagnostics…") { DiagnosticsWindowController.shared.show() }
         }
         CommandMenu("History") {
