@@ -63,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NoticeWatchers.shared.start()
         // The opt-in daily look for a newer Bench (App/UpdateCheck.swift).
         UpdateChecker.shared.start()
+        // Bench on your phone, if it was on (Remote/RemoteController.swift).
+        RemoteController.shared.start()
         MenuBarSpecimen.shared.start()
         // ⌘⇧O reaches Quick Open before the page: a web view offers key
         // equivalents to the page first, and a page that binds ⌘⇧O itself

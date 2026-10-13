@@ -1,8 +1,9 @@
 // SettingsPages.swift — Settings (⌘,), a tab for each kind of choice
 // (DESIGN.md, Settings): General (who Bench is, the theme, help), Panel (the
 // specimen and where it sits), Alerts (what reaches you when a session needs
-// you), Usage (heads-up about your plan) and Specimens (what plays). Each
-// page is a grouped form, as System Settings is.
+// you), Usage (heads-up about your plan), Specimens (what plays) and Phone
+// (Bench on your phone, Remote/PhoneSettings.swift). Each page is a grouped
+// form, as System Settings is.
 import SwiftUI
 
 /// The tabs. "Choose specimens…" lands on Specimens by setting the tab first.
@@ -17,6 +18,7 @@ struct SettingsView: View {
             Tab("Alerts", systemImage: "bell.badge", value: "alerts") { AlertSettingsView() }
             Tab("Usage", systemImage: "gauge.with.dots.needle.50percent", value: "usage") { UsageSettingsView() }
             Tab("Specimens", systemImage: "flask", value: "scenes") { SceneSettingsView() }
+            Tab("Phone", systemImage: "iphone", value: "phone") { PhoneSettingsView() }
         }
     }
 }

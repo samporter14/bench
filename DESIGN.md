@@ -1063,8 +1063,8 @@ default**: it is the one request Bench makes beyond this Mac that no click
 asked for, so it needs the switch (Settings → General → Updates → **Check for
 updates once a day**, `checkForUpdates`), which the welcome window can also
 turn on. README's promise reads: Bench talks to nothing beyond your Mac
-except links you click and, only if you turn it on, a once-a-day check with
-GitHub for a newer Bench.
+except links you click, a once-a-day update check if you turn it on, and, if
+you turn on Bench on your phone, your own devices over your Tailscale network.
 
 **What is sent.** One `GET https://api.github.com/repos/samporter14/bench/releases/latest`
 through an ephemeral `URLSession` (no cookies, no cache, no credentials,
@@ -1173,7 +1173,7 @@ state in a scratch `UserDefaults` suite.
 
 ## Settings (⌘,)
 
-Five tabs since 0.3.5 (`App/SettingsPages.swift`), each a grouped form at its
+Six tabs since 0.4.0 (`App/SettingsPages.swift`), each a grouped form at its
 own height (the window follows the tab):
 
 - **General** (`general`): Bench's name and version, a banner when it can't see
@@ -1185,6 +1185,7 @@ own height (the window follows the tab):
   notifications, and what waits while Nidus is focusing.
 - **Usage** (`usage`): heads-up cards (plan and context, week in review).
 - **Specimens** (`scenes`): what plays (above).
+- **Phone** (`phone`, since 0.4.0): Bench on your phone (below).
 
 `--demo general|panel-settings|alerts|usage-settings|specimens` shows each in a
 plain window that doesn't activate Bench.
@@ -1201,6 +1202,7 @@ plain window that doesn't activate Bench.
 | Show the Lab panel while Bench is in front | on |
 | Name the specimen that's playing, in the panel (`showSpecimenCaption`) | off |
 | Check for updates once a day (`checkForUpdates`, since 0.3.6; see Update check) | off |
+| Use Bench from your phone (`remoteEnabled`, since 0.4.0; see Bench on your phone) | off |
 
 ## Welcome window (since 0.3.6)
 
@@ -1443,3 +1445,48 @@ only, and keeps paired devices (so turning it back on needs no re-pairing);
 Serves the app on `http://127.0.0.1:<port>` with made-up sessions, a fixed
 pairing code `000000`, and the Host check relaxed to localhost. Never in a
 real launch, never touches Tailscale, Keychain or the real settings.
+
+### How the server does it (0.4.0)
+
+Files: `Remote/RemoteServer.swift` (parsing, the route table, the checks,
+the `NWListener` server), `RemoteAuth.swift` (code, tokens, devices),
+`RemoteAPI.swift` (the JSON and the change feed), `TailscaleBridge.swift`,
+`RemoteController.swift`, `PhoneSettings.swift` and `RemoteWebApp.swift`
+(the phone app's files, generated). What decides is pure and tested; the
+CLI runs through one injectable runner, the devices through an injectable
+store (in memory in tests and the demo).
+
+- **Order of the checks**: Host (403), a `Tailscale-Funnel-Request` header
+  (403), `Tailscale-User-Login` (403 when missing or different: a request
+  without it didn't come through Serve), the route (404; a known path under
+  another method 405), for a POST its media type (415), Origin and `X-Bench`
+  (403) and size (413), then for `/api/*` the cookie (401). The parser
+  refuses a head over 16 KB (431), `Transfer-Encoding` (501), absolute-form
+  targets, folded or bare-CR/LF headers and doubled `Content-Length` (400),
+  and a declared body over 8 KB before reading it (413). Routes match the
+  path exactly, never decoded; the log names the route's pattern, never a
+  path. A request has 10 s to arrive whole; at most 32 connections and 8
+  event streams (the oldest goes).
+- **The code** exists only once Settings → Phone shows one, and goes when
+  used. The fifth wrong try still answers 403 but wears the code out
+  (Settings shows a new one) and starts a 30 s wait in which tries get 429,
+  so a loopback process can't run through the million codes. The demo keeps
+  `000000` but waits the same way.
+- **The cookie** has `Max-Age` 400 days, so a Home Screen app stays paired;
+  the demo leaves out `Secure` (plain HTTP). Unpair clears it and ends the
+  device's event streams, as Remove in Settings does. `lastSeen` changes at
+  most once a minute and reaches the Keychain at most every 5 minutes.
+  Bench reads the Keychain only once the Phone tab shows or the switch is on.
+- **State**: `recent` leaves out saved files (no session, and the file name
+  stays on the Mac). Limit names are `5-hour`, `Weekly`, `Weekly Opus`,
+  `Weekly Sonnet`; `pace` is the popover's forecast line or null. The
+  stream sends the state only when something it shows changed.
+- **Serve**: Bench's mapping is 8443 with one handler, `/` proxied to
+  `http://127.0.0.1:<p>` for a `p` in 47280…47290 (an earlier run's port is
+  replaced: `off`, then add). 8443 with anything else (another target, more
+  mounts, TCP forwarding, a foreground serve, Funnel) is someone else's:
+  Settings says so and Bench neither adds nor removes. When `serve` prints a
+  `login.tailscale.com` page to turn HTTPS on, Bench stops it there and
+  offers the page as a button. With the switch on and Tailscale not up yet,
+  Bench looks again 15 s, 1 min and 5 min later, and whenever it comes to
+  the front. The mapping stays when Bench quits (the phone then gets 502).

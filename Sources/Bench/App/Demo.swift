@@ -13,6 +13,7 @@
 //   build/Bench.app/Contents/MacOS/Bench --demo toolbar
 //   build/Bench.app/Contents/MacOS/Bench --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
 //   build/Bench.app/Contents/MacOS/Bench --demo welcome --page 2
+//   build/Bench.app/Contents/MacOS/Bench --demo remote --quiet
 //
 // Add `--quiet` (and launch with `open -g -n build/Bench.app --args …`) to keep
 // the demo from taking the keyboard: its windows open without activating.
@@ -61,6 +62,10 @@ enum Demo {
         /// The first-run welcome in its plain window. Closing it doesn't mark
         /// it as seen. Its updates switch is the real setting, so leave it be.
         case welcome
+        /// Bench on your phone with the activity list's made-up sessions, on
+        /// http://127.0.0.1:<port> (printed), pairing code 000000. No window,
+        /// no Tailscale, no Keychain, no setting saved.
+        case remote
     }
 
     /// Nil in a normal launch.
@@ -174,6 +179,8 @@ enum Demo {
             showPage(UsageSettingsView(), title: "Usage")
         case .welcome?:
             WelcomeWindowController.shared.showDemo(page: welcomePage, quiet: isQuiet)
+        case .remote?:
+            showRemote()
         case nil:
             break
         }
@@ -203,12 +210,16 @@ enum Demo {
             waitingReason: reason)
     }
 
-    /// Made-up sessions in every state, for the activity list.
-    private static func showActivity() {
+    /// Made-up sessions in every state, for the activity list. `fullIDs`
+    /// gives them ids shaped like real ones (36 characters), which the phone's
+    /// routes need.
+    @discardableResult
+    private static func showActivity(fullIDs: Bool = false) -> [SessionStatus] {
         func make(_ id: String, _ title: String, _ project: String, _ state: SessionState,
                   _ reason: WaitingReason? = nil, minutes: Double) -> SessionStatus {
             let now = Date()
-            return SessionStatus(id: id, projectID: "demo", projectName: project, title: title, state: state,
+            return SessionStatus(id: fullIDs ? "00000000-0000-4000-8000-0000000000\(id)" : id, projectID: "demo",
+                                 projectName: project, title: title, state: state,
                                  updatedAt: now, startedAt: now.addingTimeInterval(-minutes * 60), waitingReason: reason)
         }
         let question = make("d1", "Protein stability screen", "Example project", .needsInput, .question, minutes: 6)
@@ -232,6 +243,7 @@ enum Demo {
         LabModel.shared.showDemo(working: working,
                                  cards: [.needsInput(question), .needsInput(plan), .needsInput(afterFocus), .failed(failed)],
                                  recent: recent, snoozed: snoozed)
+        return [question, plan, failed, afterFocus] + working + [finished]
     }
 
     // MARK: The modes
@@ -345,6 +357,26 @@ enum Demo {
         windows.append(window)
         activateUnlessQuiet()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// The activity list's sessions and the toolbar's limits, a plan ready
+    /// on the plan's card, and the phone's server for them.
+    private static func showRemote() {
+        // No Dock icon and no menu bar: there is no window to go with them.
+        NSApp.setActivationPolicy(.accessory)
+        let sessions = showActivity(fullIDs: true)
+        PlanUsageModel.shared.showDemo(limits: [
+            PlanLimit(kind: .session, usedPercent: 54, resetsAt: Date(timeIntervalSinceNow: 87 * 60)),
+            PlanLimit(kind: .week, usedPercent: 32, resetsAt: Date(timeIntervalSinceNow: 3 * 24 * 3600)),
+        ])
+        if let plan = sessions.first(where: { $0.waitingReason == .plan }) {
+            PlanApprover.shared.showDemo(sessionID: plan.id, preview: PlanPreview(
+                summary: "Check the sequencing pilot for batch effects", steps: 4, confidence: "high",
+                stepTitles: ["Load the count tables", "Plot the samples by run date",
+                             "Fit a model with run as a covariate", "Write up what changes"],
+                versionID: "demo", artifactID: nil))
+        }
+        RemoteController.startDemo()
     }
 
     private static func showPage<V: View>(_ view: V, title: String) {

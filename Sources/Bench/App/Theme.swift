@@ -65,10 +65,19 @@ enum SettingsKey {
     /// on, in Settings or the welcome window: it's the one request Bench makes
     /// beyond this Mac that a click didn't ask for.
     static let checkForUpdates = "checkForUpdates"
+    /// Bench on your phone (since 0.4.0): the loopback listener and Bench's
+    /// Tailscale Serve mapping. Off unless the user turns it on in Settings
+    /// → Phone: it is what lets the user's own devices reach Bench.
+    static let remoteEnabled = "remoteEnabled"
+    /// The listener's port, from 47280 to 47290, tried first next time.
+    static let remotePort = "remotePort"
+    /// The tailnet login Bench on your phone was turned on with: Serve's
+    /// `Tailscale-User-Login` must match it.
+    static let remoteLogin = "remoteLogin"
     /// The welcome window has been shown (or was skipped for someone who used
     /// Bench before it existed).
     static let hasSeenWelcome = "hasSeenWelcome"
-    /// Which Settings tab is showing: "general" or "scenes".
+    /// Which Settings tab is showing: "general", "phone" or "scenes".
     static let settingsTab = "settingsTab"
     /// "system" (follow the Mac), "light" or "dark": see `BenchAppearance`.
     static let appearance = "appearance"
@@ -97,6 +106,7 @@ enum SettingsKey {
             panelWhileFront: true,
             panelCorner: PanelCorner.bottomRight.rawValue,
             checkForUpdates: false,
+            remoteEnabled: false,
             panelScreen: "",
             pageZoom: 1.0,
             appearance: BenchAppearance.system.rawValue,

@@ -24,8 +24,9 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   Glass, a real toolbar, menus, keyboard shortcuts, Settings (⌘,) and Find
   (⌘F).
 - **Nothing collected.** No Bench account, no analytics, no telemetry. Bench
-  talks to nothing beyond your Mac except links you click and, only if you
-  turn it on, a once-a-day check with GitHub for a newer Bench. Bench reads
+  talks to nothing beyond your Mac except links you click, a once-a-day
+  update check if you turn it on, and, if you turn on Bench on your phone,
+  your own devices over your Tailscale network. Bench reads
   Claude Science and changes nothing in it, except when you press Approve on
   a plan's card. It saves nothing but its own settings.
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
@@ -89,6 +90,24 @@ corner of your screen, on any display: Settings → Panel → Corner and
 Screen.
 
 <img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, a checkbox per category (Lab 130 of 131, Biology 211 of 214), a search field with an All, On and Off filter, and a grid of specimens under a Lab heading, each with a clay check when on">
+
+## Bench on your phone
+
+See what needs you, what's working and what happened lately from your iPhone
+or another computer: a private page that Bench serves to your own devices
+over your [Tailscale](https://tailscale.com) network. A session shows its
+status and, when it waits on a plan, the plan's summary and steps, and
+**Open on Mac** brings it up on your Mac. Nothing is on the internet: Bench
+listens only on your Mac, and Tailscale Serve passes on what your devices
+ask, with a certificate for your tailnet.
+
+It's **off** until you turn it on in **Settings → Phone**, which checks that
+Tailscale is installed and signed in and that your tailnet has HTTPS on.
+Then scan the QR code with your iPhone, add the page to your Home Screen,
+open it from there and enter the one-time code. Paired devices see your
+sessions' titles and status. Settings lists them, each with Remove; turning
+the switch off stops serving and leaves your other Tailscale Serve settings
+as they are.
 
 ## Install
 
@@ -171,7 +190,9 @@ It builds `build/Bench.app` and opens it.
   routed.
 - The screenshots use made-up sessions: `Bench --demo working|card|plan|toolbar|general|specimens`
   shows the real UI with invented names (add `--quiet`, and launch with
-  `open -g -n`, to keep it from taking the keyboard), and
+  `open -g -n`, to keep it from taking the keyboard),
+  `Bench --demo remote` serves the phone page with them on
+  `http://127.0.0.1:47280` (pairing code `000000`), and
   `Bench --render-scenes` records the scene GIF.
 - `Sources/Bench/Shared` holds copies from the Science Status droplet, where
   the specimens are written; `Scripts/sync-shared.sh` refreshes them.
