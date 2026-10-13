@@ -34,7 +34,7 @@ struct RemoteServerTests {
 
     private func status(_ request: RemoteRequest, policy: RemotePolicy = RemoteServerTests.policy) -> Int {
         switch RemoteCheck.evaluate(request, policy: policy) {
-        case .reject(let status, _): status
+        case .reject(let status, _, _): status
         case .accept: 200
         }
     }
@@ -72,6 +72,21 @@ struct RemoteServerTests {
         #expect(status(request("/api/state", headers: ["tailscale-user-login": ["someone@example.com"]])) == 403)
         #expect(status(request("/api/state", headers: ["tailscale-user-login": []])) == 403)
         #expect(status(request("/api/state", headers: ["tailscale-user-login": ["PAT@example.com"]])) == 200)
+    }
+
+    @Test func eachRefusalNamesItsGate() {
+        func gate(_ request: RemoteRequest) -> RemoteCheck.Gate? {
+            if case .reject(_, _, let gate) = RemoteCheck.evaluate(request, policy: Self.policy) { gate } else { nil }
+        }
+        #expect(gate(request("/", headers: ["host": ["evil.example.com"]])) == .host)
+        #expect(gate(request("/", headers: ["tailscale-user-login": []])) == .login)
+        #expect(gate(request("/", headers: ["tailscale-funnel-request": ["?1"]])) == .funnel)
+        #expect(gate(request("/nothing")) == .route)
+        #expect(gate(request("POST", "/api/state")) == .method)
+        #expect(gate(request("POST", "/pair", headers: ["content-type": ["text/plain"]])) == .type)
+        #expect(gate(request("POST", "/pair", headers: ["origin": ["https://evil.example.com"]])) == .origin)
+        #expect(gate(request("POST", "/pair", headers: ["x-bench": []])) == .xbench)
+        #expect(gate(request("/api/state", cookie: false)) == .token)
     }
 
     @Test func funnelIsRefused() {

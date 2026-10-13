@@ -1464,8 +1464,10 @@ store (in memory in tests and the demo).
   refuses a head over 16 KB (431), `Transfer-Encoding` (501), absolute-form
   targets, folded or bare-CR/LF headers and doubled `Content-Length` (400),
   and a declared body over 8 KB before reading it (413). Routes match the
-  path exactly, never decoded; the log names the route's pattern, never a
-  path. A request has 10 s to arrive whole; at most 32 connections and 8
+  path exactly, never decoded. The log names the route's pattern, the status
+  and, for a refusal, which check refused (`host`, `login`, `funnel`,
+  `route`, `method`, `type`, `origin`, `xbench`, `size`, `token`, `device`),
+  never a path. A request has 10 s to arrive whole; at most 32 connections and 8
   event streams (the oldest goes).
 - **The code** exists only once Settings → Phone shows one, and goes when
   used. The fifth wrong try still answers 403 but wears the code out

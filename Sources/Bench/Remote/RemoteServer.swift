@@ -249,9 +249,15 @@ struct RemotePolicy: Equatable, Sendable {
 /// Every check a request must pass before it is answered, pure. What is
 /// left for the server is the token, which needs the devices.
 enum RemoteCheck {
+    /// Which check refused: a word for the log, so a refusal can be told
+    /// apart without logging anything the request carried.
+    enum Gate: String, Equatable, Sendable {
+        case host, funnel, login, route, method, type, origin, xbench, size, token
+    }
+
     enum Outcome: Equatable {
         /// Answer with this status; `route` is for the log, when known.
-        case reject(Int, route: RemoteRoute?)
+        case reject(Int, route: RemoteRoute?, gate: Gate)
         /// Go on. `token` is the device cookie, for a route that needs one.
         case accept(RemoteRoute, token: String?)
     }
@@ -264,34 +270,34 @@ enum RemoteCheck {
     /// for `/api/*` a device cookie (401).
     static func evaluate(_ request: RemoteRequest, policy: RemotePolicy) -> Outcome {
         guard let host = request.single("host")?.lowercased(), policy.hosts.contains(host) else {
-            return .reject(403, route: nil)
+            return .reject(403, route: nil, gate: .host)
         }
         // Funnel would put the server on the internet. Bench never turns it
         // on, and refuses whatever comes through it.
-        if request.headers["tailscale-funnel-request"] != nil { return .reject(403, route: nil) }
+        if request.headers["tailscale-funnel-request"] != nil { return .reject(403, route: nil, gate: .funnel) }
         if let login = policy.login {
             guard let sent = request.single("tailscale-user-login"),
-                  sent.caseInsensitiveCompare(login) == .orderedSame else { return .reject(403, route: nil) }
+                  sent.caseInsensitiveCompare(login) == .orderedSame else { return .reject(403, route: nil, gate: .login) }
         }
 
         let route: RemoteRoute
         switch RemoteRoute.match(method: request.method, path: request.path) {
         case .found(let found): route = found
-        case .wrongMethod: return .reject(405, route: nil)
-        case .notFound: return .reject(404, route: nil)
+        case .wrongMethod: return .reject(405, route: nil, gate: .method)
+        case .notFound: return .reject(404, route: nil, gate: .route)
         }
 
         if route.method == "POST" {
-            guard isJSON(request.single("content-type")) else { return .reject(415, route: route) }
+            guard isJSON(request.single("content-type")) else { return .reject(415, route: route, gate: .type) }
             guard let origin = request.single("origin"), policy.origins.contains(origin) else {
-                return .reject(403, route: route)
+                return .reject(403, route: route, gate: .origin)
             }
-            guard request.single("x-bench") == "1" else { return .reject(403, route: route) }
-            guard request.body.count <= RemoteHTTP.maxBody else { return .reject(413, route: route) }
+            guard request.single("x-bench") == "1" else { return .reject(403, route: route, gate: .xbench) }
+            guard request.body.count <= RemoteHTTP.maxBody else { return .reject(413, route: route, gate: .size) }
         }
 
         guard route.needsToken else { return .accept(route, token: nil) }
-        guard let token = deviceToken(request) else { return .reject(401, route: route) }
+        guard let token = deviceToken(request) else { return .reject(401, route: route, gate: .token) }
         return .accept(route, token: token)
     }
 
@@ -514,8 +520,13 @@ final class RemoteServer {
         }
         let ready = await withCheckedContinuation { continuation in
             starting = continuation
-            listener.stateUpdateHandler = { [weak self] state in
-                MainActor.assumeIsolated { self?.listenerChanged(state) }
+            // Only the listener being started speaks: one given up on
+            // reports its cancellation later, during the next one's start.
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
+                MainActor.assumeIsolated {
+                    guard let self, let listener, listener === self.listener else { return }
+                    self.listenerChanged(state)
+                }
             }
             listener.start(queue: .main)
         }
@@ -569,7 +580,7 @@ final class RemoteServer {
         client.timer = Task { [weak self] in
             try? await Task.sleep(for: Self.readTimeout)
             guard !Task.isCancelled, let self, let client = self.clients[id], !client.answered else { return }
-            self.send(id, RemoteResponse.error(408), route: nil, closing: true)
+            self.send(id, RemoteResponse.error(408), route: nil, why: "timeout", closing: true)
         }
         connection.start(queue: .main)
         receive(id)
@@ -595,7 +606,7 @@ final class RemoteServer {
         case .incomplete:
             if isComplete || failed { close(id) } else { receive(id) }
         case .reject(let status):
-            send(id, RemoteResponse.error(status), route: nil, closing: true)
+            send(id, RemoteResponse.error(status), route: nil, why: "parse", closing: true)
         case .request(let request):
             client.answered = true
             client.timer?.cancel()
@@ -606,13 +617,13 @@ final class RemoteServer {
 
     private func answer(_ request: RemoteRequest, client id: Int) {
         switch RemoteCheck.evaluate(request, policy: policy) {
-        case .reject(let status, let route):
-            send(id, RemoteResponse.error(status), route: route, closing: true)
+        case .reject(let status, let route, let gate):
+            send(id, RemoteResponse.error(status), route: route, why: gate.rawValue, closing: true)
         case .accept(let route, let token):
             var device: RemoteDevice?
             if route.needsToken {
                 guard let token, let found = auth.device(forToken: token) else {
-                    send(id, RemoteResponse.error(401), route: route, closing: true)
+                    send(id, RemoteResponse.error(401), route: route, why: "device", closing: true)
                     return
                 }
                 auth.touch(found.id)
@@ -721,11 +732,12 @@ final class RemoteServer {
 
     // MARK: Writing
 
-    private func send(_ id: Int, _ response: Data, route: RemoteRoute?, closing: Bool) {
+    /// `why` names the check that refused, for the log.
+    private func send(_ id: Int, _ response: Data, route: RemoteRoute?, why: String? = nil, closing: Bool) {
         guard let client = clients[id] else { return }
         client.answered = true
         client.timer?.cancel()
-        log.info("\(route?.pattern ?? "-", privacy: .public) \(Self.status(of: response), privacy: .public)")
+        log.info("\(route?.pattern ?? "-", privacy: .public) \(Self.status(of: response), privacy: .public) \(why ?? "", privacy: .public)")
         let connection = client.connection
         connection.send(content: response, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in
             connection.cancel()
