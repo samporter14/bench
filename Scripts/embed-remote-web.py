@@ -2,14 +2,14 @@
 """Regenerate Sources/Bench/Remote/RemoteWebApp.swift from the phone app's source files.
 
 The web files live in RemoteWeb/ (index.html, app.js, app.css,
-manifest.webmanifest). Edit those, then run:
+manifest.webmanifest, sw.js). Edit those, then run:
 
     python3 Scripts/embed-remote-web.py
 
 The Swift file is generated: never edit it by hand. Pass --check to fail (exit 1)
 when the committed Swift file is out of date, without writing anything.
 
-To keep the app small, app.js and app.css are embedded with leading indentation,
+To keep the app small, app.js, app.css and sw.js are embedded with leading indentation,
 blank lines and full-line comments removed (nothing else changes, so the code
 behaves the same). The stripped JS is syntax-checked with node when node exists.
 Pass --readable to embed the files exactly as they are.
@@ -37,6 +37,7 @@ FILES = [
     ("/app.js", "app.js", "appJS", "text/javascript; charset=utf-8"),
     ("/app.css", "app.css", "appCSS", "text/css; charset=utf-8"),
     ("/manifest.webmanifest", "manifest.webmanifest", "manifest", "application/manifest+json"),
+    ("/sw.js", "sw.js", "serviceWorkerJS", "text/javascript; charset=utf-8"),
 ]
 
 
@@ -85,7 +86,7 @@ def generate() -> str:
         "// script or style and no third-party code, so the strict CSP holds.",
         "",
         "enum RemoteWebApp {",
-        '    /// Path -> (content type, body). Paths: "/", "/app.js", "/app.css", "/manifest.webmanifest".',
+        '    /// Path -> (content type, body). Paths: "/", "/app.js", "/app.css", "/manifest.webmanifest", "/sw.js".',
         "    static let files: [String: (contentType: String, body: String)] = [",
     ]
     for path, _src, const, ctype in FILES:
