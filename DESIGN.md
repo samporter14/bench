@@ -1384,6 +1384,10 @@ message, and push notifications.
 | POST | `/api/sessions/<id>/approve` | token | Approve its plan: `{"version"}` (Phase 2, Actions). |
 | POST | `/api/sessions/<id>/answer` | token | Answer, choose for me or cancel its question (Phase 2, Actions). |
 | POST | `/api/sessions/<id>/message` | token | Send it a message: `{"text","id"}`; body up to 16 KB (Phase 2, Actions). |
+| GET | `/api/sessions/<id>/artifacts` | token | The session's artifacts, projected in the page (Phase 3, Artifacts). |
+| GET | `/api/files/<v>/thumb?w=120\|800` | token | A listed image's WebP thumbnail (Phase 3, Artifacts). |
+| GET | `/api/files/<v>/text` | token | A listed markdown, text or table file, as JSON (Phase 3, Artifacts). |
+| GET | `/api/files/<v>/download` | token | A listed file's bytes, as an attachment, ≤ 8 MB (Phase 3, Artifacts). |
 
 ### `/api/state` (version 1)
 
@@ -1840,6 +1844,79 @@ results' `artifacts[]`, `send_user_message` attachments), keeping only
   `thumb`. Links stay text.
 - **Bytes** move in-page (fetch, base64, `callAsyncJavaScript`) in v1; Bench
   never holds the daemon's cookies.
+
+#### How the server does it (Phase 3 files)
+
+Files: `Remote/ArtifactReader.swift` (the in-page reads and Swift's checks of
+them), `Remote/RemoteArtifacts.swift` (the routes, their checks and headers,
+the table parser, `ListedFileInfo`) and `Remote/ArtifactsDemo.swift` (the
+demo's files). The shared files only gained hooks marked `// Phase 3 files`.
+
+- **Three GETs, in the page**: `/api/frames/<36>/artifacts`,
+  `/api/artifacts/versions/<v>?thumbnail=120|800` and
+  `/api/artifacts/versions/<v>`, built from typed arguments and checked
+  against that allowlist in the page (and by the same rule in Swift) before
+  anything is fetched; `no-store`. The tests run the script in
+  JavaScriptCore against a fake `fetch` that streams bytes.
+- **The list**: a bare array or `{"artifacts":[…]}`. Every row needs a
+  string `id`, a path-safe `version_id`, string `filename` and
+  `content_type` and a numeric `size_bytes`, or nothing is listed. Rows the
+  UI hides are dropped; the name is the path's last segment without control
+  or direction characters (≤ 255); `mime` is the media type alone or null;
+  the newest 300 are kept. Swift checks every field again, classes it
+  (`ArtifactKind`), sorts it (documents: markdown, PDF, HTML, notebooks;
+  images: raster and SVG; tables; the rest; the daemon's oldest-first order
+  within each) and records each version in `ListedFiles` and in
+  `ListedFileInfo` (name, type, listed size and kind, for an hour). The
+  files routes take the kind and size from there, never from the request, so
+  a history page's `files` must be recorded in both too.
+- **Bytes** are read from the body's stream and never past the cap: a
+  `Content-Length` over it is refused unread (thumbnails 4 MB, downloads
+  8 MB) and a body that runs over is cancelled. Text asks for
+  `Range: bytes=0-262143`, takes 200 or 206 (starting at 0; 416 is an empty
+  file), stops at 256 KB even when the daemon ignores the Range, is
+  `truncated` when the stream or `Content-Range` says there is more, refuses
+  a NUL in the first 8 KB, and is decoded as UTF-8 in the page (a character
+  the range cut in two is dropped). Base64 and the UTF-8 decoder are written
+  out in the script: JavaScriptCore has neither `btoa` nor `TextDecoder`.
+- **Order of the checks**: the browse switch (403 `browseOff`); for the
+  list, a session Bench knows (404; Phase 3 browse's point lookup takes this
+  place); for a file, listed to this device within the hour with its listing
+  at hand (404), `?w=` exactly `120` or `800` (400 `width`), a kind the route
+  serves (415 `kind`: `thumb` only images, `text` only markdown, text and
+  tables), the listed size (413 `tooBig`); then the read (503 `unreadable`
+  when it fails), and what came back is checked again: a thumbnail must
+  start `RIFF????WEBP` (415 `notWebP`), a download must be ≤ 8 MB (413),
+  text with a NUL is 415 `notText`.
+- **Headers**: every files response carries `Content-Security-Policy:
+  default-src 'none'; sandbox` beside the usual `no-store`, `nosniff`,
+  `no-referrer` and CORP `same-origin`. A thumbnail is `image/webp` with no
+  disposition (an `<img>`). A download is `attachment; filename="…";
+  filename*=UTF-8''…`: the ASCII name keeps printable ASCII without
+  `" \ / : ; % * ? < > |`, folds accents, drops controls, shows a leading dot
+  as `_`, keeps the extension within 150 characters and is "file" when
+  nothing is left; `filename*` percent-encodes every byte outside
+  `[A-Za-z0-9._-]` (180 characters of the name at most). Its type is the
+  sniffed PNG, JPEG, GIF or WebP only for a file listed as an image whose
+  bytes agree; everything else, HTML, SVG and notebooks always, is
+  `application/octet-stream`.
+- **Tables**: one pass; RFC 4180 quotes (`""`, line breaks inside quotes),
+  CRLF, LF or CR, a BOM skipped, a tab for `.tsv` or
+  `text/tab-separated-values`. The first record is `columns`; then at most
+  200 rows and 30 columns (the rest of a 10,000-column line is scanned, never
+  kept), cells cut at 200 characters with "…", every row padded to the
+  widest; a text cut short loses its incomplete last record. `truncated`
+  when anything was cut.
+- **Size**: a response is built whole (the body up to 8 MB) and sent once;
+  nothing times out once the request has arrived, so a slow phone still gets
+  all of it.
+- **`--demo remote`**: "Primer design" has one file of every kind (a chart
+  drawn with CoreGraphics as a PNG, its WebP thumbnails written by Bench as
+  two-colour lossless VP8L since ImageIO can't write WebP, markdown, a CSV
+  with quotes and a line break, a log, HTML and SVG that carry a script, a
+  PDF, a notebook, an 8 MB file at the cap and a 120 MB one listed only);
+  two other sessions have a few, one has none, and "Gel quantification"
+  can't be read (503). Served from memory through the same checks.
 
 #### New session
 

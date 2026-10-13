@@ -255,7 +255,8 @@ final class RemoteController: ObservableObject {
                 return true
             },
             version: RemoteAPI.benchVersion,
-            act: { await RemoteSessions.shared.act($0, session: $1, device: $2, body: $3) })) // Phase 2 actions
+            act: { await RemoteSessions.shared.act($0, session: $1, device: $2, body: $3) }, // Phase 2 actions
+            files: { await RemoteArtifacts.shared.respond($0, target: $1, device: $2).response })) // Phase 3 files
     }
 
     private static func state(now: Date = Date()) -> RemoteAPI.State {
@@ -291,13 +292,15 @@ final class RemoteController: ObservableObject {
         guard Demo.mode == .remote, demoServer == nil else { return }
         let auth = RemoteAuth(store: MemoryDeviceStore(), fixedCode: "000000")
         let sessions = RemoteSessions.demo(reads: reads) // Phase 2 actions
+        let artifacts = RemoteArtifacts.demo() // Phase 3 files
         let server = RemoteServer(policy: .closed, auth: auth, backend: RemoteBackend(
             state: { Self.stateJSON() },
             session: { await sessions.sessionJSON($0) }, // Phase 2 actions
             // Made up: nothing to open, and no window to open it in.
             open: { id in RemoteAPI.knownSessions(lab: .shared).contains { $0.id == id } },
             version: RemoteAPI.benchVersion,
-            act: { await sessions.act($0, session: $1, device: $2, body: $3) })) // Phase 2 actions
+            act: { await sessions.act($0, session: $1, device: $2, body: $3) }, // Phase 2 actions
+            files: { await artifacts.respond($0, target: $1, device: $2).response })) // Phase 3 files
         demoServer = server
         server.push = PushCenter.demo(auth: auth) // Phase 2 push
         Task {
