@@ -1307,10 +1307,10 @@ Each item gets checked live, and the result goes in TESTING.md:
 ## Bench on your phone (Remote, since 0.4.0)
 
 A private mobile web app that Bench serves to the user's own devices over
-their Tailscale network. Off by default. Phase 1 (this section): see what
-needs you, what works and what happened, read a session's status and plan,
-Open on Mac. No Claude Science writes in Phase 1; Approve / answer / Later
-come in Phase 2, after Approve is proven on the Mac.
+their Tailscale network. Off by default. Phase 1: see what needs you, what
+works and what happened, read a session's status and plan, Open on Mac.
+Phase 2 (below, same release): read replies, answer, approve, send a
+message, and push notifications.
 
 ### Transport and trust
 
@@ -1492,3 +1492,135 @@ store (in memory in tests and the demo).
   offers the page as a button. With the switch on and Tailscale not up yet,
   Bench looks again 15 s, 1 min and 5 min later, and whenever it comes to
   the front. The mapping stays when Bench quits (the phone then gets 502).
+
+### Phase 2: read, act, notify (0.4.0)
+
+Sam's call (2026-10-12): the phone must do more than look. Paired devices can
+read a session's latest reply and last few turns, answer its question,
+approve its plan, and send it a message; and each device can opt in to push
+notifications. Research: `Bench-phone-research.md` (outside the repo).
+
+#### Reading a session (in-page, projected)
+
+Bench reads through its own web view, as `apiGET` does, but with a dedicated
+**session reader** whose JavaScript runs the two GETs *and projects them inside
+the page*, so Swift only ever receives the fields below. Allowed GETs, exactly:
+`/api/frames/<36>?shallow=true` and `/api/frames/<36>/messages?from=-12&limit=12`.
+`no-store`, never logged, never saved, held only while a response is built.
+
+- From the shallow frame: `status` (one of the eight known values, else
+  unreadable), `agent_name`, `project_id`, `status_description` (≤ 200 chars),
+  `output_data.response` (the last reply, ≤ 4,000 chars),
+  `context_data._sent_user_messages[]` (the agent's "messages to you": last 5,
+  `{text ≤ 2,000, at}`), `queued_user_messages.length`,
+  `output_data.pending_input_requests[]` (only `kind:"ask"` with a string
+  `tool_id` and non-empty `questions`, each with a string `question` and
+  options with non-empty `label`s), and the plan fields Approve already uses.
+- From `/messages`: `role` user|assistant rows only, dropping hidden user rows
+  (any flag `_task_boundary`, `_rolling_summary`, `_harness_prompt`,
+  `_from_agent`, `_from_aside`, `_harness_notice`; text starting `[System]`,
+  `[compute]`, `[Memory]`, `[image:`, `[document:`; rows holding only tool
+  results). Keep only `{type:"text"}` blocks, joined, ≤ 2,000 chars, with `_ts`.
+  Never thinking, tool calls or results, images, paths, attachments,
+  sub-agents or artifacts.
+- Any shape that doesn't match → the session is "unreadable": the phone shows
+  status and Open on Mac only. Root frame only throughout.
+
+#### `/api/sessions/<id>` (version 2)
+
+Adds to version 1 (all optional-null when unreadable; `version` becomes 2):
+
+```json
+{
+  "readable": true,
+  "statusLine": "Fitting the model",
+  "reply": {"text": "…markdown…", "at": "…"},
+  "turns": [{"role": "you", "at": "…", "text": "…"}, {"role": "claude", "at": "…", "text": "…"}],
+  "toYou": [{"text": "…", "at": "…"}],
+  "queued": 0,
+  "question": {"toolId": "…", "items": [{"question": "…", "header": "…", "multi": false,
+               "options": [{"label": "…", "detail": "…"}]}]},
+  "plan": {"summary": "…", "steps": ["…"], "feasibility": "high", "version": "…opaque…"},
+  "can": {"approve": true, "answer": false, "message": "send", "why": null}
+}
+```
+
+`turns` oldest first, at most 12. `can.message` is `"send"` (completed),
+`"queue"` (processing: it waits for a safe point), `"resume"` (failed or
+cancelled: the session picks up again) or null with `why` ("Answer its question
+first", "Approve or revise the plan on your Mac", "Actions are off in Bench's
+Settings", "Bench can't read this session"). `can.approve` only when the root
+itself awaits plan approval and Approve's shape checks pass; `can.answer` only
+for a root `ask`. The phone renders `reply` and `turns` as plain text with a
+small safe markdown subset (paragraphs, lists, bold, italic, inline and fenced
+code), built as DOM nodes, never `innerHTML`; links are shown as text.
+
+#### Actions (three routes, body ≤ 8 KB, one shared limiter)
+
+| Route | Body | Bench does |
+|---|---|---|
+| `POST /api/sessions/<id>/approve` | `{"version":"…"}` | `PlanApprover` as on the card: re-GET, require `awaiting_plan_approval`, not approved, same plan version; then `approve-plan` `{}`. |
+| `POST /api/sessions/<id>/answer` | `{"toolId":"…","answers":{"<question>":"<text>"}}` or `{"toolId":"…","action":"chooseForMe"\|"cancel"}` | Re-GET; require `awaiting_user_response`, the same `tool_id` pending on the root, the same question texts; every question answered (≤ 1,000 chars each). Then `resolve-input` `{responses:[{tool_id, action:"answer", answers}]}`; chooseForMe sends `action:"answer"` with every question answered "Use your best judgment for this question"; cancel sends `{tool_id, action:"cancel", answers:{}}`. |
+| `POST /api/sessions/<id>/message` | `{"text":"…","id":"<uuid v4>"}` | Text trimmed, 1…4,000 chars. Re-GET; allowed only for `completed`/`success`, `processing`, `failed`/`cancelled`. Then `POST /api/request` `{target_agent: <agent_name from the re-GET>, root_frame_id, project_id, input_data:{request:text}, intent_id: id, plan_mode:false}`. The phone's `id` is the intent id, so a retry dedupes. |
+
+Each answers `{"result": …, "sentence": "…"}`: approve → `approved` |
+`changed` | `unavailable`; answer → `sent` | `changed` | `unavailable`;
+message → `sent` | `queued` | `resumed` | `blocked` | `unavailable`. Any
+unexpected status, 404/405, unknown 4xx `code` or non-JSON reply is
+`unavailable` ("Couldn't do that from here. Open it on your Mac."). 403
+`csrf_stale` is refreshed and retried once inside the page, as Approve does.
+
+- **The writer**: `apiPOST` stays for the card; a separate in-page writer
+  allows exactly `/frames/<36>/approve-plan` (`{}`),
+  `/frames/<36>/resolve-input` and `/request`, and builds each body in the page
+  from typed arguments (never string interpolation), checking the shape again
+  there.
+- **Limits**: at most 6 actions a minute per device (429 after). Settings →
+  Phone has "Let paired devices answer, approve and send messages"
+  (`remoteActions`, on); off, the routes answer 403 and `can` is all off with
+  `why` "Actions are off in Bench's Settings".
+- **Never logged**: route pattern and status only, as for every request.
+
+#### Notifications (Web Push, opt-in per device)
+
+iOS delivers Web Push to a Home Screen web app (16.4+). Bench sends them
+itself: encrypted per RFC 8291 (`aes128gcm`) so only the device can read
+them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
+
+- **Keys**: one VAPID P-256 key pair, made the first time a device subscribes,
+  kept in Keychain beside the devices. JWT `aud` = the endpoint's origin, `exp`
+  now + 1 h, `sub` = `https://github.com/samporter14/bench`.
+- **Routes**: `GET /api/push` → `{"publicKey":"<base64url>","subscribed":bool,"prefs":{…}}`;
+  `POST /api/push/subscribe` `{"endpoint":"…","keys":{"p256dh":"…","auth":"…"},"prefs":{…}}`;
+  `POST /api/push/prefs` `{…}`; `POST /api/push/unsubscribe` `{}`;
+  `POST /api/push/test` `{}` (sends "Notifications are on." to this device).
+  The endpoint must be `https`, ≤ 1,024 chars, on `web.push.apple.com`,
+  `fcm.googleapis.com`, `updates.push.services.mozilla.com` or
+  `*.notify.windows.com`. The subscription is stored with the device's
+  Keychain record and goes when the device is removed or unpaired.
+- **Prefs** (per device): `needsYou` (on), `errors` (on), `finishes` (off),
+  `names` (off), `onlyAway` (on).
+- **When**: from the same moments that raise a card (LabModel's announce hook),
+  once per device per event (session + kind + since). Finishes held during a
+  Nidus focus session follow the hold. `onlyAway`: skip while the Mac is in use
+  (screen unlocked and input within the last 2 minutes).
+- **Payload** (JSON, ≤ 1 KB before encryption):
+  `{"v":1,"title":"…","body":"…","tag":"<kind>-<id>","url":"/#/session/<id>"}`.
+  With `names` off: title "Claude Science", body "A session needs you: plan
+  ready for review" / "A session stopped with an error" / "A session
+  finished". With names on: the session's title, then its sentence and
+  project. Headers: `TTL: 3600`, `Urgency: high` (needs you, errors) or
+  `normal`, `Topic` = a 22-char base64url hash of tag, so a newer push replaces
+  an older one.
+- **Delivery**: an ephemeral `URLSession`. 201 ok; 404/410 drop the
+  subscription; 413/400 log the status; 429 or 5xx wait and retry once after
+  `Retry-After` (≤ 10 min). Never log endpoints or payloads.
+- **Phone**: `/sw.js` (served from the binary, scope `/`) shows the push with
+  `icon:/icon-180.png` and `tag`, and on tap focuses the app or opens `url`.
+  Settings on the phone: "Notifications" with a Turn On button (needs a tap,
+  and only works from the Home Screen app; in Safari it says so), the five
+  prefs, Send a test. Taps work off the tailnet too (the push comes through
+  Apple), but opening the session needs Tailscale on.
+- **Promise**: README's line gains "and, if you turn on notifications on a
+  paired device, Apple's push service carries them, encrypted so only that
+  device can read them".
