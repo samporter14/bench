@@ -1463,9 +1463,10 @@ say-so).
 
 A checklist that walks a first-time user through setup, then gets out of the
 way (`Remote/PhoneSetup.swift`, pure and tested; `Remote/PhoneSettings.swift`
-draws it). A grouped form at a fixed 760 pt (`settingsPage(height:)`): every
-state but "Pair your phone" open fits; that one scrolls to the switches and
-devices below.
+draws it). A grouped form at a fixed 760 pt (`settingsPage(height:)`): with
+steps 1, 2, 3 or 5 open, or ready, everything fits; with step 4 or 6 open, or
+Pair Another Device, the whole checklist shows and the switches and devices
+below are a scroll away.
 
 1. **Header.** "Bench on your phone", then "Use Claude Science from your
    iPhone or iPad: see what needs you, answer, approve and send messages,

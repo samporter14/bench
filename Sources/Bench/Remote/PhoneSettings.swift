@@ -128,8 +128,9 @@ struct PhoneSetupPage: View {
     private var status: RemoteController.Status { model.status }
     private var input: PhoneSetup.Input { model.input(pairingAnotherFrom: pairingAnotherFrom) }
 
-    /// The tallest state (step 6 open, the pairing code showing) fits
-    /// without scrolling.
+    /// Every state shows its whole checklist. Steps 1, 2, 3 and 5 open, and
+    /// ready, fit entirely; with step 4 or 6 open (the QR codes) the
+    /// switches and devices below are a scroll away.
     static let height: CGFloat = 760
 
     var body: some View {
