@@ -2364,7 +2364,7 @@ function pairView() {
     h('div', { class: 'hero' },
       h('img', { class: 'tile', src: '/icon-180.png', width: '64', height: '64', alt: '' }),
       h('h1', { tabindex: '-1', text: 'Pair this phone' }),
-      h('p', { class: 'lede', text: 'Bench shows what needs you in Claude Science and can open a session on your Mac. It all stays on your own Tailscale network.' })),
+      h('p', { class: 'lede', text: 'See what needs you in Claude Science, then answer, approve and send messages from here. It all stays on your own Tailscale network.' })),
     h('form', { onsubmit: submit, novalidate: true },
       h('ol', { class: 'group steps' },
         h('li', null,

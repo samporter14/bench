@@ -2155,7 +2155,7 @@ return h('main', { class: 'wrap pair' },
 h('div', { class: 'hero' },
 h('img', { class: 'tile', src: '/icon-180.png', width: '64', height: '64', alt: '' }),
 h('h1', { tabindex: '-1', text: 'Pair this phone' }),
-h('p', { class: 'lede', text: 'Bench shows what needs you in Claude Science and can open a session on your Mac. It all stays on your own Tailscale network.' })),
+h('p', { class: 'lede', text: 'See what needs you in Claude Science, then answer, approve and send messages from here. It all stays on your own Tailscale network.' })),
 h('form', { onsubmit: submit, novalidate: true },
 h('ol', { class: 'group steps' },
 h('li', null,
@@ -2590,7 +2590,7 @@ text-decoration: none;
 .kv { display: flex; justify-content: space-between; gap: 16px; padding: 11px 16px; min-height: 44px; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; text-align: right; color: var(--ink); overflow-wrap: anywhere; }
-dl.group.sec { margin: 0 0 26px; }
+dl.group.sec, ul.group.sec { margin: 0 0 26px; }
 .plan { padding: 14px 16px; color: var(--body); }
 .plan p { margin: 0 0 12px; overflow-wrap: anywhere; }
 .plan ol { margin: 0; padding-left: 1.5em; }
