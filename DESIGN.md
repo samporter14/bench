@@ -1301,3 +1301,145 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] update check against a real newer release: the card comes once, Settings shows "Bench 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Bench in /Applications) quits Bench, installs it and reopens it. Bench started from a build folder offers no Install
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption lines (Panel, "Name the specimen that's playing")
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Bench settings already stored; Help → Welcome to Bench shows it again; Return and Esc work; the updates switch stays off until turned on
+
+## Bench on your phone (Remote, since 0.4.0)
+
+A private mobile web app that Bench serves to the user's own devices over
+their Tailscale network. Off by default. Phase 1 (this section): see what
+needs you, what works and what happened, read a session's status and plan,
+Open on Mac. No Claude Science writes in Phase 1; Approve / answer / Later
+come in Phase 2, after Approve is proven on the Mac.
+
+### Transport and trust
+
+- Bench's `RemoteServer` listens on **127.0.0.1:47280 only** (falls back to
+  the next free port up to 47290 and remembers it). Never on other
+  interfaces.
+- **Tailscale Serve** publishes it to the tailnet with a real certificate:
+  `tailscale serve --bg --https=8443 http://127.0.0.1:<port>`. A dedicated
+  HTTPS port (8443) so it never collides with the user's own serve mappings
+  on 443. Never Funnel. Never `tailscale serve reset`: read
+  `tailscale serve status --json` first and add or remove only Bench's own
+  mapping. The CLI is `/Applications/Tailscale.app/Contents/MacOS/Tailscale`
+  (not on PATH); a Mac App Store install has the same binary in its bundle.
+- The URL is `https://<node>.<tailnet>.ts.net:8443/` from
+  `tailscale status --json` (`Self.DNSName`, trailing dot dropped).
+- **Every request**:
+  - `Host` must be exactly the node's DNS name with `:8443` (or without a
+    port). Anything else: 403. This blocks DNS rebinding from a browser on
+    this Mac. `--demo remote` is the only exception (allows `127.0.0.1:<port>`
+    and `localhost:<port>`).
+  - All `/api/*` routes need a paired device token: cookie `bench_device`
+    (HttpOnly, Secure, SameSite=Strict, Path=/). 401 without it. The token is
+    the real gate: any local process can reach loopback and forge headers.
+  - `Tailscale-User-Login` (set by Serve) must equal the login recorded when
+    Remote was turned on; checked as an extra, not relied on.
+  - Responses: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`,
+    `Referrer-Policy: no-referrer`, and for HTML a strict CSP:
+    `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`.
+    All assets inline-free files served by Bench itself (no CDNs).
+  - POSTs need `Content-Type: application/json`, an `Origin` equal to the
+    served origin, and `X-Bench: 1`. Bodies ≤ 8 KB.
+  - Never log request bodies, tokens or session text. Log only route + status.
+- **Pairing**: Settings → Phone shows a QR code of the URL and a one-time
+  6-digit code (expires after 10 minutes, 5 wrong tries then a new code).
+  `POST /pair {"code","name"}` → sets the cookie; Bench stores only a SHA-256
+  hash of each token, with the device name and when it was paired / last
+  seen, in Keychain (one generic-password item, JSON). Settings lists paired
+  phones with Remove. iOS keeps a Home Screen app's storage apart from
+  Safari's, so the flow is: scan → Add to Home Screen → open it → enter the
+  code there.
+
+### Routes (one allowlisted table)
+
+| Method | Path | Auth | What |
+|---|---|---|---|
+| GET | `/` | none | The app shell (HTML). Shows the pairing screen when not paired. |
+| GET | `/app.js`, `/app.css`, `/manifest.webmanifest`, `/icon-180.png`, `/icon-512.png` | none | Static, from the binary. |
+| POST | `/pair` | code | Pair this device. |
+| GET | `/api/me` | token | `{"paired":true,"device":"Sam's iPhone","bench":"0.4.0"}` |
+| POST | `/api/unpair` | token | Removes this device. |
+| GET | `/api/state` | token | The snapshot below. |
+| GET | `/api/events` | token | Server-Sent Events: `event: state` with the snapshot on every change, a `: keepalive` comment every 25 s. |
+| GET | `/api/sessions/<id>` | token | One session (below). `<id>` must match `^[0-9a-f-]{36}$`. |
+| POST | `/api/sessions/<id>/open` | token | Open it on the Mac (`LabModel.open`). |
+
+### `/api/state` (version 1)
+
+```json
+{
+  "version": 1,
+  "bench": "0.4.0",
+  "updatedAt": "2026-10-12T19:40:00Z",
+  "problem": null,
+  "needsYou": [
+    {"id": "…36…", "title": "Protein stability screen", "project": "Example project",
+     "reason": "plan", "sentence": "Plan ready for your review",
+     "since": "2026-10-12T19:31:00Z", "snooze": {"until": "2026-10-12T19:50:00Z", "afterFocus": false}}
+  ],
+  "failed": [{"id": "…", "title": "…", "project": "…", "since": "…"}],
+  "working": [{"id": "…", "title": "…", "project": "…", "startedAt": "…"}],
+  "recent": [{"kind": "finished", "id": "…", "title": "…", "project": "…", "at": "…", "line": "Finished"}],
+  "usage": {"limits": [{"name": "5-hour", "usedPercent": 54, "resetsAt": "…", "pace": "At this pace: limit around 3:40 PM"}]}
+}
+```
+
+`snooze` is null when not put off; `problem` is a short sentence when Bench
+can't see sessions ("Claude Science isn't running"); `usage` is null when
+unknown. Dates are ISO 8601 UTC. Titles and project names are the user's own,
+shown only to their paired devices.
+
+### `/api/sessions/<id>` (version 1)
+
+```json
+{
+  "version": 1,
+  "id": "…", "title": "…", "project": "…",
+  "state": "needsInput", "reason": "plan", "sentence": "Plan ready for your review",
+  "startedAt": "…", "updatedAt": "…",
+  "plan": {"summary": "…", "steps": ["…"], "feasibility": "high"},
+  "messages": []
+}
+```
+
+`plan` only when Bench already holds the plan card's preview; `messages`
+stays empty in Phase 1 (session text needs its own research and Sam's
+say-so).
+
+### Settings → Phone (tab `phone`)
+
+1. "Use Bench from your phone" switch (`remoteEnabled`, off). Subtitle: "A
+   private page for your iPhone or another computer, over your Tailscale
+   network. Paired devices see your sessions' titles and status. Nothing is
+   on the internet."
+2. Checks, each a row with a status: Tailscale installed · Signed in (shows
+   the tailnet login) · HTTPS on for your tailnet (if Serve says it's off,
+   show the enable URL it prints, as a button that opens it) · Serving at
+   `https://…:8443`.
+3. Pair a device: the QR code (CoreImage) of the URL, the 6-digit code with
+   a countdown, and the three steps (scan, Add to Home Screen, open it and
+   enter the code).
+4. Paired devices: name, paired, last seen, Remove.
+Turning the switch off stops the listener, removes Bench's serve mapping
+only, and keeps paired devices (so turning it back on needs no re-pairing);
+"Remove all devices" is separate.
+
+### The phone app
+
+- Mobile web app, iOS look (system font, large titles, inset grouped lists,
+  light and dark from `prefers-color-scheme`), clay `#D97757` as the one
+  accent. Standalone display (`apple-mobile-web-app-capable`), safe areas.
+- Screens: **Now** (Needs you, Working with live clocks, Recent), **Session**
+  (status, the plan's summary and steps when known, Open on Mac), **Settings**
+  (this device's name, Unpair). Pull to refresh.
+- Live: `EventSource('/api/events')`; on `visibilitychange` to visible, refetch
+  `/api/state` and reconnect. If nothing new for 60 s while visible, show
+  "Not updating since …". On 401 show pairing; on a network error or 502
+  show "Bench isn't running on your Mac, or your Mac is asleep".
+- No third-party code, no CDNs, everything served by Bench.
+
+### `--demo remote`
+
+Serves the app on `http://127.0.0.1:<port>` with made-up sessions, a fixed
+pairing code `000000`, and the Host check relaxed to localhost. Never in a
+real launch, never touches Tailscale, Keychain or the real settings.
