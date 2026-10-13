@@ -72,7 +72,7 @@ struct PhoneSettingsView: View {
         .tint(Theme.clay)
         .frame(width: 600, height: 720)
         .onAppear {
-            // A demo reads no Keychain and asks Tailscale nothing.
+            // A demo reads no stored devices and asks Tailscale nothing.
             guard Demo.mode == nil else { return }
             auth.load()
             remote.refresh()

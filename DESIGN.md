@@ -1357,7 +1357,11 @@ message, and push notifications.
   6-digit code (expires after 10 minutes, 5 wrong tries then a new code).
   `POST /pair {"code","name"}` → sets the cookie; Bench stores only a SHA-256
   hash of each token, with the device name and when it was paired / last
-  seen, in Keychain (one generic-password item, JSON). Settings lists paired
+  seen, in `~/Library/Application Support/Bench/remote-devices.json` (folder
+  0700, file 0600, written to a temporary file and renamed). Not the Keychain:
+  Bench is signed without a Team ID, so macOS ties a Keychain item to one
+  build and asks for the login password after every update, with Bench
+  frozen waiting (seen 2026-10-13). Settings lists paired
   phones with Remove. iOS keeps a Home Screen app's storage apart from
   Safari's, so the flow is: scan → Add to Home Screen → open it → enter the
   code there.
@@ -1472,7 +1476,7 @@ only, and keeps paired devices (so turning it back on needs no re-pairing);
 
 Serves the app on `http://127.0.0.1:<port>` with made-up sessions, a fixed
 pairing code `000000`, and the Host check relaxed to localhost. Never in a
-real launch, never touches Tailscale, Keychain or the real settings.
+real launch, never touches Tailscale, the stored devices or the real settings.
 
 ### How the server does it (0.4.0)
 
@@ -1506,8 +1510,8 @@ store (in memory in tests and the demo).
 - **The cookie** has `Max-Age` 400 days, so a Home Screen app stays paired;
   the demo leaves out `Secure` (plain HTTP). Unpair clears it and ends the
   device's event streams, as Remove in Settings does. `lastSeen` changes at
-  most once a minute and reaches the Keychain at most every 5 minutes.
-  Bench reads the Keychain only once the Phone tab shows or the switch is on.
+  most once a minute and reaches the file at most every 5 minutes.
+  Bench reads the file only once the Phone tab shows or the switch is on.
 - **State**: `recent` leaves out saved files (no session, and the file name
   stays on the Mac). Limit names are `5-hour`, `Weekly`, `Weekly Opus`,
   `Weekly Sonnet`; `pace` is the popover's forecast line or null. The
@@ -1675,7 +1679,7 @@ itself: encrypted per RFC 8291 (`aes128gcm`) so only the device can read
 them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
 
 - **Keys**: one VAPID P-256 key pair, made the first time a device subscribes,
-  kept in Keychain beside the devices. JWT `aud` = the endpoint's origin, `exp`
+  kept in a file beside the devices'. JWT `aud` = the endpoint's origin, `exp`
   now + 1 h, `sub` = `https://github.com/samporter14/bench`.
 - **Routes**: `GET /api/push` → `{"publicKey":"<base64url>","subscribed":bool,"prefs":{…}}`;
   `POST /api/push/subscribe` `{"endpoint":"…","keys":{"p256dh":"…","auth":"…"},"prefs":{…}}`;
@@ -1684,7 +1688,7 @@ them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
   The endpoint must be `https`, ≤ 1,024 chars, on `web.push.apple.com`,
   `fcm.googleapis.com`, `updates.push.services.mozilla.com` or
   `*.notify.windows.com`. The subscription is stored with the device's
-  Keychain record and goes when the device is removed or unpaired.
+  record and goes when the device is removed or unpaired.
 - **Prefs** (per device): `needsYou` (on), `errors` (on), `finishes` (off),
   `names` (off), `onlyAway` (on).
 - **When**: from the same moments that raise a card (LabModel's announce hook),
@@ -1729,9 +1733,9 @@ the routes, the announce hook, delivery). The hooks elsewhere are single
 lines marked `// Phase 2 push`.
 
 - **Storage**: a device's `push` (`{subscription, prefs}`) is a field of its
-  record in the devices' Keychain item; a record from before reads as none,
-  and one without push writes none. The VAPID key is a second item beside it
-  (`local.sam.bench.remote` / `push-key`: JSON with the private scalar). It
+  record in the devices' file; a record from before reads as none,
+  and one without push writes none. The VAPID key is a second file beside it
+  (`remote-push-key.json`: JSON with the private scalar, 0600). It
   is made the first time a paired device asks `GET /api/push`, since the
   phone needs the public key to subscribe. One that can't be read is never
   replaced: every subscription depends on it. Unsubscribe keeps the prefs.
@@ -1763,7 +1767,7 @@ lines marked `// Phase 2 push`.
   The test push is `Urgency: high`. A Retry-After that says nothing waits a
   minute, and the retry is sealed afresh. The log has the status only.
 - **Demo**: the public key is made at launch and kept in memory only, so a
-  browser can subscribe; nothing reaches the Keychain or the network.
+  browser can subscribe; nothing reaches the disk or the network.
 
 ### Phase 3: browse, history, artifacts, new sessions (0.4.0)
 

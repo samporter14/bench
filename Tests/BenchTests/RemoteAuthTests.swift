@@ -1,5 +1,5 @@
 // RemoteAuthTests.swift — the pairing code and the devices, with an
-// in-memory store: nothing here reads or writes the Keychain.
+// in-memory store: nothing here reads or writes the devices file.
 import Foundation
 import Testing
 @testable import Bench

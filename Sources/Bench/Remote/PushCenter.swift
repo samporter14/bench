@@ -6,8 +6,8 @@
 // What to send, in what words and with what headers is `PushRules`: pure and
 // tested on made-up cards. `PushCenter` keeps the VAPID key, answers the
 // `/api/push` routes, hears LabModel's announce moments and delivers. The
-// devices' subscriptions and prefs live in their Keychain records
-// (`RemoteDevice.push`); the key in a second item beside them. Tests and
+// devices' subscriptions and prefs live in their records
+// (`RemoteDevice.push`); the key in a second file beside them. Tests and
 // `--demo remote` keep both in memory, and the demo sends nothing.
 //
 // Never logged: endpoints, payloads, keys. Only a route and a status.
@@ -392,14 +392,14 @@ struct URLSessionPushTransport: PushTransport {
 final class PushCenter {
     static let shared = PushCenter(
         auth: RemoteController.shared.auth,
-        keyStore: KeychainDeviceStore(account: PushCenter.keyAccount, label: "Bench push key"),
+        keyStore: FileDeviceStore(name: PushCenter.keyFile),
         transport: URLSessionPushTransport(),
         presence: .live,
         enabled: { RemoteController.shared.enabled },
         holdingFinishes: { NidusFocus.shared.holding })
 
-    /// The Keychain item beside the devices that holds the VAPID key.
-    nonisolated static let keyAccount = "push-key"
+    /// The file beside the devices that holds the VAPID key.
+    nonisolated static let keyFile = "remote-push-key.json"
     /// Events sent are remembered this long, per device.
     static let rememberSent: TimeInterval = 24 * 60 * 60
 
@@ -596,7 +596,7 @@ final class PushCenter {
                           let raw = WebPush.data(base64URL: stored.key),
                           let found = try? P256.Signing.PrivateKey(rawRepresentation: raw) else {
                         // Never replaced unseen: subscriptions made with it would all break.
-                        log.error("The push key in the Keychain is unreadable")
+                        log.error("The push key file is unreadable")
                         return nil
                     }
                     key = found

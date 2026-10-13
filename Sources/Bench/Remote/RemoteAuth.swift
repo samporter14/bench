@@ -2,10 +2,10 @@
 // (DESIGN.md, Bench on your phone → Transport and trust). A device proves
 // itself with a token Bench gave it once, in a cookie; Bench keeps only the
 // token's SHA-256 hash, with the device's name and when it was paired and
-// last seen, as one Keychain item of JSON.
+// last seen, as one file of JSON only this user can read.
 //
 // The code and the hashes are checked in constant time. The store is
-// injected: the app's is the Keychain, the tests' and `--demo remote`'s
+// injected: the app's is that file, the tests' and `--demo remote`'s
 // live in memory.
 import CryptoKit
 import Foundation
@@ -97,54 +97,66 @@ protocol RemoteDeviceStore: AnyObject {
     func delete() throws
 }
 
-/// The app's store: one generic-password item in the login keychain.
+/// The app's store: one JSON file in Bench's own Application Support folder,
+/// readable by this user only (folder 0700, file 0600), written whole to a
+/// temporary file and then renamed over the old one.
+///
+/// Not the Keychain: Bench is signed without a Team ID, so macOS ties a
+/// Keychain item to one exact build and asks for the login password again
+/// after every update, with Bench stuck waiting. Nothing here is a secret a
+/// file can't hold: tokens are kept only as SHA-256 hashes, and the push key
+/// lets its holder do no more than send this user's own devices a
+/// notification.
 @MainActor
-final class KeychainDeviceStore: RemoteDeviceStore {
+final class FileDeviceStore: RemoteDeviceStore {
     struct Failure: Error, Equatable {
-        let status: OSStatus
+        let errno: Int32
     }
 
-    private let service = "local.sam.bench.remote"
-    private let account: String
-    private let label: String
+    private let url: URL
 
-    // Phase 2 push: the push key is a second item beside the devices.
-    init(account: String = "devices", label: String = "Bench paired devices") {
-        self.account = account
-        self.label = label
+    /// `~/Library/Application Support/Bench`.
+    nonisolated static var folder: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Bench", isDirectory: true)
     }
 
-    private var query: [CFString: Any] {
-        [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: account]
+    // Phase 2 push: the push key is a second file beside the devices.
+    init(name: String = "remote-devices.json", folder: URL = FileDeviceStore.folder) {
+        url = folder.appendingPathComponent(name, isDirectory: false)
     }
 
     func load() throws -> Data? {
-        var request = query
-        request[kSecReturnData] = true
-        request[kSecMatchLimit] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(request as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else { throw Failure(status: status) }
-        return result as? Data
+        do {
+            return try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        }
     }
 
     func save(_ data: Data) throws {
-        let status = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var item = query
-            item[kSecValueData] = data
-            item[kSecAttrLabel] = label
-            let added = SecItemAdd(item as CFDictionary, nil)
-            guard added == errSecSuccess else { throw Failure(status: added) }
-        } else if status != errSecSuccess {
-            throw Failure(status: status)
+        let folder = url.deletingLastPathComponent()
+        let files = FileManager.default
+        try files.createDirectory(at: folder, withIntermediateDirectories: true,
+                                  attributes: [.posixPermissions: 0o700])
+        try? files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
+        let temporary = folder.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
+        guard files.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            throw Failure(errno: EIO)
+        }
+        guard rename(temporary.path, url.path) == 0 else {
+            let failure = Failure(errno: errno)
+            try? files.removeItem(at: temporary)
+            throw failure
         }
     }
 
     func delete() throws {
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure(status: status) }
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            return
+        }
     }
 }
 
@@ -162,7 +174,7 @@ final class MemoryDeviceStore: RemoteDeviceStore {
     func load() throws -> Data? { data }
 
     func save(_ data: Data) throws {
-        if failsToSave { throw KeychainDeviceStore.Failure(status: errSecIO) }
+        if failsToSave { throw FileDeviceStore.Failure(errno: EIO) }
         self.data = data
     }
 
@@ -215,7 +227,7 @@ final class RemoteAuth: ObservableObject {
     static let maxDevices = 20
     /// `lastSeen` changes in memory at most this often, and reaches the
     /// store at most every `persistEvery`: the events stream and the phone's
-    /// refetches would otherwise rewrite the Keychain item constantly.
+    /// refetches would otherwise rewrite the file constantly.
     static let seenEvery: TimeInterval = 60
     static let persistEvery: TimeInterval = 5 * 60
 
@@ -242,7 +254,7 @@ final class RemoteAuth: ObservableObject {
     }
 
     /// Reads the devices from the store, once. Not at init: someone who never
-    /// turns Remote on never has Bench read the Keychain.
+    /// turns Remote on never has Bench read the file.
     func load() {
         guard !loaded else { return }
         loaded = true
@@ -353,7 +365,7 @@ final class RemoteAuth: ObservableObject {
         }
     }
 
-    /// "Remove All Devices": the Keychain item goes.
+    /// "Remove All Devices": the file goes.
     func removeAll() {
         load()
         do {

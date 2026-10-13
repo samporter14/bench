@@ -4,7 +4,7 @@
 // only, keeping the paired devices. It publishes what Settings → Phone shows.
 //
 // Never in a demo but `--demo remote`, which serves made-up sessions on
-// 127.0.0.1 with the fixed code 000000, and touches no Tailscale, Keychain or
+// 127.0.0.1 with the fixed code 000000, and touches no Tailscale, stored device or
 // setting.
 import AppKit
 import Combine
@@ -15,7 +15,7 @@ private let log = Logger(subsystem: "local.sam.bench", category: "remote")
 
 @MainActor
 final class RemoteController: ObservableObject {
-    static let shared = RemoteController(auth: RemoteAuth(store: KeychainDeviceStore()), bridge: .live())
+    static let shared = RemoteController(auth: RemoteAuth(store: FileDeviceStore()), bridge: .live())
 
     /// What Settings → Phone shows.
     struct Status: Equatable {
