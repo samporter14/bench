@@ -135,6 +135,8 @@ enum RemoteRoute: Equatable, Sendable {
     case events
     case session(String)
     case openSession(String)
+    /// Phase 2 push: `/api/push` and its POSTs (PushCenter.swift).
+    case push(RemotePushRoute)
 
     enum Match: Equatable {
         case found(RemoteRoute)
@@ -143,7 +145,7 @@ enum RemoteRoute: Equatable, Sendable {
         case notFound
     }
 
-    static let staticFiles: Set<String> = ["/app.js", "/app.css", "/manifest.webmanifest"]
+    static let staticFiles: Set<String> = ["/app.js", "/app.css", "/manifest.webmanifest", PushServiceWorker.path] // Phase 2 push
 
     /// Matches the path exactly, never decoding it: `/api/sessions/<id>` only
     /// with a full frame id (`^[0-9a-f-]{36}$`).
@@ -165,6 +167,7 @@ enum RemoteRoute: Equatable, Sendable {
         default: break
         }
         if staticFiles.contains(String(path)) { return .file(String(path)) }
+        if let push = RemotePushRoute(path: path) { return .push(push) } // Phase 2 push
         let prefix = "/api/sessions/"
         guard path.hasPrefix(prefix) else { return nil }
         let rest = path.dropFirst(prefix.count)
@@ -180,6 +183,7 @@ enum RemoteRoute: Equatable, Sendable {
     var method: String {
         switch self {
         case .pair, .unpair, .openSession: "POST"
+        case .push(let push): push.method // Phase 2 push
         default: "GET"
         }
     }
@@ -205,6 +209,7 @@ enum RemoteRoute: Equatable, Sendable {
         case .events: "/api/events"
         case .session: "/api/sessions/<id>"
         case .openSession: "/api/sessions/<id>/open"
+        case .push(let push): push.pattern // Phase 2 push
         }
     }
 }
@@ -446,6 +451,8 @@ final class RemoteServer {
     let auth: RemoteAuth
     let backend: RemoteBackend
     private(set) var port: UInt16?
+    /// Phase 2 push: answers `/api/push*`; without it they are 404.
+    var push: PushCenter?
 
     private var listener: NWListener?
     private var starting: CheckedContinuation<Bool, Never>?
@@ -686,6 +693,10 @@ final class RemoteServer {
             guard backend.open(sessionID) else { return send(id, RemoteResponse.error(404), route: route, closing: true) }
             send(id, RemoteResponse.make(status: 200, contentType: RemoteResponse.json, body: Data(#"{"opened":true}"#.utf8)),
                  route: route, closing: true)
+        case .push(let pushRoute): // Phase 2 push
+            guard let push, let device else { return send(id, RemoteResponse.error(404), route: route, closing: true) }
+            let reply = push.respond(pushRoute, body: request.body, device: device)
+            send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.json), route: route, closing: true)
         }
     }
 

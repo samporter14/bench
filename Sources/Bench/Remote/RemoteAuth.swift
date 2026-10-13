@@ -71,6 +71,9 @@ struct RemoteDevice: Codable, Equatable, Identifiable, Sendable {
     let tokenHash: Data
     let pairedAt: Date
     var lastSeen: Date?
+    /// Phase 2 push: its notifications (PushCenter.swift); nil in records
+    /// from before, and for a device that never asked.
+    var push: RemoteDevicePush? = nil
 
     /// The longest name kept, in characters.
     static let nameLimit = 64
@@ -102,7 +105,14 @@ final class KeychainDeviceStore: RemoteDeviceStore {
     }
 
     private let service = "local.sam.bench.remote"
-    private let account = "devices"
+    private let account: String
+    private let label: String
+
+    // Phase 2 push: the push key is a second item beside the devices.
+    init(account: String = "devices", label: String = "Bench paired devices") {
+        self.account = account
+        self.label = label
+    }
 
     private var query: [CFString: Any] {
         [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: account]
@@ -124,7 +134,7 @@ final class KeychainDeviceStore: RemoteDeviceStore {
         if status == errSecItemNotFound {
             var item = query
             item[kSecValueData] = data
-            item[kSecAttrLabel] = "Bench paired devices"
+            item[kSecAttrLabel] = label
             let added = SecItemAdd(item as CFDictionary, nil)
             guard added == errSecSuccess else { throw Failure(status: added) }
         } else if status != errSecSuccess {
@@ -384,4 +394,14 @@ final class RemoteAuth: ObservableObject {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+
+    // Phase 2 push: each device's `push`, as `change` gives it, in one write.
+    // Nothing else in a record changes. True when stored (or nothing changed).
+    @discardableResult
+    func updatePush(_ change: (RemoteDevice) -> RemoteDevicePush?) -> Bool {
+        load()
+        var next = devices
+        for index in next.indices { next[index].push = change(next[index]) }
+        return next == devices || save(next)
+    }
 }

@@ -84,6 +84,7 @@ final class RemoteController: ObservableObject {
     /// At launch: back on if it was on. Never in a demo.
     func start() {
         guard Demo.mode == nil, activation == nil else { return }
+        PushCenter.shared.start() // Phase 2 push
         // Back from turning HTTPS on in the browser, or from opening
         // Tailscale: check again.
         activation = NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
@@ -127,6 +128,7 @@ final class RemoteController: ObservableObject {
         status.serve = .starting
         let server = server ?? makeServer()
         self.server = server
+        server.push = PushCenter.shared // Phase 2 push
         do {
             let port = try await server.start(candidates: RemoteServer.candidates(
                 remembered: defaults.object(forKey: SettingsKey.remotePort) as? Int))
@@ -297,6 +299,7 @@ final class RemoteController: ObservableObject {
             open: { id in RemoteAPI.knownSessions(lab: .shared).contains { $0.id == id } },
             version: RemoteAPI.benchVersion))
         demoServer = server
+        server.push = PushCenter.demo(auth: auth) // Phase 2 push
         Task {
             guard let port = try? await server.start(candidates: Array(RemoteServer.ports)) else {
                 FileHandle.standardError.write(Data("Bench: no free port from 47280 to 47290\n".utf8))

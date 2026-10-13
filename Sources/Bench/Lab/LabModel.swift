@@ -208,6 +208,8 @@ final class LabModel: ObservableObject {
     /// `MacNotifications.start()` sets them, so tests and demos never notify.
     var cardRaised: (LabCard) -> Void = { _ in }
     var cardWithdrawn: (LabCard) -> Void = { _ in }
+    /// Phase 2 push: the same moments, for paired devices (PushCenter.swift).
+    var pushRaised: (LabCard) -> Void = { _ in }
 
     private let source = CombinedScienceSource()
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
@@ -666,7 +668,7 @@ final class LabModel: ObservableObject {
         expiries.removeValue(forKey: card.id)?.cancel()
         armFrontCard()
         // Not on the first read: what already waits at launch is not news.
-        if (isNew || asksSomethingNew), !firstRead, announcing { cardRaised(card) }
+        if (isNew || asksSomethingNew), !firstRead, announcing { cardRaised(card); pushRaised(card) } // Phase 2 push
         return isNew
     }
 
