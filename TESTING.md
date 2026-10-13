@@ -321,6 +321,41 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-13, Bench 0.4.0 (Bench on your phone)
+
+- ✅ `swift test`: 662 tests in 87 suites, all made-up data. New suites cover
+  the server's parser and checks, pairing, Tailscale's status and serve
+  output, the session, history and artifact projections (their in-page
+  JavaScript runs in JavaScriptCore against a fake `fetch`), the actions,
+  browse SQL against a made-up database, Web Push (RFC 8291's worked example
+  byte for byte, VAPID tokens verified), and the devices file.
+- ✅ Live on the Mac's tailnet (`https://<node>:8443`): `/` 200 with the CSP,
+  `/api/*` 401 without the cookie, `/sw.js` served, the Home Screen icon an
+  opaque square. An iPhone paired from its Home Screen app and subscribed
+  to notifications (Settings → Phone shows "Notifications on").
+- ✅ Live in Claude Science's **Example project** only, from a test device
+  paired over curl and removed afterwards:
+  - listing projects and the project's sessions;
+  - starting two sessions;
+  - answering a question (Claude replied with the choice);
+  - a message after it finished (sent), one while it worked (queued, then
+    read) and the same message id again (not doubled);
+  - a plan: a stale version refused ("changed"), the right one approved and
+    run;
+  - history: turns, the question with its answer, the plan, step lines
+    ("Ran a command, saved artifacts") and file chips;
+  - artifacts: a markdown note and a CSV through `/text`, a PNG's WebP
+    thumbnail, and its download with `attachment` and `sandbox`.
+- Found live and fixed: the daemon's older rows carry no `_ts`, so every
+  older session read as "can't read this session"; a turn now shows without
+  a time.
+- Found live and fixed: the paired devices were in the Keychain, and Bench's
+  self-signed build (no Team ID) made macOS ask for the password after every
+  update, with Bench frozen waiting. They are a 0600 file now.
+- Not checked live: a push for a real event while away from the Mac, an
+  8 MB download, the iPad layout on a real iPad, and a daemon restart while
+  the phone is open.
+
 ## 2026-10-12, Bench 0.3.6 (lock fix, review fixes, update check, welcome)
 
 - ✅ `swift test`: 316 tests in 41 suites. New:

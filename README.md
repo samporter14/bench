@@ -96,23 +96,36 @@ Screen.
 
 ## Bench on your phone
 
-See what needs you, what's working and what happened lately from your iPhone
-or another computer: a private page that Bench serves to your own devices
-over your [Tailscale](https://tailscale.com) network. A session shows its
-status and, when it waits on a plan, the plan's summary and steps, and
-**Open on Mac** brings it up on your Mac. Nothing is on the internet: Bench
-listens only on your Mac, and Tailscale Serve passes on what your devices
-ask, with a certificate for your tailnet.
+Use Claude Science from your iPhone, iPad or another computer while you're
+away from your Mac: a private web app that Bench serves to your own devices
+over your [Tailscale](https://tailscale.com) network. Nothing is on the
+public internet: Bench listens only on your Mac, and Tailscale Serve passes
+on what your devices ask, with a certificate for your tailnet.
+
+- **Now**: what needs you, what stopped with an error, what's working (with
+  live clocks) and what happened lately, plus your plan's usage.
+- **A session**: its latest reply and the whole conversation (scroll up for
+  more), with tool steps as one quiet line each, and the files it made:
+  images, documents and tables open on the phone, anything else downloads.
+- **Act on it**: answer its question, approve its plan, or send it a message
+  (it waits for the next pause if Claude is busy). Bench checks the session
+  hasn't changed on your Mac just before it acts.
+- **Projects**: every project and all its sessions, with search, and a new
+  session in any of them.
+- **Notifications**, if you turn them on, on each device: when a session
+  needs you, stops with an error or (if you like) finishes; by default only
+  while you're away from your Mac and without session names. They travel
+  through Apple's push service, encrypted so only your device can read them.
+- On iPad, a sidebar and the session side by side.
 
 It's **off** until you turn it on in **Settings → Phone**, which checks that
-Tailscale is installed and signed in and that your tailnet has HTTPS on.
-Then scan the QR code with your iPhone, add the page to your Home Screen,
-open it from there and enter the one-time code. Paired devices see your
-sessions' titles and status. Settings lists them, each with Remove; turning
-the switch off stops serving and leaves your other Tailscale Serve settings
-as they are.
-
-Paired devices can also browse every project and its sessions, scroll back through a session's whole conversation, and start a new session in a project (**Let paired devices browse every project, full conversations and artifacts** in Settings → Phone, on; starting a session also needs actions on).
+Tailscale is installed and signed in and that your tailnet has HTTPS on. Then
+scan the QR code with your iPhone, add the page to your Home Screen, open it
+from there and enter the one-time code. Settings lists paired devices, each
+with Remove, and has two switches: one for answering, approving and sending
+messages, one for browsing projects, full conversations and files. Turning
+Bench on your phone off stops serving and leaves your other Tailscale Serve
+settings as they are.
 
 ## Install
 
