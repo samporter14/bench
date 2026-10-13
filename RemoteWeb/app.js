@@ -766,7 +766,7 @@ function paintOpen(id) {
   const o = S.open[id];
   b.textContent = openLabel(id);
   b.disabled = !!o && o.phase === 'busy';
-  b.className = 'btn ' + (o && o.phase === 'done' ? 'ok' : 'primary');
+  b.className = 'btn ' + (b.dataset.low === '1' || (o && o.phase === 'done') ? 'ok' : 'primary');
   m.textContent = openMessage(id);
   m.hidden = !m.textContent;
 }
@@ -787,9 +787,9 @@ async function openOnMac(id) {
   paintOpen(id);
 }
 
-function openBlock(id) {
+function openBlock(id, low = false) {
   const block = h('div', { class: 'act', 'aria-live': 'polite' },
-    h('button', { id: 'open-btn', class: 'btn primary', type: 'button', 'data-key': 'open', 'data-id': id, onclick: () => openOnMac(id) }),
+    h('button', { id: 'open-btn', class: 'btn primary', type: 'button', 'data-key': 'open', 'data-id': id, 'data-low': low ? '1' : '0', onclick: () => openOnMac(id) }),
     h('p', { id: 'open-msg', class: 'msg bad', hidden: true }));
   queueMicrotask(() => paintOpen(id));
   return block;
@@ -812,7 +812,7 @@ function statusMark(state) {
 // What the person has typed or chosen on a session, kept across every redraw.
 const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: {}, other: {}, otherOn: {}, qTool: '', busy: {}, note: null, noteT: 0, shown: 4, more: {} });
 
-const REGIONS = ['head', 'open', 'unread', 'question', 'plan', 'reply', 'toyou', 'convo', 'times'];
+const REGIONS = ['head', 'open', 'unread', 'question', 'plan', 'reply', 'toyou', 'convo', 'times', 'openlow'];
 
 function sessionView(id, inPane) {
   const body = h('div', { class: (inPane ? 'detail-in' : 'wrap') + ' sess-body' }, REGIONS.map((n) => h('div', { 'data-r': n })));
@@ -853,7 +853,11 @@ function fillSession(sv, id) {
   const none = () => [];
 
   set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze]], () => headNodes(id, rec, d, snap));
-  set('open', rec && rec.phase === 'missing' ? 0 : 1, () => (rec && rec.phase === 'missing' ? [] : [openBlock(id)]));
+  // When the phone can act, Open on Mac is a quiet button after the details; otherwise it is the main one.
+  const acts = !!(d && d.can && (d.can.approve || d.can.answer || d.can.message));
+  const gone = rec && rec.phase === 'missing';
+  set('open', gone || acts ? 0 : 1, () => (gone || acts ? [] : [openBlock(id)]));
+  set('openlow', acts ? 1 : 0, () => (acts ? [openBlock(id, true)] : []));
   set('unread', d && d.version >= 2 && d.readable === false, () => (d && d.version >= 2 && d.readable === false
     ? [h('p', { class: 'quiet', text: 'Bench can’t show this session’s messages. Open it on your Mac.' })] : []));
   set('question', d && q ? [q, u.picks, u.otherOn, u.busy.question] : 0, () => (d && q ? [questionCard(id, q, u)] : []));
@@ -1049,17 +1053,28 @@ function uuid() {
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
 }
 
+// On a touch-only device Return makes a newline and the Send button sends. A hardware
+// keyboard (seen by a key a soft keyboard never makes) or a trackpad brings back Enter to send.
+let hardwareKeys = false;
+const touchOnly = () => matchMedia('(hover: none) and (pointer: coarse)').matches && !hardwareKeys;
+document.addEventListener('keydown', (e) => {
+  if (hardwareKeys || !(e.ctrlKey || e.metaKey || e.altKey || /^(Shift|Tab|Escape|Arrow|F\d)/.test(e.key))) return;
+  hardwareKeys = true;
+  const ta = $('composer');
+  if (ta) ta.setAttribute('enterkeyhint', 'send');
+});
+
 function buildDock(id) {
   const u = ui(id);
   const ta = h('textarea', {
-    id: 'composer', class: 'composer-ta', rows: '1', maxlength: '4000', enterkeyhint: 'send', autocapitalize: 'sentences',
+    id: 'composer', class: 'composer-ta', rows: '1', maxlength: '4000', enterkeyhint: touchOnly() ? 'enter' : 'send', autocapitalize: 'sentences',
     'aria-label': 'Message to Claude', 'data-key': 'composer',
   });
   const grow = h('div', { class: 'grow' }, ta);
   ta.value = u.draft;
   ta.addEventListener('input', () => { u.draft = ta.value; paintDock(id); });
   ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(id); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touchOnly()) { e.preventDefault(); sendMessage(id); }
   });
   return h('div', { class: 'dock' }, h('div', { class: 'dock-in' },
     h('div', { class: 'dock-note', role: 'status', hidden: true }),
