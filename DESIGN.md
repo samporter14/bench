@@ -1348,7 +1348,8 @@ message, and push notifications.
     `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`.
     All assets inline-free files served by Bench itself (no CDNs).
   - POSTs need `Content-Type: application/json`, an `Origin` equal to the
-    served origin, and `X-Bench: 1`. Bodies ≤ 8 KB.
+    served origin, and `X-Bench: 1`. Bodies ≤ 8 KB (16 KB for a Phase 2
+    `/message`).
   - Never log request bodies, tokens or session text. Log only route + status.
 - **Pairing**: Settings → Phone shows a QR code of the URL and a one-time
   6-digit code (expires after 10 minutes, 5 wrong tries then a new code).
@@ -1473,7 +1474,8 @@ store (in memory in tests and the demo).
   (403) and size (413), then for `/api/*` the cookie (401). The parser
   refuses a head over 16 KB (431), `Transfer-Encoding` (501), absolute-form
   targets, folded or bare-CR/LF headers and doubled `Content-Length` (400),
-  and a declared body over 8 KB before reading it (413). Routes match the
+  and a declared body over the route's limit before reading it (413; 8 KB,
+  16 KB for Phase 2's `/message`). Routes match the
   path exactly, never decoded. The log names the route's pattern, the status
   and, for a refusal, which check refused (`host`, `login`, `funnel`,
   `route`, `method`, `type`, `origin`, `xbench`, `size`, `token`, `device`),
@@ -1516,7 +1518,9 @@ Bench reads through its own web view, as `apiGET` does, but with a dedicated
 **session reader** whose JavaScript runs the two GETs *and projects them inside
 the page*, so Swift only ever receives the fields below. Allowed GETs, exactly:
 `/api/frames/<36>?shallow=true` and `/api/frames/<36>/messages?from=-12&limit=12`.
-`no-store`, never logged, never saved, held only while a response is built.
+`no-store`, never logged, never saved, held only while a response is built
+and then at most 5 s in memory (so a burst of requests reads the page once;
+dropped after any action on the session).
 
 - From the shallow frame: `status` (one of the eight known values, else
   unreadable), `agent_name`, `project_id`, `status_description` (≤ 200 chars),
