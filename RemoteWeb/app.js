@@ -30,6 +30,17 @@ const S = {
   sessSig: {},         // id -> what the state said about it at that fetch
   sessTimer: 0,
   push: { loaded: false, unavailable: false, key: '', on: false, prefs: null, busy: false, msg: '' },
+  side: { tab: 'now', pid: null },   // what the iPad sidebar is showing
+  from: null,          // the last list screen we were on, so a session's Back says where it goes
+  prevKey: '',
+  projects: { list: [], loaded: false, busy: false, err: false, at: 0 },
+  proj: {},            // pid -> { items, next, q, applied, busy, err, loaded, seq, t }
+  newSess: {},         // pid -> the draft of a new session
+  hist: {},            // session id -> its history rows, by index
+  art: {},             // session id -> its artifacts
+  files: {},           // version id -> { v, a, name, kind, size, mime, at }
+  ftext: {},           // version id -> the text, markdown or table of a file
+  wrap: false,
 };
 const splitQuery = matchMedia('(min-width: 768px) and (min-height: 500px)');
 S.split = splitQuery.matches;
@@ -60,6 +71,23 @@ const PATHS = {
   moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
   up: '<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  compose: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  file: '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>',
+  doc: '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+  table: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/>',
+  code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+  text: '<line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+  list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+  ask: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  msg: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  helper: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  share: '<path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>',
 };
 
 function icon(name, cls = '') {
@@ -141,6 +169,7 @@ async function api(path, method = 'GET', body) {
   if (!res.ok) {
     const e = new Error('http ' + res.status);
     e.status = res.status;
+    try { e.data = await res.json(); } catch { /* not JSON */ }
     throw e;
   }
   try { return await res.json(); } catch { return null; }
@@ -177,6 +206,7 @@ function showPair(msg = '') {
   S.sig = '';
   S.sess = {};
   S.ui = {};
+  Object.assign(S, { projects: { list: [], loaded: false, busy: false, err: false, at: 0 }, proj: {}, newSess: {}, hist: {}, art: {}, files: {}, ftext: {} });
   S.push = { loaded: false, unavailable: false, key: '', on: false, prefs: null, busy: false, msg: '' };
   S.me = null;
   disconnect();
@@ -211,7 +241,12 @@ function refresh(fg = true) {
 
 function refreshAll(fg) {
   const r = route();
-  return Promise.all([refresh(fg), r.name === 'session' ? loadSession(r.id) : null]);
+  const jobs = [refresh(fg)];
+  if (r.name === 'session') { jobs.push(loadSession(r.id)); if (browseOn()) jobs.push(loadArtifacts(r.id)); }
+  else if (r.name === 'artifacts') jobs.push(loadArtifacts(r.id));
+  else if (r.name === 'projects') jobs.push(loadProjects(true));
+  else if (r.name === 'project') jobs.push(loadProjects(true), loadProject(r.pid, false));
+  return Promise.all(jobs);
 }
 
 async function start() {
@@ -239,6 +274,8 @@ async function loadSession(id) {
   const had = S.sess[id];
   S.sessAt[id] = Date.now();
   S.sessSig[id] = JSON.stringify(lookup(id));
+  const here = route();
+  if (here.name === 'session' && here.id === id) loadHistory(id);
   if (!had) S.sess[id] = { phase: 'loading', data: null };
   try {
     const data = await api('/api/sessions/' + encodeURIComponent(id));
@@ -271,7 +308,8 @@ function gotState(st) {
   if (sig === S.sig) return;
   S.sig = sig;
   const r = route();
-  if (r.name === 'settings' && !S.split) return;
+  const showsState = S.split ? S.side.tab === 'now' || r.name === 'session' : r.name === 'now' || r.name === 'session';
+  if (!showsState) return;
   render();
   // The open session is read again only when the state says it changed, and at most every 10 s.
   if (r.name === 'session' && JSON.stringify(lookup(r.id)) !== S.sessSig[r.id]) fetchSoon(r.id);
@@ -372,36 +410,93 @@ function onHidden() {
 
 /* ---------- routing ---------- */
 
-function route() {
-  const hash = location.hash.slice(1) || '/';
-  const m = hash.match(/^\/session\/([0-9a-f-]{36})$/);
-  if (m) return { name: 'session', id: m[1] };
-  if (hash === '/settings') return { name: 'settings' };
+const RE = { sid: /^[0-9a-f-]{36}$/, pid: /^[A-Za-z0-9_-]{1,64}$/, vid: /^[A-Za-z0-9_-]{1,128}$/ };
+const browseOn = () => !S.me || S.me.browse !== false;
+
+function routeOf(hash) {
+  const p = (hash || '').replace(/^#/, '') || '/';
+  let m;
+  if ((m = p.match(/^\/session\/([0-9a-f-]{36})\/file\/([A-Za-z0-9_-]{1,128})$/))) return { name: 'file', id: m[1], v: m[2] };
+  if ((m = p.match(/^\/session\/([0-9a-f-]{36})\/artifacts$/))) return { name: 'artifacts', id: m[1] };
+  if ((m = p.match(/^\/session\/([0-9a-f-]{36})$/))) return { name: 'session', id: m[1] };
+  if ((m = p.match(/^\/projects\/([A-Za-z0-9_-]{1,64})$/))) return { name: 'project', pid: m[1] };
+  if (p === '/projects') return { name: 'projects' };
+  if (p === '/settings') return { name: 'settings' };
   return { name: 'now' };
 }
-const routeKey = () => { const r = route(); return r.name + (r.id || ''); };
+
+// With browsing switched off on the Mac the Projects, History and Artifacts parts do not exist.
+function route() {
+  const r = routeOf(location.hash);
+  if (browseOn()) return r;
+  if (r.name === 'projects' || r.name === 'project') return { name: 'now' };
+  if (r.name === 'artifacts' || r.name === 'file') return { name: 'session', id: r.id };
+  return r;
+}
+const routeKey = (r = route()) => [r.name, r.pid || '', r.id || '', r.v || ''].join('|');
+
+// The iPad sidebar follows the list screens; a session, its files and Settings leave it as it was.
+function syncSide(r = route()) {
+  if (r.name === 'now') S.side = { tab: 'now', pid: null };
+  else if (r.name === 'projects') S.side = { tab: 'projects', pid: null };
+  else if (r.name === 'project') S.side = { tab: 'projects', pid: r.pid };
+  else return;
+  S.from = { name: r.name, pid: r.pid || null };
+}
+
+// Where a session's Back goes, by the list it was opened from.
+function sessionBack() {
+  const f = S.from;
+  if (f && f.name === 'projects') return ['Projects', '#/projects'];
+  if (f && f.name === 'project') return [projName(f.pid), '#/projects/' + f.pid];
+  return ['Now', '#/'];
+}
+
+function ensureBrowse(r) {
+  if (!browseOn()) return;
+  const t = S.split ? S.side : r.name === 'projects' ? { tab: 'projects', pid: null } : r.name === 'project' ? { tab: 'projects', pid: r.pid } : null;
+  if (t && t.tab === 'projects') {
+    loadProjects();
+    if (t.pid && !proj(t.pid).loaded) loadProject(t.pid, false);
+  }
+}
 
 function enterRoute() {
   const r = route();
-  if (r.name === 'session') loadSession(r.id);
-  else if (r.name === 'settings') { loadMe(); loadPush(); }
-  else if (!S.me) loadMe();
+  syncSide(r);
+  if (!S.me) loadMe();
+  if (r.name === 'settings') { loadMe(); loadPush(); }
+  if (r.name === 'session') {
+    loadSession(r.id);
+    if (browseOn()) loadArtifacts(r.id);
+  }
+  if (r.name === 'artifacts') {
+    if (!S.sess[r.id]) loadSession(r.id);
+    loadArtifacts(r.id);
+  }
+  if (r.name === 'file') {
+    if (!S.sess[r.id]) loadSession(r.id);
+    if (S.files[r.v]) maybeLoadText(r.v); else loadArtifacts(r.id);
+  }
+  ensureBrowse(r);
 }
 
 addEventListener('hashchange', () => {
   if (!S.split) S.scroll[S.rk] = window.scrollY;
   S.navs++;
+  S.prevKey = S.rk;
   S.rk = routeKey();
   if (S.view === 'app') enterRoute();
   render(true);
-  if (!S.split) window.scrollTo(0, S.rk === 'now' ? S.scroll.now || 0 : 0);
+  if (!S.split) window.scrollTo(0, /^(now|projects?)\|/.test(S.rk) ? S.scroll[S.rk] || 0 : 0);
 });
 
 /* ---------- rendering ---------- */
 
-function render(fresh = false) {
+// `force` skips the in-place patch: used when the data a screen shows has just arrived.
+function render(fresh = false, force = false) {
   const r = route();
-  if (!fresh && S.view === 'app' && patchSession(r)) return;
+  if (!fresh && !force && S.view === 'app' && patchApp(r)) return;
   const active = document.activeElement;
   const keep = !fresh && active && active.dataset ? active.dataset.key : '';
   // The two split panes scroll on their own: carry their positions across.
@@ -428,43 +523,100 @@ function render(fresh = false) {
   }
 }
 
-// The session screen is already up: refresh the list beside it and the regions that changed.
-function patchSession(r) {
+const detailKey = (r) => (['session', 'artifacts', 'file', 'settings'].includes(r.name) ? routeKey(r) : 'empty');
+const sideKey = () => S.side.tab + ':' + (S.side.pid || '');
+
+// The screen is already up: refresh what changed without rebuilding it (and without losing a keyboard).
+function patchApp(r) {
+  const split = root.querySelector('.split');
+  if (!!split !== S.split) return false;
+  if (S.split) {
+    if (split.dataset.dk !== detailKey(r) || split.dataset.sk !== sideKey()) return false;
+    if (S.side.tab === 'now' || !browseOn()) refreshSide();
+    if (r.name === 'session') {
+      const sv = root.querySelector('.sessview');
+      if (!sv) return false;
+      fillSession(sv, r.id);
+    }
+    return true;
+  }
   if (r.name !== 'session') return false;
   const sv = root.querySelector('.sessview');
-  if (!sv || sv.dataset.sess !== r.id || !!root.querySelector('.split') !== S.split) return false;
-  if (S.split) {
-    const side = root.querySelector('.side-pane');
-    const top = side.scrollTop;
-    const active = document.activeElement;
-    const key = active && side.contains(active) ? active.dataset.key : '';
-    side.querySelector('.pane-in').replaceChildren(...nowContent().filter(Boolean));
-    side.scrollTop = top;
-    if (key) { const again = side.querySelector(`[data-key="${CSS.escape(key)}"]`); if (again) again.focus({ preventScroll: true }); }
-    watchTitle();
-  } else {
-    const t = root.querySelector('.bar-t');
-    if (t) t.textContent = sessionTitle(r.id);
-  }
+  if (!sv || sv.dataset.sess !== r.id) return false;
+  const t = root.querySelector('.bar-t');
+  if (t) t.textContent = sessionTitle(r.id);
   fillSession(sv, r.id);
   return true;
 }
 
-function singleView(r) {
-  if (r.name === 'session') return sessionView(r.id, false);
-  if (r.name === 'settings') return h('div', null, bar('Settings', backLink('Now'), null), h('main', { class: 'wrap' }, settingsContent()));
-  return h('div', null, bar('Now', null, [refreshButton(), settingsLink()]), h('main', { class: 'wrap' }, nowContent()));
+function refreshSide() {
+  const side = root.querySelector('.side-pane');
+  if (!side) return;
+  const top = side.scrollTop;
+  const active = document.activeElement;
+  const key = active && side.contains(active) ? active.dataset.key : '';
+  side.querySelector('.pane-in').replaceChildren(...sideContent().filter(Boolean));
+  side.scrollTop = top;
+  if (key) { const again = side.querySelector(`[data-key="${CSS.escape(key)}"]`); if (again) again.focus({ preventScroll: true }); }
+  watchTitle();
 }
 
+// A list screen: a bar, the content, and the tab bar when there is more than one tab.
+function screen(header, content, tab) {
+  const tabs = tab ? tabbar(tab) : null;
+  return h('div', { class: tabs ? 'has-tabs' : null }, header, h('main', { class: 'wrap' }, content), tabs);
+}
+
+function tabbar(active) {
+  if (!browseOn()) return null;
+  const tab = (href, label, name, ic) => h('a', { class: 'tab', href, 'aria-current': active === name ? 'page' : null }, icon(ic), h('span', { text: label }));
+  return h('nav', { class: 'tabbar', 'aria-label': 'Sections' }, tab('#/', 'Now', 'now', 'clock'), tab('#/projects', 'Projects', 'projects', 'folder'));
+}
+
+const composeButton = (pid) => h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'New session', onclick: () => newSessionSheet(pid) }, icon('compose'));
+const shortTitle = (t) => (t.length > 24 ? t.slice(0, 23) + '…' : t);
+
+function singleView(r) {
+  switch (r.name) {
+    case 'session': return sessionView(r.id, false);
+    case 'settings': return screen(bar('Settings', backLink('Now'), null), settingsContent());
+    case 'projects': return screen(bar('Projects', null, [refreshButton()]), projectsContent(), 'projects');
+    case 'project': return screen(bar(projName(r.pid), backLink('Projects', '#/projects'), composeButton(r.pid)), projectContent(r.pid), 'projects');
+    case 'artifacts': return screen(bar('Artifacts', backLink(shortTitle(sessionTitle(r.id)), '#/session/' + r.id), refreshButton()), artifactsContent(r.id));
+    case 'file': return screen(bar(fileName(r.v), backLink('Artifacts', '#/session/' + r.id + '/artifacts'), null), fileContent(r.id, r.v));
+    default: return screen(bar('Now', null, [refreshButton(), settingsLink()]), nowContent(), 'now');
+  }
+}
+
+function sideBar() {
+  if (!browseOn()) return bar('Now', null, [refreshButton(), settingsLink()]);
+  const seg = (href, label, name) => h('a', { class: 'seg-b', href, role: 'tab', 'aria-selected': S.side.tab === name ? 'true' : 'false', 'aria-current': S.side.tab === name ? 'page' : null, text: label });
+  return h('header', { class: 'bar' }, h('div', { class: 'bar-in side-bar' },
+    h('div', { class: 'seg', role: 'tablist', 'aria-label': 'Sections' }, seg('#/', 'Now', 'now'), seg('#/projects', 'Projects', 'projects')),
+    h('div', { class: 'bar-r' }, [refreshButton(), settingsLink()])));
+}
+
+function sideContent() {
+  if (!browseOn() || S.side.tab === 'now') return nowContent();
+  if (!S.side.pid) return projectsContent();
+  return [h('a', { class: 'back-row', href: '#/projects' }, icon('left'), h('span', { text: 'Projects' })), ...projectContent(S.side.pid)];
+}
+
+const crumb = (href, label) => h('a', { class: 'crumb', href }, icon('left', 'sm'), h('span', { text: label }));
+
 function splitView(r) {
-  const detail = r.name === 'session'
-    ? sessionView(r.id, true)
-    : h('div', { class: 'detail-col' }, h('div', { class: 'detail-body' },
-      h('div', { class: 'detail-in' + (r.name === 'now' ? ' nothing' : '') }, r.name === 'settings' ? settingsContent() : emptyDetail())));
-  return h('div', { class: 'split' },
-    h('nav', { class: 'pane side-pane', 'aria-label': 'Sessions' },
-      bar('Now', null, [refreshButton(), settingsLink()]),
-      h('div', { class: 'pane-in' }, nowContent())),
+  let detail;
+  if (r.name === 'session') detail = sessionView(r.id, true);
+  else {
+    const body = r.name === 'settings' ? settingsContent()
+      : r.name === 'artifacts' ? [crumb('#/session/' + r.id, shortTitle(sessionTitle(r.id))), ...artifactsContent(r.id)]
+      : r.name === 'file' ? [crumb('#/session/' + r.id + '/artifacts', 'Artifacts'), ...fileContent(r.id, r.v)]
+      : emptyDetail();
+    detail = h('div', { class: 'detail-col' }, h('div', { class: 'detail-body' },
+      h('div', { class: 'detail-in' + (detailKey(r) === 'empty' ? ' nothing' : '') }, body)));
+  }
+  return h('div', { class: 'split', 'data-dk': detailKey(r), 'data-sk': sideKey() },
+    h('nav', { class: 'pane side-pane', 'aria-label': 'Sessions' }, sideBar(), h('div', { class: 'pane-in' }, sideContent())),
     h('main', { class: 'pane detail' }, detail));
 }
 
@@ -498,13 +650,14 @@ function bar(title, left, right) {
       h('div', { class: 'bar-r' }, right)));
 }
 
-function backLink(label) {
+function backLink(label, href = '#/') {
   return h('a', {
     class: 'back',
-    href: '#/',
+    href,
     'aria-label': 'Back to ' + label,
     onclick: (e) => {
-      if (S.navs > 0) { e.preventDefault(); history.back(); }
+      // pop the history when the screen before this one is where Back goes; otherwise follow the link
+      if (S.navs > 0 && S.prevKey === routeKey(routeOf(href))) { e.preventDefault(); history.back(); }
     },
   }, icon('left'), h('span', { text: label }));
 }
@@ -634,9 +787,13 @@ function nowContent() {
 
 const txt = (s) => document.createTextNode(s);
 
+// md(text, { image(src) -> a version id or null }). An image shows only when `image` names one of
+// this session's own listed images; anything else is its alt text. Links are always plain words.
+let mdImage = null;
+
 function inline(s, depth = 0) {
   const out = [];
-  const re = /`([^`\n]+)`|\*\*([^*\n]+?)\*\*|\*([^*\s][^*\n]*?)\*|\[([^\]\n]*)\]\(([^)\s]*)\)/g;
+  const re = /`([^`\n]+)`|\*\*([^*\n]+?)\*\*|\*([^*\s][^*\n]*?)\*|!\[([^\]\n]*)\]\(([^)\s]*)\)|\[([^\]\n]*)\]\(([^)\s]*)\)/g;
   let last = 0;
   let m;
   while ((m = re.exec(s))) {
@@ -644,7 +801,14 @@ function inline(s, depth = 0) {
     if (m[1] != null) out.push(h('code', { text: m[1] }));
     else if (m[2] != null) out.push(h('strong', null, depth < 3 ? inline(m[2], depth + 1) : txt(m[2])));
     else if (m[3] != null) out.push(h('em', null, depth < 3 ? inline(m[3], depth + 1) : txt(m[3])));
-    else out.push(txt(m[5] && m[5] !== m[4] ? `${m[4]} (${m[5]})` : m[4] || m[5])); // a link is just its words
+    else if (m[5] != null) {
+      const v = mdImage ? mdImage(m[5]) : null;
+      if (v && RE.vid.test(v)) {
+        const img = h('img', { class: 'md-img', src: '/api/files/' + v + '/thumb?w=800', alt: m[4], loading: 'lazy' });
+        img.addEventListener('error', () => img.replaceWith(txt(m[4] || 'image')));
+        out.push(img);
+      } else out.push(txt(m[4] || 'image'));
+    } else out.push(txt(m[7] && m[7] !== m[6] ? `${m[6]} (${m[7]})` : m[6] || m[7])); // a link is just its words
     last = re.lastIndex;
   }
   if (last < s.length) out.push(txt(s.slice(last)));
@@ -657,7 +821,8 @@ function mdLines(lines) {
   return out;
 }
 
-function md(src) {
+function md(src, ctx) {
+  mdImage = ctx && ctx.image ? ctx.image : null;
   const lines = String(src == null ? '' : src).slice(0, 20000).replace(/\r\n?/g, '\n').split('\n');
   const out = [];
   const bullet = /^(\s*)[-*+]\s+(.*)$/;
@@ -812,13 +977,13 @@ function statusMark(state) {
 // What the person has typed or chosen on a session, kept across every redraw.
 const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: {}, other: {}, otherOn: {}, qTool: '', busy: {}, note: null, noteT: 0, shown: 4, more: {} });
 
-const REGIONS = ['head', 'open', 'unread', 'question', 'plan', 'reply', 'toyou', 'convo', 'times', 'openlow'];
+const REGIONS = ['head', 'open', 'unread', 'question', 'plan', 'reply', 'toyou', 'artifacts', 'convo', 'times', 'openlow'];
 
 function sessionView(id, inPane) {
   const body = h('div', { class: (inPane ? 'detail-in' : 'wrap') + ' sess-body' }, REGIONS.map((n) => h('div', { 'data-r': n })));
   const sv = inPane
     ? h('div', { class: 'detail-col sessview', 'data-sess': id }, h('div', { class: 'detail-body' }, body))
-    : h('div', { class: 'sessview single', 'data-sess': id }, bar(sessionTitle(id), backLink('Now'), refreshButton()), h('main', null, body));
+    : h('div', { class: 'sessview single', 'data-sess': id }, bar(sessionTitle(id), backLink(...sessionBack()), refreshButton()), h('main', null, body));
   fillSession(sv, id);
   return sv;
 }
@@ -867,7 +1032,22 @@ function fillSession(sv, id) {
   set('toyou', d && d.toYou && d.toYou.length ? d.toYou : 0, () => (d && d.toYou && d.toYou.length
     ? [section('Messages to you', 0, h('ul', { class: 'group' }, d.toYou.map((m) => h('li', { class: 'turn' },
       h('div', { class: 'md' }, md(m.text)), m.at ? h('p', { class: 'foot-t' }, rel(m.at)) : null))))] : []));
-  set('convo', d && d.turns && d.turns.length ? [d.turns, u.shown, u.more] : 0, () => (d && d.turns && d.turns.length ? [convo(id, d.turns, u)] : []));
+  // Artifacts: a row with a count, once the list is in.
+  const A = art(id);
+  const nArt = browseOn() && A.loaded ? A.items.length : 0;
+  set('artifacts', nArt, () => (nArt ? [h('ul', { class: 'group sec' }, h('li', null, h('a', { class: 'row', href: `#/session/${id}/artifacts`, 'data-key': 'artifacts' },
+    h('span', { class: 'kind-ic', 'aria-hidden': 'true' }, icon('file', 'sm')),
+    h('span', { class: 'row-main' }, h('span', { class: 'title', text: 'Artifacts' })),
+    h('span', { class: 'side', text: String(nArt) }),
+    icon('chev', 'sm chev'))))] : []));
+  // Conversation: the whole history once it has arrived, the last few turns until then.
+  const H = browseOn() ? hist(id) : null;
+  const fullHist = !!(H && H.loaded);
+  if (fullHist) {
+    set('convo', [H.rev, H.from, H.busy, H.err, u.more, Object.keys(H.full).length, H.cutBusy, H.cutErr], () => [histCard(id, H, u)]);
+  } else {
+    set('convo', d && d.turns && d.turns.length ? [d.turns, u.shown, u.more] : 0, () => (d && d.turns && d.turns.length ? [convo(id, d.turns, u)] : []));
+  }
   set('times', d ? [d.state, d.startedAt, d.updatedAt] : 0, () => (d ? [timesCard(d)] : []));
 
   let dock = sv.querySelector('.dock');
@@ -875,7 +1055,7 @@ function fillSession(sv, id) {
     if (!dock) { dock = buildDock(id); sv.append(dock); }
     paintDock(id, dock);
   } else if (dock) dock.remove();
-  requestAnimationFrame(() => measureClamps(sv));
+  requestAnimationFrame(() => { measureClamps(sv); watchHistTop(sv, id); });
 }
 
 function headNodes(id, rec, d, snap) {
@@ -1026,8 +1206,8 @@ function convo(id, turns, u) {
 // Show "More" only on turns that really are cut off.
 function measureClamps(sv) {
   for (const el of sv.querySelectorAll('.md.clamp:not(.open)')) {
-    const b = el.nextElementSibling;
-    if (b && b.dataset.more) b.hidden = el.scrollHeight <= el.clientHeight + 1;
+    const b = el.nextElementSibling && el.nextElementSibling.dataset && el.nextElementSibling.dataset.more ? el.nextElementSibling : el.parentElement.querySelector('[data-more]');
+    if (b) b.hidden = el.scrollHeight <= el.clientHeight + 1;
   }
 }
 
@@ -1076,7 +1256,7 @@ function buildDock(id) {
   ta.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touchOnly()) { e.preventDefault(); sendMessage(id); }
   });
-  return h('div', { class: 'dock' }, h('div', { class: 'dock-in' },
+  return h('div', { class: 'dock', 'data-sess': id }, h('div', { class: 'dock-in' },
     h('div', { class: 'dock-note', role: 'status', hidden: true }),
     h('div', { class: 'composer' }, grow, h('button', { class: 'send', type: 'button', 'aria-label': 'Send', onclick: () => sendMessage(id) }, icon('up'))),
     h('p', { class: 'dock-count', hidden: true })));
@@ -1084,7 +1264,8 @@ function buildDock(id) {
 
 function paintDock(id, dock = root.querySelector('.dock')) {
   const d = S.sess[id] && S.sess[id].data;
-  if (!dock || !d || !d.can) return;
+  // a late timer or reply for a session we have left must not repaint the one on screen
+  if (!dock || dock.dataset.sess !== id || !d || !d.can) return;
   const u = ui(id);
   const can = d.can;
   const ta = dock.querySelector('textarea');
@@ -1171,10 +1352,597 @@ async function sendMessage(id) {
   if (result && result.ok) {
     u.draft = '';
     u.msg = null;
-    const ta = root.querySelector('.composer-ta');
+    const dock = root.querySelector('.dock');
+    const ta = dock && dock.dataset.sess === id ? dock.querySelector('.composer-ta') : null;
     if (ta) ta.value = '';
     paintDock(id);
   }
+}
+
+/* ---------- Browse: projects, a project's sessions, starting a session ---------- */
+
+const quiet = (t) => h('p', { class: 'quiet', text: t });
+const isBrowseOff = (x) => !!x && x.status === 403 && !!x.data && x.data.error === 'browseOff';
+const errorCard = (text, retry) => h('div', { class: 'card pad' }, h('p', { class: 'n-note', text }), h('button', { class: 'btn retry', type: 'button', text: 'Try again', onclick: retry }));
+
+function setBrowseOff() {
+  S.me = { ...(S.me || {}), browse: false };
+  render(true);
+}
+
+const projName = (pid) => (S.projects.list.find((p) => p.id === pid) || {}).name || 'Project';
+const proj = (pid) => (S.proj[pid] ||= { items: [], next: null, q: '', applied: null, busy: false, err: false, loaded: false, seq: 0, t: 0 });
+
+async function loadProjects(force = false) {
+  const P = S.projects;
+  if (P.busy || (!force && P.loaded && Date.now() - P.at < 10000)) return;
+  P.busy = true;
+  try {
+    const d = await api('/api/projects');
+    P.list = Array.isArray(d && d.projects) ? d.projects.filter((p) => p && RE.pid.test(p.id)) : [];
+    P.loaded = true;
+    P.err = false;
+    P.at = Date.now();
+  } catch (e) {
+    P.busy = false;
+    if (e instanceof Unauth) return showPair();
+    if (isBrowseOff(e)) return setBrowseOff();
+    P.err = true;
+    return onProjects();
+  }
+  P.busy = false;
+  onProjects();
+}
+
+function onProjects() {
+  const r = route();
+  for (const el of root.querySelectorAll('[data-ptitle]')) el.textContent = projName(el.dataset.ptitle);
+  if (r.name === 'project') { const t = root.querySelector('.bar-t'); if (t) t.textContent = projName(r.pid); }
+  if (S.split) { if (S.side.tab === 'projects' && !S.side.pid) refreshSide(); } else if (r.name === 'projects') render(false, true);
+}
+
+function projectsContent() {
+  const P = S.projects;
+  let body;
+  if (!P.loaded) body = P.err ? errorCard('Couldn’t load your projects.', () => { P.err = false; loadProjects(true); }) : quiet('Loading…');
+  else if (!P.list.length) body = h('div', { class: 'group' }, h('div', { class: 'empty', text: 'No projects yet' }));
+  else {
+    body = h('ul', { class: 'group' }, P.list.map((p) => h('li', null,
+      h('a', { class: 'row', href: '#/projects/' + p.id, 'data-key': 'p:' + p.id },
+        h('span', { class: 'row-main' },
+          h('span', { class: 'title', text: p.name || 'Untitled project' }),
+          h('span', { class: 'sub' }, `${p.sessions || 0} ${p.sessions === 1 ? 'session' : 'sessions'}`, p.lastActive ? [' · ', rel(p.lastActive)] : null)),
+        icon('chev', 'sm chev')))));
+  }
+  return [h('h1', { class: 'large', tabindex: '-1', text: 'Projects' }), body];
+}
+
+async function loadProject(pid, more) {
+  const P = proj(pid);
+  if (more && (P.busy || !P.next)) return;
+  const q = P.q.trim().length >= 2 ? P.q.trim() : '';
+  const seq = ++P.seq;
+  P.busy = true;
+  P.err = false;
+  paintProject(pid);
+  const qs = [];
+  if (more) qs.push('before=' + encodeURIComponent(P.next));
+  if (q) qs.push('q=' + encodeURIComponent(q));
+  try {
+    const d = await api(`/api/projects/${pid}/sessions` + (qs.length ? '?' + qs.join('&') : ''));
+    if (seq !== P.seq) return; // a newer search has taken over
+    const rows = Array.isArray(d && d.sessions) ? d.sessions.filter((x) => x && RE.sid.test(x.id)) : [];
+    P.items = more ? P.items.concat(rows) : rows;
+    P.next = (d && d.next) || null;
+    P.applied = q;
+    P.loaded = true;
+  } catch (e) {
+    if (seq !== P.seq) return;
+    if (e instanceof Unauth) { P.busy = false; return showPair(); }
+    if (isBrowseOff(e)) { P.busy = false; return setBrowseOff(); }
+    P.err = true;
+  }
+  P.busy = false;
+  paintProject(pid);
+}
+
+// 300 ms after the last keystroke; one character is not a search.
+function onSearch(pid, value) {
+  const P = proj(pid);
+  P.q = value;
+  clearTimeout(P.t);
+  const eff = value.trim().length >= 2 ? value.trim() : '';
+  if (eff === P.applied) return;
+  P.t = setTimeout(() => loadProject(pid, false), 300);
+}
+
+function sessionRow(s) {
+  return h('li', null, h('a', { class: 'row', href: sessionHref(s.id), 'data-key': 's:' + s.id, 'aria-current': current(s.id) },
+    h('span', { class: 'mk', 'aria-hidden': 'true' }, statusMark(s.state)),
+    h('span', { class: 'row-main' },
+      h('span', { class: 'title', text: s.title || 'Untitled session' }),
+      s.sentence ? h('span', { class: 'sub', text: s.sentence }) : null),
+    h('span', { class: 'side' }, rel(s.updatedAt)),
+    icon('chev', 'sm chev')));
+}
+
+function projectRows(pid) {
+  const P = proj(pid);
+  const q = P.q.trim().length >= 2 ? P.q.trim() : '';
+  const rows = [h('li', null, h('button', { class: 'row newrow', type: 'button', 'data-key': 'new:' + pid, onclick: () => newSessionSheet(pid) },
+    icon('plus', 'sm'), h('span', { class: 'row-main' }, h('span', { class: 'title', text: 'New session' }))))];
+  rows.push(...P.items.map(sessionRow));
+  const out = [h('ul', { class: 'group' }, rows)];
+  if (!P.loaded && !P.err) out.push(quiet('Loading…'));
+  if (P.err) out.push(errorCard('Couldn’t load these sessions.', () => loadProject(pid, P.items.length > 0 && !!P.next)));
+  if (P.loaded && !P.items.length) out.push(quiet(q ? `No sessions match “${q}”.` : 'No sessions in this project yet.'));
+  if (P.next && !P.err) {
+    out.push(h('button', { class: 'btn load-more', type: 'button', text: P.busy ? 'Loading…' : 'Load more', disabled: P.busy, 'data-key': 'more:' + pid, onclick: () => loadProject(pid, true) }));
+  }
+  return out;
+}
+
+function paintProject(pid) {
+  for (const el of root.querySelectorAll(`.plist[data-pid="${pid}"]`)) el.replaceChildren(...projectRows(pid));
+}
+
+function projectContent(pid) {
+  const P = proj(pid);
+  const search = h('input', {
+    class: 'search', type: 'search', placeholder: 'Search sessions', 'aria-label': 'Search sessions in ' + projName(pid), enterkeyhint: 'search',
+    autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', 'data-key': 'search',
+    oninput: (e) => onSearch(pid, e.target.value),
+  });
+  search.value = P.q;
+  const list = h('div', { class: 'plist', 'data-pid': pid });
+  list.append(...projectRows(pid));
+  return [h('h1', { class: 'large', tabindex: '-1', 'data-ptitle': pid, text: projName(pid) }), h('div', { class: 'search-wrap' }, search), list];
+}
+
+/* ----- starting a session ----- */
+
+function newSessionSheet(pid) {
+  const st = (S.newSess[pid] ||= { text: '', msg: null, plan: false });
+  const before = document.activeElement;
+  let busy = false;
+  const ta = h('textarea', {
+    class: 'ns-text', rows: '5', maxlength: '4000', placeholder: 'What should Claude work on?', 'aria-label': 'What should Claude work on?',
+    autocapitalize: 'sentences', enterkeyhint: 'enter', 'data-key': 'ns-text',
+  });
+  ta.value = st.text;
+  const sw = h('button', {
+    class: 'row sw ns-sw', type: 'button', role: 'switch', 'aria-checked': st.plan ? 'true' : 'false', 'data-key': 'ns-plan',
+    onclick: () => { st.plan = !st.plan; sw.setAttribute('aria-checked', st.plan ? 'true' : 'false'); },
+  }, h('span', { class: 'row-main' }, h('span', { class: 'title', text: 'Plan first' }), h('span', { class: 'sub', text: 'Claude drafts a plan for you to approve before it starts.' })),
+  h('span', { class: 'switch', 'aria-hidden': 'true' }));
+  const note = h('p', { class: 'msg', role: 'status', hidden: true });
+  const say = (t) => { note.textContent = t; note.hidden = !t; };
+  const start = h('button', { class: 'btn primary', type: 'button', text: 'Start', disabled: !st.text.trim(), 'data-key': 'ns-start', onclick: () => go() });
+  const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => close() });
+  const scrim = h('div', { class: 'scrim top', onclick: (e) => { if (e.target === scrim) close(); } },
+    h('div', { class: 'sheet wide', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ns-h' },
+      h('div', { class: 'box left' },
+        h('p', { class: 'sec-h', id: 'ns-h', text: projName(pid) }),
+        ta, h('div', { class: 'group ns-opts' }, sw), note, start),
+      cancel));
+  ta.addEventListener('input', () => { st.text = ta.value; start.disabled = busy || !ta.value.trim(); });
+  function key(e) { if (e.key === 'Escape') close(); }
+  function close() {
+    document.removeEventListener('keydown', key);
+    root.inert = false;
+    scrim.remove();
+    if (before && before.isConnected) before.focus({ preventScroll: true });
+  }
+  async function go() {
+    const text = ta.value.trim();
+    if (!text || busy) return;
+    if (!st.msg || st.msg.text !== text || st.msg.plan !== st.plan) st.msg = { id: uuid(), text, plan: st.plan }; // a retry of the same words keeps its id
+    busy = true;
+    start.disabled = true;
+    start.textContent = 'Starting…';
+    say('');
+    let out;
+    try {
+      out = await send(`/api/projects/${pid}/sessions`, { text, id: st.msg.id, planFirst: st.plan });
+    } catch (e) {
+      busy = false;
+      start.textContent = 'Start';
+      start.disabled = false;
+      if (e instanceof Unauth) { close(); return showPair(); }
+      say('Couldn’t reach your Mac. Try again.');
+      return;
+    }
+    busy = false;
+    start.textContent = 'Start';
+    start.disabled = !ta.value.trim();
+    const d = out.data;
+    if (d && d.result === 'started' && typeof d.id === 'string' && RE.sid.test(d.id) && out.status < 300) {
+      Object.assign(st, { text: '', msg: null, plan: false });
+      close();
+      location.hash = '#/session/' + d.id;
+      return;
+    }
+    if (out.status === 429) say('Too many actions just now. Try again in a minute.');
+    else if (isBrowseOff(out)) { close(); setBrowseOff(); } else if (out.status === 403 && !(d && d.sentence)) say('Actions are off in Bench’s Settings.');
+    else say((d && typeof d.sentence === 'string' && d.sentence) || 'Couldn’t start it from here. Open Bench on your Mac.');
+  }
+  document.addEventListener('keydown', key);
+  document.body.append(scrim);
+  root.inert = true;
+  ta.focus();
+}
+
+/* ---------- Artifacts and the file viewer ---------- */
+
+const KIND_ICON = { image: 'image', svg: 'image', markdown: 'doc', text: 'text', table: 'table', html: 'code', pdf: 'file', notebook: 'file', other: 'file' };
+const KIND_LABEL = { image: 'Image', svg: 'SVG image', markdown: 'Markdown', text: 'Text', table: 'Table', html: 'HTML', pdf: 'PDF', notebook: 'Notebook', other: 'File' };
+const kindIcon = (k) => KIND_ICON[k] || 'file';
+const MAX_DOWNLOAD = 8 * 1024 * 1024;
+
+function fmtSize(n) {
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
+const art = (id) => (S.art[id] ||= { items: [], loaded: false, busy: false, err: false });
+// A name is shown without bidi overrides and control characters, so it can't pose as another extension.
+const dispName = (n) => String(n == null ? '' : n).replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim();
+const fileName = (v) => dispName(S.files[v] && S.files[v].name) || 'File';
+const fileHref = (id, v) => (RE.vid.test(v) ? `#/session/${id}/file/${v}` : null);
+const safeName = (n) => dispName(n).replace(/[\\/]/g, '_').slice(0, 200) || 'file';
+
+function rememberFiles(files) {
+  for (const f of files || []) if (f && RE.vid.test(f.v)) S.files[f.v] = { ...S.files[f.v], ...f };
+}
+
+async function loadArtifacts(id) {
+  if (!browseOn()) return;
+  const A = art(id);
+  if (A.busy) return;
+  A.busy = true;
+  try {
+    const d = await api('/api/sessions/' + id + '/artifacts');
+    A.items = (Array.isArray(d && d.artifacts) ? d.artifacts : []).filter((f) => f && RE.vid.test(f.v));
+    rememberFiles(A.items);
+    A.loaded = true;
+    A.err = false;
+  } catch (e) {
+    A.busy = false;
+    if (e instanceof Unauth) return showPair();
+    if (isBrowseOff(e)) return setBrowseOff();
+    A.err = true;
+    return onArtifacts(id);
+  }
+  A.busy = false;
+  onArtifacts(id);
+}
+
+function onArtifacts(id) {
+  const r = route();
+  if ((r.name === 'artifacts' || r.name === 'file') && r.id === id) {
+    if (r.name === 'file') maybeLoadText(r.v);
+    render(false, true);
+  } else if (r.name === 'session' && r.id === id) redrawSession(id);
+}
+
+function maybeLoadText(v) {
+  const f = S.files[v];
+  if (!f || !['markdown', 'text', 'table'].includes(f.kind) || S.ftext[v]) return;
+  S.ftext[v] = { phase: 'loading' };
+  api('/api/files/' + v + '/text')
+    .then((d) => { S.ftext[v] = { phase: 'ok', data: d }; })
+    .catch((e) => {
+      if (e instanceof Unauth) return showPair();
+      if (isBrowseOff(e)) return setBrowseOff();
+      S.ftext[v] = { phase: 'err', status: e.status };
+    })
+    .finally(() => { const r = route(); if (r.name === 'file' && r.v === v) render(false, true); });
+}
+
+// This session's own listed images: the only ones a markdown file may show.
+function imagesOf(id) {
+  const out = art(id).items.filter((f) => f.kind === 'image');
+  const H = S.hist[id];
+  if (H) for (const it of Object.values(H.items)) for (const f of it.files || []) if (f.kind === 'image' && !out.some((o) => o.v === f.v)) out.push(f);
+  return out;
+}
+
+function imageFor(id, src) {
+  let name = String(src);
+  try { name = decodeURIComponent(name); } catch { /* keep it as written */ }
+  name = name.split('#')[0].split('?')[0].split('/').pop();
+  if (!name) return null;
+  const imgs = imagesOf(id);
+  const hit = imgs.find((f) => f.name === name) || imgs.find((f) => String(f.name).toLowerCase() === name.toLowerCase());
+  return hit ? hit.v : null;
+}
+
+const mdFor = (id) => ({ image: (src) => imageFor(id, src) });
+
+function thumbTile(id, f) {
+  const img = h('img', { src: '/api/files/' + f.v + '/thumb?w=120', alt: '', width: '120', height: '120', loading: 'lazy' });
+  const tile = h('a', { class: 'thumb', href: fileHref(id, f.v), 'aria-label': dispName(f.name) || 'Image', 'data-key': 'f:' + f.v }, img);
+  img.addEventListener('error', () => img.replaceWith(icon('image', 'big')));
+  return tile;
+}
+
+function fileRow(id, f) {
+  return h('li', null, h('a', { class: 'row', href: fileHref(id, f.v), 'data-key': 'f:' + f.v },
+    h('span', { class: 'kind-ic', 'aria-hidden': 'true' }, icon(kindIcon(f.kind), 'sm')),
+    h('span', { class: 'row-main' },
+      h('span', { class: 'title fname', text: dispName(f.name) || 'File' }),
+      h('span', { class: 'sub' }, [KIND_LABEL[f.kind] || 'File', fmtSize(f.size)].filter(Boolean).join(' · '), f.at ? [' · ', rel(f.at)] : null)),
+    icon('chev', 'sm chev')));
+}
+
+function artifactsContent(id) {
+  const A = art(id);
+  const nodes = [h('h1', { class: 'sess', tabindex: '-1', text: 'Artifacts' }), h('p', { class: 'sub tight-sub', text: sessionTitle(id) })];
+  if (!A.loaded) nodes.push(A.err ? errorCard('Couldn’t load the artifacts.', () => { A.err = false; render(false, true); loadArtifacts(id); }) : quiet('Loading…'));
+  else if (!A.items.length) nodes.push(h('div', { class: 'group' }, h('div', { class: 'empty', text: 'This session has made no artifacts yet.' })));
+  else {
+    const imgs = A.items.filter((f) => f.kind === 'image');
+    const rest = A.items.filter((f) => f.kind !== 'image');
+    if (imgs.length) nodes.push(section('Images', imgs.length, h('div', { class: 'thumbs' }, imgs.map((f) => thumbTile(id, f)))));
+    if (rest.length) nodes.push(section('Files', rest.length, h('ul', { class: 'group' }, rest.map((f) => fileRow(id, f)))));
+  }
+  return nodes;
+}
+
+const canShareFiles = () => {
+  try { return typeof navigator.share === 'function' && typeof navigator.canShare === 'function' && navigator.canShare({ files: [new File(['x'], 'x.txt', { type: 'text/plain' })] }); } catch { return false; }
+};
+
+function downloadBlock(id, f, quietStyle) {
+  if (f.size > MAX_DOWNLOAD) {
+    const b = h('button', { class: 'btn', type: 'button', text: 'Open on Mac', onclick: async () => { b.disabled = true; await openOnMac(id); b.disabled = false; b.textContent = S.open[id] && S.open[id].phase === 'done' ? 'Opened on your Mac ✓' : 'Open on Mac'; } });
+    return h('div', { class: 'act' }, h('p', { class: 'quiet', text: 'Too big for the phone. Open it on your Mac.' }), b);
+  }
+  const link = h('a', { class: 'btn' + (quietStyle ? '' : ' primary'), href: '/api/files/' + f.v + '/download', download: safeName(f.name) }, icon('download', 'sm'), 'Download · ' + fmtSize(f.size));
+  const out = h('div', { class: 'act dl' }, link);
+  if (canShareFiles()) {
+    const share = h('button', { class: 'btn', type: 'button', onclick: async () => {
+      share.disabled = true;
+      try {
+        const res = await fetch('/api/files/' + f.v + '/download', { cache: 'no-store' });
+        if (!res.ok) throw new Error('http');
+        const file = new File([await res.blob()], safeName(f.name), { type: res.headers.get('Content-Type') || 'application/octet-stream' });
+        if (navigator.canShare({ files: [file] })) await navigator.share({ files: [file] });
+      } catch { /* cancelled or unsupported: the Download button is still there */ }
+      share.disabled = false;
+    } }, icon('share', 'sm'), 'Share');
+    out.append(share);
+  }
+  return out;
+}
+
+function tableViewer(d) {
+  const cols = Array.isArray(d.columns) ? d.columns : [];
+  const rows = Array.isArray(d.rows) ? d.rows : [];
+  const cell = (v) => (v == null ? '' : String(v));
+  const table = h('table', { class: 'tbl' },
+    h('thead', null, h('tr', null, cols.map((c) => h('th', { scope: 'col', text: cell(c) })))),
+    h('tbody', null, rows.map((r) => h('tr', null, cols.map((_, k) => (k === 0 ? h('th', { scope: 'row', text: cell(r[k]) }) : h('td', { text: cell(r[k]) })))))));
+  return [
+    h('div', { class: 'tbl-wrap', tabindex: '0', role: 'region', 'aria-label': 'Table' }, table),
+    d.truncated ? h('p', { class: 'foot', text: `Showing the first ${rows.length} rows${cols.length >= 30 ? ' and 30 columns' : ''}. Download the file for the rest.` }) : null,
+  ];
+}
+
+function textViewer(id, f) {
+  const T = S.ftext[f.v];
+  if (!T || T.phase === 'loading') return [quiet('Loading…')];
+  if (T.phase === 'err') return [h('p', { class: 'quiet', text: T.status === 413 ? 'This file is too big to show here.' : 'Couldn’t show this file here.' }), downloadBlock(id, f, false)];
+  const d = T.data || {};
+  if (f.kind === 'table' && d.kind === 'table') return [...tableViewer(d), downloadBlock(id, f, true)];
+  const text = typeof d.text === 'string' ? d.text : '';
+  const note = d.truncated ? h('p', { class: 'foot', text: 'Showing the first 256 KB. Download the file for the rest.' }) : null;
+  if (f.kind === 'markdown' || d.kind === 'markdown') {
+    return [h('div', { class: 'card pad' }, h('div', { class: 'md' }, md(text, mdFor(id)))), note, downloadBlock(id, f, true)];
+  }
+  const pre = h('pre', { class: 'viewer-pre' + (S.wrap ? ' wrap' : ''), tabindex: '0' }, h('code', { text }));
+  const wrap = h('button', {
+    class: 'btn small', type: 'button', 'aria-pressed': S.wrap ? 'true' : 'false', text: 'Wrap lines',
+    onclick: (e) => { S.wrap = !S.wrap; pre.classList.toggle('wrap', S.wrap); e.currentTarget.setAttribute('aria-pressed', String(S.wrap)); },
+  });
+  return [h('div', { class: 'viewer-tools' }, wrap), pre, note, downloadBlock(id, f, true)];
+}
+
+function fileContent(id, v) {
+  const f = S.files[v];
+  const A = art(id);
+  if (!f) {
+    const note = A.err ? errorCard('Couldn’t load this file.', () => { A.err = false; render(false, true); loadArtifacts(id); }) : A.loaded ? quiet('This file isn’t available any more.') : quiet('Loading…');
+    return [h('h1', { class: 'sess', tabindex: '-1', text: 'File' }), note];
+  }
+  const nodes = [
+    h('h1', { class: 'sess fname', tabindex: '-1', text: dispName(f.name) || 'File' }),
+    h('p', { class: 'sub tight-sub', text: [KIND_LABEL[f.kind] || 'File', fmtSize(f.size)].filter(Boolean).join(' · ') }),
+  ];
+  if (f.kind === 'image') {
+    const img = h('img', { class: 'viewer-img', src: '/api/files/' + f.v + '/thumb?w=800', alt: dispName(f.name) || 'Image' });
+    const box = h('div', { class: 'viewer-img-wrap' }, img);
+    img.addEventListener('error', () => box.replaceChildren(h('p', { class: 'quiet', text: 'Couldn’t show this image here.' })));
+    nodes.push(box, downloadBlock(id, f, true));
+  } else if (f.kind === 'markdown' || f.kind === 'text' || f.kind === 'table') {
+    nodes.push(...textViewer(id, f));
+  } else {
+    // HTML, SVG and notebooks are never shown on this page; everything else is a download too.
+    nodes.push(downloadBlock(id, f, false));
+  }
+  return nodes;
+}
+
+/* ---------- History: the whole conversation, paged backward ---------- */
+
+const hist = (id) => (S.hist[id] ||= { items: {}, total: 0, from: null, busy: false, err: false, loaded: false, failed: false, rev: 0, full: {}, cutBusy: {}, cutErr: {} });
+
+function mergeHist(H, d) {
+  for (const it of Array.isArray(d && d.items) ? d.items : []) {
+    if (!it || !Number.isInteger(it.i)) continue;
+    H.items[it.i] = it;
+    rememberFiles(it.files);
+  }
+  if (Number.isInteger(d && d.total)) H.total = d.total;
+  if (Number.isInteger(d && d.from)) H.from = H.from == null ? d.from : Math.min(H.from, d.from);
+  H.rev++;
+}
+
+// The newest page, merged by index. Called with the session itself, so it follows the same throttle.
+async function loadHistory(id) {
+  if (!browseOn()) return;
+  const H = hist(id);
+  try {
+    mergeHist(H, await api(`/api/sessions/${id}/history`));
+    H.loaded = true;
+    H.failed = false;
+  } catch (e) {
+    if (e instanceof Unauth) return showPair();
+    if (isBrowseOff(e)) return setBrowseOff();
+    if (!H.loaded) H.failed = true;
+    return;
+  }
+  redrawSession(id);
+}
+
+const scroller = () => (S.split ? root.querySelector('.detail') : document.scrollingElement);
+
+// Keep whatever row is at the top of the screen where it is while rows are added above it.
+function captureAnchor() {
+  const sc = scroller();
+  if (!sc) return null;
+  const edge = S.split ? sc.getBoundingClientRect().top : 0;
+  for (const r of root.querySelectorAll('[data-r="convo"] [data-i]')) {
+    const b = r.getBoundingClientRect();
+    if (b.bottom > edge + 60) return { i: r.dataset.i, top: b.top };
+  }
+  return null;
+}
+function restoreAnchor(a) {
+  if (!a) return;
+  const el = root.querySelector(`[data-r="convo"] [data-i="${a.i}"]`);
+  if (!el) return;
+  const d = el.getBoundingClientRect().top - a.top;
+  if (!d) return;
+  if (S.split) root.querySelector('.detail').scrollTop += d;
+  else window.scrollBy(0, d);
+}
+
+async function loadEarlier(id) {
+  const H = hist(id);
+  if (H.busy || H.from == null || H.from <= 0) return;
+  H.busy = true;
+  H.err = false;
+  redrawSession(id);
+  let d;
+  try {
+    d = await api(`/api/sessions/${id}/history?before=${H.from}`);
+  } catch (e) {
+    H.busy = false;
+    if (e instanceof Unauth) return showPair();
+    if (isBrowseOff(e)) return setBrowseOff();
+    H.err = true;
+    return redrawSession(id);
+  }
+  const anchor = captureAnchor();
+  mergeHist(H, d);
+  H.busy = false;
+  redrawSession(id);
+  restoreAnchor(anchor);
+  // "More" buttons are placed a frame later and can change a row's height: hold the position then too
+  requestAnimationFrame(() => requestAnimationFrame(() => restoreAnchor(anchor)));
+}
+
+async function showAll(id, i) {
+  const H = hist(id);
+  if (H.cutBusy[i]) return;
+  H.cutBusy[i] = true;
+  H.cutErr[i] = false;
+  H.rev++;
+  redrawSession(id);
+  try {
+    const d = await api(`/api/sessions/${id}/turn/${i}`);
+    if (d && typeof d.text === 'string') H.full[i] = d.text;
+  } catch (e) {
+    if (e instanceof Unauth) return showPair();
+    H.cutErr[i] = true;
+  }
+  H.cutBusy[i] = false;
+  H.rev++;
+  redrawSession(id);
+}
+
+function chips(id, files) {
+  const list = (files || []).filter((f) => f && RE.vid.test(f.v));
+  if (!list.length) return null;
+  return h('div', { class: 'chips' }, list.map((f) => h('a', { class: 'chip', href: fileHref(id, f.v), 'data-key': 'chip:' + f.v },
+    icon(kindIcon(f.kind), 'sm'), h('span', { class: 'chip-n', text: dispName(f.name) || 'File' }), h('span', { class: 'chip-s', text: fmtSize(f.size) }))));
+}
+
+// Steps, plans, questions and helpers are one quiet line each.
+const quietRow = (it, ic, text, cls = '') => h('li', { class: 'qrow ' + cls, 'data-i': String(it.i) }, icon(ic, 'sm'), h('span', { text }));
+
+function histRow(id, it, H, u) {
+  if (it.role === 'you' || it.role === 'claude') {
+    const key = 'h' + it.i;
+    const open = !!u.more[key];
+    const full = H.full[it.i];
+    const text = typeof full === 'string' ? full : it.text;
+    const cut = it.cut && typeof full !== 'string';
+    return h('li', { class: 'turn', 'data-i': String(it.i) },
+      h('div', { class: 'turn-h' }, h('span', { class: 'who', text: it.role === 'you' ? 'You' : 'Claude' }), it.at ? h('span', { class: 'when', text: when(it.at) }) : null),
+      h('div', { class: 'md clamp' + (open ? ' open' : '') }, md(text, mdFor(id))),
+      h('div', { class: 'turn-acts' },
+        h('button', { class: 'more', type: 'button', hidden: !open, text: open ? 'Less' : 'More', 'data-more': '1', 'data-key': 'm:' + key, onclick: () => { u.more[key] = !open; redrawSession(id); } }),
+        cut ? h('button', { class: 'more', type: 'button', text: H.cutBusy[it.i] ? 'Loading…' : 'Show all', disabled: !!H.cutBusy[it.i], 'data-key': 'all:' + it.i, onclick: () => showAll(id, it.i) }) : null,
+        H.cutErr[it.i] ? h('span', { class: 'when', text: 'Couldn’t load the whole message.' }) : null),
+      chips(id, it.files));
+  }
+  switch (it.kind) {
+    case 'steps': return it.failed
+      ? h('li', { class: 'qrow', 'data-i': String(it.i) }, icon('alert', 'sm mark-err'), h('span', { text: (it.line || 'Ran some steps') + ' (it failed)' }))
+      : quietRow(it, 'terminal', it.line || 'Ran some steps');
+    case 'plan': return quietRow(it, 'list', 'Drafted a plan' + (Number.isFinite(it.steps) ? ` · ${it.steps} ${it.steps === 1 ? 'step' : 'steps'}` : ''));
+    case 'ask': return h('li', { class: 'qrow ask', 'data-i': String(it.i) }, icon('ask', 'sm'), h('span', null,
+      h('span', { text: 'Asked you: ' + (it.q || '') }), it.a ? [h('br'), h('span', { text: 'You answered: ' + it.a })] : null));
+    case 'helper': return quietRow(it, 'helper', 'Asked a helper agent');
+    case 'toYou': {
+      const key = 'h' + it.i;
+      const open = !!u.more[key];
+      return h('li', { class: 'turn tou', 'data-i': String(it.i) },
+        h('div', { class: 'turn-h' }, h('span', { class: 'who quiet-who' }, icon('msg', 'sm'), 'Message to you')),
+        h('div', { class: 'md clamp' + (open ? ' open' : '') }, md(it.text, mdFor(id))),
+        h('div', { class: 'turn-acts' }, h('button', { class: 'more', type: 'button', hidden: !open, text: open ? 'Less' : 'More', 'data-more': '1', 'data-key': 'm:' + key, onclick: () => { u.more[key] = !open; redrawSession(id); } })),
+        chips(id, it.files));
+    }
+    default: return null;
+  }
+}
+
+function histCard(id, H, u) {
+  const items = Object.values(H.items).sort((a, b) => a.i - b.i);
+  let top;
+  if (H.from > 0) {
+    if (H.err) top = h('div', { class: 'hist-top' }, h('p', { class: 'quiet', text: 'Couldn’t load earlier messages.' }), h('button', { class: 'btn earlier', type: 'button', text: 'Try again', 'data-key': 'earlier', onclick: () => loadEarlier(id) }));
+    else if (H.busy) top = h('div', { class: 'hist-top' }, h('p', { class: 'quiet', text: 'Loading earlier messages…' }));
+    else top = h('div', { class: 'hist-top' }, 'IntersectionObserver' in window ? null : h('button', { class: 'btn earlier', type: 'button', text: 'Load earlier messages', 'data-key': 'earlier', onclick: () => loadEarlier(id) }));
+  } else top = h('p', { class: 'hist-begin', text: 'Beginning of the conversation' });
+  return section('Conversation', 0, [top, h('ul', { class: 'group hist' }, items.map((it) => histRow(id, it, H, u)))]);
+}
+
+// Reaching the top of what is loaded loads 50 earlier rows.
+let histWatcher = null;
+function watchHistTop(sv, id) {
+  const el = sv.querySelector('.hist-top');
+  if (histWatcher && histWatcher.el === el) return;
+  if (histWatcher) histWatcher.io.disconnect();
+  histWatcher = null;
+  if (!el || !('IntersectionObserver' in window)) return;
+  const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadEarlier(id); }, { root: S.split ? sv.closest('.detail') : null, rootMargin: '300px 0px -55% 0px' }); // only the upper part of the screen counts
+  io.observe(el);
+  histWatcher = { el, io };
 }
 
 /* ---------- Settings ---------- */
