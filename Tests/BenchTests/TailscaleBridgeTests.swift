@@ -39,7 +39,8 @@ enum TailscaleFixture {
           "ExtraRecords": null,
           "Peer": {
             "nodekey:1111111111111111111111111111111111111111111111111111111111111111": {
-              "HostName": "Pat's iPhone", "DNSName": "pats-iphone.example-tailnet.ts.net.", "UserID": 4242424242
+              "HostName": "Pat's iPhone", "DNSName": "pats-iphone.example-tailnet.ts.net.", "OS": "iOS", "UserID": 4242424242,
+              "Online": true
             }
           },
           "User": {
@@ -171,6 +172,7 @@ struct TailscaleBridgeTests {
         #expect(status.dnsName == "studio-mac.example-tailnet.ts.net")
         #expect(!status.httpsEnabled)
         #expect(status.url?.absoluteString == "https://studio-mac.example-tailnet.ts.net:8443/")
+        #expect(status.peers == [TailscalePeer(hostName: "Pat's iPhone", os: "iOS", online: true, sameUser: true)])
     }
 
     @Test func certDomainsMeanHTTPSIsOn() throws {

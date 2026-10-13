@@ -27,12 +27,16 @@ struct TailscaleStatus: Equatable, Sendable {
     let dnsName: String?
     /// `CertDomains` has something in it: the tailnet has HTTPS on.
     let httpsEnabled: Bool
+    /// The other devices on the tailnet (`Peer`), for Settings → Phone's
+    /// "Put Tailscale on your phone". Held in memory only, never logged.
+    let peers: [TailscalePeer]
 
-    init(running: Bool, login: String?, dnsName: String?, httpsEnabled: Bool) {
+    init(running: Bool, login: String?, dnsName: String?, httpsEnabled: Bool, peers: [TailscalePeer] = []) {
         self.running = running
         self.login = login
         self.dnsName = dnsName
         self.httpsEnabled = httpsEnabled
+        self.peers = peers
     }
 
     /// Nil unless the output is a JSON object with a `BackendState`.
@@ -44,13 +48,28 @@ struct TailscaleStatus: Equatable, Sendable {
         let name = (me?["DNSName"] as? String)?.lowercased()
         let trimmed = name.map { $0.hasSuffix(".") ? String($0.dropLast()) : $0 }
         dnsName = trimmed.flatMap { Self.isDNSName($0) ? $0 : nil }
-        var login: String?
-        if let userID = me?["UserID"] as? NSNumber, let users = root["User"] as? [String: Any],
-           let user = users[userID.stringValue] as? [String: Any] {
-            login = user["LoginName"] as? String
+        let users = root["User"] as? [String: Any] ?? [:]
+        func loginName(_ userID: NSNumber?) -> String? {
+            guard let userID, let user = users[userID.stringValue] as? [String: Any],
+                  let login = user["LoginName"] as? String, !login.isEmpty else { return nil }
+            return login
         }
-        self.login = login?.isEmpty == false ? login : nil
+        let myID = me?["UserID"] as? NSNumber
+        let login = loginName(myID)
+        self.login = login
         httpsEnabled = !((root["CertDomains"] as? [String]) ?? []).isEmpty
+        // The same user: the same `UserID` as this Mac, or a user with the
+        // same login. A `UserID` of 0 (none, or a tagged device) is nobody's.
+        let mine = myID.map { $0.int64Value != 0 } ?? false
+        peers = (root["Peer"] as? [String: Any] ?? [:]).values.compactMap { value in
+            guard let peer = value as? [String: Any] else { return nil }
+            let userID = peer["UserID"] as? NSNumber
+            let owned = userID.map { $0.int64Value != 0 } ?? false
+            let sameID = owned && mine && userID == myID
+            let sameLogin = owned && login != nil && loginName(userID)?.lowercased() == login?.lowercased()
+            return TailscalePeer(hostName: peer["HostName"] as? String ?? "", os: peer["OS"] as? String ?? "",
+                                 online: peer["Online"] as? Bool ?? false, sameUser: sameID || sameLogin)
+        }
     }
 
     /// A node name fit for a Host check and a URL: letters, digits, dashes
@@ -65,6 +84,20 @@ struct TailscaleStatus: Equatable, Sendable {
     var url: URL? {
         dnsName.flatMap { URL(string: "https://\($0):\(RemotePolicy.httpsPort)/") }
     }
+}
+
+/// One of `tailscale status --json`'s `Peer` entries, reduced to what
+/// Settings → Phone asks: is there a phone or tablet signed in as this Mac's
+/// user?
+struct TailscalePeer: Equatable, Sendable {
+    /// `HostName`, as Tailscale shows it ("iPhone").
+    let hostName: String
+    /// `OS`: "iOS" (iPhones and iPads), "android", "macOS", "windows"…
+    let os: String
+    /// `Online`. An offline phone still counts: it is set up.
+    let online: Bool
+    /// Signed in as this Mac's user (`UserID`, or the same `LoginName`).
+    let sameUser: Bool
 }
 
 /// `tailscale serve status --json`, reduced to Bench's question: whose is

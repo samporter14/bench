@@ -36,17 +36,15 @@ enum RemoteBrowse {
 }
 
 /// "Let paired devices browse every project, full conversations and
-/// artifacts" (`remoteBrowse`, on). Its own section in Settings → Phone,
+/// artifacts" (`remoteBrowse`, on). A row of Settings → Phone's options,
 /// below the actions.
-struct RemoteBrowseSettingsSection: View {
+struct RemoteBrowseToggle: View {
     @AppStorage(SettingsKey.remoteBrowse) private var browseOn = true
 
     var body: some View {
-        Section {
-            Toggle(isOn: $browseOn) {
-                Text("Let paired devices browse every project, full conversations and artifacts")
-                Text("They can also start a session when actions are on. Off, paired devices see only what Now shows, with each session's latest replies.")
-            }
+        Toggle(isOn: $browseOn) {
+            Text("Let paired devices browse every project, full conversations and artifacts")
+            Text("They can also start a session when actions are on. Off, paired devices see only what Now shows, with each session's latest replies.")
         }
     }
 }

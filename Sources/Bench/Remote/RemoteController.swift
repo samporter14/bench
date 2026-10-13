@@ -86,6 +86,8 @@ final class RemoteController: ObservableObject {
     private var pending: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var activation: AnyCancellable?
+    /// A look from Settings → Phone is queued or under way (`poll`).
+    private var polling = false
 
     init(auth: RemoteAuth, bridge: TailscaleBridge, defaults: UserDefaults = .standard, isDemo: Bool = Demo.mode != nil) {
         self.auth = auth
@@ -133,6 +135,30 @@ final class RemoteController: ObservableObject {
                 await self.serveIfReady()
             } else if self.status.mappingLeft {
                 await self.removeMappingOrRetry()
+            }
+        }
+    }
+
+    /// Settings → Phone, every few seconds and when Bench comes to the front,
+    /// while its setup isn't done: a quick look at `tailscale status`, so
+    /// the steps tick by themselves as the user works in Tailscale's own app.
+    /// `serve` runs only when it could now work: Tailscale has come up, or
+    /// HTTPS has just been turned on. Skipped while a look is under way.
+    func poll() {
+        guard !isDemo, !polling, !status.checking else { return }
+        polling = true
+        enqueue {
+            defer { self.polling = false }
+            let hadHTTPS = self.status.tailscaleStatus?.httpsEnabled == true
+            await self.checkTailscale(recordingLogin: false)
+            guard self.enabled else { return }
+            switch self.status.serve {
+            case .waitingForTailscale:
+                await self.serveIfReady()
+            case .httpsOff where !hadHTTPS && self.status.tailscaleStatus?.httpsEnabled == true:
+                await self.serveIfReady()
+            default:
+                break
             }
         }
     }

@@ -1196,8 +1196,9 @@ own height (the window follows the tab):
 - **Specimens** (`scenes`): what plays (above).
 - **Phone** (`phone`, since 0.4.0): Bench on your phone (below).
 
-`--demo general|panel-settings|alerts|usage-settings|specimens` shows each in a
-plain window that doesn't activate Bench.
+`--demo general|panel-settings|alerts|usage-settings|specimens|phone-settings`
+shows each in a plain window that doesn't activate Bench (`phone-settings`
+takes `--step 1…7`).
 
 | Setting | Default |
 |---|---|
@@ -1212,6 +1213,7 @@ plain window that doesn't activate Bench.
 | Name the specimen that's playing, in the panel (`showSpecimenCaption`) | off |
 | Check for updates once a day (`checkForUpdates`, since 0.3.6; see Update check) | off |
 | Use Bench from your phone (`remoteEnabled`, since 0.4.0; see Bench on your phone) | off |
+| Skip "Put Tailscale on your phone" (`remotePhoneSkipped`; see Settings → Phone) | off |
 
 ## Welcome window (since 0.3.6)
 
@@ -1343,7 +1345,8 @@ message, and push notifications.
   path and modification date. A bundle that fails is passed over as if it
   weren't there; none left is "not installed". Launch Services is asked only
   when `/Applications` has none, and the CLI is looked for only when Bench
-  first needs it, never for someone who never turns Remote on.
+  first needs it, never for someone who never opens Settings → Phone or
+  turns Remote on.
 - The URL is `https://<node>.<tailnet>.ts.net:8443/` from
   `tailscale status --json` (`Self.DNSName`, trailing dot dropped).
 - **Every request**:
@@ -1367,8 +1370,8 @@ message, and push notifications.
     served origin, and `X-Bench: 1`. Bodies ≤ 8 KB (16 KB for a Phase 2
     `/message`).
   - Never log request bodies, tokens or session text. Log only route + status.
-- **Pairing**: Settings → Phone shows a QR code of the URL and a one-time
-  6-digit code (expires after 10 minutes; 5 wrong tries wear it out, and
+- **Pairing**: Settings → Phone's "Pair your phone" step shows a QR code of
+  the URL and a one-time 6-digit code (expires after 10 minutes; 5 wrong tries wear it out, and
   Settings then shows "Too many wrong codes." with New Code rather than a new
   code by itself).
   `POST /pair {"code","name"}` → sets the cookie; Bench stores only a SHA-256
@@ -1458,30 +1461,73 @@ say-so).
 
 ### Settings → Phone (tab `phone`)
 
-1. "Use Bench from your phone" switch (`remoteEnabled`, off). Subtitle: "A
-   private page for your iPhone or another computer, over your Tailscale
-   network. Paired devices see your sessions' titles and status. Nothing is
-   on the internet."
-2. Checks, each a row with a status: Tailscale installed · Signed in (shows
-   the tailnet login) · HTTPS on for your tailnet (if Serve says it's off,
-   show the enable URL it prints, as a button that opens it) · Serving at
-   `https://…:8443`.
-3. Pair a device: the QR code (CoreImage) of the URL, the 6-digit code with
-   a countdown, and the three steps (scan, Add to Home Screen, open it and
-   enter the code).
-4. Paired devices: name, paired, last seen, Remove; the footnote "Expires if
-   unused for 60 days."
+A checklist that walks a first-time user through setup, then gets out of the
+way (`Remote/PhoneSetup.swift`, pure and tested; `Remote/PhoneSettings.swift`
+draws it). A grouped form at a fixed 760 pt (`settingsPage(height:)`): every
+state but "Pair your phone" open fits; that one scrolls to the switches and
+devices below.
 
-Also, when they apply: in the checks, "Bench couldn't remove its Tailscale
-mapping" with Try Again (the switch is off and removing the mapping failed);
-while serving, when Serve has other sites on this node
-(`ServeStatus.hasOtherMappings`), "Other Tailscale Serve sites on this Mac
-share its address, and can see your devices' Bench sign-in. Serve only things
-you trust here." The cookie keeps its name (`bench_device`), so paired
-phones stay paired.
+1. **Header.** "Bench on your phone", then "Use Claude Science from your
+   iPhone or iPad: see what needs you, answer, approve and send messages,
+   over your own private Tailscale network." and a "Setup guide" link to
+   `docs/phone.md` on GitHub.
+2. **Set up.** Six steps, each a row with a mark (`checkmark.circle.fill`
+   when done, a numbered circle when not) and its title. Detection drives
+   everything; nobody ticks anything. A done step is one line, its title and
+   what was found in secondary text. Only the first step not done is open:
+   its title, one line of help and its action. The steps after it are dimmed
+   with no buttons (one already done keeps its tick).
+
+   | # | Title | Help | Action | Done when (found) |
+   |---|---|---|---|---|
+   | 1 | Install Tailscale on this Mac | Free. It links your own devices into a private network. | Get Tailscale (tailscale.com/download/mac) | the signature-checked CLI is found ("Installed") |
+   | 2 | Sign in to Tailscale | Use the same account you'll use on your phone. (Signed in but disconnected: "Tailscale is off. Open it and connect, with the same account you'll use on your phone.") | Open Tailscale (the app whose signature was checked) | running with a login (the login) |
+   | 3 | Turn on HTTPS for your network | One switch on Tailscale's DNS page, so your phone gets a secure address. | Open DNS Settings… (login.tailscale.com/admin/dns, or the page `serve` printed) | `CertDomains` isn't empty ("On") |
+   | 4 | Put Tailscale on your phone | Install Tailscale from the App Store and sign in with the same account. | a 96 pt QR code of Tailscale's App Store page, "Scan for the App Store"; "Don't see it? Make sure Tailscale is on and signed in with the same account on your phone (Apple, Google and GitHub sign-ins are separate accounts)."; a quiet Skip link | a `Peer` with `OS` iOS, iPadOS or android (any case) and the same user, online or not ("Found: <HostName>"); or Skip ("Skipped", `remotePhoneSkipped`) |
+   | 5 | Turn on Bench on your phone | A private page for your devices on Tailscale. Never on the internet. (Switched on but not served yet: what it waits for, and Try Again when blocked or failed.) | the switch (`remoteEnabled`) at the end of the title's line | serving (the `https://…:8443` address) |
+   | 6 | Pair your phone | Once per device, with a one-time code. | the pairing block: the QR code of the address, the 6-digit code with its countdown (or "Too many wrong codes." and New Code), and the three steps (scan, Add to Home Screen, open it and enter the code) | a device is paired ("1 device") |
+
+   The same user: the peer's `UserID` is `Self.UserID`, or its `User` entry
+   has the same `LoginName` (any case); a `UserID` of 0 (tagged) is nobody's.
+   An online phone is named before an offline one, then by name.
+3. **Ready.** With all six done the section is one row: "Ready · 1 device"
+   with the address under it in secondary text (the address would otherwise
+   be cut short beside the button), and Pair Another Device. That opens the
+   pairing block under the row (its button becomes Cancel, which also
+   withdraws the code) until one more device pairs.
+4. **The code** is issued only while "Pair your phone" is the step open
+   (first time, or after Pair Another Device), not whenever the tab shows.
+5. **Below**, as before: anything Bench needs to say, each with a warning
+   sign (Tailscale signed in as someone else now; "Bench couldn't remove its
+   Tailscale mapping" with Try Again; while serving, "Other Tailscale Serve
+   sites on this Mac share its address, and can see your devices' Bench
+   sign-in. Serve only things you trust here."); one section of switches
+   ("Use Bench from your phone" whenever it is on and step 5 isn't the step
+   open, so it can always be turned off; the actions and browse switches);
+   and Paired devices: name, paired, last seen, Remove, Remove All Devices…,
+   and the footnote "Expires if unused for 60 days."
+6. **Looking again.** While the tab shows and setup isn't done, it looks at
+   Tailscale every 5 s and whenever Bench comes to the front
+   (`RemoteController.poll`), so ticks appear by themselves as the user works
+   in Tailscale's own app. A look is `status --json` only; `serve` runs only
+   when it could now work (Tailscale has come up, or HTTPS was just turned
+   on); one look at a time. Nothing looks while the tab is hidden or once
+   setup is done.
+7. **Look.** Grouped form, system controls, SF Pro. Clay only on the open
+   step's one button (and, as on every tab, the switches); links are the
+   system's.
+
+The cookie keeps its name (`bench_device`), so paired phones stay paired.
 Turning the switch off stops the listener, removes Bench's serve mapping
 only, and keeps paired devices (so turning it back on needs no re-pairing);
 "Remove all devices" is separate.
+
+`--demo phone-settings --step N` shows the page in a plain window that
+doesn't activate Bench (with `--quiet` and `open -g -n`): 1 to 6 opens that
+step with every one before it done, 7 is ready with one device. All made up
+(`you@example.com`, `https://your-mac.your-tailnet.ts.net:8443`, code 123 456,
+a phone and a device both "iPhone"); no Tailscale, no files, no Keychain, and
+its buttons do nothing.
 
 ### The phone app
 
@@ -1510,7 +1556,8 @@ real ones.
 Files: `Remote/RemoteServer.swift` (parsing, the route table, the checks,
 the `NWListener` server), `RemoteAuth.swift` (code, tokens, devices),
 `RemoteAPI.swift` (the JSON and the change feed), `TailscaleBridge.swift`,
-`RemoteController.swift`, `PhoneSettings.swift` and `RemoteWebApp.swift`
+`RemoteController.swift`, `PhoneSetup.swift` and `PhoneSettings.swift` (the
+tab's checklist and its page), and `RemoteWebApp.swift`
 (the phone app's files, generated). What decides is pure and tested; the
 CLI runs through one injectable runner, the devices through an injectable
 store (in memory in tests and the demo).
@@ -1532,8 +1579,8 @@ store (in memory in tests and the demo).
   fails is answered at once, with its body still to come. One that passes has
   3 s for its body. A head has 10 s to arrive; at most 32 connections. Then
   the device's budget (Budgets, below).
-- **The code** exists only once Settings → Phone shows one, and goes when
-  used. The fifth wrong try still answers 403 but wears the code out and
+- **The code** exists only once Settings → Phone shows one (while its
+  "Pair your phone" step is open), and goes when used. The fifth wrong try still answers 403 but wears the code out and
   starts a wait in which tries get 429: 30 s, then 2 minutes, then 10 minutes
   each time after, starting again from 30 s after a pairing or an hour
   without a wrong try. No new code comes by itself after one is worn out:

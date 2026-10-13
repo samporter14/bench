@@ -679,16 +679,14 @@ extension SessionProjection {
 // MARK: Settings → Phone
 
 /// "Let paired devices answer, approve and send messages" (`remoteActions`,
-/// on). Its own section in Settings → Phone.
-struct RemoteActionsSettingsSection: View {
+/// on). A row of Settings → Phone's options.
+struct RemoteActionsToggle: View {
     @AppStorage(SettingsKey.remoteActions) private var actionsOn = true
 
     var body: some View {
-        Section {
-            Toggle(isOn: $actionsOn) {
-                Text("Let paired devices answer, approve and send messages")
-                Text("Off, paired devices can still read your sessions, but only Open on Mac acts on them.")
-            }
+        Toggle(isOn: $actionsOn) {
+            Text("Let paired devices answer, approve and send messages")
+            Text("Off, paired devices can still read your sessions, but only Open on Mac acts on them.")
         }
     }
 }
