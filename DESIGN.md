@@ -1555,7 +1555,11 @@ for a root `ask`. The phone renders `reply` and `turns` as plain text with a
 small safe markdown subset (paragraphs, lists, bold, italic, inline and fenced
 code), built as DOM nodes, never `innerHTML`; links are shown as text.
 
-#### Actions (three routes, body ≤ 8 KB, one shared limiter)
+#### Actions (three routes, one shared limiter)
+
+Bodies ≤ 8 KB, except `/message`, whose body may be up to 16 KB (4,000
+characters of non-Latin text is more than 8 KB of JSON); the parser's
+declared-length check takes the route's own limit.
 
 | Route | Body | Bench does |
 |---|---|---|
@@ -1621,6 +1625,13 @@ them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
   and only works from the Home Screen app; in Safari it says so), the five
   prefs, Send a test. Taps work off the tailnet too (the push comes through
   Apple), but opening the session needs Tailscale on.
+- **Test**: `POST /api/push/test` ignores `onlyAway` (Sam is at the Mac when
+  he presses it) and the other prefs.
+- **Demo**: `--demo remote` makes no keys and no network calls; subscribe
+  answers as if subscribed, and the test does nothing.
 - **Promise**: README's line gains "and, if you turn on notifications on a
   paired device, Apple's push service carries them, encrypted so only that
-  device can read them".
+  device can read them". And "changes nothing in it, except when you press
+  Approve on a plan's card" becomes "…except when you press Approve on a
+  plan's card, or answer, approve or send a message from a paired device"
+  (README and DESIGN together).
