@@ -1365,6 +1365,12 @@ message, and push notifications.
 | GET | `/api/events` | token | Server-Sent Events: `event: state` with the snapshot on every change, a `: keepalive` comment every 25 s. |
 | GET | `/api/sessions/<id>` | token | One session (below). `<id>` must match `^[0-9a-f-]{36}$`. |
 | POST | `/api/sessions/<id>/open` | token | Open it on the Mac (`LabModel.open`). |
+| GET | `/sw.js` | none | The service worker for pushes: static, from the binary, once the phone app has it. |
+| GET | `/api/push` | token | `{"publicKey","subscribed","prefs"}` (Notifications, below). |
+| POST | `/api/push/subscribe` | token | Keep this device's subscription (and prefs). |
+| POST | `/api/push/prefs` | token | Change this device's prefs. |
+| POST | `/api/push/unsubscribe` | token | Drop this device's subscription. |
+| POST | `/api/push/test` | token | Push "Notifications are on." to this device. |
 
 ### `/api/state` (version 1)
 
@@ -1635,3 +1641,49 @@ them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
   Approve on a plan's card" becomes "…except when you press Approve on a
   plan's card, or answer, approve or send a message from a paired device"
   (README and DESIGN together).
+
+#### How the server does it (push)
+
+Files: `Remote/WebPush.swift` (RFC 8291 encryption, RFC 8292 VAPID, the
+subscription checks; pure, and tested byte for byte on RFC 8291's own
+example) and `Remote/PushCenter.swift` (`PushRules`, pure: which cards, the
+words, the payload, the headers, what an answer means; `PushCenter`: the key,
+the routes, the announce hook, delivery). The hooks elsewhere are single
+lines marked `// Phase 2 push`.
+
+- **Storage**: a device's `push` (`{subscription, prefs}`) is a field of its
+  record in the devices' Keychain item; a record from before reads as none,
+  and one without push writes none. The VAPID key is a second item beside it
+  (`local.sam.bench.remote` / `push-key`: JSON with the private scalar). It
+  is made the first time a paired device asks `GET /api/push`, since the
+  phone needs the public key to subscribe. One that can't be read is never
+  replaced: every subscription depends on it. Unsubscribe keeps the prefs.
+  An endpoint another device record had is taken from it, so a phone paired
+  twice hears each push once.
+- **Replies**: every push route but the test answers as `GET /api/push`
+  does; the test answers `{"sent":true}` once it is on its way. Errors: 400
+  `{"error":"body"|"endpoint"|"keys"|"prefs"|"notSubscribed"}`, 500
+  `"key"|"store"`.
+- **When**: `LabModel.pushRaised`, called with `cardRaised`, and only while
+  the Phone switch is on. The cards are `NotificationRules`' (needs you,
+  errors, finishes but not while a focus session holds them, and the "While
+  you focused" notice that releases them). Once per device per event: the
+  session, the kind (with the waiting reason, so a question that becomes a
+  plan is news again) and `updatedAt`, remembered for a day. `onlyAway`
+  reads `CGSessionCopyCurrentDictionary` (`CGSSessionScreenIsLocked`, on
+  console) and `CGEventSource.secondsSinceLastEventType` (any input) only
+  when a device needs it. A push skipped for it isn't remembered, so the same
+  moment coming again while away (a reminder) still goes.
+- **Words**: names off, the needs-you body names the kind of wait ("a
+  question to answer", "permission to reach the web", or just "A session
+  needs you"); the held finishes say "A session finished" or "Sessions
+  finished while you focused". Title and body are cut short (120 and 240
+  characters, then the body further) so the JSON stays within 1 KB.
+- **Sending**: the stored endpoint is checked again, each push is sealed with
+  a new salt and sender key, and the JWT is for the endpoint's origin.
+  Headers: `TTL: 3600`, `Urgency`, `Topic`, `Content-Encoding: aes128gcm`,
+  `Content-Type: application/octet-stream`, `Authorization: vapid t=…, k=…`.
+  The test push is `Urgency: high`. A Retry-After that says nothing waits a
+  minute, and the retry is sealed afresh. The log has the status only.
+- **Demo**: the public key is made at launch and kept in memory only, so a
+  browser can subscribe; nothing reaches the Keychain or the network.

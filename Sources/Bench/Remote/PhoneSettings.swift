@@ -53,6 +53,7 @@ struct PhoneSettingsView: View {
                         } label: {
                             Text(device.name)
                             Text(Self.deviceLine(device))
+                            if device.push?.subscription != nil { Text("Notifications on") } // Phase 2 push
                         }
                     }
                     HStack {
