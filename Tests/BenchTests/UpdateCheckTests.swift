@@ -350,7 +350,8 @@ struct UpdateCheckerTests {
         #expect(network.calls == 0)
         // Turned on in Settings, or in the welcome window: noticed without a relaunch.
         scratch.defaults.set(true, forKey: SettingsKey.checkForUpdates)
-        try await until { network.calls == 1 }
+        // The request goes out a moment before the check records its time.
+        try await until { network.calls == 1 && updates.lastChecked != nil }
         #expect(network.calls == 1)
         #expect(updates.lastChecked != nil)
     }
