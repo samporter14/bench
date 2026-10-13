@@ -437,6 +437,8 @@ enum RemoteAPI {
         let paired: Bool
         let device: String
         let bench: String
+        /// Settings → Phone lets paired devices browse (`remoteBrowse`). // Phase 3 browse
+        var browse: Bool = RemoteBrowse.isOn
     }
 
     // MARK: Encoding

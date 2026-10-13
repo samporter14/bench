@@ -71,7 +71,10 @@ extension RemoteRoute {
 
     /// The most this route's body may be.
     var bodyLimit: Int {
-        if case .action(.message, _) = self { Self.messageBodyLimit } else { RemoteHTTP.maxBody }
+        switch self {
+        case .action(.message, _), .newSession: Self.messageBodyLimit // Phase 3 browse: a new session's text too
+        default: RemoteHTTP.maxBody
+        }
     }
 
     /// The parser's declared-length check, before the request is whole: the
@@ -402,6 +405,11 @@ final class RemoteSessions {
         /// The writer: nil when the write didn't complete.
         var write: @MainActor (RemoteWrite) async -> RemoteWriteResult?
         var now: @MainActor () -> Date
+        // Phase 3 browse
+        /// Settings → Phone → "Let paired devices browse…" (`remoteBrowse`).
+        var browseOn: @MainActor () -> Bool = { RemoteBrowse.isOn }
+        /// The database's point lookup: any root session, by its id.
+        var lookup: @MainActor (String) async -> SessionStatus? = { _ in nil }
 
         static func live() -> Dependencies {
             Dependencies(
@@ -421,7 +429,8 @@ final class RemoteSessions {
                     guard Demo.mode == nil else { return nil }
                     return try? await WebContainer.shared.writeSession(write)
                 },
-                now: { Date() })
+                now: { Date() },
+                lookup: { await RemoteBrowser.lookUp($0) }) // Phase 3 browse
         }
     }
 
@@ -441,6 +450,16 @@ final class RemoteSessions {
     private var acting: [String: Task<RemoteActionReply, Never>] = [:]
     private var limiter = ActionLimiter()
     private var sweep: Task<Void, Never>?
+    /// Phase 3 browse: sessions found by id or just started, by id.
+    private var held: [String: Held] = [:]
+
+    private struct Held {
+        let session: SessionStatus
+        let until: Date
+        /// Admits the session when the database doesn't have it yet: one
+        /// the phone has just started.
+        let admits: Bool
+    }
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
@@ -448,14 +467,59 @@ final class RemoteSessions {
 
     // MARK: Reading
 
-    /// `/api/sessions/<id>`, version 2; nil when Bench doesn't know the session.
+    /// `/api/sessions/<id>`, version 2; nil when the phone may not open the
+    /// session (`admitted`).
     func sessionJSON(_ id: String) async -> Data? {
-        guard dependencies.known().contains(where: { $0.id == id }) else { return nil }
+        guard let found = await admitted(id) else { return nil } // Phase 3 browse
         let entry = await entry(for: id)
         // Unreadable: the card's plan, as version 1 showed it.
         let plan = entry.read == nil ? dependencies.cardPlan(id) : entry.plan
-        return RemoteAPI.session(id: id, candidates: dependencies.known(), plan: plan, read: entry.read,
+        return RemoteAPI.session(id: id, candidates: dependencies.known() + found, plan: plan, read: entry.read,
                                  actionsOn: dependencies.actionsOn()).map(RemoteAPI.encode)
+    }
+
+    // MARK: Which sessions open (Phase 3 browse)
+
+    /// Whether the phone may open this session, and what else to know it by:
+    /// `[]` for one Bench knows now (its own reading is fresher), the
+    /// database's row for any other root session while browse is on, or one
+    /// the phone has just started that the database doesn't have yet. Nil:
+    /// not this one (404).
+    func admitted(_ id: String) async -> [SessionStatus]? {
+        if dependencies.known().contains(where: { $0.id == id }) { return [] }
+        guard dependencies.browseOn() else { return nil }
+        let now = dependencies.now()
+        if let row = await dependencies.lookup(id), row.id == id {
+            hold(row, until: now.addingTimeInterval(60 * 60), admits: false)
+            return [row]
+        }
+        if let held = held[id], held.admits, held.until > now { return [held.session] }
+        return nil
+    }
+
+    /// A session the phone opened lately by browsing, for Open on Mac.
+    func heldSession(_ id: String) -> SessionStatus? {
+        guard dependencies.browseOn(), let held = held[id], held.until > dependencies.now() else { return nil }
+        return held.session
+    }
+
+    /// A session the phone just started: it opens for two minutes even before
+    /// the database has it.
+    func admitStarted(_ session: SessionStatus) {
+        hold(session, until: dependencies.now().addingTimeInterval(120), admits: true)
+    }
+
+    /// A new session counts toward the same six a minute as the actions.
+    func allowAction(device: String) -> Bool {
+        limiter.allow(device, at: dependencies.now())
+    }
+
+    private func hold(_ session: SessionStatus, until: Date, admits: Bool) {
+        let now = dependencies.now()
+        held[session.id] = Held(session: session, until: until, admits: admits)
+        guard held.count > 200 else { return }
+        held = held.filter { $0.value.until > now }
+        while held.count > 200, let oldest = held.min(by: { $0.value.until < $1.value.until }) { held[oldest.key] = nil }
     }
 
     /// What is held for a session now: for tests.
@@ -521,7 +585,7 @@ final class RemoteSessions {
     func act(_ action: RemoteAction, session id: String, device: String, body: Data) async -> RemoteActionReply {
         guard dependencies.actionsOn() else { return .actionsOff }
         guard limiter.allow(device, at: dependencies.now()) else { return .tooMany }
-        guard dependencies.known().contains(where: { $0.id == id }) else { return .notFound }
+        guard await admitted(id) != nil else { return .notFound } // Phase 3 browse
         guard let request = RemoteActionRequest.parse(action, body: body) else { return .badRequest }
         let previous = acting[id]
         let task = Task { [weak self] () -> RemoteActionReply in
@@ -565,22 +629,26 @@ final class RemoteSessions {
     /// and go nowhere. No web view is touched.
     /// `known` and `cardPlan` are the demo's own models, unless a test
     /// gives its own.
+    /// Phase 3 browse: `lookup` and `more` are the made-up sessions only
+    /// browsing finds, and what they read.
     static func demo(reads: [String: SessionProjection],
                      known: @escaping @MainActor () -> [SessionStatus] = { RemoteAPI.knownSessions(lab: .shared) },
                      cardPlan: @escaping @MainActor (String) -> PlanPreview? = { RemoteAPI.readyPlan(.shared, sessionID: $0) },
-                     now: @escaping @MainActor () -> Date = { Date() }) -> RemoteSessions {
+                     now: @escaping @MainActor () -> Date = { Date() },
+                     lookup: @escaping @MainActor (String) -> SessionStatus? = { _ in nil },
+                     more: @escaping @MainActor (String) -> SessionProjection? = { _ in nil }) -> RemoteSessions {
         RemoteSessions(dependencies: Dependencies(
             actionsOn: { RemoteSessions.actionsSetting() },
             known: known,
             cardPlan: cardPlan,
             read: { id, turns in
-                guard let read = reads[id] else { return nil }
+                guard let read = reads[id] ?? more(id) else { return nil }
                 return turns ? read : read.withoutTurns
             },
             readPlan: { _ in nil },
             write: { write in
                 switch write {
-                case .message(let frame, _, _, _, _) where reads[frame]?.status == "processing":
+                case .message(let frame, _, _, _, _) where (reads[frame] ?? more(frame))?.status == "processing":
                     RemoteWriteResult(status: 200, bodyStatus: "message_queued")
                 case .answer, .cancel:
                     RemoteWriteResult(status: 200, bodyStatus: "accepted", remaining: 0)
@@ -588,7 +656,8 @@ final class RemoteSessions {
                     RemoteWriteResult(status: 200, bodyStatus: "accepted")
                 }
             },
-            now: now))
+            now: now,
+            lookup: { lookup($0) }))
     }
 }
 

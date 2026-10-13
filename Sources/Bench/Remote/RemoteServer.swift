@@ -139,6 +139,17 @@ enum RemoteRoute: Equatable, Sendable {
     case push(RemotePushRoute)
     /// `POST /api/sessions/<id>/approve|answer|message`. // Phase 2 actions
     case action(RemoteAction, String)
+    // Phase 3 browse (RemoteBrowse.swift)
+    /// `GET /api/projects`.
+    case projects
+    /// `GET /api/projects/<pid>/sessions`.
+    case projectSessions(String)
+    /// `POST /api/projects/<pid>/sessions`: start one.
+    case newSession(String)
+    /// `GET /api/sessions/<id>/history`.
+    case history(String)
+    /// `GET /api/sessions/<id>/turn/<i>`.
+    case turn(String, Int)
 
     enum Match: Equatable {
         case found(RemoteRoute)
@@ -153,6 +164,7 @@ enum RemoteRoute: Equatable, Sendable {
     /// with a full frame id (`^[0-9a-f-]{36}$`).
     static func match(method: String, path: Substring) -> Match {
         guard let route = route(for: path) else { return .notFound }
+        if method == "POST", case .projectSessions(let project) = route { return .found(.newSession(project)) } // Phase 3 browse
         return method == route.method ? .found(route) : .wrongMethod
     }
 
@@ -170,6 +182,7 @@ enum RemoteRoute: Equatable, Sendable {
         }
         if staticFiles.contains(String(path)) { return .file(String(path)) }
         if let push = RemotePushRoute(path: path) { return .push(push) } // Phase 2 push
+        if let browse = browseRoute(for: path) { return browse } // Phase 3 browse
         let prefix = "/api/sessions/"
         guard path.hasPrefix(prefix) else { return nil }
         let rest = path.dropFirst(prefix.count)
@@ -188,6 +201,7 @@ enum RemoteRoute: Equatable, Sendable {
         case .pair, .unpair, .openSession: "POST"
         case .push(let push): push.method // Phase 2 push
         case .action: "POST" // Phase 2 actions
+        case .newSession: "POST" // Phase 3 browse
         default: "GET"
         }
     }
@@ -215,6 +229,11 @@ enum RemoteRoute: Equatable, Sendable {
         case .openSession: "/api/sessions/<id>/open"
         case .push(let push): push.pattern // Phase 2 push
         case .action(let action, _): "/api/sessions/<id>/\(action.rawValue)" // Phase 2 actions
+        // Phase 3 browse
+        case .projects: "/api/projects"
+        case .projectSessions, .newSession: "/api/projects/<pid>/sessions"
+        case .history: "/api/sessions/<id>/history"
+        case .turn: "/api/sessions/<id>/turn/<i>"
         }
     }
 }
@@ -439,6 +458,9 @@ struct RemoteBackend {
     var version: String
     /// An action (session id, device id, body). // Phase 2 actions
     var act: @MainActor (RemoteAction, String, String, Data) async -> RemoteActionReply = { _, _, _, _ in .notFound }
+    /// A Phase 3 browse route (the route, the request target with its query,
+    /// device id, body). // Phase 3 browse
+    var browse: @MainActor (RemoteRoute, String, String, Data) async -> RemoteActionReply = { _, _, _, _ in .notFound }
 }
 
 enum RemoteServerError: Error, Equatable {
@@ -715,6 +737,14 @@ final class RemoteServer {
             Task { [weak self] in
                 guard let self else { return }
                 let reply = await self.backend.act(action, sessionID, deviceID, body)
+                self.send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.body),
+                          route: route, closing: true)
+            }
+        case .projects, .projectSessions, .newSession, .history, .turn: // Phase 3 browse
+            let deviceID = device?.id ?? "", target = request.target, body = request.body
+            Task { [weak self] in
+                guard let self else { return }
+                let reply = await self.backend.browse(route, target, deviceID, body)
                 self.send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.body),
                           route: route, closing: true)
             }

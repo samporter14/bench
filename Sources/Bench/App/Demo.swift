@@ -218,7 +218,9 @@ enum Demo {
         func make(_ id: String, _ title: String, _ project: String, _ state: SessionState,
                   _ reason: WaitingReason? = nil, minutes: Double) -> SessionStatus {
             let now = Date()
-            return SessionStatus(id: fullIDs ? "00000000-0000-4000-8000-0000000000\(id)" : id, projectID: "demo",
+            // Phase 3 browse: with full ids, each in its made-up project.
+            return SessionStatus(id: fullIDs ? "00000000-0000-4000-8000-0000000000\(id)" : id,
+                                 projectID: fullIDs ? DemoBrowseStore.projectID(for: project) : "demo",
                                  projectName: project, title: title, state: state,
                                  updatedAt: now, startedAt: now.addingTimeInterval(-minutes * 60), waitingReason: reason)
         }
