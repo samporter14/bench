@@ -69,3 +69,15 @@ struct ListedFilesTests {
         #expect(files.allows("v0", device: "phone"))
     }
 }
+
+@MainActor
+struct ListedFilesForgetAllTests {
+    @Test func removingEveryDeviceForgetsEveryListing() {
+        let files = ListedFiles()
+        files.record(["v1"], device: "phone")
+        files.record(["v2"], device: "tablet")
+        files.forgetAll()
+        #expect(!files.allows("v1", device: "phone"))
+        #expect(!files.allows("v2", device: "tablet"))
+    }
+}

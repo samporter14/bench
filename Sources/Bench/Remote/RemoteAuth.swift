@@ -348,6 +348,7 @@ final class RemoteAuth: ObservableObject {
         guard devices.contains(where: { $0.id == id }) else { return }
         if save(devices.filter { $0.id != id }) {
             persistedSeen[id] = nil
+            ListedFiles.shared.forget(device: id)
             log.notice("Removed a device")
         }
     }
@@ -359,6 +360,7 @@ final class RemoteAuth: ObservableObject {
             try store.delete()
             devices = []
             persistedSeen = [:]
+            ListedFiles.shared.forgetAll()
             log.notice("Removed all devices")
         } catch {
             log.error("Couldn't remove the paired devices")

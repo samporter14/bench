@@ -92,4 +92,9 @@ final class ListedFiles {
     func forget(device: String) {
         listed[device] = nil
     }
+
+    /// Every device removed.
+    func forgetAll() {
+        listed = [:]
+    }
 }

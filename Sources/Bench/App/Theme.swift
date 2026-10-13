@@ -86,6 +86,11 @@ enum SettingsKey {
     /// message (Bench on your phone, since 0.4.0). On by default; off, the
     /// action routes answer 403 and the phone offers Open on Mac only.
     static let remoteActions = "remoteActions"
+    // Phase 3 browse
+    /// Paired devices may browse every project, read whole conversations and
+    /// see artifacts, and start a session (Bench on your phone, since 0.4.0).
+    /// On by default; off, those routes answer 403 and the phone shows Now only.
+    static let remoteBrowse = "remoteBrowse"
 
     static func register() {
         let defaults = UserDefaults.standard
@@ -116,6 +121,7 @@ enum SettingsKey {
             pageZoom: 1.0,
             appearance: BenchAppearance.system.rawValue,
             remoteActions: true, // Phase 2 actions
+            remoteBrowse: true, // Phase 3 browse
         ])
     }
 }

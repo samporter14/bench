@@ -250,13 +250,15 @@ final class RemoteController: ObservableObject {
             state: { Self.stateJSON() },
             session: { await RemoteSessions.shared.sessionJSON($0) }, // Phase 2 actions
             open: { id in
-                guard let session = RemoteAPI.knownSessions(lab: .shared).first(where: { $0.id == id }) else { return false }
+                guard let session = RemoteAPI.knownSessions(lab: .shared).first(where: { $0.id == id })
+                        ?? RemoteSessions.shared.heldSession(id) else { return false } // Phase 3 browse
                 LabModel.shared.open(session)
                 return true
             },
             version: RemoteAPI.benchVersion,
             act: { await RemoteSessions.shared.act($0, session: $1, device: $2, body: $3) }, // Phase 2 actions
-            files: { await RemoteArtifacts.shared.respond($0, target: $1, device: $2).response })) // Phase 3 files
+            files: { await RemoteArtifacts.shared.respond($0, target: $1, device: $2).response }, // Phase 3 files
+            browse: { await RemoteBrowser.shared.respond($0, target: $1, device: $2, body: $3) })) // Phase 3 browse
     }
 
     private static func state(now: Date = Date()) -> RemoteAPI.State {
@@ -291,16 +293,19 @@ final class RemoteController: ObservableObject {
     static func startDemo(reads: [String: SessionProjection] = [:]) {
         guard Demo.mode == .remote, demoServer == nil else { return }
         let auth = RemoteAuth(store: MemoryDeviceStore(), fixedCode: "000000")
-        let sessions = RemoteSessions.demo(reads: reads) // Phase 2 actions
-        let artifacts = RemoteArtifacts.demo() // Phase 3 files
+        let store = DemoBrowseStore(nowSessions: RemoteAPI.knownSessions(lab: .shared), reads: reads) // Phase 3 browse
+        let sessions = RemoteSessions.demo(reads: reads, lookup: { store.lookup($0) }, more: { store.read($0) }) // Phase 2 actions
+        let browser = RemoteBrowser.demo(sessions: sessions, store: store) // Phase 3 browse
+        let artifacts = RemoteArtifacts.demo(listed: .shared, info: .shared) // Phase 3 files
         let server = RemoteServer(policy: .closed, auth: auth, backend: RemoteBackend(
             state: { Self.stateJSON() },
             session: { await sessions.sessionJSON($0) }, // Phase 2 actions
             // Made up: nothing to open, and no window to open it in.
-            open: { id in RemoteAPI.knownSessions(lab: .shared).contains { $0.id == id } },
+            open: { id in RemoteAPI.knownSessions(lab: .shared).contains { $0.id == id } || sessions.heldSession(id) != nil },
             version: RemoteAPI.benchVersion,
             act: { await sessions.act($0, session: $1, device: $2, body: $3) }, // Phase 2 actions
-            files: { await artifacts.respond($0, target: $1, device: $2).response })) // Phase 3 files
+            files: { await artifacts.respond($0, target: $1, device: $2).response }, // Phase 3 files
+            browse: { await browser.respond($0, target: $1, device: $2, body: $3) })) // Phase 3 browse
         demoServer = server
         server.push = PushCenter.demo(auth: auth) // Phase 2 push
         Task {

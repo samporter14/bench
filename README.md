@@ -29,9 +29,9 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   your own paired devices over your Tailscale network, with notifications,
   if you turn them on, carried by Apple's push service and encrypted so only
   your device can read them. Bench reads Claude Science and changes nothing
-  in it, except when you press Approve on a plan's card, or answer, approve
-  or send a message from a paired device. It saves nothing but its own
-  settings.
+  in it, except when you press Approve on a plan's card, or answer, approve,
+  send a message or start a session from a paired device. It saves nothing
+  but its own settings.
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
 - **Know when it needs you.** While a session works, one of 507 little
@@ -111,6 +111,8 @@ open it from there and enter the one-time code. Paired devices see your
 sessions' titles and status. Settings lists them, each with Remove; turning
 the switch off stops serving and leaves your other Tailscale Serve settings
 as they are.
+
+Paired devices can also browse every project and its sessions, scroll back through a session's whole conversation, and start a new session in a project (**Let paired devices browse every project, full conversations and artifacts** in Settings → Phone, on; starting a session also needs actions on).
 
 ## Install
 

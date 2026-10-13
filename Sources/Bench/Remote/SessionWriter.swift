@@ -7,7 +7,9 @@
 // The page builds each path and body itself from typed arguments, never from
 // a string Swift put together, and checks the shape again there. Exactly three
 // routes: `/frames/<36>/approve-plan` with `{}`, `/frames/<36>/resolve-input`
-// and `/request`. Only the status and a few whitelisted fields come back.
+// and `/request`; and since Phase 3, a new session's
+// `/projects/<id>/request`. Only the status and a few whitelisted fields come
+// back.
 import Foundation
 import WebKit
 
@@ -23,11 +25,15 @@ enum RemoteWrite: Equatable, Sendable {
     /// `POST /api/request`: `{target_agent, root_frame_id, project_id?,
     /// input_data:{request}, intent_id, plan_mode:false}`.
     case message(frame: String, agent: String, projectID: String?, text: String, intentID: String)
+    /// `POST /api/projects/<project>/request`: `{input_data:{request},
+    /// plan_mode, intent_id}`, no `target_agent`: a new session. // Phase 3 browse
+    case newSession(project: String, text: String, planMode: Bool, intentID: String)
 
     /// The script's arguments: every name always there, null when unused.
     var arguments: [String: Any] {
         var all: [String: Any] = ["kind": "", "frameId": "", "toolId": NSNull(), "mode": NSNull(), "answers": NSNull(),
-                                  "agent": NSNull(), "projectId": NSNull(), "text": NSNull(), "intentId": NSNull()]
+                                  "agent": NSNull(), "projectId": NSNull(), "text": NSNull(), "intentId": NSNull(),
+                                  "planMode": NSNull()] // Phase 3 browse
         switch self {
         case .approvePlan(let frame):
             all["kind"] = "approve"
@@ -50,6 +56,12 @@ enum RemoteWrite: Equatable, Sendable {
             all["projectId"] = projectID ?? NSNull()
             all["text"] = text
             all["intentId"] = intentID
+        case .newSession(let project, let text, let planMode, let intentID): // Phase 3 browse
+            all["kind"] = "newSession"
+            all["projectId"] = project
+            all["text"] = text
+            all["planMode"] = planMode
+            all["intentId"] = intentID
         }
         return all
     }
@@ -68,6 +80,8 @@ struct RemoteWriteResult: Equatable, Sendable {
     let bodyStatus: String?
     /// How many `remaining_tool_ids`, when the body lists them.
     let remaining: Int?
+    /// The body's `root_frame_id`, when it is a full frame id: a new session's. // Phase 3 browse
+    let rootFrameID: String?
     /// The body says "No plan awaiting approval…".
     let noPlanAwaiting: Bool
     /// The body says a question is pending ("Please answer the pending
@@ -78,7 +92,7 @@ struct RemoteWriteResult: Equatable, Sendable {
     let staleInput: Bool
 
     init(status: Int, isJSON: Bool = true, code: String? = nil, bodyStatus: String? = nil, remaining: Int? = nil,
-         noPlanAwaiting: Bool = false, askPending: Bool = false, staleInput: Bool = false) {
+         noPlanAwaiting: Bool = false, askPending: Bool = false, staleInput: Bool = false, rootFrameID: String? = nil) {
         self.status = status
         self.isJSON = isJSON
         self.code = code
@@ -87,6 +101,7 @@ struct RemoteWriteResult: Equatable, Sendable {
         self.noPlanAwaiting = noPlanAwaiting
         self.askPending = askPending
         self.staleInput = staleInput
+        self.rootFrameID = rootFrameID
     }
 
     static let knownBodyStatuses: Set<String> = [
@@ -102,9 +117,13 @@ struct RemoteWriteResult: Equatable, Sendable {
               let staleInput = Pick.bool(fields["staleInput"]) else { return nil }
         guard code.isEmpty || Self.isCode(code), bodyStatus.isEmpty || Self.knownBodyStatuses.contains(bodyStatus),
               remaining >= -1 else { return nil }
+        // Phase 3 browse: a new session's id, "" when none.
+        let root = fields["rootFrameId"] == nil ? "" : Pick.string(fields["rootFrameId"])
+        guard let root, root.isEmpty || PlanCheck.isFrameID(root) else { return nil }
         self.init(status: status, isJSON: isJSON, code: code.isEmpty ? nil : code,
                   bodyStatus: bodyStatus.isEmpty ? nil : bodyStatus, remaining: remaining < 0 ? nil : remaining,
-                  noPlanAwaiting: noPlanAwaiting, askPending: askPending, staleInput: staleInput)
+                  noPlanAwaiting: noPlanAwaiting, askPending: askPending, staleInput: staleInput,
+                  rootFrameID: root.isEmpty ? nil : root)
     }
 
     /// `^[A-Za-z0-9_.-]{1,64}$`.
@@ -126,13 +145,22 @@ struct RemoteWriteResult: Equatable, Sendable {
 
 enum SessionWriterScript {
     /// `benchBuildWrite(args)` → `{path, body}`, or null when the arguments
-    /// don't make one of the three writes. Pure: no fetch, no DOM.
+    /// don't make one of the writes. Pure: no fetch, no DOM.
     static let builder = #"""
     function benchBuildWrite(a) {
         "use strict";
         const isObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
         const points = text => Array.from(text).length;
         const text = (v, min, max) => typeof v === "string" && v.trim() !== "" && points(v) >= min && points(v) <= max;
+        // Phase 3 browse: a new session in a project, to the server's default agent.
+        if (isObject(a) && a.kind === "newSession") {
+            if (typeof a.projectId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(a.projectId)) { return null; }
+            if (!text(a.text, 1, 4000) || typeof a.planMode !== "boolean") { return null; }
+            if (typeof a.intentId !== "string"
+                || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a.intentId)) { return null; }
+            return { path: "/api/projects/" + a.projectId + "/request",
+                     body: { input_data: { request: a.text }, plan_mode: a.planMode, intent_id: a.intentId } };
+        }
         if (!isObject(a) || typeof a.frameId !== "string" || !/^[0-9a-f-]{36}$/.test(a.frameId)) { return null; }
         const frame = "/api/frames/" + a.frameId;
         if (a.kind === "approve") {
@@ -188,6 +216,8 @@ enum SessionWriterScript {
             noPlanAwaiting: text.indexOf("No plan awaiting") >= 0,
             askPending: /pending question/i.test(text),
             staleInput: /not awaiting user response|no pending request/i.test(text),
+            rootFrameId: isObject && typeof json.root_frame_id === "string" && /^[0-9a-f-]{36}$/.test(json.root_frame_id)
+                ? json.root_frame_id : "",
         };
     }
     """#
@@ -199,7 +229,8 @@ enum SessionWriterScript {
     static let body = builder + "\n" + summarizer + #"""
 
     const write = benchBuildWrite({ kind: kind, frameId: frameId, toolId: toolId, mode: mode, answers: answers,
-                                    agent: agent, projectId: projectId, text: text, intentId: intentId });
+                                    agent: agent, projectId: projectId, text: text, intentId: intentId,
+                                    planMode: planMode });
     if (write === null) { return JSON.stringify({ refused: true }); }
     const secret = () => {
         const entry = document.cookie.split(";").map(part => part.trim())

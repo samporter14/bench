@@ -24,6 +24,8 @@ struct PhoneSettingsView: View {
 
             RemoteActionsSettingsSection() // Phase 2 actions
 
+            RemoteBrowseSettingsSection() // Phase 3 browse
+
             Section {
                 checks
             } header: {

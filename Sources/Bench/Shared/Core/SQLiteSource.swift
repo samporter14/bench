@@ -311,3 +311,192 @@ func fetchProjectNames(db: URL) throws -> [String: String] {
     for cols in rows where cols.count >= 2 { out[cols[0]] = cols[1] }
     return out
 }
+
+// MARK: Browse (Bench on your phone, Phase 3)
+//
+// Pageable reads for the phone's Projects tab and a project's sessions, and a
+// point lookup by id. Metadata only, like the reads above: ids, names,
+// statuses, times and counts. Never input_data, output_data or any text column
+// but `name`. Only two looks go further, each a test inside SQLite's WHERE
+// whose value never leaves the database: `task_summary IS NOT NULL` (Claude
+// Science's own list shows only sessions with one), and, to find a new session
+// whose reply was lost, whether `input_data`'s `_intent_id` is the phone's id.
+// Every value put into the SQL is checked first (ids by their shape, numbers
+// as numbers) or escaped (`q`); sqlite3 takes the statement as one argument.
+
+/// A project for the phone: how many sessions it has, and when the newest
+/// was last active (milliseconds; nil without sessions).
+struct ProjectRow: Equatable, Sendable {
+    let id: String
+    let name: String
+    let sessions: Int
+    let lastActiveMs: Int64?
+}
+
+/// A session found by browsing or by its id: a conversation root, metadata only.
+struct BrowseRow: Equatable, Sendable {
+    let id: String
+    let projectID: String
+    let projectName: String
+    let name: String
+    let status: String
+    let createdMs: Int64
+    let updatedMs: Int64
+    let completedMs: Int64?
+    /// When the latest turn began: the last user message, else creation.
+    let turnStartedMs: Int64
+}
+
+/// Where the next page of a project's sessions starts: after this
+/// `(updated_at, id)`, newest first.
+struct BrowseCursor: Equatable, Sendable {
+    let updatedMs: Int64
+    let id: String
+}
+
+enum BrowseSQL {
+    /// A page of sessions: 50, and one more to tell whether there is a next page.
+    static let pageSize = 50
+    /// At most this many projects, as Claude Science's own list.
+    static let projectLimit = 500
+
+    /// `^[A-Za-z0-9_-]{1,64}$`: a project id, safe in a path and in SQL.
+    static func isProjectID(_ id: some StringProtocol) -> Bool {
+        (1...64).contains(id.utf8.count) && id.utf8.allSatisfy {
+            (0x30...0x39).contains($0) || (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0) || $0 == 0x2D || $0 == 0x5F
+        }
+    }
+
+    /// `'%text%'` for `LIKE … ESCAPE '\'`: the quote doubled, and `\`, `%` and
+    /// `_` escaped, so the text matches only itself.
+    static func containsPattern(_ text: String) -> String {
+        var out = ""
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "'": out += "''"
+            case "\\": out += "\\\\"
+            case "%": out += "\\%"
+            case "_": out += "\\_"
+            default: out.unicodeScalars.append(scalar)
+            }
+        }
+        return "'%" + out + "%'"
+    }
+
+    /// The columns of a `BrowseRow`, from `frames f` and `projects p`.
+    fileprivate static let rowColumns = """
+        f.id, COALESCE(f.project_id,''), \(oneLineSQL("p.name")), \(oneLineSQL("f.name")), COALESCE(f.status,''),
+        COALESCE(f.created_at,0), COALESCE(f.updated_at,0), COALESCE(f.completed_at,''),
+        MAX(COALESCE(f.created_at,0), COALESCE(f.last_user_message_at,0))
+        """
+
+    fileprivate static func row(_ cols: [String]) -> BrowseRow? {
+        guard cols.count >= 9, PlanCheck.isFrameID(cols[0]) else { return nil }
+        let created = Int64(cols[5]) ?? 0
+        return BrowseRow(id: cols[0], projectID: cols[1], projectName: cols[2], name: cols[3], status: cols[4],
+                         createdMs: created, updatedMs: Int64(cols[6]) ?? 0,
+                         completedMs: cols[7].isEmpty ? nil : Int64(cols[7]),
+                         turnStartedMs: Int64(cols[8]) ?? created)
+    }
+}
+
+/// Whether `table` has `column`, from SQLite's own pragma; remembered for five
+/// minutes per database, so a daemon update while Bench runs is noticed.
+private final class ColumnProbe: @unchecked Sendable {
+    static let shared = ColumnProbe()
+    private let lock = NSLock()
+    private var known: [String: (has: Bool, at: Date)] = [:]
+
+    func has(db: URL, table: String, column: String) throws -> Bool {
+        let key = "\(db.path)\u{1F}\(table)\u{1F}\(column)"
+        lock.lock()
+        let cached = known[key]
+        lock.unlock()
+        if let cached, Date().timeIntervalSince(cached.at) < 300 { return cached.has }
+        let rows = try runReadOnlyQuery(
+            db: db, sql: "SELECT COUNT(*) FROM pragma_table_info('\(table)') WHERE name = '\(column)';")
+        let has = rows.first?.first == "1"
+        lock.lock()
+        known[key] = (has, Date())
+        lock.unlock()
+        return has
+    }
+}
+
+/// Every project but the concierge's own, archived ones hidden when the
+/// database has `archived_at`; with its root-session count and latest
+/// activity, newest first. Counted as the session list lists them.
+func fetchProjects(db: URL) throws -> [ProjectRow] {
+    let archived = try ColumnProbe.shared.has(db: db, table: "projects", column: "archived_at")
+    let sql = """
+        SELECT p.id, \(oneLineSQL("p.name")), COUNT(f.id), COALESCE(MAX(f.updated_at),'')
+        FROM projects p
+        LEFT JOIN frames f ON f.project_id = p.id AND \(sessionFilterSQL("f")) AND f.task_summary IS NOT NULL
+        WHERE p.id NOT LIKE 'proj\\_concierge\\_sys\\_%' ESCAPE '\\'\(archived ? " AND p.archived_at IS NULL" : "")
+        GROUP BY p.id
+        ORDER BY COALESCE(MAX(f.updated_at),0) DESC, p.id
+        LIMIT \(BrowseSQL.projectLimit);
+        """
+    return try runReadOnlyQuery(db: db, sql: sql).compactMap { cols in
+        guard cols.count >= 4, BrowseSQL.isProjectID(cols[0]) else { return nil }
+        return ProjectRow(id: cols[0], name: cols[1], sessions: Int(cols[2]) ?? 0,
+                          lastActiveMs: cols[3].isEmpty ? nil : Int64(cols[3]))
+    }
+}
+
+/// One page of a project's root sessions, newest first by `(updated_at, id)`,
+/// after `cursor`, and with `search` its names containing that text. Up to
+/// `BrowseSQL.pageSize + 1` rows: the extra one says there is a next page.
+/// Nil (nothing read) for a project id or cursor out of shape.
+func fetchProjectSessions(db: URL, project: String, after cursor: BrowseCursor?, search: String?) throws -> [BrowseRow]? {
+    guard BrowseSQL.isProjectID(project) else { return nil }
+    var conditions = ["\(sessionFilterSQL("f"))", "f.task_summary IS NOT NULL", "f.project_id = '\(project)'"]
+    if let cursor {
+        guard PlanCheck.isFrameID(cursor.id), cursor.updatedMs >= 0 else { return nil }
+        conditions.append("""
+            (COALESCE(f.updated_at,0) < \(cursor.updatedMs) \
+            OR (COALESCE(f.updated_at,0) = \(cursor.updatedMs) AND f.id < '\(cursor.id)'))
+            """)
+    }
+    if let search { conditions.append("f.name LIKE \(BrowseSQL.containsPattern(search)) ESCAPE '\\'") }
+    let sql = """
+        SELECT \(BrowseSQL.rowColumns)
+        FROM frames f LEFT JOIN projects p ON p.id = f.project_id
+        WHERE \(conditions.joined(separator: "\n  AND "))
+        ORDER BY COALESCE(f.updated_at,0) DESC, f.id DESC
+        LIMIT \(BrowseSQL.pageSize + 1);
+        """
+    return try runReadOnlyQuery(db: db, sql: sql).compactMap(BrowseSQL.row)
+}
+
+/// One root session by its full id, as the session list's filter counts
+/// sessions (without the `task_summary` test, so any root opens). Nil when
+/// there is none, or for an id out of shape.
+func fetchSession(db: URL, id: String) throws -> BrowseRow? {
+    guard PlanCheck.isFrameID(id) else { return nil }
+    let sql = """
+        SELECT \(BrowseSQL.rowColumns)
+        FROM frames f LEFT JOIN projects p ON p.id = f.project_id
+        WHERE \(sessionFilterSQL("f")) AND f.id = '\(id)'
+        LIMIT 1;
+        """
+    return try runReadOnlyQuery(db: db, sql: sql).compactMap(BrowseSQL.row).first
+}
+
+/// The root session a new-session request with this intent id made in this
+/// project within `window` seconds of `now`: for a reply that was lost (a
+/// timeout) or refused as a repeat (409). The intent is compared inside
+/// SQLite; only the session's id comes out.
+func fetchSessionByIntent(db: URL, project: String, intent: String, now: Date = Date(),
+                          window: TimeInterval = 600) throws -> String? {
+    guard BrowseSQL.isProjectID(project), RemoteActionRequest.isUUIDv4(intent) else { return nil }
+    let since = Int64((now.timeIntervalSince1970 - window) * 1000)
+    let sql = """
+        SELECT f.id FROM frames f
+        WHERE \(sessionFilterSQL("f")) AND f.project_id = '\(project)' AND COALESCE(f.created_at,0) >= \(since)
+          AND json_extract(CASE WHEN json_valid(f.input_data) THEN f.input_data END, '$._intent_id') = '\(intent)'
+        ORDER BY f.created_at DESC
+        LIMIT 1;
+        """
+    return try runReadOnlyQuery(db: db, sql: sql).first.flatMap { $0.first }.flatMap { PlanCheck.isFrameID($0) ? $0 : nil }
+}

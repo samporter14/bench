@@ -15,11 +15,6 @@
 // the app, made-up files in `--demo remote` and the tests. Nothing here logs.
 import Foundation
 
-// Phase 3 files: stand-in, replaced at merge
-enum RemoteBrowse {
-    @MainActor static var isOn: Bool { UserDefaults.standard.object(forKey: "remoteBrowse") as? Bool ?? true }
-}
-
 // MARK: The routes
 
 /// The four routes, matched exactly and never decoded: a session id
@@ -477,9 +472,9 @@ final class RemoteArtifacts {
     struct Dependencies {
         /// Settings → Phone → "Let paired devices browse…" (`remoteBrowse`).
         var browseOn: @MainActor () -> Bool
-        /// A root session Bench knows. Phase 3 browse's point lookup takes
-        /// this place at merge, as it does for `/api/sessions/<id>`.
-        var isSession: @MainActor (String) -> Bool
+        /// A root session the phone may open: one Bench knows now, or, while
+        /// browse is on, any in the database (`RemoteSessions.admitted`).
+        var isSession: @MainActor (String) async -> Bool
         /// The page's read, checked (`WebContainer.readArtifact`).
         var read: @MainActor (ArtifactRead) async -> ArtifactReadOutcome
         var listed: ListedFiles
@@ -488,7 +483,7 @@ final class RemoteArtifacts {
         @MainActor static func live() -> Dependencies {
             Dependencies(
                 browseOn: { RemoteBrowse.isOn },
-                isSession: { id in RemoteAPI.knownSessions(lab: .shared).contains { $0.id == id } },
+                isSession: { id in await RemoteSessions.shared.admitted(id) != nil },
                 read: { read in
                     guard Demo.mode == nil else { return .unreadable }
                     return (try? await WebContainer.shared.readArtifact(read)) ?? .unreadable
@@ -544,7 +539,7 @@ final class RemoteArtifacts {
     }
 
     private func list(_ session: String, device: String) async -> RemoteFilesReply {
-        guard dependencies.isSession(session) else { return .notFound }
+        guard await dependencies.isSession(session) else { return .notFound }
         guard case .list(let entries) = await dependencies.read(.list(frame: session)) else { return .unreadable }
         let sorted = ArtifactJSON.sorted(entries)
         dependencies.listed.record(sorted.map(\.version), device: device)

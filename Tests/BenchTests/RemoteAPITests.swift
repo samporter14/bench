@@ -163,7 +163,7 @@ struct RemoteAPITests {
     }
 
     @Test func theMeAnswer() {
-        let me = String(decoding: RemoteAPI.encode(RemoteAPI.Me(paired: true, device: "Pat's iPhone", bench: "0.4.0")), as: UTF8.self)
-        #expect(me == #"{"bench":"0.4.0","device":"Pat's iPhone","paired":true}"#)
+        let me = String(decoding: RemoteAPI.encode(RemoteAPI.Me(paired: true, device: "Pat's iPhone", bench: "0.4.0", browse: true)), as: UTF8.self)
+        #expect(me == #"{"bench":"0.4.0","browse":true,"device":"Pat's iPhone","paired":true}"#)
     }
 }

@@ -1369,7 +1369,7 @@ message, and push notifications.
 | GET | `/` | none | The app shell (HTML). Shows the pairing screen when not paired. |
 | GET | `/app.js`, `/app.css`, `/manifest.webmanifest`, `/icon-180.png`, `/icon-512.png` | none | Static, from the binary. |
 | POST | `/pair` | code | Pair this device. |
-| GET | `/api/me` | token | `{"paired":true,"device":"Sam's iPhone","bench":"0.4.0"}` |
+| GET | `/api/me` | token | `{"paired":true,"device":"Sam's iPhone","bench":"0.4.0","browse":true}` (`browse` since Phase 3) |
 | POST | `/api/unpair` | token | Removes this device. |
 | GET | `/api/state` | token | The snapshot below. |
 | GET | `/api/events` | token | Server-Sent Events: `event: state` with the snapshot on every change, a `: keepalive` comment every 25 s. |
@@ -1388,6 +1388,11 @@ message, and push notifications.
 | GET | `/api/files/<v>/thumb?w=120\|800` | token | A listed image's WebP thumbnail (Phase 3, Artifacts). |
 | GET | `/api/files/<v>/text` | token | A listed markdown, text or table file, as JSON (Phase 3, Artifacts). |
 | GET | `/api/files/<v>/download` | token | A listed file's bytes, as an attachment, ≤ 8 MB (Phase 3, Artifacts). |
+| GET | `/api/projects` | token | Every project, with its session count and latest activity (Phase 3, Browse). |
+| GET | `/api/projects/<pid>/sessions[?before=<cursor>][&q=<text>]` | token | A project's sessions, 50 a page, newest first (Phase 3, Browse). |
+| POST | `/api/projects/<pid>/sessions` | token | Start a session: `{"text","id","planFirst"}`; body up to 16 KB (Phase 3, New session). |
+| GET | `/api/sessions/<id>/history[?before=<i>]` | token | A page of the whole conversation, oldest first (Phase 3, History). |
+| GET | `/api/sessions/<id>/turn/<i>` | token | One cut turn whole (Phase 3, History). |
 
 ### `/api/state` (version 1)
 
@@ -1930,6 +1935,63 @@ ids), so on a timeout or 409 Bench looks up, in SQLite, a root in that project
 from the last 10 minutes whose `input_data` `_intent_id` equals `id` (the test
 runs in SQLite; nothing else is read) and answers `started` with its id. It
 counts toward the 6-a-minute action limit and needs `remoteActions` too.
+
+#### How the server does it (Phase 3 browse)
+
+Files: `Remote/RemoteBrowse.swift` (the switch, the routes, the query and the
+cursor, the answers, and `RemoteBrowser` over injected reads and writes),
+`Remote/HistoryReader.swift` (the in-page projection and Swift's checks of
+it), `Remote/RemoteBrowseDemo.swift` (the demo's made-up store), and the
+reads at the end of `Shared/Core/SQLiteSource.swift` (Bench's own copy). The
+shared files gained lines marked `// Phase 3 browse`.
+
+- **The switch**: `RemoteBrowse.isOn` is the first check of every Phase 3
+  route, the artifact routes included; off, 403 `{"error":"browseOff"}`
+  before anything is read. Off, `/api/sessions/<id>` and the actions open
+  only the sessions Bench knows, as in Phase 2.
+- **SQL**: sqlite3 takes no bound parameters, so every value is checked by
+  its shape before it goes in (ids, the cursor's number) and `q` is escaped
+  (`'` doubled; `\`, `%` and `_` with `ESCAPE '\'`). `archived_at` is probed
+  with `pragma_table_info` (remembered five minutes). A project's count is of
+  the roots its list shows. Each read runs off the main thread; 503
+  `{"error":"unreadable"}` when the database can't be read.
+- **States in a list** come from `status` alone (no output is read), so a
+  root still `processing` while a sub-agent waits lists as Working, unless
+  Bench knows the session: then its own state shows. A row's `startedAt` is
+  when the session was created; `updatedAt` is its `updated_at`, the order.
+- **The gate**: Bench's own sessions first (nothing read), then, browse on,
+  the point lookup. A session found is held an hour, so Open on Mac works
+  for it; one the phone just started opens for two minutes before the
+  database has it.
+- **History**: without `before`, Phase 2's `from=-12&limit=12` gives the
+  total and the last rows (its `from` may be the index or the -12 asked
+  for), and one `from=max(0,total−50)&limit=…` reads the rest; with
+  `before=i`, one GET of `from=max(0,i−50)&limit=i−from`. A 15 s timeout
+  each. The page caps at 60 items and 64 KB by dropping the oldest rows
+  whole and moving `from` up; Swift checks again on its own JSON. Tool calls
+  fold until something is said (a turn, a plan, an ask, a message to you, a
+  helper), so a row's text and its calls can share an `i`. The plurals are
+  Bench's ("ran 3 commands"), groups go by count then first use, and "+N
+  more" counts the groups not shown. A turn's files (`_artifact_refs`, and
+  the save and run tools' `artifacts[]`) go under its last reply on the page,
+  else on its last `steps` line, which then carries `files`; a message to
+  you carries its own attachments. Names lose any path. Every `v` a page
+  lists goes into `ListedFiles` for that device. A row without `_ts` has
+  `"at": null`. `/turn/<i>` is 404 for a row that isn't a turn.
+- **New session**: browse, then actions (403 `actionsOff`), the device's six
+  a minute (shared with the actions, 429), then the body (400; `planFirst`
+  false when left out; up to 16 KB). 200 `accepted` with a full
+  `root_frame_id` is `started`. A timeout, a 409 or a 200 without an id looks
+  the intent up, and once more a second later; anything else is
+  `unavailable`. README's "changes nothing" line gains "or start a session".
+- **Errors**: 400 for a query or body out of shape (an unknown or repeated
+  name too), 404 for a session that doesn't open, 503 for one that can't be
+  read.
+- **`--demo remote`**: six made-up projects; Example project has 64 sessions
+  (two pages, one untitled); "Primer design" has 118 rows of history (three
+  pages) with every kind of item, every kind of file and one cut turn. A new
+  session is made in memory, lists first in its project, opens and reads;
+  the same intent again gets the daemon's 409 and is found by it.
 
 #### Phone
 
