@@ -139,6 +139,8 @@ enum RemoteRoute: Equatable, Sendable {
     case push(RemotePushRoute)
     /// `POST /api/sessions/<id>/approve|answer|message`. // Phase 2 actions
     case action(RemoteAction, String)
+    /// `/api/sessions/<id>/artifacts` and `/api/files/<v>/…` (RemoteArtifacts.swift). // Phase 3 files
+    case files(RemoteFilesRoute)
 
     enum Match: Equatable {
         case found(RemoteRoute)
@@ -170,6 +172,7 @@ enum RemoteRoute: Equatable, Sendable {
         }
         if staticFiles.contains(String(path)) { return .file(String(path)) }
         if let push = RemotePushRoute(path: path) { return .push(push) } // Phase 2 push
+        if let files = RemoteFilesRoute(path: path) { return .files(files) } // Phase 3 files
         let prefix = "/api/sessions/"
         guard path.hasPrefix(prefix) else { return nil }
         let rest = path.dropFirst(prefix.count)
@@ -215,6 +218,7 @@ enum RemoteRoute: Equatable, Sendable {
         case .openSession: "/api/sessions/<id>/open"
         case .push(let push): push.pattern // Phase 2 push
         case .action(let action, _): "/api/sessions/<id>/\(action.rawValue)" // Phase 2 actions
+        case .files(let files): files.pattern // Phase 3 files
         }
     }
 }
@@ -439,6 +443,8 @@ struct RemoteBackend {
     var version: String
     /// An action (session id, device id, body). // Phase 2 actions
     var act: @MainActor (RemoteAction, String, String, Data) async -> RemoteActionReply = { _, _, _, _ in .notFound }
+    /// A files route (the route, the request's target, device id): the whole response. // Phase 3 files
+    var files: @MainActor (RemoteFilesRoute, String, String) async -> Data = { _, _, _ in RemoteResponse.error(404) }
 }
 
 enum RemoteServerError: Error, Equatable {
@@ -717,6 +723,13 @@ final class RemoteServer {
                 let reply = await self.backend.act(action, sessionID, deviceID, body)
                 self.send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.body),
                           route: route, closing: true)
+            }
+        case .files(let filesRoute): // Phase 3 files
+            let deviceID = device?.id ?? "", target = request.target
+            Task { [weak self] in
+                guard let self else { return }
+                let response = await self.backend.files(filesRoute, target, deviceID)
+                self.send(id, response, route: route, closing: true)
             }
         }
     }
