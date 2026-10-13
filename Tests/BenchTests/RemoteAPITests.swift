@@ -128,7 +128,7 @@ struct RemoteAPITests {
             return
         }
         let detail = json(built)
-        #expect(detail["version"] as? Int == 1)
+        #expect(detail["version"] as? Int == 2)
         #expect(detail["state"] as? String == "needsInput")
         #expect(detail["reason"] as? String == "plan")
         #expect(detail["sentence"] as? String == "Plan ready for your review")

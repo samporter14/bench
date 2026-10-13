@@ -81,6 +81,11 @@ enum SettingsKey {
     static let settingsTab = "settingsTab"
     /// "system" (follow the Mac), "light" or "dark": see `BenchAppearance`.
     static let appearance = "appearance"
+    // Phase 2 actions
+    /// Paired devices may answer a question, approve a plan and send a
+    /// message (Bench on your phone, since 0.4.0). On by default; off, the
+    /// action routes answer 403 and the phone offers Open on Mac only.
+    static let remoteActions = "remoteActions"
 
     static func register() {
         let defaults = UserDefaults.standard
@@ -110,6 +115,7 @@ enum SettingsKey {
             panelScreen: "",
             pageZoom: 1.0,
             appearance: BenchAppearance.system.rawValue,
+            remoteActions: true, // Phase 2 actions
         ])
     }
 }

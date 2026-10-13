@@ -376,7 +376,83 @@ enum Demo {
                              "Fit a model with run as a covariate", "Write up what changes"],
                 versionID: "demo", artifactID: nil))
         }
-        RemoteController.startDemo()
+        RemoteController.startDemo(reads: remoteReads(sessions))
+    }
+
+    /// What the phone reads of the made-up sessions (Phase 2): replies,
+    /// turns, a message to you, a question with three options, the plan's
+    /// version. Each session's `can` comes out differently; one is left
+    /// unreadable, to show the phone's fallback. All made up.
+    static func remoteReads(_ sessions: [SessionStatus]) -> [String: SessionProjection] {
+        let now = Date()
+        func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
+        func turn(_ role: SessionProjection.Turn.Role, _ minutes: Double, _ text: String) -> SessionProjection.Turn {
+            SessionProjection.Turn(role: role, at: ago(minutes), text: text)
+        }
+        var reads: [String: SessionProjection] = [:]
+        for session in sessions {
+            switch session.title {
+            case "Protein stability screen":
+                reads[session.id] = SessionProjection(
+                    status: "awaiting_user_response", agentName: "demo", projectID: "demo",
+                    statusLine: "Waiting for your answer",
+                    asks: [SessionProjection.Ask(toolID: "demo-ask", items: [SessionProjection.Question(
+                        question: "Which buffer should the screen start with?", header: "Buffer", multi: false,
+                        options: [
+                            SessionProjection.Option(label: "HEPES pH 7.5", detail: "Most stable in the pilot"),
+                            SessionProjection.Option(label: "Tris pH 8.0", detail: "Cheapest; its pH drifts with temperature"),
+                            SessionProjection.Option(label: "Phosphate pH 7.0", detail: "Matches the assay buffer"),
+                        ])])],
+                    turns: [
+                        turn(.you, 6, "Screen the protein in a few buffers and tell me which keeps it soluble longest."),
+                        turn(.claude, 5, "I'll set up a **24-well** screen. Before I order anything:\n\n- three buffers are on hand\n- each needs about 2 mL"),
+                    ])
+            case "Batch effect check":
+                reads[session.id] = SessionProjection(
+                    status: "awaiting_plan_approval", agentName: "demo", projectID: "demo",
+                    statusLine: "Plan ready for review", planVersion: "demo",
+                    turns: [
+                        turn(.you, 12, "Do the two sequencing runs differ more than the samples do?"),
+                        turn(.claude, 11, "Here's a plan in four steps. It compares the runs before anything else."),
+                    ])
+            case "Figure 2 rebuild":
+                reads[session.id] = SessionProjection(
+                    status: "failed", agentName: "demo", projectID: "demo",
+                    statusLine: "Stopped: the plotting step ran out of memory",
+                    reply: "The panel with every replicate didn't fit in memory. Send a message to try again with one panel per condition.",
+                    replyAt: ago(3),
+                    turns: [
+                        turn(.you, 4, "Rebuild figure 2 with the new colours."),
+                        turn(.claude, 3, "The panel with every replicate didn't fit in memory."),
+                    ])
+            case "Literature sweep":
+                reads[session.id] = SessionProjection(
+                    status: "processing", agentName: "demo", projectID: "demo",
+                    statusLine: "Reading 14 papers on thermal shift assays",
+                    toYou: [SessionProjection.Note(text: "Found two reviews that compare dyes. I'm summarising those first.", at: ago(2))],
+                    queued: 1,
+                    turns: [turn(.you, 4, "Find what's been published on dye choice for thermal shift assays.")])
+            case "Plate layout":
+                reads[session.id] = SessionProjection(
+                    status: "processing", agentName: "demo", projectID: "demo",
+                    statusLine: "Laying out the 96-well plate",
+                    turns: [turn(.you, 17, "Lay out a 96-well plate: 8 conditions, 3 replicates, controls on the edge.")])
+            case "Primer design":
+                reads[session.id] = SessionProjection(
+                    status: "completed", agentName: "demo", projectID: "demo",
+                    reply: "Designed **6 primer pairs**. All have a melting point between 58 and 62 °C.\n\n1. Pair 1 spans the first exon\n2. Pair 2 is the backup\n\nThe table is in the session.",
+                    replyAt: ago(9),
+                    turns: [
+                        turn(.you, 40, "Design primers for the three target genes."),
+                        turn(.claude, 9, "Designed 6 primer pairs. All have a melting point between 58 and 62 °C."),
+                    ])
+            default:
+                // "Gel quantification": unreadable, so the phone shows its
+                // status and Open on Mac.
+                break
+            }
+        }
+        return reads
     }
 
     private static func showPage<V: View>(_ view: V, title: String) {

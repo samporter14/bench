@@ -205,9 +205,14 @@ Every link goes through one function. The rules:
 - **Calls to Claude Science's API** (Web/WebAPI.swift) are made from inside
   the page with `callAsyncJavaScript`, in Bench's `.defaultClient` script
   world, so the page's cookie session carries them and Bench never holds it:
-  - `apiGET` reads, and only under `/api/usage`, `/api/frames/` and (since
-    0.3.4, for a plan's card) `/api/artifacts/versions/`; never a path with
-    `..`.
+  - `apiGET` reads, and only under `/api/usage`, (since 0.3.4, for a plan's
+    card) `/api/artifacts/versions/`, and a frame exactly as
+    `/api/frames/<36>?shallow=true` (the card) or
+    `/api/frames/<id>/token-series` (the context ring); never a path with
+    `..`, and never `/frames/<id>/messages` (since 0.4.0
+    `WebContainer.isReadablePath`). A session's messages are read only by the
+    phone's session reader, which projects them in the page (Bench on your
+    phone → Reading a session).
   - `apiPOST` is the **one write** (since 0.3.4). It accepts exactly one
     route, `^/frames/[0-9a-f-]{36}/approve-plan$` (`WebContainer.isWritablePath`),
     and its body is always exactly `{}`. It sends the `operon_csrf` cookie's
@@ -217,7 +222,8 @@ Every link goes through one function. The rules:
     script, not through `apiGET`) and retries once. It returns the status
     and the JSON `code` (and whether the body says "No plan awaiting"), never
     the body itself. A 401 calls `sessionLost()`, as `apiGET` does. See
-    Approving a plan from its card.
+    Approving a plan from its card. Since 0.4.0 the phone's writes go through
+    their own writer (Bench on your phone → Actions); `apiPOST` is unchanged.
 - `isInspectable = true` (internal build).
 - `isElementFullscreenEnabled = true`.
 - Find (⌘F): a small find bar under the toolbar that uses
@@ -673,8 +679,9 @@ The poster, `MacNotifications`, is thin and tests never use it.
 
 ### Approving a plan from its card (since 0.3.4)
 
-Bench's first and only write to Claude Science (Lab/PlanApproval.swift).
-Until 0.3.4 it only read. Plan approval only; every other kind of waiting
+Bench's first write to Claude Science (Lab/PlanApproval.swift).
+Until 0.3.4 it only read. (Since 0.4.0 a paired device can also approve,
+answer and send a message: Bench on your phone → Actions.) Plan approval only; every other kind of waiting
 keeps Open and Later.
 
 **The flow.** `PlanApprover` follows `LabModel.cards`:
@@ -1363,8 +1370,11 @@ message, and push notifications.
 | POST | `/api/unpair` | token | Removes this device. |
 | GET | `/api/state` | token | The snapshot below. |
 | GET | `/api/events` | token | Server-Sent Events: `event: state` with the snapshot on every change, a `: keepalive` comment every 25 s. |
-| GET | `/api/sessions/<id>` | token | One session (below). `<id>` must match `^[0-9a-f-]{36}$`. |
+| GET | `/api/sessions/<id>` | token | One session (version 2 since Phase 2, below). `<id>` must match `^[0-9a-f-]{36}$`. |
 | POST | `/api/sessions/<id>/open` | token | Open it on the Mac (`LabModel.open`). |
+| POST | `/api/sessions/<id>/approve` | token | Approve its plan: `{"version"}` (Phase 2, Actions). |
+| POST | `/api/sessions/<id>/answer` | token | Answer, choose for me or cancel its question (Phase 2, Actions). |
+| POST | `/api/sessions/<id>/message` | token | Send it a message: `{"text","id"}`; body up to 16 KB (Phase 2, Actions). |
 
 ### `/api/state` (version 1)
 
@@ -1584,6 +1594,58 @@ unexpected status, 404/405, unknown 4xx `code` or non-JSON reply is
   (`remoteActions`, on); off, the routes answer 403 and `can` is all off with
   `why` "Actions are off in Bench's Settings".
 - **Never logged**: route pattern and status only, as for every request.
+
+#### How the server does it (Phase 2 actions)
+
+Files: `Remote/SessionReader.swift` (the in-page projection and Swift's
+checks of it), `Remote/SessionWriter.swift` (the in-page writer) and
+`Remote/RemoteActions.swift` (the bodies, the decisions, the limit, and
+`RemoteSessions`, which reads and acts over injected closures). The shared
+files only gained hooks marked `// Phase 2 actions`.
+
+- **Tested as it runs.** The projection, the writer's body builder and its
+  reply summary are plain JavaScript strings; the tests run those very
+  strings in JavaScriptCore (WebKit's engine) on made-up frames, and the
+  in-page bodies against a fake `fetch` that records each path and body.
+- **Shape gates.** Statuses are the daemon's eight (`processing`,
+  `awaiting_user_response`, `awaiting_plan_approval`, `completed`,
+  `success`, `cancelled`, `replaced`, `failed`). The page returns
+  `JSON.stringify` of its projection; Swift re-checks every type, count and
+  length (code points), and any mismatch is unreadable. A question's text
+  and its option labels are never cut (they go back as the answer's keys):
+  one that is too long, a duplicate question or an empty label leaves the
+  question unoffered, and a first question that doesn't match is not
+  passed over for a later one. The plan fields follow `PlanFrame`'s rules
+  (context first, then output), checked against it in the tests.
+- **The plan's text** isn't in the shallow frame: the card's preview when
+  it is the same version, else `apiGET /artifacts/versions/<v>` and
+  `PlanCheck.preview`, as the card does. `plan.version` is the plan version
+  id; Approve sends it back and Bench approves only while
+  `PlanCheck.versionToRead` of a fresh read equals it.
+- **Reading** happens only when the phone asks for `/api/sessions/<id>`,
+  and only for a session Bench knows (else 404, nothing read). What was read
+  is held 5 s per session (a burst reads the page once; concurrent asks
+  share one read) and dropped after any action on that session.
+- **Order of an action's checks**: the setting (403
+  `{"error":"actionsOff","result":"unavailable","sentence":…}`), the
+  device's limit (429; every attempt counts), a known session (404), the
+  body (400), then one action at a time per session: a fresh frame read
+  (frame only, no messages), the decision, the write. Result mapping:
+  approve uses `PlanCheck.outcome` (`plan_frame_processing` is `changed`,
+  "Claude is busy with it"); answer: 200 `accepted`/`buffered` → `sent`,
+  `already_resolved` or 400 "not awaiting user response" / "No pending
+  request" → `changed`; message: `accepted` → `sent` (`resumed` when the
+  fresh read was `failed`/`cancelled`), `message_queued` → `queued`,
+  `already_delivered` → `sent`, 400 "pending question" or the daemon's 429
+  → `blocked`; everything else `unavailable`.
+- **`can.why`**, in this order: actions off, unreadable, then the status
+  (`replaced`, which the research's table leaves out, says "This session
+  can't take a message from here"; a root without an `agent_name` takes no
+  message: "Bench can't read this session").
+- **`--demo remote`** reads made-up projections (a question with three
+  options, a plan at version `demo`, a failed session, a queued message, a
+  finished reply, one unreadable session) and its writes answer as the
+  daemon would without touching a web view.
 
 #### Notifications (Web Push, opt-in per device)
 

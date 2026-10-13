@@ -28,7 +28,8 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   update check if you turn it on, and, if you turn on Bench on your phone,
   your own devices over your Tailscale network. Bench reads
   Claude Science and changes nothing in it, except when you press Approve on
-  a plan's card. It saves nothing but its own settings.
+  a plan's card, or answer, approve or send a message from a paired device.
+  It saves nothing but its own settings.
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
 - **Know when it needs you.** While a session works, one of 507 little
