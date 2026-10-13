@@ -1207,8 +1207,8 @@ plain window that doesn't activate Bench.
 ## Welcome window (since 0.3.6)
 
 A short welcome for someone who has just installed Bench (`App/Welcome.swift`),
-so the panel, the cards and the one setting that reaches beyond this Mac are
-explained once, in Bench's own words. It is a plain titled, closable window,
+so the panel, the cards and the update check (the one request Bench can make
+without a click) are explained once, in Bench's own words. It is a plain titled, closable window,
 560 × 460 and fixed in size, centred, hosting SwiftUI. No tabs, no toolbar. The
 main Claude Science window opens behind it as usual.
 
