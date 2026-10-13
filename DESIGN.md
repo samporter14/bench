@@ -1755,3 +1755,118 @@ lines marked `// Phase 2 push`.
   minute, and the retry is sealed afresh. The log has the status only.
 - **Demo**: the public key is made at launch and kept in memory only, so a
   browser can subscribe; nothing reaches the Keychain or the network.
+
+### Phase 3: browse, history, artifacts, new sessions (0.4.0)
+
+Sam's call (2026-10-13): from the phone, change projects, scroll up through a
+session's whole conversation, see the artifacts older sessions made, and
+start a session. Research: `Bench-phone-browse-research.md` (outside the
+repo; read it, its tables are the detail behind this section). This widens
+"never read content" to full history and artifact bytes, for paired devices
+only, behind its own switch.
+
+- **Switch**: Settings → Phone, "Let paired devices browse every project, full
+  conversations and artifacts" (`remoteBrowse`, on). Off: these routes answer
+  403 `{"error":"browseOff"}`, `/api/me` says `"browse": false`, and the phone
+  hides Projects and the History/Artifacts parts.
+- **Ids**: session ids `^[0-9a-f-]{36}$`; project ids `^[A-Za-z0-9_-]{1,64}$`;
+  version ids `^[A-Za-z0-9_-]{1,128}$`. Never decoded, matched exactly.
+
+#### Browse (from Bench's own database, metadata only)
+
+New read-only SQLite queries beside the existing ones, never touching
+`input_data`, `output_data` or any text column (a `task_summary IS NOT NULL`
+*test* is allowed, as the UI filters on it; its value is never read):
+projects (id, name, root-session count, latest activity; no
+`proj_concierge_sys_%`; archived hidden when an `archived_at` column exists),
+a project's root sessions (keyset `(updated_at, id)` desc, 50 a page, the
+existing session filter), and a point lookup by id that **replaces the
+known-sessions gate** for `/api/sessions/<id>`, so any root session can open.
+
+| Route | Answer |
+|---|---|
+| `GET /api/projects` | `{"version":1,"projects":[{"id","name","sessions":12,"lastActive":"…"}]}` newest activity first |
+| `GET /api/projects/<pid>/sessions[?before=<cursor>][&q=<2–64 chars>]` | `{"sessions":[{"id","title","state","sentence","startedAt","updatedAt"}],"next":"<opaque cursor>"\|null}`; `q` matches the session's `name` only (`LIKE`, escaped); title falls back to "Untitled session" |
+
+#### History (in-page, projected, paged backward)
+
+`GET /api/sessions/<id>/history[?before=<i>]` → the 50 rows before index `i`
+(default: the last 50) of `/frames/<root>/messages`, projected in the page:
+
+```json
+{"total": 812, "from": 762,
+ "items": [
+  {"i": 762, "role": "you", "at": "…", "text": "…≤2000", "cut": false, "files": []},
+  {"i": 763, "kind": "steps", "line": "Ran a command, read a file +2 more", "failed": false},
+  {"i": 765, "kind": "plan", "steps": 4},
+  {"i": 766, "kind": "ask", "q": "…≤300", "a": "…≤300"},
+  {"i": 770, "kind": "toYou", "text": "…≤2000", "files": [{"v","a","name","kind","size"}]},
+  {"i": 771, "kind": "helper"},
+  {"i": 772, "role": "claude", "at": "…", "text": "…", "cut": true, "files": [ … ]}
+ ]}
+```
+
+At most 60 items and 64 KB a page. Steps use the UI's group phrases only (the
+research's verb table; unknown tools "made a call"), so no tool input is read;
+consecutive tool rows fold into one `steps` line. Hidden rows, thinking, tool
+input and results, images and paths never leave the page. Allowlisted GET:
+`^/frames/<36>/messages\?from=\d{1,7}&limit=([1-9]|[1-4]\d|50)$` (and the
+Phase 2 `from=-12&limit=12`). `GET /api/sessions/<id>/turn/<i>` returns one
+cut turn whole, ≤ 20,000 chars: `{"i","role","at","text"}`.
+
+`files` come from the turn's artifacts (`_artifact_refs`, save/run tool
+results' `artifacts[]`, `send_user_message` attachments), keeping only
+`{v: version_id, a: artifact_id, name ≤255, kind, size}`.
+
+#### Artifacts
+
+`kind` is one of `image` (png, jpeg, gif, webp), `svg`, `markdown`, `text`
+(text, code, json, log, fasta and the like), `table` (csv, tsv), `html`,
+`pdf`, `notebook`, `other`, decided from extension and content type.
+
+| Route | Answer |
+|---|---|
+| `GET /api/sessions/<id>/artifacts` | `{"artifacts":[{"v","a","name","kind","size","mime","at"}]}`: from `/frames/<root>/artifacts`, ≤ 300, without `file_path`/`ref_host_path`, intermediates, `plan*.json`, `goal_*.html` and `user_hidden`; documents, then images, then tables, then the rest |
+| `GET /api/files/<v>/thumb?w=120\|800` | WebP from `?thumbnail=<w>`, only for `kind:image` and only when the bytes' magic says WebP; ≤ 4 MB |
+| `GET /api/files/<v>/text` | `{"kind":"markdown"\|"text","text":"…","truncated":bool}` from a 256 KB range read (UTF-8, no NUL in the first 8 KB), or `{"kind":"table","columns":[…],"rows":[[…]],"truncated":bool}` (≤ 200 rows × 30 columns, cells ≤ 200 chars) |
+| `GET /api/files/<v>/download` | The bytes, ≤ 8 MB (bigger: 413 `{"error":"tooBig"}`; the phone says "Too big for the phone. Open it on your Mac."), with `Content-Type` sniffed for raster images else `application/octet-stream`, `Content-Disposition: attachment; filename="<ASCII-safe>"; filename*=UTF-8''…`, `Content-Security-Policy: default-src 'none'; sandbox`, `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`, `no-store` |
+
+- **Only what was listed**: Bench serves `/api/files/<v>/…` only for version
+  ids it listed to *that device* (an artifacts list or a history page's
+  `files`) in the last hour.
+- **Never as a page**: HTML, SVG and notebooks are never rendered on Bench's
+  origin; SVG shows only as the download (a phone can still view it from
+  Files). Markdown images resolve only to this session's listed images, via
+  `thumb`. Links stay text.
+- **Bytes** move in-page (fetch, base64, `callAsyncJavaScript`) in v1; Bench
+  never holds the daemon's cookies.
+
+#### New session
+
+`POST /api/projects/<pid>/sessions` `{"text":"…1–4,000","id":"<uuid v4>","planFirst":false}`
+→ in the page, `POST /api/projects/<pid>/request`
+`{input_data:{request:text}, plan_mode: planFirst, intent_id: id}` (no
+`target_agent`: the server's default agent). Never `/api/request` (it creates
+projects). Answer `{"result":"started","id":"<root_frame_id>","sentence":"Started"}`
+or `unavailable`. Not retry-safe on the daemon (a reused intent gets 409 with no
+ids), so on a timeout or 409 Bench looks up, in SQLite, a root in that project
+from the last 10 minutes whose `input_data` `_intent_id` equals `id` (the test
+runs in SQLite; nothing else is read) and answers `started` with its id. It
+counts toward the 6-a-minute action limit and needs `remoteActions` too.
+
+#### Phone
+
+A **Projects** tab beside Now (bottom tab bar on the phone; in the iPad
+sidebar, a Now/Projects switch at the top): projects with counts and last
+activity → a project's sessions (50 a page, "Load more", search field, a
+**New session** button) → the Session screen. The Session screen's
+Conversation becomes the full history: it opens at the end and loads 50
+earlier on scroll to the top (keeping the scroll position), with `steps`,
+`plan`, `ask`, `toYou` and `helper` rows as one quiet line each, file chips
+under turns, and "Show all" on cut turns. An **Artifacts** section (a row
+count, opening a list: thumbnails for images, icons for the rest) → a viewer:
+images full width (`thumb?w=800`, pinch zoom by the browser), markdown and
+text through the safe renderer (`<pre>` for text), tables as a scrollable
+table with a sticky header, everything else a Download button (size shown;
+over 8 MB, "Open it on your Mac"). New session: a sheet with the project's
+name, a text field, "Plan first" (off), Start → navigates to the new session.
