@@ -323,7 +323,8 @@ yet checked live: a real failed session, and a real notification close.
 
 ## 2026-10-13, Bench 0.4.0 (Bench on your phone)
 
-- ✅ `swift test`: 662 tests in 87 suites, all made-up data. New suites cover
+- ✅ `swift test`: 662 tests in 87 suites before the review (719 after), all
+  made-up data. New suites cover
   the server's parser and checks, pairing, Tailscale's status and serve
   output, the session, history and artifact projections (their in-page
   JavaScript runs in JavaScriptCore against a fake `fetch`), the actions,
@@ -353,9 +354,19 @@ yet checked live: a real failed session, and a real notification close.
 - Found live and fixed: the paired devices were in the Keychain, and Bench's
   self-signed build (no Team ID) made macOS ask for the password after every
   update, with Bench frozen waiting. They are a 0600 file now.
+- ✅ A read-only Opus security review of Remote (other tailnet devices, a
+  page in a browser on the Mac, other local processes, a hostile or stolen
+  paired device, hostile session content): 0 critical or high, 1 medium, 8
+  low, 1 info, all fixed (`swift test`: 719 tests in 95 suites). The medium:
+  Serve's `--bg` mapping outlived Bench, so whatever took the loopback port
+  next would get the phone's cookie. Checked live against the real
+  Tailscale: quitting Bench removes its mapping ("No serve config", the
+  address refuses connections) and launching puts it back in 2 s, with the
+  iPhone still paired; the login is now kept as a SHA-256 hash.
 - Not checked live: a push for a real event while away from the Mac, an
-  8 MB download, the iPad layout on a real iPad, and a daemon restart while
-  the phone is open.
+  8 MB download and saving it on the phone, the iPad layout on a real iPad,
+  a daemon restart while the phone is open, the pairing lockout ladder and
+  New Code, and the shared-address note with a second Serve site.
 
 ## 2026-10-12, Bench 0.3.6 (lock fix, review fixes, update check, welcome)
 
