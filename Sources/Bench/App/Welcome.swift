@@ -362,7 +362,7 @@ private struct UpdatesPage: View {
     var body: some View {
         VStack(spacing: 18) {
             Heading("Updates and privacy")
-            BodyText("Bench reads your sessions on this Mac and changes nothing in Claude Science, except when you press Approve on a plan.")
+            BodyText("Bench reads your sessions on this Mac and changes nothing in Claude Science, except when you press Approve on a plan, or act from a phone you’ve paired.")
             HStack(alignment: .center, spacing: 16) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Check for updates once a day")

@@ -104,7 +104,7 @@ enum RemoteHTTP {
                   text.allSatisfy({ ("0"..."9").contains($0) }), let number = Int(text) else { return .reject(400) }
             length = number
         }
-        guard length <= maxBody else { return .reject(413) }
+        guard length <= RemoteRoute.bodyLimit(method: method, path: target.prefix { $0 != "?" }) else { return .reject(413) } // Phase 2 actions
         let bodyStart = end.upperBound
         guard buffer.endIndex - bodyStart >= length else { return .incomplete }
         let body = Data(buffer[bodyStart..<(bodyStart + length)])
@@ -137,6 +137,8 @@ enum RemoteRoute: Equatable, Sendable {
     case openSession(String)
     /// Phase 2 push: `/api/push` and its POSTs (PushCenter.swift).
     case push(RemotePushRoute)
+    /// `POST /api/sessions/<id>/approve|answer|message`. // Phase 2 actions
+    case action(RemoteAction, String)
 
     enum Match: Equatable {
         case found(RemoteRoute)
@@ -176,6 +178,7 @@ enum RemoteRoute: Equatable, Sendable {
         switch parts.count {
         case 1: return .session(id)
         case 2 where parts[1] == "open": return .openSession(id)
+        case 2: return RemoteAction(rawValue: String(parts[1])).map { .action($0, id) } // Phase 2 actions
         default: return nil
         }
     }
@@ -184,6 +187,7 @@ enum RemoteRoute: Equatable, Sendable {
         switch self {
         case .pair, .unpair, .openSession: "POST"
         case .push(let push): push.method // Phase 2 push
+        case .action: "POST" // Phase 2 actions
         default: "GET"
         }
     }
@@ -210,6 +214,7 @@ enum RemoteRoute: Equatable, Sendable {
         case .session: "/api/sessions/<id>"
         case .openSession: "/api/sessions/<id>/open"
         case .push(let push): push.pattern // Phase 2 push
+        case .action(let action, _): "/api/sessions/<id>/\(action.rawValue)" // Phase 2 actions
         }
     }
 }
@@ -298,7 +303,7 @@ enum RemoteCheck {
                 return .reject(403, route: route, gate: .origin)
             }
             guard request.single("x-bench") == "1" else { return .reject(403, route: route, gate: .xbench) }
-            guard request.body.count <= RemoteHTTP.maxBody else { return .reject(413, route: route, gate: .size) }
+            guard request.body.count <= route.bodyLimit else { return .reject(413, route: route, gate: .size) } // Phase 2 actions
         }
 
         guard route.needsToken else { return .accept(route, token: nil) }
@@ -425,12 +430,15 @@ enum RemoteResponse {
 struct RemoteBackend {
     /// `/api/state`'s JSON, as of now.
     var state: @MainActor () -> Data
-    /// One session's JSON; nil when Bench doesn't know it.
-    var session: @MainActor (String) -> Data?
+    /// One session's JSON; nil when Bench doesn't know it. Async since
+    /// Phase 2: it may read the session through the page.
+    var session: @MainActor (String) async -> Data?
     /// Opens the session on the Mac; false when Bench doesn't know it.
     var open: @MainActor (String) -> Bool
     /// Bench's version, for `/api/me`.
     var version: String
+    /// An action (session id, device id, body). // Phase 2 actions
+    var act: @MainActor (RemoteAction, String, String, Data) async -> RemoteActionReply = { _, _, _, _ in .notFound }
 }
 
 enum RemoteServerError: Error, Equatable {
@@ -687,8 +695,13 @@ final class RemoteServer {
         case .events:
             openStream(id, device: device?.id ?? "")
         case .session(let sessionID):
-            guard let json = backend.session(sessionID) else { return send(id, RemoteResponse.error(404), route: route, closing: true) }
-            send(id, RemoteResponse.make(status: 200, contentType: RemoteResponse.json, body: json), route: route, closing: true)
+            Task { [weak self] in
+                guard let self else { return }
+                guard let json = await self.backend.session(sessionID) else {
+                    return self.send(id, RemoteResponse.error(404), route: route, closing: true)
+                }
+                self.send(id, RemoteResponse.make(status: 200, contentType: RemoteResponse.json, body: json), route: route, closing: true)
+            }
         case .openSession(let sessionID):
             guard backend.open(sessionID) else { return send(id, RemoteResponse.error(404), route: route, closing: true) }
             send(id, RemoteResponse.make(status: 200, contentType: RemoteResponse.json, body: Data(#"{"opened":true}"#.utf8)),
@@ -697,6 +710,14 @@ final class RemoteServer {
             guard let push, let device else { return send(id, RemoteResponse.error(404), route: route, closing: true) }
             let reply = push.respond(pushRoute, body: request.body, device: device)
             send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.json), route: route, closing: true)
+        case .action(let action, let sessionID): // Phase 2 actions
+            let deviceID = device?.id ?? "", body = request.body
+            Task { [weak self] in
+                guard let self else { return }
+                let reply = await self.backend.act(action, sessionID, deviceID, body)
+                self.send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.body),
+                          route: route, closing: true)
+            }
         }
     }
 

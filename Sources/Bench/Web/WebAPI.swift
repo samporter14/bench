@@ -3,9 +3,12 @@
 // and Bench never holds the session itself.
 //
 // Reads (the title bar's usage and context readouts, a plan's card) are GETs
-// to an allowed list of paths. There is exactly one write: approving a plan
-// from its card (DESIGN.md, Approving a plan from its card), a POST with an
-// empty body to one route and nothing else.
+// to an allowed list of paths; a frame only as its shallow read or its token
+// series, never its messages (the phone's session reader, Remote/
+// SessionReader.swift, reads those and projects them in the page). The card's
+// one write is approving a plan (DESIGN.md, Approving a plan from its card), a
+// POST with an empty body to one route and nothing else; the phone's writes
+// go through their own writer (Remote/SessionWriter.swift).
 import WebKit
 
 enum WebAPIError: Error {
@@ -30,15 +33,33 @@ struct APIWriteResult: Equatable, Sendable {
 }
 
 extension WebContainer {
-    /// The API paths Bench may read, under the daemon's `/api`.
-    private static let readablePrefixes = ["/usage", "/frames/", "/artifacts/versions/"]
+    /// The API paths Bench may read in full, under the daemon's `/api`.
+    nonisolated private static let readablePrefixes = ["/usage", "/artifacts/versions/"]
+
+    /// What `apiGET` may read: usage and plan files as before, and a frame
+    /// exactly as `^/frames/[0-9a-f-]{36}\?shallow=true$` (a plan's card) or
+    /// `/frames/<id>/token-series` (the context ring; one id-shaped path
+    /// segment). Never `/frames/<id>/messages`, nor anything with `..`.
+    nonisolated static func isReadablePath(_ path: String) -> Bool {
+        guard !path.contains("..") else { return false }
+        if readablePrefixes.contains(where: path.hasPrefix) { return true }
+        let head = "/frames/", shallow = "?shallow=true", series = "/token-series"
+        guard path.hasPrefix(head) else { return false }
+        let rest = path.dropFirst(head.count)
+        if rest.hasSuffix(shallow) { return PlanCheck.isFrameID(String(rest.dropLast(shallow.count))) }
+        if rest.hasSuffix(series) {
+            let id = rest.dropLast(series.count).utf8
+            return (1...64).contains(id.count) && id.allSatisfy {
+                (0x30...0x39).contains($0) || (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0) || $0 == 0x2D || $0 == 0x5F
+            }
+        }
+        return false
+    }
 
     /// GETs `/api<path>` from the page and returns the body.
     func apiGET(_ path: String) async throws -> Data {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard Self.readablePrefixes.contains(where: path.hasPrefix), !path.contains("..") else {
-            throw WebAPIError.notAllowed
-        }
+        guard Self.isReadablePath(path) else { throw WebAPIError.notAllowed }
         let body = """
         // no-store: what's read here (usage, a plan) is never kept in WebKit's
         // cache on disk.

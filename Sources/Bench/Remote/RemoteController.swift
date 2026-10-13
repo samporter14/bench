@@ -248,13 +248,14 @@ final class RemoteController: ObservableObject {
     private func makeServer() -> RemoteServer {
         RemoteServer(policy: .closed, auth: auth, backend: RemoteBackend(
             state: { Self.stateJSON() },
-            session: { Self.sessionJSON($0) },
+            session: { await RemoteSessions.shared.sessionJSON($0) }, // Phase 2 actions
             open: { id in
                 guard let session = RemoteAPI.knownSessions(lab: .shared).first(where: { $0.id == id }) else { return false }
                 LabModel.shared.open(session)
                 return true
             },
-            version: RemoteAPI.benchVersion))
+            version: RemoteAPI.benchVersion,
+            act: { await RemoteSessions.shared.act($0, session: $1, device: $2, body: $3) })) // Phase 2 actions
     }
 
     private static func state(now: Date = Date()) -> RemoteAPI.State {
@@ -263,11 +264,6 @@ final class RemoteController: ObservableObject {
 
     private static func stateJSON() -> Data {
         RemoteAPI.encode(state())
-    }
-
-    private static func sessionJSON(_ id: String) -> Data? {
-        RemoteAPI.session(id: id, candidates: RemoteAPI.knownSessions(lab: .shared),
-                          plan: RemoteAPI.readyPlan(.shared, sessionID: id)).map(RemoteAPI.encode)
     }
 
     /// The models changed: the state goes to the events streams, if it
@@ -289,15 +285,19 @@ final class RemoteController: ObservableObject {
 
     /// Serves the made-up sessions Demo shows on http://127.0.0.1:<port>,
     /// with the code 000000, and prints where. Nothing is saved anywhere.
-    static func startDemo() {
+    /// `reads` are the sessions' made-up replies, turns and questions; the
+    /// demo's actions answer as the daemon would and touch no web view.
+    static func startDemo(reads: [String: SessionProjection] = [:]) {
         guard Demo.mode == .remote, demoServer == nil else { return }
         let auth = RemoteAuth(store: MemoryDeviceStore(), fixedCode: "000000")
+        let sessions = RemoteSessions.demo(reads: reads) // Phase 2 actions
         let server = RemoteServer(policy: .closed, auth: auth, backend: RemoteBackend(
             state: { Self.stateJSON() },
-            session: { Self.sessionJSON($0) },
+            session: { await sessions.sessionJSON($0) }, // Phase 2 actions
             // Made up: nothing to open, and no window to open it in.
             open: { id in RemoteAPI.knownSessions(lab: .shared).contains { $0.id == id } },
-            version: RemoteAPI.benchVersion))
+            version: RemoteAPI.benchVersion,
+            act: { await sessions.act($0, session: $1, device: $2, body: $3) })) // Phase 2 actions
         demoServer = server
         server.push = PushCenter.demo(auth: auth) // Phase 2 push
         Task {

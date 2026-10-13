@@ -18,9 +18,11 @@ struct PhoneSettingsView: View {
             Section {
                 Toggle(isOn: Binding(get: { remote.enabled }, set: { remote.setEnabled($0) })) {
                     Text("Use Bench from your phone")
-                    Text("A private page for your iPhone or another computer, over your Tailscale network. Paired devices see your sessions' titles and status. Nothing is on the internet.")
+                    Text("A private page for your iPhone or another computer, over your Tailscale network. Paired devices see your sessions, their latest replies and questions, and can answer them. Nothing is on the public internet.")
                 }
             }
+
+            RemoteActionsSettingsSection() // Phase 2 actions
 
             Section {
                 checks
