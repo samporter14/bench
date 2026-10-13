@@ -13,7 +13,12 @@ To keep the app small, app.js and app.css are embedded with leading indentation,
 blank lines and full-line comments removed (nothing else changes, so the code
 behaves the same). The stripped JS is syntax-checked with node when node exists.
 Pass --readable to embed the files exactly as they are.
+
+It also embeds Resources/AppIcon.icon/Assets/bench-glyph.png as base64
+(RemoteWebApp.iconGlyph). The raw glyph is not in the app bundle, and
+RemoteIcon draws the Home Screen icons from it at run time.
 """
+import base64
 import pathlib
 import re
 import shutil
@@ -24,6 +29,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEB = ROOT / "RemoteWeb"
 OUT = ROOT / "Sources/Bench/Remote/RemoteWebApp.swift"
+GLYPH = ROOT / "Resources/AppIcon.icon/Assets/bench-glyph.png"
 
 # (served path, source file, Swift constant, content type)
 FILES = [
@@ -87,10 +93,12 @@ def generate() -> str:
     lines += [
         "    ]",
         "",
-        "    /// PNG icons for the Home Screen (180 and 512 px). nil until they are drawn;",
-        "    /// the server then answers 404 and iOS falls back to a page snapshot.",
+        "    /// Ready-made PNG icons. nil: the server draws them from `iconGlyph` (RemoteIcon).",
         "    static let icon180: Data? = nil",
         "    static let icon512: Data? = nil",
+        "",
+        "    /// The bench glyph (1024 x 1024 PNG, with alpha) the Home Screen icons are drawn from.",
+        "    static let iconGlyph: Data = Data(base64Encoded: iconGlyphBase64, options: .ignoreUnknownCharacters) ?? Data()",
         "",
     ]
     for _path, src, const, _ctype in FILES:
@@ -100,6 +108,11 @@ def generate() -> str:
         lines.append(f"    // {src}")
         lines.append(f"    private static let {const}: String = " + literal(body))
         lines.append("")
+    lines.append("    // Resources/AppIcon.icon/Assets/bench-glyph.png")
+    lines.append('    private static let iconGlyphBase64: String = """')
+    encoded = base64.b64encode(GLYPH.read_bytes()).decode("ascii")
+    lines += [encoded[i:i + 100] for i in range(0, len(encoded), 100)]
+    lines.append('"""')
     lines.append("}")
     return "\n".join(lines) + "\n"
 

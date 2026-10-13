@@ -451,7 +451,7 @@ final class RemoteServer {
     private var starting: CheckedContinuation<Bool, Never>?
     private var clients: [Int: Client] = [:]
     private var nextID = 0
-    /// Icons made from the app's own, when `RemoteWebApp` has none.
+    /// Icons drawn by `RemoteIcon`, when `RemoteWebApp` names none.
     private var iconCache: [Int: Data] = [:]
 
     private final class Client {
@@ -769,26 +769,13 @@ final class RemoteServer {
 
     // MARK: Icons
 
-    /// `RemoteWebApp`'s icon, else one made from the app's own icon.
+    /// `RemoteWebApp`'s icon if it names one, else the Home Screen icon drawn
+    /// once from the embedded glyph (opaque, full-bleed: see `RemoteIcon`).
     private func icon(_ size: Int) -> Data? {
         if let given = size == 180 ? RemoteWebApp.icon180 : RemoteWebApp.icon512 { return given }
         if let cached = iconCache[size] { return cached }
-        guard let png = Self.png(of: NSApplication.shared.applicationIconImage, size: size) else { return nil }
+        guard let png = RemoteIcon.png(size: size, glyph: RemoteWebApp.iconGlyph) else { return nil }
         iconCache[size] = png
         return png
-    }
-
-    private static func png(of image: NSImage?, size: Int) -> Data? {
-        guard let image, let bitmap = NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8, samplesPerPixel: 4,
-            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
-        bitmap.size = NSSize(width: size, height: size)
-        NSGraphicsContext.saveGraphicsState()
-        defer { NSGraphicsContext.restoreGraphicsState() }
-        guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
-        NSGraphicsContext.current = context
-        image.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
-        context.flushGraphics()
-        return bitmap.representation(using: .png, properties: [:])
     }
 }

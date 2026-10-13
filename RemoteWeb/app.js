@@ -24,7 +24,10 @@ const S = {
   scroll: {},
   rk: '',
   navs: 0,
+  split: false,        // the iPad layout: the Now list beside the selected session
 };
+const splitQuery = matchMedia('(min-width: 768px) and (min-height: 500px)');
+S.split = splitQuery.matches;
 
 /* ---------- small DOM helpers ---------- */
 
@@ -50,7 +53,6 @@ const PATHS = {
   chev: '<polyline points="9 18 15 12 9 6"/>',
   alert: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
-  phone: '<rect x="5" y="2" width="14" height="20" rx="3"/><line x1="12" y1="18" x2="12.01" y2="18"/>',
 };
 
 function icon(name, cls = '') {
@@ -218,7 +220,7 @@ async function loadSession(id) {
     S.sess[id] = { phase: 'ok', data };
   } catch (e) {
     if (e instanceof Unauth) return showPair();
-    if (e.status === 404) S.sess[id] = { phase: 'missing', data: null };
+    if (e.status === 404) S.sess[id] = had && had.data ? { ...had, gone: true } : { phase: 'missing', data: null };
     else if (!had || !had.data) S.sess[id] = { phase: 'error', data: null, down: e instanceof Down };
   }
   const r = route();
@@ -243,7 +245,7 @@ function gotState(st) {
   if (sig === S.sig) return;
   S.sig = sig;
   const r = route();
-  if (r.name === 'settings') return;
+  if (r.name === 'settings' && !S.split) return;
   render();
   if (r.name === 'session') loadSession(r.id);
 }
@@ -346,12 +348,12 @@ function enterRoute() {
 }
 
 addEventListener('hashchange', () => {
-  S.scroll[S.rk] = window.scrollY;
+  if (!S.split) S.scroll[S.rk] = window.scrollY;
   S.navs++;
   S.rk = routeKey();
   if (S.view === 'app') enterRoute();
   render(true);
-  window.scrollTo(0, S.rk === 'now' ? S.scroll.now || 0 : 0);
+  if (!S.split) window.scrollTo(0, S.rk === 'now' ? S.scroll.now || 0 : 0);
 });
 
 /* ---------- rendering ---------- */
@@ -360,28 +362,66 @@ function render(fresh = false) {
   const r = route();
   const active = document.activeElement;
   const keep = !fresh && active && active.dataset ? active.dataset.key : '';
+  // The two split panes scroll on their own: carry their positions across.
+  const oldSide = root.querySelector('.side-pane');
+  const oldDetail = root.querySelector('.detail');
+  const sideTop = oldSide ? oldSide.scrollTop : 0;
+  const detailTop = oldDetail ? oldDetail.scrollTop : 0;
   let tree = null;
   if (S.view === 'pair') tree = pairView();
   else if (S.view === 'offline') tree = offlineView();
-  else if (S.view === 'app') tree = r.name === 'session' ? sessionView(r.id) : r.name === 'settings' ? settingsView() : nowView();
+  else if (S.view === 'app') tree = S.split ? splitView(r) : singleView(r);
   root.replaceChildren(...(tree ? [tree] : []));
+  const side = root.querySelector('.side-pane');
+  const detail = root.querySelector('.detail');
+  if (side) side.scrollTop = sideTop;
+  if (detail && !fresh) detail.scrollTop = detailTop;
   watchTitle();
   if (keep) {
     const again = root.querySelector(`[data-key="${CSS.escape(keep)}"]`);
     if (again) again.focus({ preventScroll: true });
   } else if (fresh) {
-    const t = root.querySelector('h1');
+    const t = root.querySelector('.detail h1') || root.querySelector('h1');
     if (t) t.focus({ preventScroll: true });
   }
+}
+
+function singleView(r) {
+  if (r.name === 'session') {
+    return h('div', null, bar(sessionTitle(r.id), backLink('Now'), refreshButton()), h('main', { class: 'wrap' }, sessionContent(r.id)));
+  }
+  if (r.name === 'settings') return h('div', null, bar('Settings', backLink('Now'), null), h('main', { class: 'wrap' }, settingsContent()));
+  return h('div', null, bar('Now', null, [refreshButton(), settingsLink()]), h('main', { class: 'wrap' }, nowContent()));
+}
+
+function splitView(r) {
+  const body = r.name === 'session' ? sessionContent(r.id) : r.name === 'settings' ? settingsContent() : emptyDetail();
+  return h('div', { class: 'split' },
+    h('nav', { class: 'pane side-pane', 'aria-label': 'Sessions' },
+      bar('Now', null, [refreshButton(), settingsLink()]),
+      h('div', { class: 'pane-in' }, nowContent())),
+    h('main', { class: 'pane detail' }, h('div', { class: 'detail-in' + (r.name === 'now' ? ' nothing' : '') }, body)));
+}
+
+function emptyDetail() {
+  return [
+    h('img', { class: 'tile', src: '/icon-180.png', width: '72', height: '72', alt: '' }),
+    h('h1', { tabindex: '-1', text: 'Select a session' }),
+    h('p', { text: 'Its status, and its plan where there is one, will appear here.' }),
+  ];
 }
 
 let titleWatcher;
 function watchTitle() {
   if (titleWatcher) titleWatcher.disconnect();
-  const t = root.querySelector('h1.large');
-  const bar = root.querySelector('.bar');
-  if (!t || !bar || !('IntersectionObserver' in window)) return;
-  titleWatcher = new IntersectionObserver(([e]) => bar.classList.toggle('scrolled', !e.isIntersecting), { rootMargin: '-56px 0px 0px 0px' });
+  const scope = root.querySelector('.side-pane') || root;
+  const t = scope.querySelector('h1.large');
+  const header = scope.querySelector('.bar');
+  if (!t || !header || !('IntersectionObserver' in window)) return;
+  titleWatcher = new IntersectionObserver(([e]) => header.classList.toggle('scrolled', !e.isIntersecting), {
+    root: scope === root ? null : scope,
+    rootMargin: '-56px 0px 0px 0px',
+  });
   titleWatcher.observe(t);
 }
 
@@ -418,7 +458,7 @@ function refreshButton() {
   }, icon('refresh'));
 }
 
-const settingsLink = () => h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': 'Settings' }, icon('gear'));
+const settingsLink = () => h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': 'Settings', 'aria-current': S.split && route().name === 'settings' ? 'page' : null }, icon('gear'));
 
 function section(title, count, body, cls = '') {
   const id = 'h-' + title.toLowerCase().replace(/\W+/g, '-');
@@ -445,12 +485,15 @@ function snoozeText(z) {
 
 /* ---------- Now ---------- */
 
+// Splits show the open session's row with a quiet tint.
+const current = (id) => (S.split && route().id === id ? 'page' : null);
+
 function needsRow(n) {
   const z = snoozeText(n.snooze);
   return h('li', null,
-    h('a', { class: 'row', href: sessionHref(n.id), 'data-key': 'n:' + n.id },
+    h('a', { class: 'row', href: sessionHref(n.id), 'data-key': 'n:' + n.id, 'aria-current': current(n.id) },
       h('span', { class: 'row-main' },
-        h('span', { class: 'reason', text: n.sentence || 'Needs you' }),
+        h('span', { class: 'reason' }, h('span', { class: 'dot', 'aria-hidden': 'true' }), n.sentence || 'Needs you'),
         h('span', { class: 'title', text: n.title }),
         subLine(n.project, rel(n.since)),
         z ? h('span', { class: 'snooze', text: z }) : null),
@@ -459,9 +502,9 @@ function needsRow(n) {
 
 function failedRow(f) {
   return h('li', null,
-    h('a', { class: 'row', href: sessionHref(f.id), 'data-key': 'f:' + f.id },
-      h('span', { class: 'dot err', 'aria-hidden': 'true' }),
+    h('a', { class: 'row', href: sessionHref(f.id), 'data-key': 'f:' + f.id, 'aria-current': current(f.id) },
       h('span', { class: 'row-main' },
+        h('span', { class: 'reason' }, icon('alert', 'sm mark-err'), 'Stopped with an error'),
         h('span', { class: 'title', text: f.title }),
         subLine(f.project, rel(f.since))),
       icon('chev', 'sm chev')));
@@ -469,7 +512,7 @@ function failedRow(f) {
 
 function workingRow(w) {
   return h('li', null,
-    h('a', { class: 'row', href: sessionHref(w.id), 'data-key': 'w:' + w.id },
+    h('a', { class: 'row', href: sessionHref(w.id), 'data-key': 'w:' + w.id, 'aria-current': current(w.id) },
       h('span', { class: 'dot live', 'aria-hidden': 'true' }),
       h('span', { class: 'row-main' },
         h('span', { class: 'title', text: w.title }),
@@ -480,7 +523,7 @@ function workingRow(w) {
 
 function recentRow(r) {
   return h('li', null,
-    h('a', { class: 'row', href: sessionHref(r.id), 'data-key': 'r:' + r.id + r.at },
+    h('a', { class: 'row', href: sessionHref(r.id), 'data-key': 'r:' + r.id + r.at, 'aria-current': current(r.id) },
       h('span', { class: 'row-main' },
         h('span', { class: 'title', text: r.title }),
         subLine(r.project, r.line)),
@@ -497,27 +540,27 @@ function usageSection(u) {
     return h('li', { class: 'usage' },
       h('div', { class: 'u-top' },
         h('span', { class: 'u-name', text: l.name }),
-        h('span', { class: 'u-pct', text: pct + '%' })),
+        h('span', null, pct >= 90 ? h('span', { class: 'u-flag', text: 'Near the limit' }) : null, h('span', { class: 'u-pct', text: pct + '%' }))),
       h('progress', { max: '100', value: String(pct), class: pct >= 90 ? 'hot' : null, 'aria-label': (l.name || 'Usage') + ' used' }),
       pace ? h('div', { class: 'u-pace', text: pace }) : null);
   })));
 }
 
-function nowView() {
+function nowContent() {
   const st = S.state;
   const needs = st.needsYou || [];
   const failed = st.failed || [];
   const working = st.working || [];
   const recent = st.recent || [];
-  const main = h('main', { class: 'wrap' },
+  return [
     h('h1', { class: 'large', tabindex: '-1', text: 'Now' }),
     st.problem ? h('div', { class: 'banner', role: 'status' }, icon('alert'), h('span', { text: st.problem })) : null,
     section('Needs you', needs.length, needs.length ? list(needs.map(needsRow)) : emptyCard('Nothing needs you')),
-    failed.length ? section('Stopped with an error', failed.length, list(failed.map(failedRow)), 'err') : null,
+    failed.length ? section('Stopped with an error', failed.length, list(failed.map(failedRow))) : null,
     section('Working', 0, working.length ? list(working.map(workingRow)) : emptyCard('Nothing working right now')),
     recent.length ? section('Recent', 0, list(recent.map(recentRow))) : null,
-    usageSection(st.usage));
-  return h('div', null, bar('Now', null, [refreshButton(), settingsLink()]), main);
+    usageSection(st.usage),
+  ];
 }
 
 /* ---------- Session ---------- */
@@ -593,13 +636,25 @@ function openBlock(id) {
   return block;
 }
 
-function sessionView(id) {
+const sessionTitle = (id) => {
+  const rec = S.sess[id];
+  const snap = lookup(id);
+  return (rec && rec.data && rec.data.title) || (snap && snap.title) || 'Session';
+};
+
+// A status is a shape and a label, never a colour alone.
+function statusMark(state) {
+  if (state === 'needsInput') return h('span', { class: 'dot', 'aria-hidden': 'true' });
+  if (state === 'error' || state === 'failed') return icon('alert', 'sm mark-err');
+  if (state === 'working') return h('span', { class: 'dot live', 'aria-hidden': 'true' });
+  return h('span', { class: 'dot idle', 'aria-hidden': 'true' });
+}
+
+function sessionContent(id) {
   const rec = S.sess[id];
   const d = rec && rec.data;
   const snap = lookup(id);
-  const title = (d && d.title) || (snap && snap.title) || 'Session';
-  const head = bar(title, backLink('Now'), refreshButton());
-  const heading = h('h1', { class: 'large tight' + (title.length > 26 ? ' long' : ''), tabindex: '-1', text: title });
+  const heading = h('h1', { class: 'sess', tabindex: '-1', text: sessionTitle(id) });
 
   if (!d) {
     const note = !rec || rec.phase === 'loading' ? 'Loading…'
@@ -609,21 +664,19 @@ function sessionView(id) {
     const retry = rec && rec.phase === 'error'
       ? h('div', { class: 'act' }, h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: () => { delete S.sess[id]; loadSession(id); render(); } }))
       : null;
-    return h('div', null, head, h('main', { class: 'wrap' },
+    return [
       heading,
       snap ? h('p', { class: 'sub tight-sub', text: snap.project }) : null,
-      h('p', { class: 'lede', text: note }), retry, gone ? null : openBlock(id)));
+      h('p', { class: 'lede', text: note }), retry, gone ? null : openBlock(id),
+    ];
   }
 
-  const bad = d.state === 'error' || d.state === 'failed';
   const snooze = snap && snap.snooze ? snoozeText(snap.snooze) : '';
-  const status = d.sentence || stateLabel(d.state);
   const times = [];
   const kv = (k, v) => h('div', { class: 'kv' }, h('dt', { text: k }), h('dd', null, v));
   if (d.state === 'working' && d.startedAt) times.push(kv('Working for', clockEl(d.startedAt)));
   if (d.startedAt) times.push(kv('Started', [when(d.startedAt), ' ', h('span', { class: 'sub' }, '(', rel(d.startedAt), ')')]));
   if (d.updatedAt) times.push(kv('Updated', rel(d.updatedAt)));
-
 
   const plan = d.plan;
   const steps = plan && Array.isArray(plan.steps) ? plan.steps : [];
@@ -632,30 +685,31 @@ function sessionView(id) {
     steps.length ? h('ol', null, steps.map((s) => h('li', { text: typeof s === 'string' ? s : (s && (s.text || s.title)) || '' }))) : null,
     plan.feasibility ? h('p', { class: 'feas', text: 'Feasibility: ' + plan.feasibility }) : null)) : null;
 
-  const tree = h('div', null, head, h('main', { class: 'wrap' },
+  return [
     heading,
     d.project ? h('p', { class: 'sub tight-sub', text: d.project }) : null,
-    h('p', { class: 'status' + (bad ? ' err' : d.state === 'needsInput' ? '' : ' calm'), text: status }),
+    h('p', { class: 'status' + (d.state === 'needsInput' || d.state === 'error' || d.state === 'failed' ? '' : ' calm') },
+      statusMark(d.state), d.sentence || stateLabel(d.state)),
     snooze ? h('p', { class: 'snooze lone', text: snooze }) : null,
+    rec.gone ? h('p', { class: 'snooze lone', text: 'This session is no longer on your list.' }) : null,
     openBlock(id),
     times.length ? h('dl', { class: 'group sec' }, times) : null,
-    planCard));
-  return tree;
+    planCard,
+  ];
 }
 
 /* ---------- Settings ---------- */
 
-function settingsView() {
+function settingsContent() {
   const me = S.me;
   const version = (me && me.bench) || (S.state && S.state.bench) || '';
   const msg = h('p', { id: 'unpair-msg', class: 'msg bad', role: 'alert', hidden: true });
-  const row = (k, v) => h('div', { class: 'kv' }, h('dt', { text: k }), h('dd', { text: v }));
-  const main = h('main', { class: 'wrap' },
+  return [
     h('h1', { class: 'large', tabindex: '-1', text: 'Settings' }),
-    h('dl', { class: 'group sec' }, row('This device', (me && me.device) || '…'), version ? row('Bench', version) : null),
+    h('dl', { class: 'group sec' }, h('div', { class: 'kv' }, h('dt', { text: 'This device' }), h('dd', { text: (me && me.device) || '…' }))),
     h('div', { class: 'act' },
       h('button', {
-        class: 'btn danger',
+        class: 'btn',
         type: 'button',
         text: 'Unpair this device',
         onclick: () => confirmSheet({
@@ -666,8 +720,9 @@ function settingsView() {
         }),
       }),
       msg),
-    h('p', { class: 'foot', text: 'Only people on your Tailscale network can reach this page, and only a paired device can see your sessions.' }));
-  return h('div', null, bar('Settings', backLink('Now'), null), main);
+    h('p', { class: 'foot', text: 'Only people on your Tailscale network can reach this page, and only a paired device can see your sessions.' }),
+    h('p', { class: 'foot', text: 'Bench' + (version ? ' ' + version : '') + '. A Solanum product. Unofficial, and not affiliated with Anthropic.' }),
+  ];
 }
 
 async function unpair() {
@@ -687,13 +742,13 @@ async function unpair() {
 
 function confirmSheet({ title, message, confirm, run }) {
   const before = document.activeElement;
-  const cancel = h('button', { class: 'btn plain', type: 'button', text: 'Cancel', onclick: close });
+  const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: close });
   const scrim = h('div', { class: 'scrim', onclick: (e) => { if (e.target === scrim) close(); } },
     h('div', { class: 'sheet', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'sheet-t', 'aria-describedby': 'sheet-d' },
       h('div', { class: 'box' },
         h('h2', { id: 'sheet-t', text: title }),
         h('p', { id: 'sheet-d', text: message }),
-        h('button', { class: 'btn danger', type: 'button', text: confirm, onclick: () => { close(); run(); } })),
+        h('button', { class: 'btn primary', type: 'button', text: confirm, onclick: () => { close(); run(); } })),
       cancel));
   function key(e) { if (e.key === 'Escape') close(); }
   function close() {
@@ -767,7 +822,7 @@ function pairView() {
   const inHome = standalone();
   return h('main', { class: 'wrap pair' },
     h('div', { class: 'hero' },
-      icon('phone', 'big'),
+      h('img', { class: 'tile', src: '/icon-180.png', width: '64', height: '64', alt: '' }),
       h('h1', { tabindex: '-1', text: 'Pair this phone' }),
       h('p', { class: 'lede', text: 'Bench shows what needs you in Claude Science and can open a session on your Mac. It all stays on your own Tailscale network.' })),
     h('form', { onsubmit: submit, novalidate: true },
@@ -821,17 +876,17 @@ function setPull(stage) {
   pullEl.textContent = stage === 2 ? 'Release to refresh' : stage === 1 ? 'Pull to refresh' : '';
 }
 
-addEventListener('touchstart', (e) => {
-  const ok = S.view === 'app' && window.scrollY <= 0 && e.touches.length === 1 && !document.querySelector('.scrim');
+document.addEventListener('touchstart', (e) => {
+  const ok = S.view === 'app' && !S.split && window.scrollY <= 0 && e.touches.length === 1 && !document.querySelector('.scrim');
   pullFrom = ok ? e.touches[0].clientY : -1;
 }, { passive: true });
-addEventListener('touchmove', (e) => {
+document.addEventListener('touchmove', (e) => {
   if (pullFrom < 0) return;
   if (window.scrollY > 0) { pullFrom = -1; setPull(0); return; }
   const dy = e.touches[0].clientY - pullFrom;
   setPull(dy > 90 ? 2 : dy > 24 ? 1 : 0);
 }, { passive: true });
-addEventListener('touchend', async () => {
+document.addEventListener('touchend', async () => {
   const go = pullStage === 2;
   pullFrom = -1;
   if (go) {
@@ -840,13 +895,17 @@ addEventListener('touchend', async () => {
   }
   setPull(0);
 }, { passive: true });
-addEventListener('touchcancel', () => { pullFrom = -1; setPull(0); }, { passive: true });
+document.addEventListener('touchcancel', () => { pullFrom = -1; setPull(0); }, { passive: true });
 
 /* ---------- go ---------- */
 
 document.addEventListener('visibilitychange', () => (document.hidden ? onHidden() : onVisible()));
 addEventListener('pageshow', (e) => { if (e.persisted) onVisible(); });
 addEventListener('online', onVisible);
+splitQuery.addEventListener('change', (e) => {
+  S.split = e.matches;
+  if (S.view === 'app') render(true);
+});
 S.rk = routeKey();
 startTicker();
 start();
