@@ -98,7 +98,8 @@ Screen.
 
 Use Claude Science from your iPhone, iPad or another computer while you're
 away from your Mac: a private web app that Bench serves to your own devices
-over your [Tailscale](https://tailscale.com) network. Nothing is on the
+over your [Tailscale](https://tailscale.com) network. **[The setup guide](docs/phone.md)**
+takes about five minutes. Nothing is on the
 public internet: Bench listens only on your Mac, and Tailscale Serve passes
 on what your devices ask, with a certificate for your tailnet.
 
@@ -118,10 +119,11 @@ on what your devices ask, with a certificate for your tailnet.
   through Apple's push service, encrypted so only your device can read them.
 - On iPad, a sidebar and the session side by side.
 
-It's **off** until you turn it on in **Settings → Phone**, which checks that
-Tailscale is installed and signed in and that your tailnet has HTTPS on. Then
-scan the QR code with your iPhone, add the page to your Home Screen, open it
-from there and enter the one-time code. Settings lists paired devices, each
+It's **off** until you turn it on in **Settings → Phone**, which walks you
+through six steps and ticks each one off as you go: Tailscale on your Mac,
+signed in, HTTPS on, Tailscale on your phone, the switch, and pairing (scan
+the QR code, add the page to your Home Screen, open it from there and enter
+the one-time code). Settings lists paired devices, each
 with Remove (a device unused for 60 days has to pair again), and has two
 switches: one for answering, approving and sending messages, one for
 browsing projects, full conversations and files. Turning Bench on your phone
