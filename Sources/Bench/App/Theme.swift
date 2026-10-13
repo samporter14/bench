@@ -91,6 +91,10 @@ enum SettingsKey {
     /// see artifacts, and start a session (Bench on your phone, since 0.4.0).
     /// On by default; off, those routes answer 403 and the phone shows Now only.
     static let remoteBrowse = "remoteBrowse"
+    /// "Skip" on Settings → Phone's "Put Tailscale on your phone", for
+    /// someone pairing a computer instead: that step counts as done. Off
+    /// unless pressed.
+    static let remotePhoneSkipped = "remotePhoneSkipped"
 
     static func register() {
         let defaults = UserDefaults.standard

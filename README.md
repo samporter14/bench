@@ -212,7 +212,8 @@ It builds `build/Bench.app` and opens it.
 - The screenshots use made-up sessions: `Bench --demo working|card|plan|toolbar|general|specimens`
   shows the real UI with invented names (add `--quiet`, and launch with
   `open -g -n`, to keep it from taking the keyboard),
-  `Bench --demo remote` serves the phone page with them on
+  `Bench --demo phone-settings --step 1…7` shows Settings → Phone at each
+  step of its setup checklist, `Bench --demo remote` serves the phone page with them on
   `http://127.0.0.1:47280` (pairing code `000000`), and
   `Bench --render-scenes` records the scene GIF.
 - `Sources/Bench/Shared` holds copies from the Science Status droplet, where

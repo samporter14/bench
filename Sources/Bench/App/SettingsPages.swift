@@ -23,7 +23,7 @@ struct SettingsView: View {
     }
 }
 
-private extension View {
+extension View {
     /// A Settings page: a grouped form with switches in the one accent, at
     /// the page's own height (the window follows the tab).
     func settingsPage(height: CGFloat) -> some View {

@@ -14,6 +14,7 @@
 //   build/Bench.app/Contents/MacOS/Bench --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
 //   build/Bench.app/Contents/MacOS/Bench --demo welcome --page 2
 //   build/Bench.app/Contents/MacOS/Bench --demo remote --quiet
+//   open -g -n build/Bench.app --args --demo phone-settings --step 3 --quiet -ApplePersistenceIgnoreState YES
 //
 // Add `--quiet` (and launch with `open -g -n build/Bench.app --args …`) to keep
 // the demo from taking the keyboard: its windows open without activating.
@@ -66,6 +67,11 @@ enum Demo {
         /// http://127.0.0.1:<port> (printed), pairing code 000000. No window,
         /// no Tailscale, no Keychain, no setting saved.
         case remote
+        /// Settings > Phone in a plain window, with `--step N`: 1 to 6 opens
+        /// that step of the checklist with every one before it done, 7 is
+        /// ready with one device. Made up: no Tailscale, no files, no
+        /// Keychain, and its buttons do nothing.
+        case phoneSettings = "phone-settings"
     }
 
     /// Nil in a normal launch.
@@ -77,6 +83,15 @@ enum Demo {
         let arguments = CommandLine.arguments
         guard mode == .welcome, let flag = arguments.firstIndex(of: "--page") else { return nil }
         return arguments.dropFirst(flag + 1).first.flatMap { Int($0) }
+    }()
+
+    /// `--step N` with `--demo phone-settings`: 1 to 6 opens step N of the
+    /// checklist, 7 is ready. 1 when missing.
+    static let phoneStep: Int = {
+        let arguments = CommandLine.arguments
+        guard mode == .phoneSettings, let flag = arguments.firstIndex(of: "--step"),
+              let step = arguments.dropFirst(flag + 1).first.flatMap({ Int($0) }) else { return 1 }
+        return min(max(step, 1), 7)
     }()
 
     /// `--open-options` with `--demo toolbar`: the Specimens options popover
@@ -181,6 +196,8 @@ enum Demo {
             WelcomeWindowController.shared.showDemo(page: welcomePage, quiet: isQuiet)
         case .remote?:
             showRemote()
+        case .phoneSettings?:
+            showPage(PhoneSetupPage(model: phoneSettings(step: phoneStep), actions: .none), title: "Phone")
         case nil:
             break
         }
@@ -455,6 +472,32 @@ enum Demo {
             }
         }
         return reads
+    }
+
+    /// Settings > Phone on step `step` (1 to 6 open, 7 ready): everything
+    /// before it done, nothing after. All made up.
+    static func phoneSettings(step: Int, now: Date = Date()) -> PhoneSetupModel {
+        var status = RemoteController.Status()
+        let phone = TailscalePeer(hostName: "iPhone", os: "iOS", online: true, sameUser: true)
+        switch step {
+        case ...1:
+            status.tailscale = .notInstalled
+        case 2:
+            status.tailscale = .status(TailscaleStatus(running: false, login: nil, dnsName: nil, httpsEnabled: false))
+        default:
+            status.tailscale = .status(TailscaleStatus(running: true, login: "you@example.com",
+                                                       dnsName: "your-mac.your-tailnet.ts.net",
+                                                       httpsEnabled: step >= 4, peers: step >= 5 ? [phone] : []))
+        }
+        if step >= 6 {
+            status.serve = .serving
+            status.port = 47280
+        }
+        let device = RemoteDevice(id: "demo-iphone", name: "iPhone", tokenHash: Data(count: 32),
+                                  pairedAt: now, lastSeen: now)
+        return PhoneSetupModel(status: status, enabled: step >= 6, phoneSkipped: false,
+                               devices: step >= 7 ? [device] : [],
+                               code: PairingCode(digits: "123456", issuedAt: now))
     }
 
     private static func showPage<V: View>(_ view: V, title: String) {
