@@ -331,8 +331,9 @@ yet checked live: a real failed session, and a real notification close.
   byte for byte, VAPID tokens verified), and the devices file.
 - ✅ Live on the Mac's tailnet (`https://<node>:8443`): `/` 200 with the CSP,
   `/api/*` 401 without the cookie, `/sw.js` served, the Home Screen icon an
-  opaque square. An iPhone paired from its Home Screen app and subscribed
-  to notifications (Settings → Phone shows "Notifications on").
+  opaque square. An iPhone paired from its Home Screen app, subscribed to
+  notifications (Settings → Phone shows "Notifications on"), and Send a Test
+  arrived on it through Apple's push service.
 - ✅ Live in Claude Science's **Example project** only, from a test device
   paired over curl and removed afterwards:
   - listing projects and the project's sessions;
