@@ -26,7 +26,9 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 - **Nothing collected.** No Bench account, no analytics, no telemetry. Bench
   talks to nothing beyond your Mac except links you click, a once-a-day
   update check if you turn it on, and, if you turn on Bench on your phone,
-  your own devices over your Tailscale network. Bench reads
+  your own devices over your Tailscale network; and, if you turn on
+  notifications on a paired device, Apple's push service carries them,
+  encrypted so only that device can read them. Bench reads
   Claude Science and changes nothing in it, except when you press Approve on
   a plan's card. It saves nothing but its own settings.
 - **One home for Claude Science.** No lost browser tab. Nothing opens in

@@ -625,8 +625,10 @@ struct PushCenterTests {
         guard case .paired(_, let device) = auth.pair(code: "000000", name: "Phone") else { return }
         let demo = PushCenter.demo(auth: auth)
         let status = try json(demo.respond(.status, body: Data(), device: device))
-        #expect(status["publicKey"] as? String == PushCenter.demoPublicKey)
-        #expect(WebPush.receiverKey(PushCenter.demoPublicKey) != nil)
+        // A key a browser can subscribe with, kept nowhere.
+        let publicKey = try #require(status["publicKey"] as? String)
+        #expect(WebPush.receiverKey(publicKey) != nil)
+        #expect(demo.publicKey(creating: true) == publicKey)
         #expect(status["subscribed"] as? Bool == false)
         // As if subscribed, whatever was sent.
         let reply = demo.respond(.subscribe, body: Data("{}".utf8), device: device)

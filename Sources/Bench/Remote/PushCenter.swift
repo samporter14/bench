@@ -402,9 +402,6 @@ final class PushCenter {
     nonisolated static let keyAccount = "push-key"
     /// Events sent are remembered this long, per device.
     static let rememberSent: TimeInterval = 24 * 60 * 60
-    /// `--demo remote`'s public key: RFC 8291's example sender key, so a
-    /// browser can subscribe, though Bench never sends with it.
-    static let demoPublicKey = "BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8"
 
     struct Reply: Equatable {
         let status: Int
@@ -426,6 +423,9 @@ final class PushCenter {
     private let wait: (TimeInterval) async -> Void
 
     private var key: P256.Signing.PrivateKey?
+    /// `--demo remote`'s public key, so a browser can subscribe: new each
+    /// launch, in memory only, and never sent with.
+    private lazy var demoPublicKey = WebPush.base64URL(P256.Signing.PrivateKey().publicKey.x963Representation)
     private var keyLoaded = false
     /// Per device, the events already pushed and when.
     private var sent: [String: [String: Date]] = [:]
@@ -576,7 +576,7 @@ final class PushCenter {
     /// The VAPID public key, uncompressed, base64url. Made the first time a
     /// device asks: the phone needs it to subscribe.
     func publicKey(creating: Bool) -> String? {
-        if isDemo { return Self.demoPublicKey }
+        if isDemo { return demoPublicKey }
         return signingKey(creating: creating).map { WebPush.base64URL($0.publicKey.x963Representation) }
     }
 
