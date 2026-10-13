@@ -60,7 +60,8 @@ final class ListedFiles {
     static let shared = ListedFiles()
 
     static let lifetime: TimeInterval = 60 * 60
-    /// Per device, at most this many versions; the oldest go first.
+    /// Per device, at most this many versions; the oldest go first, a tenth
+    /// at a time (`evict`).
     static let capacity = 2_000
 
     private var listed: [String: [String: Date]] = [:]
@@ -73,14 +74,28 @@ final class ListedFiles {
     /// Remember that these versions were listed to this device.
     func record(_ versions: some Sequence<String>, device: String) {
         let time = now()
-        var mine = (listed[device] ?? [:]).filter { time.timeIntervalSince($0.value) < Self.lifetime }
+        var mine = listed[device] ?? [:]
         for version in versions { mine[version] = time }
         if mine.count > Self.capacity {
-            let keep = mine.sorted { $0.value > $1.value }.prefix(Self.capacity)
-            mine = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+            mine = Self.evict(mine, capacity: Self.capacity, at: time, lifetime: Self.lifetime, when: { $0 })
         }
         listed[device] = mine
     }
+
+    /// Past `capacity`: what has expired goes, then the oldest, in one sort
+    /// down to nine tenths of it, so the next tenth of inserts sorts nothing.
+    nonisolated static func evict<Value>(_ entries: [String: Value], capacity: Int, at time: Date,
+                                         lifetime: TimeInterval, when: (Value) -> Date) -> [String: Value] {
+        var kept = entries.filter { time.timeIntervalSince(when($0.value)) < lifetime }
+        guard kept.count > capacity else { return kept }
+        let room = capacity - capacity / 10
+        let newest = kept.sorted { when($0.value) > when($1.value) }.prefix(room)
+        kept = Dictionary(uniqueKeysWithValues: newest.map { ($0.key, $0.value) })
+        return kept
+    }
+
+    /// How many versions a device holds: for tests.
+    func count(_ device: String) -> Int { listed[device]?.count ?? 0 }
 
     /// Whether this device was listed this version within the last hour.
     func allows(_ version: String, device: String) -> Bool {

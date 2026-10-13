@@ -122,9 +122,10 @@ It's **off** until you turn it on in **Settings → Phone**, which checks that
 Tailscale is installed and signed in and that your tailnet has HTTPS on. Then
 scan the QR code with your iPhone, add the page to your Home Screen, open it
 from there and enter the one-time code. Settings lists paired devices, each
-with Remove, and has two switches: one for answering, approving and sending
-messages, one for browsing projects, full conversations and files. Turning
-Bench on your phone off stops serving and leaves your other Tailscale Serve
+with Remove (a device unused for 60 days has to pair again), and has two
+switches: one for answering, approving and sending messages, one for
+browsing projects, full conversations and files. Turning Bench on your phone
+off, or quitting Bench, stops serving and leaves your other Tailscale Serve
 settings as they are.
 
 ## Install

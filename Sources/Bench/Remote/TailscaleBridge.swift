@@ -6,10 +6,12 @@
 // Bench reads `serve status --json` before every change and adds or removes
 // only its own mapping: never `serve reset`, never Funnel, never another
 // mapping. The parsing and the exact arguments are pure and tested on
-// fixtures; running the CLI goes through one injectable runner.
+// fixtures; running the CLI goes through one injectable runner, and the app's
+// runs only a binary whose app bundle is signed by Tailscale Inc.
 import AppKit
 import Foundation
 import OSLog
+import Security
 
 private let log = Logger(subsystem: "local.sam.bench", category: "remote")
 
@@ -196,6 +198,17 @@ enum TailscaleCommands {
     }
 }
 
+/// When Bench removes its mapping though nobody turned the switch off:
+/// when it quits, and when it launches with the switch off. What it then
+/// runs is `TailscaleCommands.remove`: `off` only when 8443 is Bench's alone.
+enum ServeCleanup {
+    /// Whether to ask Tailscale at all: never in a demo, and only when Bench
+    /// may have made a mapping (`everServed`).
+    static func shouldLook(demo: Bool, everServed: Bool) -> Bool {
+        !demo && everServed
+    }
+}
+
 // MARK: Running the CLI
 
 /// One run of the CLI.
@@ -205,6 +218,10 @@ struct TailscaleRun: Equatable, Sendable {
     /// Standard output and error together.
     var output: String
     var timedOut = false
+    /// Nothing ran: no Tailscale CLI signed by Tailscale is installed.
+    var notInstalled = false
+
+    static let none = TailscaleRun(exitStatus: nil, output: "", notInstalled: true)
 }
 
 /// Runs the CLI. The app's runs the real binary; the tests' are fakes.
@@ -213,26 +230,108 @@ protocol TailscaleRunner: Sendable {
     func run(_ arguments: [String], timeout: TimeInterval, stopWhen: (@Sendable (String) -> Bool)?) async -> TailscaleRun
 }
 
-/// Where the CLI is: the app's own binary, run with arguments.
+/// Where the CLI is: the app's own binary, run with arguments, and only from
+/// an app bundle Tailscale Inc signed.
 enum TailscaleCLI {
-    static let standard = URL(fileURLWithPath: "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+    static let standardApp = URL(fileURLWithPath: "/Applications/Tailscale.app")
+    static let standard = binary(in: standardApp)
     /// The standalone app and the Mac App Store app.
     static let bundleIDs = ["io.tailscale.ipn.macsys", "io.tailscale.ipn.macos"]
 
+    /// Tailscale Inc's Developer ID (team W5364U7YZB), as the standalone app
+    /// is signed; or the Mac App Store's signature on Tailscale's own app,
+    /// whose leaf certificate is Apple's and names no team, so it is known by
+    /// the store's marker and its identifier, as its designated requirement
+    /// does.
+    static let requirement = #"(anchor apple generic and certificate leaf[subject.OU] = "W5364U7YZB")"#
+        + #" or (anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] exists"#
+        + #" and identifier "io.tailscale.ipn.macos")"#
+
+    static func binary(in app: URL) -> URL {
+        app.appendingPathComponent("Contents/MacOS/Tailscale")
+    }
+
     /// `/Applications/Tailscale.app` first (both installs put it there),
-    /// then wherever else Launch Services knows the app.
+    /// then wherever else Launch Services knows the app: app bundles.
     static func candidates(appURLs: [URL]) -> [URL] {
-        var list = [standard]
-        for app in appURLs {
-            let binary = app.appendingPathComponent("Contents/MacOS/Tailscale")
-            if !list.contains(binary) { list.append(binary) }
+        var list = [standardApp]
+        for app in appURLs where !list.contains(where: { $0.standardizedFileURL == app.standardizedFileURL }) {
+            list.append(app)
         }
         return list
     }
 
-    static func locate(isExecutable: (String) -> Bool = FileManager.default.isExecutableFile(atPath:)) -> URL? {
-        let apps = bundleIDs.flatMap { NSWorkspace.shared.urlsForApplications(withBundleIdentifier: $0) }
-        return candidates(appURLs: apps).first { isExecutable($0.path) }
+    /// The first candidate's binary that can run and whose bundle passes
+    /// `isTrusted`. One that fails is passed over as if it weren't there:
+    /// an app that only borrows Tailscale's bundle id never runs. Launch
+    /// Services is asked only when `/Applications` has none.
+    static func locate(isExecutable: (String) -> Bool = FileManager.default.isExecutableFile(atPath:),
+                       isTrusted: (URL) -> Bool = TailscaleSignature.shared.isTrusted,
+                       apps: () -> [URL] = { bundleIDs.flatMap { NSWorkspace.shared.urlsForApplications(withBundleIdentifier: $0) } })
+        -> URL? {
+        func usable(_ app: URL) -> Bool { isExecutable(binary(in: app).path) && isTrusted(app) }
+        if usable(standardApp) { return standard }
+        return candidates(appURLs: apps()).dropFirst().first(where: usable).map(binary(in:))
+    }
+}
+
+/// Whether an app bundle is Tailscale's own, by its code signature
+/// (`SecStaticCodeCheckValidity` against `TailscaleCLI.requirement`),
+/// remembered per bundle path and modification date, so an app replaced in
+/// place is checked again. The check is injected for the tests, which never
+/// run a binary.
+final class TailscaleSignature: @unchecked Sendable {
+    static let shared = TailscaleSignature(check: TailscaleSignature.verify, stamp: TailscaleSignature.modified)
+
+    private let lock = NSLock()
+    private var known: [String: (stamp: [Date?], trusted: Bool)] = [:]
+    private let check: @Sendable (URL) -> Bool
+    private let stamp: @Sendable (URL) -> [Date?]
+
+    init(check: @escaping @Sendable (URL) -> Bool, stamp: @escaping @Sendable (URL) -> [Date?]) {
+        self.check = check
+        self.stamp = stamp
+    }
+
+    func isTrusted(_ app: URL) -> Bool {
+        let path = app.standardizedFileURL.path
+        let mark = stamp(app)
+        if let cached = lock.withLock({ known[path] }), cached.stamp == mark { return cached.trusted }
+        let trusted = check(app)
+        lock.withLock { known[path] = (mark, trusted) }
+        if !trusted { log.error("A Tailscale app that Tailscale didn't sign was passed over") }
+        return trusted
+    }
+
+    /// The bundle's and its binary's modification dates.
+    @Sendable static func modified(_ app: URL) -> [Date?] {
+        [app, TailscaleCLI.binary(in: app)].map {
+            (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date
+        }
+    }
+
+    /// The app's code signature, valid and meeting the requirement.
+    @Sendable static func verify(_ app: URL) -> Bool {
+        meets(app, requirement: TailscaleCLI.requirement)
+    }
+
+    static func meets(_ app: URL, requirement text: String) -> Bool {
+        var code: SecStaticCode?
+        var requirement: SecRequirement?
+        guard SecStaticCodeCreateWithPath(app as CFURL, [], &code) == errSecSuccess, let code,
+              SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, let requirement
+        else { return false }
+        return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSStrictValidate), requirement) == errSecSuccess
+    }
+}
+
+/// The app's runner: finds the CLI before each run (`TailscaleCLI.locate`,
+/// its signature checks remembered), off the main thread, and runs it.
+/// Without one, nothing runs and the run says so.
+struct LiveTailscaleRunner: TailscaleRunner {
+    func run(_ arguments: [String], timeout: TimeInterval, stopWhen: (@Sendable (String) -> Bool)?) async -> TailscaleRun {
+        guard let executable = TailscaleCLI.locate() else { return .none }
+        return await ProcessTailscaleRunner(executable: executable).run(arguments, timeout: timeout, stopWhen: stopWhen)
     }
 }
 
@@ -349,8 +448,10 @@ struct TailscaleBridge: Sendable {
     /// Nil when Tailscale isn't installed.
     let runner: (any TailscaleRunner)?
 
+    /// The CLI is looked for, and its signature checked, when it is first
+    /// needed: never for someone who never turns Remote on.
     static func live() -> TailscaleBridge {
-        TailscaleBridge(runner: TailscaleCLI.locate().map(ProcessTailscaleRunner.init(executable:)))
+        TailscaleBridge(runner: LiveTailscaleRunner())
     }
 
     var isInstalled: Bool { runner != nil }
@@ -365,17 +466,24 @@ struct TailscaleBridge: Sendable {
     func status() async -> Check {
         guard let runner else { return .notInstalled }
         let run = await runner.run(TailscaleCommands.status, timeout: 10, stopWhen: nil)
+        if run.notInstalled { return .notInstalled }
         // Status can exit non-zero while it still prints JSON (logged out,
         // say); what it printed decides.
         guard let status = TailscaleStatus(json: Data(Self.json(in: run.output).utf8)) else { return .notRunning }
         return .status(status)
     }
 
-    func serveStatus() async -> ServeStatus? {
-        guard let runner else { return nil }
-        let run = await runner.run(TailscaleCommands.serveStatus, timeout: 10, stopWhen: nil)
-        guard run.exitStatus == 0 else { return nil }
-        return ServeStatus(json: Data(Self.json(in: run.output).utf8))
+    func serveStatus(timeout: TimeInterval = 10) async -> ServeStatus? {
+        await readServeStatus(timeout: timeout).status
+    }
+
+    /// `serve status`, and whether the CLI was there to ask.
+    private func readServeStatus(timeout: TimeInterval) async -> (status: ServeStatus?, installed: Bool) {
+        guard let runner else { return (nil, false) }
+        let run = await runner.run(TailscaleCommands.serveStatus, timeout: timeout, stopWhen: nil)
+        if run.notInstalled { return (nil, false) }
+        guard run.exitStatus == 0 else { return (nil, true) }
+        return (ServeStatus(json: Data(Self.json(in: run.output).utf8)), true)
     }
 
     enum Outcome: Equatable, Sendable {
@@ -388,36 +496,69 @@ struct TailscaleBridge: Sendable {
         case failed
     }
 
+    /// What `serve` did, and whether Serve has anything else on this node
+    /// (`ServeStatus.hasOtherMappings`): Settings warns that such a site
+    /// shares Bench's address, and so its devices' sign-in cookie.
+    struct Served: Equatable, Sendable {
+        let outcome: Outcome
+        let othersShare: Bool
+    }
+
     /// Adds Bench's mapping for the listener on `port`, unless it is there.
-    func serve(port: UInt16) async -> Outcome {
-        guard let runner, let current = await serveStatus() else { return .failed }
+    func serve(port: UInt16) async -> Served {
+        guard let runner, let current = await serveStatus() else { return Served(outcome: .failed, othersShare: false) }
+        let others = current.hasOtherMappings
         switch TailscaleCommands.plan(current, port: port) {
         case .nothing:
-            return .serving
+            return Served(outcome: .serving, othersShare: others)
         case .blocked:
-            return .blocked
+            return Served(outcome: .blocked, othersShare: others)
         case .run(let commands):
             for arguments in commands {
                 // `serve` waits for HTTPS to be turned on once it has printed
                 // the page that does it: stop there, and say where it is.
                 let run = await runner.run(arguments, timeout: 30) { TailscaleCommands.enableURL(in: $0) != nil }
-                if let url = TailscaleCommands.enableURL(in: run.output) { return .httpsOff(url) }
+                if let url = TailscaleCommands.enableURL(in: run.output) { return Served(outcome: .httpsOff(url), othersShare: others) }
                 guard run.exitStatus == 0 else {
                     log.error("tailscale serve failed (\(run.timedOut ? "timed out" : "exit \(run.exitStatus ?? -1)", privacy: .public))")
-                    return .failed
+                    return Served(outcome: .failed, othersShare: others)
                 }
             }
-            guard let after = await serveStatus(), after.port8443 == .bench(port: port) else { return .failed }
-            return .serving
+            guard let after = await serveStatus(), after.port8443 == .bench(port: port) else {
+                return Served(outcome: .failed, othersShare: others)
+            }
+            return Served(outcome: .serving, othersShare: after.hasOtherMappings)
         }
     }
 
-    /// Removes Bench's mapping, and only Bench's. True when none is left.
+    /// What removing Bench's mapping came to.
+    enum Removal: Equatable, Sendable {
+        /// None of Bench's is left (or there was none).
+        case none
+        /// No Tailscale CLI: with no Tailscale, nothing is served.
+        case notInstalled
+        /// `serve status` couldn't be read (Tailscale not running, say), so
+        /// whether Bench's mapping is there isn't known.
+        case unreadable
+        /// `serve … off` failed.
+        case failed
+    }
+
+    /// Removes Bench's mapping, and only Bench's: `off` runs only when
+    /// `serve status` says 8443 is Bench's alone (`TailscaleCommands.remove`).
+    func removeMapping(statusTimeout: TimeInterval = 10, offTimeout: TimeInterval = 15) async -> Removal {
+        guard let runner else { return .notInstalled }
+        let (current, installed) = await readServeStatus(timeout: statusTimeout)
+        guard installed else { return .notInstalled }
+        guard let current else { return .unreadable }
+        guard let arguments = TailscaleCommands.remove(current) else { return .none }
+        let run = await runner.run(arguments, timeout: offTimeout, stopWhen: nil)
+        return run.exitStatus == 0 ? .none : .failed
+    }
+
+    /// True when none of Bench's mapping is left.
     func stopServing() async -> Bool {
-        guard let runner, let current = await serveStatus() else { return false }
-        guard let arguments = TailscaleCommands.remove(current) else { return true }
-        let run = await runner.run(arguments, timeout: 15, stopWhen: nil)
-        return run.exitStatus == 0
+        await removeMapping() == .none
     }
 
     /// The JSON object in the output: from the first `{` to the last `}`,

@@ -321,13 +321,15 @@ enum RemoteDecide {
     // MARK: Message
 
     /// Only for `completed`/`success`, `processing`, `failed`/`cancelled`;
-    /// to the agent the fresh read names, with `plan_mode` false.
+    /// to the agent and project the fresh read names, with `plan_mode`
+    /// false. A read without a `project_id` sends nothing: `/api/request`
+    /// without one is how the daemon starts a new project.
     static func message(_ request: RemoteActionRequest, session: String, fresh: SessionProjection?) -> Step {
         guard case .message(let text, let intentID) = request, let fresh else { return .answer(.unavailable) }
         let mode = RemoteMessageMode(status: fresh.status)
         if case .blocked(let why) = mode { return .answer(RemoteActionResult(result: .blocked, sentence: why + ".")) }
-        guard let agent = fresh.agentName else { return .answer(.unavailable) }
-        return .write(.message(frame: session, agent: agent, projectID: fresh.projectID, text: text, intentID: intentID))
+        guard let agent = fresh.agentName, let project = fresh.projectID else { return .answer(.unavailable) }
+        return .write(.message(frame: session, agent: agent, projectID: project, text: text, intentID: intentID))
     }
 
     /// `status` is the root's, as read just before sending.
@@ -527,6 +529,9 @@ final class RemoteSessions {
 
     private func entry(for id: String) async -> Entry {
         let now = dependencies.now()
+        // Whatever has been held 5 seconds goes at every ask, not only once
+        // the asking pauses.
+        dropExpired()
         if let cached = cache[id], cached.at <= now, now.timeIntervalSince(cached.at) < Self.cacheLifetime { return cached }
         if let task = loading[id] { return await task.value }
         let started = generation[id, default: 0]

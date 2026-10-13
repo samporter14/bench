@@ -414,22 +414,24 @@ struct PushCenterTests {
 
     @Test func aRecordFromBeforePushStillReads() throws {
         let old = Data(#"[{"id":"d1","lastSeen":"2026-10-01T10:00:00Z","name":"Sam's iPhone","pairedAt":"2026-09-30T10:00:00Z","tokenHash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}]"#.utf8)
+        // Read as of a day after it was last seen: not yet 60 days old, whatever today is.
+        let then = Date(timeIntervalSince1970: 1_791_000_000)
         let auth = RemoteAuth(store: MemoryDeviceStore(data: old))
-        auth.load()
+        auth.load(now: then)
         #expect(auth.devices.count == 1)
         #expect(auth.devices.first?.push == nil)
         // A device without push writes no `push` key, so older Benches read it too.
         #expect(auth.updatePush { _ in nil })
         let store = MemoryDeviceStore(data: old)
         let again = RemoteAuth(store: store)
-        again.load()
+        again.load(now: then)
         let browser = FakeBrowser()
         let push = RemoteDevicePush(subscription: PushSubscription(endpoint: browser.endpoint, p256dh: browser.key.publicKey.x963Representation,
                                                                    auth: browser.secret, since: Date(timeIntervalSince1970: 1_800_000_000)),
                                     prefs: PushPrefs(names: true))
         #expect(again.updatePush { _ in push })
         let reread = RemoteAuth(store: MemoryDeviceStore(data: store.data))
-        reread.load()
+        reread.load(now: then)
         #expect(reread.devices.first?.push == push)
         #expect(reread.devices.first?.name == "Sam's iPhone")
         again.updatePush { _ in nil }

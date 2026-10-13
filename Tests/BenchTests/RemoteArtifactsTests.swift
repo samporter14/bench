@@ -1023,6 +1023,23 @@ struct ArtifactServingTests {
         now += 2
         #expect(info.info("v1") == nil)
     }
+
+    @Test func pastCapacityTheOldestTenthGoesAtOnce() {
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        let info = ListedFileInfo(now: { now })
+        let made = ListedFileInfo.Info(name: "a.md", mime: nil, size: 1, kind: .markdown)
+        for n in 0...ListedFileInfo.capacity {
+            now += 0.01
+            info.record("v\(n)", made)
+        }
+        let room = ListedFileInfo.capacity - ListedFileInfo.capacity / 10
+        #expect(info.count == room)
+        #expect(info.info("v\(ListedFileInfo.capacity)") == made)
+        #expect(info.info("v0") == nil)
+        now += 0.01
+        info.record("next", made)
+        #expect(info.count == room + 1)
+    }
 }
 
 // MARK: `--demo remote`

@@ -58,6 +58,7 @@ enum RemoteWebApp {
     private static let appJS: String = #"""
 const $ = (id) => document.getElementById(id);
 const root = $('root');
+const dict = () => Object.create(null);
 const S = {
 view: 'boot',        // boot | pair | offline | app
 down: { status: 0, err: false },
@@ -65,8 +66,8 @@ pairMsg: '',
 state: null,         // the last /api/state snapshot
 sig: '',             // snapshot signature without updatedAt, to skip no-op renders
 me: null,
-sess: {},            // id -> { phase: loading|ok|missing|error, data }
-open: {},            // id -> { phase: busy|done|error, down, status }
+sess: dict(),        // id -> { phase: loading|ok|missing|error, data }
+open: dict(),        // id -> { phase: busy|done|error, down, status }
 lastOk: 0,           // when we last heard from Bench (stream or poll)
 lastTry: 0,
 refreshing: null,
@@ -75,25 +76,25 @@ esTimer: 0,
 backoff: 0,
 tickTimer: 0,
 n: 0,
-scroll: {},
+scroll: dict(),
 rk: '',
 navs: 0,
 split: false,        // the iPad layout: the Now list beside the selected session
-ui: {},              // id -> what the person typed or chose on that session
-sessAt: {},          // id -> when we last fetched it
-sessSig: {},         // id -> what the state said about it at that fetch
+ui: dict(),          // id -> what the person typed or chose on that session
+sessAt: dict(),      // id -> when we last fetched it
+sessSig: dict(),     // id -> what the state said about it at that fetch
 sessTimer: 0,
 push: { loaded: false, unavailable: false, key: '', on: false, prefs: null, busy: false, msg: '' },
 side: { tab: 'now', pid: null },   // what the iPad sidebar is showing
 from: null,          // the last list screen we were on, so a session's Back says where it goes
 prevKey: '',
 projects: { list: [], loaded: false, busy: false, err: false, at: 0 },
-proj: {},            // pid -> { items, next, q, applied, busy, err, loaded, seq, t }
-newSess: {},         // pid -> the draft of a new session
-hist: {},            // session id -> its history rows, by index
-art: {},             // session id -> its artifacts
-files: {},           // version id -> { v, a, name, kind, size, mime, at }
-ftext: {},           // version id -> the text, markdown or table of a file
+proj: dict(),        // pid -> { items, next, q, applied, busy, err, loaded, seq, t }
+newSess: dict(),     // pid -> the draft of a new session
+hist: dict(),        // session id -> its history rows, by index
+art: dict(),         // session id -> its artifacts
+files: dict(),       // version id -> { v, a, name, kind, size, mime, at }
+ftext: dict(),       // version id -> the text, markdown or table of a file
 wrap: false,
 };
 const splitQuery = matchMedia('(min-width: 768px) and (min-height: 500px)');
@@ -188,9 +189,24 @@ class Down extends Error {
 constructor(status = 0) { super('down'); this.status = status; }
 }
 class Unauth extends Error {}
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const retryWait = (res, n) => Math.min(10, Math.max(1, Number(res.headers.get('Retry-After')) || n)) * 1000 + Math.random() * 500;
+const isSlow = (e) => !!e && e.status === 429;
+const slowText = (d) => (d && d.error === 'busy' ? 'Another file is still coming. Try again in a moment.' : 'That’s a lot at once. Try again in a moment.');
+const FQ = { n: 0, wait: [] };
+const takeSlot = () => (FQ.n < 2 ? (FQ.n++, Promise.resolve()) : new Promise((r) => FQ.wait.push(r)));
+function giveSlot() {
+const next = FQ.wait.shift();
+if (next) next(); else FQ.n = Math.max(0, FQ.n - 1);
+}
+const isFile = (path) => path.startsWith('/api/files/');
 async function api(path, method = 'GET', body) {
 const post = method === 'POST';
+const file = isFile(path);
+for (let n = 1; ; n++) {
 let res;
+if (file) await takeSlot();
+try {
 try {
 res = await fetch(path, {
 method,
@@ -201,6 +217,7 @@ body: post ? JSON.stringify(body ?? {}) : undefined,
 } catch {
 throw new Down();
 }
+if (!(res.status === 429 && !post && n < 3)) {
 if (res.status === 401) throw new Unauth();
 if (res.status === 502 || res.status === 503 || res.status === 504) throw new Down(res.status);
 if (!res.ok) {
@@ -210,6 +227,13 @@ try { e.data = await res.json(); } catch { /* not JSON */ }
 throw e;
 }
 try { return await res.json(); } catch { return null; }
+}
+try { await res.text(); } catch { /* gone */ }
+} finally {
+if (file) giveSlot();
+}
+await pause(retryWait(res, n));
+}
 }
 async function send(path, body) {
 let res;
@@ -226,6 +250,7 @@ return { status: res.status, data };
 }
 function fail(e, fg) {
 if (e instanceof Unauth) return showPair();
+if (isSlow(e) && S.state) return; // Bench asked to wait: the next poll tries again
 if (e instanceof Down) return fg || !S.state ? showOffline(e.status, false) : undefined;
 if (fg || !S.state) showOffline(e.status || -1, true);
 }
@@ -235,9 +260,9 @@ S.view = 'pair';
 S.pairMsg = msg;
 S.state = null;
 S.sig = '';
-S.sess = {};
-S.ui = {};
-Object.assign(S, { projects: { list: [], loaded: false, busy: false, err: false, at: 0 }, proj: {}, newSess: {}, hist: {}, art: {}, files: {}, ftext: {} });
+S.sess = dict();
+S.ui = dict();
+Object.assign(S, { projects: { list: [], loaded: false, busy: false, err: false, at: 0 }, proj: dict(), newSess: dict(), hist: dict(), art: dict(), files: dict(), ftext: dict() });
 S.push = { loaded: false, unavailable: false, key: '', on: false, prefs: null, busy: false, msg: '' };
 S.me = null;
 disconnect();
@@ -418,13 +443,14 @@ disconnect();
 }
 const RE = { sid: /^[0-9a-f-]{36}$/, pid: /^[A-Za-z0-9_-]{1,64}$/, vid: /^[A-Za-z0-9_-]{1,128}$/ };
 const browseOn = () => !S.me || S.me.browse !== false;
+const RESERVED = new Set(['__proto__', 'constructor', 'prototype']);
 function routeOf(hash) {
 const p = (hash || '').replace(/^#/, '') || '/';
 let m;
-if ((m = p.match(/^\/session\/([0-9a-f-]{36})\/file\/([A-Za-z0-9_-]{1,128})$/))) return { name: 'file', id: m[1], v: m[2] };
+if ((m = p.match(/^\/session\/([0-9a-f-]{36})\/file\/([A-Za-z0-9_-]{1,128})$/))) return RESERVED.has(m[2]) ? { name: 'now' } : { name: 'file', id: m[1], v: m[2] };
 if ((m = p.match(/^\/session\/([0-9a-f-]{36})\/artifacts$/))) return { name: 'artifacts', id: m[1] };
 if ((m = p.match(/^\/session\/([0-9a-f-]{36})$/))) return { name: 'session', id: m[1] };
-if ((m = p.match(/^\/projects\/([A-Za-z0-9_-]{1,64})$/))) return { name: 'project', pid: m[1] };
+if ((m = p.match(/^\/projects\/([A-Za-z0-9_-]{1,64})$/))) return RESERVED.has(m[1]) ? { name: 'now' } : { name: 'project', pid: m[1] };
 if (p === '/projects') return { name: 'projects' };
 if (p === '/settings') return { name: 'settings' };
 return { name: 'now' };
@@ -755,9 +781,8 @@ else if (m[3] != null) out.push(h('em', null, depth < 3 ? inline(m[3], depth + 1
 else if (m[5] != null) {
 const v = mdImage ? mdImage(m[5]) : null;
 if (v && RE.vid.test(v)) {
-const img = h('img', { class: 'md-img', src: '/api/files/' + v + '/thumb?w=800', alt: m[4], loading: 'lazy' });
-img.addEventListener('error', () => img.replaceWith(txt(m[4] || 'image')));
-out.push(img);
+const alt = m[4];
+out.push(fileImg({ class: 'md-img', alt }, '/api/files/' + v + '/thumb?w=800', (img) => img.replaceWith(txt(alt || 'image'))));
 } else out.push(txt(m[4] || 'image'));
 } else out.push(txt(m[7] && m[7] !== m[6] ? `${m[6]} (${m[7]})` : m[6] || m[7])); // a link is just its words
 last = re.lastIndex;
@@ -863,6 +888,7 @@ const o = S.open[id];
 if (!o || o.phase !== 'error') return '';
 if (o.down) return 'Couldn’t reach your Mac. Try again.';
 if (o.status === 404) return 'That session isn’t available any more.';
+if (o.status === 429) return 'Wait a moment, then try again.';
 return 'Bench couldn’t open it (error ' + (o.status || '?') + ').';
 }
 function paintOpen(id) {
@@ -909,7 +935,7 @@ if (state === 'error' || state === 'failed') return icon('alert', 'sm mark-err')
 if (state === 'working') return h('span', { class: 'dot live', 'aria-hidden': 'true' });
 return h('span', { class: 'dot idle', 'aria-hidden': 'true' });
 }
-const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: {}, other: {}, otherOn: {}, qTool: '', busy: {}, note: null, noteT: 0, shown: 4, more: {} });
+const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: dict(), other: dict(), otherOn: dict(), qTool: '', busy: dict(), note: null, noteT: 0, shown: 4, more: dict() });
 const REGIONS = ['head', 'open', 'unread', 'question', 'plan', 'reply', 'toyou', 'artifacts', 'convo', 'times', 'openlow'];
 function sessionView(id, inPane) {
 const body = h('div', { class: (inPane ? 'detail-in' : 'wrap') + ' sess-body' }, REGIONS.map((n) => h('div', { 'data-r': n })));
@@ -942,7 +968,7 @@ const d = rec && rec.data;
 const snap = lookup(id);
 const u = ui(id);
 const q = d && d.question;
-if (q && u.qTool !== q.toolId) Object.assign(u, { qTool: q.toolId, picks: {}, other: {}, otherOn: {} });
+if (q && u.qTool !== q.toolId) Object.assign(u, { qTool: q.toolId, picks: dict(), other: dict(), otherOn: dict() });
 const set = (name, sig, build) => setRegion(body, name, JSON.stringify(sig) ?? '', build);
 const none = () => [];
 set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze]], () => headNodes(id, rec, d, snap));
@@ -1207,7 +1233,7 @@ function describe(out) {
 const { status, data } = out;
 const result = data && typeof data.result === 'string' ? data.result : '';
 const sentence = data && typeof data.sentence === 'string' ? data.sentence : '';
-if (status === 429) return { ok: false, refetch: false, text: 'Too many actions just now. Try again in a minute.' };
+if (status === 429) return { ok: false, refetch: false, text: data && data.error === 'tooMany' ? 'Too many actions just now. Try again in a minute.' : slowText(data) };
 if (result === 'changed') return { ok: false, refetch: true, text: 'This changed on your Mac. Showing the latest.' };
 if (['approved', 'sent', 'queued', 'resumed'].includes(result) && status < 300) {
 return { ok: true, refetch: true, text: sentence || { approved: 'Approved', sent: 'Sent', queued: 'Queued', resumed: 'Picked up again' }[result] };
@@ -1436,7 +1462,7 @@ close();
 location.hash = '#/session/' + d.id;
 return;
 }
-if (out.status === 429) say('Too many actions just now. Try again in a minute.');
+if (out.status === 429) say(d && d.error === 'tooMany' ? 'Too many actions just now. Try again in a minute.' : slowText(d));
 else if (isBrowseOff(out)) { close(); setBrowseOff(); } else if (out.status === 403 && !(d && d.sentence)) say('Actions are off in Bench’s Settings.');
 else say((d && typeof d.sentence === 'string' && d.sentence) || 'Couldn’t start it from here. Open Bench on your Mac.');
 }
@@ -1460,6 +1486,54 @@ const dispName = (n) => String(n == null ? '' : n).replace(/[\u0000-\u001f\u007f
 const fileName = (v) => dispName(S.files[v] && S.files[v].name) || 'File';
 const fileHref = (id, v) => (RE.vid.test(v) ? `#/session/${id}/file/${v}` : null);
 const safeName = (n) => dispName(n).replace(/[\\/]/g, '_').slice(0, 200) || 'file';
+const nearScreen = 'IntersectionObserver' in window
+? new IntersectionObserver((es) => {
+for (const e of es) if (e.isIntersecting) { nearScreen.unobserve(e.target); e.target._load(); }
+}, { rootMargin: '300px 0px' })
+: null;
+function fileImg(props, src, failed) {
+const img = h('img', props);
+let tries = 0;
+img._load = async () => {
+await takeSlot();
+if (tries && !img.isConnected) { giveSlot(); return; } // gone from the screen meanwhile
+const ok = await new Promise((r) => {
+let t = 0;
+const over = (v) => { clearTimeout(t); img.onload = img.onerror = null; r(v); };
+img.onload = () => over(true);
+img.onerror = () => over(false);
+t = setTimeout(() => over(false), 20000);
+img.removeAttribute('src');
+img.src = src;
+});
+giveSlot();
+if (ok) return;
+if (++tries < 3) setTimeout(() => { if (img.isConnected) img._load(); }, tries * 2500 + Math.random() * 1000);
+else failed(img);
+};
+if (nearScreen) nearScreen.observe(img); else queueMicrotask(img._load);
+return img;
+}
+async function getFile(f) {
+await takeSlot();
+try {
+const res = await fetch('/api/files/' + f.v + '/download', { cache: 'no-store' });
+if (res.status === 401) return { unauth: true };
+if (!res.ok) {
+let data = null;
+try { data = await res.json(); } catch { /* not JSON */ }
+return { status: res.status, data };
+}
+return { file: new File([await res.blob()], safeName(f.name), { type: res.headers.get('Content-Type') || 'application/octet-stream' }) };
+} catch {
+return { down: true };
+} finally {
+giveSlot();
+}
+}
+const fileTrouble = (r) => (r.status === 429 ? slowText(r.data)
+: r.status === 413 ? 'Too big for the phone. Open it on your Mac.'
+: r.down || r.status === 502 || r.status === 504 ? 'Couldn’t reach your Mac. Try again.' : 'Couldn’t get this file from your Mac. Try again.');
 function rememberFiles(files) {
 for (const f of files || []) if (f && RE.vid.test(f.v)) S.files[f.v] = { ...S.files[f.v], ...f };
 }
@@ -1493,7 +1567,8 @@ render(false, true);
 }
 function maybeLoadText(v) {
 const f = S.files[v];
-if (!f || !['markdown', 'text', 'table'].includes(f.kind) || S.ftext[v]) return;
+const had = S.ftext[v];
+if (!f || !['markdown', 'text', 'table'].includes(f.kind) || (had && !(had.phase === 'err' && had.status === 429))) return;
 S.ftext[v] = { phase: 'loading' };
 api('/api/files/' + v + '/text')
 .then((d) => { S.ftext[v] = { phase: 'ok', data: d }; })
@@ -1521,10 +1596,8 @@ return hit ? hit.v : null;
 }
 const mdFor = (id) => ({ image: (src) => imageFor(id, src) });
 function thumbTile(id, f) {
-const img = h('img', { src: '/api/files/' + f.v + '/thumb?w=120', alt: '', width: '120', height: '120', loading: 'lazy' });
-const tile = h('a', { class: 'thumb', href: fileHref(id, f.v), 'aria-label': dispName(f.name) || 'Image', 'data-key': 'f:' + f.v }, img);
-img.addEventListener('error', () => img.replaceWith(icon('image', 'big')));
-return tile;
+const img = fileImg({ alt: '', width: '120', height: '120' }, '/api/files/' + f.v + '/thumb?w=120', (el) => el.replaceWith(icon('image', 'big')));
+return h('a', { class: 'thumb', href: fileHref(id, f.v), 'aria-label': dispName(f.name) || 'Image', 'data-key': 'f:' + f.v }, img);
 }
 function fileRow(id, f) {
 return h('li', null, h('a', { class: 'row', href: fileHref(id, f.v), 'data-key': 'f:' + f.v },
@@ -1555,21 +1628,45 @@ if (f.size > MAX_DOWNLOAD) {
 const b = h('button', { class: 'btn', type: 'button', text: 'Open on Mac', onclick: async () => { b.disabled = true; await openOnMac(id); b.disabled = false; b.textContent = S.open[id] && S.open[id].phase === 'done' ? 'Opened on your Mac ✓' : 'Open on Mac'; } });
 return h('div', { class: 'act' }, h('p', { class: 'quiet', text: 'Too big for the phone. Open it on your Mac.' }), b);
 }
-const link = h('a', { class: 'btn' + (quietStyle ? '' : ' primary'), href: '/api/files/' + f.v + '/download', download: safeName(f.name) }, icon('download', 'sm'), 'Download · ' + fmtSize(f.size));
+const note = h('p', { class: 'msg bad', role: 'status', hidden: true });
+const say = (t) => { note.textContent = t; note.hidden = !t; };
+const link = h('a', {
+class: 'btn' + (quietStyle ? '' : ' primary'), href: '/api/files/' + f.v + '/download', download: safeName(f.name),
+onclick: async (e) => {
+e.preventDefault();
+if (link.getAttribute('aria-busy') === 'true') return;
+link.setAttribute('aria-busy', 'true');
+say('');
+const r = await getFile(f);
+link.removeAttribute('aria-busy');
+if (r.unauth) return showPair();
+if (!r.file) return say(fileTrouble(r));
+const url = URL.createObjectURL(r.file);
+const a = h('a', { href: url, download: r.file.name, hidden: true });
+document.body.append(a);
+a.click();
+a.remove();
+setTimeout(() => URL.revokeObjectURL(url), 60000);
+},
+}, icon('download', 'sm'), 'Download · ' + fmtSize(f.size));
 const out = h('div', { class: 'act dl' }, link);
 if (canShareFiles()) {
 const share = h('button', { class: 'btn', type: 'button', onclick: async () => {
 share.disabled = true;
+say('');
+const r = await getFile(f);
+if (r.unauth) return showPair();
+if (!r.file) say(fileTrouble(r));
+else {
 try {
-const res = await fetch('/api/files/' + f.v + '/download', { cache: 'no-store' });
-if (!res.ok) throw new Error('http');
-const file = new File([await res.blob()], safeName(f.name), { type: res.headers.get('Content-Type') || 'application/octet-stream' });
-if (navigator.canShare({ files: [file] })) await navigator.share({ files: [file] });
+if (navigator.canShare({ files: [r.file] })) await navigator.share({ files: [r.file] });
 } catch { /* cancelled or unsupported: the Download button is still there */ }
+}
 share.disabled = false;
 } }, icon('share', 'sm'), 'Share');
 out.append(share);
 }
+out.append(note);
 return out;
 }
 function tableViewer(d) {
@@ -1587,7 +1684,7 @@ d.truncated ? h('p', { class: 'foot', text: `Showing the first ${rows.length} ro
 function textViewer(id, f) {
 const T = S.ftext[f.v];
 if (!T || T.phase === 'loading') return [quiet('Loading…')];
-if (T.phase === 'err') return [h('p', { class: 'quiet', text: T.status === 413 ? 'This file is too big to show here.' : 'Couldn’t show this file here.' }), downloadBlock(id, f, false)];
+if (T.phase === 'err') return [h('p', { class: 'quiet', text: T.status === 413 ? 'This file is too big to show here.' : T.status === 429 ? 'Bench is busy. Open this file again in a moment.' : 'Couldn’t show this file here.' }), downloadBlock(id, f, false)];
 const d = T.data || {};
 if (f.kind === 'table' && d.kind === 'table') return [...tableViewer(d), downloadBlock(id, f, true)];
 const text = typeof d.text === 'string' ? d.text : '';
@@ -1614,9 +1711,9 @@ h('h1', { class: 'sess fname', tabindex: '-1', text: dispName(f.name) || 'File' 
 h('p', { class: 'sub tight-sub', text: [KIND_LABEL[f.kind] || 'File', fmtSize(f.size)].filter(Boolean).join(' · ') }),
 ];
 if (f.kind === 'image') {
-const img = h('img', { class: 'viewer-img', src: '/api/files/' + f.v + '/thumb?w=800', alt: dispName(f.name) || 'Image' });
-const box = h('div', { class: 'viewer-img-wrap' }, img);
-img.addEventListener('error', () => box.replaceChildren(h('p', { class: 'quiet', text: 'Couldn’t show this image here.' })));
+const box = h('div', { class: 'viewer-img-wrap' });
+box.append(fileImg({ class: 'viewer-img', alt: dispName(f.name) || 'Image' }, '/api/files/' + f.v + '/thumb?w=800',
+() => box.replaceChildren(h('p', { class: 'quiet', text: 'Couldn’t show this image here.' }))));
 nodes.push(box, downloadBlock(id, f, true));
 } else if (f.kind === 'markdown' || f.kind === 'text' || f.kind === 'table') {
 nodes.push(...textViewer(id, f));
@@ -1625,7 +1722,7 @@ nodes.push(downloadBlock(id, f, false));
 }
 return nodes;
 }
-const hist = (id) => (S.hist[id] ||= { items: {}, total: 0, from: null, busy: false, err: false, loaded: false, failed: false, rev: 0, full: {}, cutBusy: {}, cutErr: {} });
+const hist = (id) => (S.hist[id] ||= { items: dict(), total: 0, from: null, busy: false, err: false, loaded: false, failed: false, rev: 0, full: dict(), cutBusy: dict(), cutErr: dict() });
 function mergeHist(H, d) {
 for (const it of Array.isArray(d && d.items) ? d.items : []) {
 if (!it || !Number.isInteger(it.i)) continue;
@@ -1903,7 +2000,7 @@ p.msg = '';
 redrawSettings();
 try {
 const out = await send('/api/push/test', {});
-p.msg = out.status < 300 ? 'Test sent. It should arrive in a moment.' : 'Couldn’t send a test.';
+p.msg = out.status < 300 ? 'Test sent. It should arrive in a moment.' : out.status === 429 ? 'That’s a few tests just now. Wait a minute, then try again.' : 'Couldn’t send a test.';
 } catch (e) {
 if (e instanceof Unauth) return showPair();
 p.msg = 'Couldn’t reach your Mac. Try again.';
@@ -1921,11 +2018,11 @@ p.msg = '';
 redrawSettings();
 try {
 const out = await send('/api/push/prefs', prefs);
-if (out.status >= 300) throw new Error('refused');
+if (out.status >= 300) throw Object.assign(new Error('refused'), { status: out.status });
 } catch (e) {
 if (e instanceof Unauth) return showPair();
 p.prefs = before;
-p.msg = 'Couldn’t save that. Try again.';
+p.msg = isSlow(e) ? 'Couldn’t save that just now. Try again in a moment.' : 'Couldn’t save that. Try again.';
 redrawSettings();
 }
 }

@@ -57,6 +57,10 @@ enum RemoteHTTP {
     enum Parse: Equatable {
         /// Not all here yet: read more.
         case incomplete
+        /// The head is all here, its body (`length` bytes, declared) not
+        /// yet: the request without it, so the checks that need only the head
+        /// can refuse it now, before a body that may never come.
+        case head(RemoteRequest, length: Int)
         case request(RemoteRequest)
         /// Refuse with this status and close.
         case reject(Int)
@@ -106,7 +110,9 @@ enum RemoteHTTP {
         }
         guard length <= RemoteRoute.bodyLimit(method: method, path: target.prefix { $0 != "?" }) else { return .reject(413) } // Phase 2 actions
         let bodyStart = end.upperBound
-        guard buffer.endIndex - bodyStart >= length else { return .incomplete }
+        guard buffer.endIndex - bodyStart >= length else {
+            return .head(RemoteRequest(method: method, target: target, headers: headers), length: length)
+        }
         let body = Data(buffer[bodyStart..<(bodyStart + length)])
         return .request(RemoteRequest(method: method, target: target, headers: headers, body: body))
     }
@@ -252,30 +258,37 @@ struct RemotePolicy: Equatable, Sendable {
     var hosts: Set<String>
     /// The origins a POST may come from.
     var origins: Set<String>
-    /// When set, Serve's `Tailscale-User-Login` must be there and equal it.
-    /// Nil only in `--demo remote`, which Serve never fronts.
-    var login: String?
+    /// When set, Serve's `Tailscale-User-Login` must be there and hash to it
+    /// (`RemoteLogin`): Bench keeps the login only as this hash. Nil only in
+    /// `--demo remote`, which Serve never fronts.
+    var loginHash: String?
     /// The device cookie's `Secure` flag: off only in the demo, which is
     /// plain HTTP on this Mac.
     var secureCookie: Bool
 
     /// Nothing is served.
-    static let closed = RemotePolicy(hosts: [], origins: [], login: nil, secureCookie: true)
+    static let closed = RemotePolicy(hosts: [], origins: [], loginHash: nil, secureCookie: true)
 
     static let httpsPort = 8443
 
-    /// Behind Tailscale Serve: `https://<node>.<tailnet>.ts.net:8443`.
-    static func tailnet(dnsName: String, login: String) -> RemotePolicy {
+    /// Behind Tailscale Serve: `https://<node>.<tailnet>.ts.net:8443`, for
+    /// the login recorded (as its hash) when Remote was turned on.
+    static func tailnet(dnsName: String, loginHash: String) -> RemotePolicy {
         let name = dnsName.lowercased()
         return RemotePolicy(hosts: [name, "\(name):\(httpsPort)"], origins: ["https://\(name):\(httpsPort)"],
-                            login: login, secureCookie: true)
+                            loginHash: loginHash, secureCookie: true)
+    }
+
+    /// The same, from the login as Tailscale says it.
+    static func tailnet(dnsName: String, login: String) -> RemotePolicy {
+        tailnet(dnsName: dnsName, loginHash: RemoteLogin.hash(login))
     }
 
     /// `--demo remote`: loopback by number or by name, plain HTTP.
     static func demo(port: UInt16) -> RemotePolicy {
         RemotePolicy(hosts: ["127.0.0.1:\(port)", "localhost:\(port)"],
                      origins: ["http://127.0.0.1:\(port)", "http://localhost:\(port)"],
-                     login: nil, secureCookie: false)
+                     loginHash: nil, secureCookie: false)
     }
 }
 
@@ -301,6 +314,11 @@ enum RemoteCheck {
     /// identity (403), the route (404, or 405 for a known path), for a POST
     /// its type (415), Origin and `X-Bench: 1` (403) and size (413), and
     /// for `/api/*` a device cookie (401).
+    ///
+    /// Every one of them reads the head alone, so the server asks as soon as
+    /// the head is in (`RemoteHTTP.Parse.head`, whose body is still empty)
+    /// and again with the body; the parser has already held the declared
+    /// length to the route's limit.
     static func evaluate(_ request: RemoteRequest, policy: RemotePolicy) -> Outcome {
         guard let host = request.single("host")?.lowercased(), policy.hosts.contains(host) else {
             return .reject(403, route: nil, gate: .host)
@@ -308,9 +326,9 @@ enum RemoteCheck {
         // Funnel would put the server on the internet. Bench never turns it
         // on, and refuses whatever comes through it.
         if request.headers["tailscale-funnel-request"] != nil { return .reject(403, route: nil, gate: .funnel) }
-        if let login = policy.login {
+        if let loginHash = policy.loginHash {
             guard let sent = request.single("tailscale-user-login"),
-                  sent.caseInsensitiveCompare(login) == .orderedSame else { return .reject(403, route: nil, gate: .login) }
+                  RemoteLogin.matches(sent, hash: loginHash) else { return .reject(403, route: nil, gate: .login) }
         }
 
         let route: RemoteRoute
@@ -478,10 +496,15 @@ final class RemoteServer {
     /// 47280, then the next free one up to 47290.
     nonisolated static let ports: ClosedRange<UInt16> = 47280...47290
     static let keepaliveEvery: Duration = .seconds(25)
-    /// A request has this long to arrive whole.
-    static let readTimeout: Duration = .seconds(10)
+    /// A request's head has this long to arrive.
+    nonisolated static let readTimeout: Duration = .seconds(10)
+    /// Once the head is in and has passed every check, its body has this
+    /// long: a body that never comes holds a connection only briefly.
+    nonisolated static let bodyTimeout: Duration = .seconds(3)
+    /// A response, or one write to an events stream, has this long to be
+    /// taken by the phone: a client that reads slowly can't hold its buffer.
+    nonisolated static let sendTimeout: Duration = .seconds(60)
     static let maxConnections = 32
-    static let maxStreams = 8
 
     var policy: RemotePolicy
     let auth: RemoteAuth
@@ -496,26 +519,55 @@ final class RemoteServer {
     private var nextID = 0
     /// Icons drawn by `RemoteIcon`, when `RemoteWebApp` names none.
     private var iconCache: [Int: Data] = [:]
+    /// What each device may still ask (RemoteBudget.swift).
+    private var budgets = DeviceBudgets()
+    private let now: () -> Date
 
     private final class Client {
         let connection: NWConnection
         var buffer = Data()
         /// Answered (or answering): nothing more is read as a request.
         var answered = false
+        /// The head passed every check: the route, and its device.
+        var admitted: Admitted?
         /// For an events stream: the device it belongs to.
         var streamDevice: String?
         var opened = Date()
         var timer: Task<Void, Never>?
+        /// A file transfer this connection counts as, until it goes.
+        var transfer: Transfer?
+        /// Writes to an events stream, made and taken: one not taken within
+        /// `sendTimeout` ends the stream.
+        var writes = 0
+        var written = 0
 
         init(_ connection: NWConnection) {
             self.connection = connection
         }
     }
 
-    init(policy: RemotePolicy, auth: RemoteAuth, backend: RemoteBackend) {
+    private struct Admitted {
+        let route: RemoteRoute
+        let device: RemoteDevice?
+    }
+
+    /// One of a device's two file transfers. It is under way while its
+    /// connection is open and while the page is still reading for it, so a
+    /// phone that hangs up early can't start another read before this one ends.
+    private final class Transfer {
+        let device: String
+        var holds = 1
+
+        init(device: String) {
+            self.device = device
+        }
+    }
+
+    init(policy: RemotePolicy, auth: RemoteAuth, backend: RemoteBackend, now: @escaping () -> Date = Date.init) {
         self.policy = policy
         self.auth = auth
         self.backend = backend
+        self.now = now
     }
 
     // MARK: Listening
@@ -619,14 +671,19 @@ final class RemoteServer {
                 }
             }
         }
-        // A request that doesn't arrive whole in time is dropped.
-        client.timer = Task { [weak self] in
-            try? await Task.sleep(for: Self.readTimeout)
-            guard !Task.isCancelled, let self, let client = self.clients[id], !client.answered else { return }
-            self.send(id, RemoteResponse.error(408), route: nil, why: "timeout", closing: true)
-        }
+        // A head that doesn't arrive in time is dropped.
+        client.timer = timeout(id, after: Self.readTimeout)
         connection.start(queue: .main)
         receive(id)
+    }
+
+    /// 408 once `wait` is up, unless the request was answered by then.
+    private func timeout(_ id: Int, after wait: Duration) -> Task<Void, Never> {
+        Task { [weak self] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let self, let client = self.clients[id], !client.answered else { return }
+            self.send(id, RemoteResponse.error(408), route: client.admitted?.route, why: "timeout", closing: true)
+        }
     }
 
     private func receive(_ id: Int) {
@@ -645,34 +702,59 @@ final class RemoteServer {
         }
         guard !client.answered else { return }
         if let data { client.buffer.append(data) }
-        switch RemoteHTTP.parse(client.buffer) {
+        let parsed = RemoteHTTP.parse(client.buffer)
+        let head: RemoteRequest
+        switch parsed {
         case .incomplete:
             if isComplete || failed { close(id) } else { receive(id) }
+            return
         case .reject(let status):
-            send(id, RemoteResponse.error(status), route: nil, why: "parse", closing: true)
-        case .request(let request):
-            client.answered = true
-            client.timer?.cancel()
-            client.buffer = Data()
-            answer(request, client: id)
+            return send(id, RemoteResponse.error(status), route: nil, why: "parse", closing: true)
+        case .head(let request, _), .request(let request):
+            head = request
         }
+        // The head is in: every check runs now, before any body is waited for.
+        if client.admitted == nil {
+            guard let admitted = admit(head, client: id) else { return }
+            client.admitted = admitted
+            if case .head = parsed {
+                client.timer?.cancel()
+                client.timer = timeout(id, after: Self.bodyTimeout)
+            }
+        }
+        guard case .request(let request) = parsed, let admitted = client.admitted else {
+            if isComplete || failed { close(id) } else { receive(id) }
+            return
+        }
+        client.answered = true
+        client.timer?.cancel()
+        client.buffer = Data()
+        respond(admitted.route, request: request, device: admitted.device, client: id)
     }
 
-    private func answer(_ request: RemoteRequest, client id: Int) {
+    /// The checks (`RemoteCheck`), the device a route needs, and that
+    /// device's budget. Nil when refused: the refusal is on its way.
+    private func admit(_ request: RemoteRequest, client id: Int) -> Admitted? {
         switch RemoteCheck.evaluate(request, policy: policy) {
         case .reject(let status, let route, let gate):
             send(id, RemoteResponse.error(status), route: route, why: gate.rawValue, closing: true)
+            return nil
         case .accept(let route, let token):
-            var device: RemoteDevice?
-            if route.needsToken {
-                guard let token, let found = auth.device(forToken: token) else {
-                    send(id, RemoteResponse.error(401), route: route, why: "device", closing: true)
-                    return
-                }
-                auth.touch(found.id)
-                device = found
+            guard route.needsToken else { return Admitted(route: route, device: nil) }
+            guard let token, let found = auth.device(forToken: token) else {
+                send(id, RemoteResponse.error(401), route: route, why: "device", closing: true)
+                return nil
             }
-            respond(route, request: request, device: device, client: id)
+            auth.touch(found.id)
+            switch budgets.admit(route, device: found.id, at: now()) {
+            case .refuse(let error, let retryAfter):
+                send(id, RemoteResponse.error(429, error, headers: [("Retry-After", String(retryAfter))]),
+                     route: route, why: error, closing: true)
+                return nil
+            case .go(let transfer):
+                if transfer { clients[id]?.transfer = Transfer(device: found.id) }
+            }
+            return Admitted(route: route, device: found)
         }
     }
 
@@ -748,9 +830,13 @@ final class RemoteServer {
             }
         case .files(let filesRoute): // Phase 3 files
             let deviceID = device?.id ?? "", target = request.target
+            // The page's read holds the transfer too, until it is done.
+            let transfer = clients[id]?.transfer
+            transfer?.holds += 1
             Task { [weak self] in
                 guard let self else { return }
                 let response = await self.backend.files(filesRoute, target, deviceID)
+                self.release(transfer)
                 self.send(id, response, route: route, closing: true)
             }
         case .projects, .projectSessions, .newSession, .history, .turn: // Phase 3 browse
@@ -768,10 +854,11 @@ final class RemoteServer {
 
     private func openStream(_ id: Int, device: String) {
         guard let client = clients[id] else { return }
-        // The oldest stream goes when there are too many: a phone that
-        // reconnects leaves its last one behind until the drop is noticed.
-        let streams = clients.filter { $0.value.streamDevice != nil }.sorted { $0.value.opened < $1.value.opened }
-        if streams.count >= Self.maxStreams, let oldest = streams.first { close(oldest.key) }
+        // Two a device and eight in all; the oldest go (`StreamCap`).
+        let streams = clients.compactMap { id, client in
+            client.streamDevice.map { StreamCap.Stream(id: id, device: $0, opened: client.opened) }
+        }
+        for old in StreamCap.toClose(streams, for: device) { close(old) }
         client.streamDevice = device
         log.info("/api/events 200")
         let first = RemoteResponse.eventStreamHead() + Data("retry: 5000\n\n".utf8) + RemoteResponse.stateEvent(backend.state())
@@ -807,7 +894,8 @@ final class RemoteServer {
 
     // MARK: Writing
 
-    /// `why` names the check that refused, for the log.
+    /// `why` names the check that refused, for the log. The phone has
+    /// `sendTimeout` to take the response; after that the connection goes.
     private func send(_ id: Int, _ response: Data, route: RemoteRoute?, why: String? = nil, closing: Bool) {
         guard let client = clients[id] else { return }
         client.answered = true
@@ -817,24 +905,54 @@ final class RemoteServer {
         connection.send(content: response, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in
             connection.cancel()
         })
+        client.timer = Task { [weak self] in
+            try? await Task.sleep(for: Self.sendTimeout)
+            guard !Task.isCancelled, let self, self.clients[id] != nil else { return }
+            log.info("\(route?.pattern ?? "-", privacy: .public) send timeout")
+            self.close(id)
+        }
     }
 
+    /// One write to an events stream; a write the phone hasn't taken
+    /// within `sendTimeout` ends the stream.
     private func write(_ id: Int, _ data: Data) {
         guard let client = clients[id] else { return }
+        client.writes += 1
+        let number = client.writes
         client.connection.send(content: data, completion: .contentProcessed { [weak self] error in
-            guard error != nil else { return }
-            MainActor.assumeIsolated { self?.close(id) }
+            MainActor.assumeIsolated {
+                guard let self, let client = self.clients[id] else { return }
+                guard error == nil else { return self.close(id) }
+                client.written = max(client.written, number)
+            }
         })
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.sendTimeout)
+            guard let self, let client = self.clients[id], client.written < number else { return }
+            log.info("/api/events send timeout")
+            self.close(id)
+        }
     }
 
     private func close(_ id: Int) {
         guard let client = clients.removeValue(forKey: id) else { return }
         client.timer?.cancel()
         client.connection.cancel()
+        release(client.transfer)
     }
 
     private func forget(_ id: Int) {
-        clients.removeValue(forKey: id)?.timer?.cancel()
+        guard let client = clients.removeValue(forKey: id) else { return }
+        client.timer?.cancel()
+        release(client.transfer)
+    }
+
+    /// One hold on a transfer let go: the connection went, or the page's
+    /// read is done. Both gone, the device may start another.
+    private func release(_ transfer: Transfer?) {
+        guard let transfer, transfer.holds > 0 else { return }
+        transfer.holds -= 1
+        if transfer.holds == 0 { budgets.finishTransfer(device: transfer.device) }
     }
 
     /// The status code from a response's first line, for the log.

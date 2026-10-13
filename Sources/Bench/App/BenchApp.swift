@@ -99,6 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         LabModel.shared.stop()
+        // Bench on your phone: Bench's Serve mapping goes with it, waiting
+        // at most 2 s (Remote/RemoteController.swift). Never in a demo.
+        if Demo.mode == nil { RemoteController.shared.removeMappingAtQuit() }
     }
 
     /// The Dock icon's menu: the activity list's sessions, so they can be

@@ -215,7 +215,48 @@ struct RemoteServerTests {
 
     @Test func aPartRequestWaits() {
         #expect(parse("GET / HTTP/1.1\r\nHost: a") == .incomplete)
-        #expect(parse("POST /pair HTTP/1.1\r\nContent-Length: 10\r\n\r\n{\"co") == .incomplete)
+        // The head is in: it comes out on its own, without the body still on its way.
+        guard case .head(let head, let length) = parse("POST /pair HTTP/1.1\r\nContent-Length: 10\r\n\r\n{\"co") else {
+            Issue.record("no head")
+            return
+        }
+        #expect(length == 10)
+        #expect(head.target == "/pair")
+        #expect(head.body.isEmpty)
+    }
+
+    @Test func theHeadIsCheckedBeforeItsBodyArrives() {
+        // Heads whose 10-byte bodies never come: each is refused on the head alone.
+        func head(_ lines: [String], target: String = "/pair") -> RemoteRequest? {
+            let text = (["POST \(target) HTTP/1.1"] + lines + ["Content-Length: 10", "", ""]).joined(separator: "\r\n")
+            if case .head(let request, let length) = parse(text), length == 10 { return request }
+            return nil
+        }
+        func status(_ request: RemoteRequest?) -> Int? {
+            guard let request else { return nil }
+            return switch RemoteCheck.evaluate(request, policy: Self.policy) {
+            case .reject(let status, _, _): status
+            case .accept: 200
+            }
+        }
+        let good = ["Host: \(Self.host):8443", "Tailscale-User-Login: \(Self.login)", "Content-Type: application/json",
+                    "Origin: https://\(Self.host):8443", "X-Bench: 1", "Cookie: bench_device=\(Self.token)"]
+        #expect(status(head(good)) == 200)
+        #expect(status(head(good.filter { !$0.hasPrefix("Host") } + ["Host: evil.example.com"])) == 403)
+        #expect(status(head(good.filter { !$0.hasPrefix("Tailscale-User-Login") })) == 403)
+        #expect(status(head(good + ["Tailscale-Funnel-Request: ?1"])) == 403)
+        #expect(status(head(good.filter { !$0.hasPrefix("Origin") } + ["Origin: https://evil.example.com"])) == 403)
+        #expect(status(head(good.filter { !$0.hasPrefix("X-Bench") })) == 403)
+        #expect(status(head(good, target: "/nothing")) == 404)
+        #expect(status(head(good, target: "/api/state")) == 405)
+        #expect(status(head(good.filter { !$0.hasPrefix("Cookie") }, target: "/api/unpair")) == 401)
+        #expect(RemoteServer.bodyTimeout == .seconds(3))
+    }
+
+    @Test func theLoginIsComparedByItsHash() {
+        #expect(Self.policy.loginHash == RemoteLogin.hash(Self.login))
+        #expect(Self.policy.loginHash?.contains("@") == false)
+        #expect(RemotePolicy.tailnet(dnsName: Self.host, loginHash: RemoteLogin.hash("PAT@example.com")) == Self.policy)
     }
 
     @Test func aBodyOverTheCapIsRefusedBeforeItArrives() {

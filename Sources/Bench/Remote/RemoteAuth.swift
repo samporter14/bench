@@ -61,6 +61,47 @@ enum RemoteToken {
     }
 }
 
+// MARK: The login
+
+/// The tailnet login Remote was turned on with, kept in `remoteLogin` only as
+/// the SHA-256 (hex) of its lowercased form: Serve's `Tailscale-User-Login`
+/// is hashed the same way and compared, so the address itself is never
+/// stored. Lowercased, since the check has always ignored case.
+enum RemoteLogin {
+    static func hash(_ login: String) -> String {
+        SHA256.hash(data: Data(login.lowercased().utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 64 lowercase hex digits: what `hash` gives.
+    static func isHash(_ text: String) -> Bool {
+        text.utf8.count == 64 && text.utf8.allSatisfy { (0x30...0x39).contains($0) || (0x61...0x66).contains($0) }
+    }
+
+    /// Whether Serve's login is the one recorded, in constant time.
+    static func matches(_ sent: String, hash recorded: String) -> Bool {
+        RemoteToken.matches(Data(hash(sent).utf8), Data(recorded.utf8))
+    }
+
+    /// What `remoteLogin` should hold: a hash as it is; anything else (the
+    /// address an earlier build kept there) hashed.
+    static func normalized(_ stored: String) -> String {
+        isHash(stored) ? stored : hash(stored)
+    }
+
+    /// `remoteLogin`, as its hash. An address an earlier build kept there is
+    /// hashed and written back, so it doesn't stay in the preferences.
+    static func recorded(_ defaults: UserDefaults) -> String? {
+        guard let stored = defaults.string(forKey: SettingsKey.remoteLogin) else { return nil }
+        let hashed = normalized(stored)
+        if hashed != stored { defaults.set(hashed, forKey: SettingsKey.remoteLogin) }
+        return hashed
+    }
+
+    static func record(_ login: String, in defaults: UserDefaults) {
+        defaults.set(hash(login), forKey: SettingsKey.remoteLogin)
+    }
+}
+
 // MARK: Devices
 
 /// A paired device as the store keeps it: never its token, only the hash.
@@ -77,6 +118,12 @@ struct RemoteDevice: Codable, Equatable, Identifiable, Sendable {
 
     /// The longest name kept, in characters.
     static let nameLimit = 64
+
+    /// Not seen for `RemoteAuth.expiry`: no longer paired. A device never
+    /// seen counts from when it was paired.
+    func isExpired(at now: Date) -> Bool {
+        now.timeIntervalSince(lastSeen ?? pairedAt) >= RemoteAuth.expiry
+    }
 
     /// The name a phone sent, made fit to show in Settings: control
     /// characters out, white space runs to one space, at most `nameLimit`
@@ -166,6 +213,8 @@ final class MemoryDeviceStore: RemoteDeviceStore {
     private(set) var data: Data?
     /// Tests set it to make a save fail.
     var failsToSave = false
+    /// Saves that worked, for tests.
+    private(set) var saves = 0
 
     init(data: Data? = nil) {
         self.data = data
@@ -176,6 +225,7 @@ final class MemoryDeviceStore: RemoteDeviceStore {
     func save(_ data: Data) throws {
         if failsToSave { throw FileDeviceStore.Failure(errno: EIO) }
         self.data = data
+        saves += 1
     }
 
     func delete() throws { data = nil }
@@ -201,7 +251,8 @@ enum PairingRefusal: Equatable, Sendable {
     case noCode
     case expired
     case wrongCode
-    /// The tries after the fifth wrong one, for a while: the code is gone.
+    /// The tries after the fifth wrong one, for a while (30 s, then 2 min,
+    /// then 10 min): the code is gone.
     case tooManyTries
     /// Too many devices are paired already.
     case tooManyDevices
@@ -221,10 +272,21 @@ enum PairingResult: Equatable, Sendable {
 final class RemoteAuth: ObservableObject {
     nonisolated static let codeLifetime: TimeInterval = 10 * 60
     static let maxWrongTries = 5
-    /// After the fifth wrong try, tries are refused for this long (429), so
-    /// the code can't be guessed quickly code after code.
-    static let lockout: TimeInterval = 30
+    /// After the fifth wrong try, tries are refused for a while (429): 30 s
+    /// the first time, then 2 minutes, then 10 minutes each time after. And
+    /// no new code comes until someone presses New Code in Settings.
+    static let lockouts: [TimeInterval] = [30, 2 * 60, 10 * 60]
+    static let lockout = lockouts[0]
+    /// The waits start again from 30 s after a pairing, or after an hour
+    /// without a wrong try.
+    static let lockoutMemory: TimeInterval = 60 * 60
     static let maxDevices = 20
+    /// A device not seen for 60 days is no longer paired: its token stops
+    /// working, and it leaves the list.
+    nonisolated static let expiry: TimeInterval = 60 * 24 * 60 * 60
+    /// Push prefs reach the store at most once a second: a phone flipping
+    /// its switches would otherwise rewrite the file at every tap.
+    static let prefsEvery: TimeInterval = 1
     /// `lastSeen` changes in memory at most this often, and reaches the
     /// store at most every `persistEvery`: the events stream and the phone's
     /// refetches would otherwise rewrite the file constantly.
@@ -235,6 +297,9 @@ final class RemoteAuth: ObservableObject {
     /// The code Settings shows; nil until it asks for one, and after one is
     /// used or worn out by wrong tries.
     @Published private(set) var code: PairingCode?
+    /// The last code was worn out by wrong tries: Settings says so, and
+    /// shows another only when asked (New Code).
+    @Published private(set) var wornOut = false
 
     private let store: any RemoteDeviceStore
     /// `--demo remote`'s fixed code: it never expires or wears out, though
@@ -242,9 +307,16 @@ final class RemoteAuth: ObservableObject {
     private let fixedCode: String?
     private let makeDigits: () -> String
     private var lockedUntil: Date?
+    /// Codes worn out since the waits last started again, and the last wrong try.
+    private var strikes = 0
+    private var lastWrongTry: Date?
     private var loaded = false
     /// When each device's `lastSeen` last reached the store.
     private var persistedSeen: [String: Date] = [:]
+    /// Push prefs changed in memory and not yet stored, and when they last were.
+    private var pushUnsaved = false
+    private var pushSavedAt = Date.distantPast
+    private var pushSave: Task<Void, Never>?
 
     init(store: any RemoteDeviceStore, fixedCode: String? = nil, makeDigits: @escaping () -> String = RemoteAuth.randomDigits) {
         self.store = store
@@ -254,8 +326,9 @@ final class RemoteAuth: ObservableObject {
     }
 
     /// Reads the devices from the store, once. Not at init: someone who never
-    /// turns Remote on never has Bench read the file.
-    func load() {
+    /// turns Remote on never has Bench read the file. Devices not seen for
+    /// 60 days leave the list here.
+    func load(now: Date = Date()) {
         guard !loaded else { return }
         loaded = true
         do {
@@ -265,17 +338,39 @@ final class RemoteAuth: ObservableObject {
         } catch {
             log.error("Couldn't read the paired devices")
         }
+        dropExpired(now: now)
+    }
+
+    /// Devices not seen for 60 days leave the list (and the file). The log
+    /// says how many, never which.
+    func dropExpired(now: Date = Date()) {
+        let expired = devices.filter { $0.isExpired(at: now) }.map(\.id)
+        guard !expired.isEmpty, save(devices.filter { !expired.contains($0.id) }) else { return }
+        for id in expired {
+            persistedSeen[id] = nil
+            ListedFiles.shared.forget(device: id)
+        }
+        log.notice("Removed \(expired.count, privacy: .public) devices not seen for 60 days")
     }
 
     // MARK: The code
 
-    /// The code to show: the one out, while it's good, else a new one.
+    /// New Code in Settings: the code out, while it's good, else a new one,
+    /// even after one was worn out by wrong tries.
     @discardableResult
     func issueCode(now: Date = Date()) -> PairingCode {
+        wornOut = false
         if let code, fixedCode != nil || !code.isExpired(at: now) { return code }
         let fresh = PairingCode(digits: makeDigits(), issuedAt: now)
         code = fresh
         return fresh
+    }
+
+    /// What Settings → Phone shows by itself: as `issueCode`, but none once
+    /// a code was worn out by wrong tries, so someone guessing doesn't get a
+    /// fresh code to guess at after every wait.
+    func codeForSettings(now: Date = Date()) -> PairingCode? {
+        wornOut ? nil : issueCode(now: now)
     }
 
     /// Six digits, uniform, from the secure random source.
@@ -301,13 +396,21 @@ final class RemoteAuth: ObservableObject {
             return .refused(.expired)
         }
         guard RemoteToken.matches(Data(given.utf8), Data(code.digits.utf8)) else {
+            if let last = lastWrongTry, now.timeIntervalSince(last) >= Self.lockoutMemory { strikes = 0 }
+            lastWrongTry = now
             code.wrongTries += 1
             if code.wrongTries >= Self.maxWrongTries {
-                // The fifth is still a wrong code to the phone. Settings shows
-                // a new code at once (the demo keeps its own); the next tries
-                // wait a while.
-                self.code = fixedCode.map { PairingCode(digits: $0, issuedAt: .distantFuture) }
-                lockedUntil = now.addingTimeInterval(Self.lockout)
+                // The fifth is still a wrong code to the phone. The next tries
+                // wait, longer each time, and Settings shows no new code until
+                // asked (the demo keeps its own).
+                lockedUntil = now.addingTimeInterval(Self.lockout(after: strikes))
+                strikes += 1
+                if let fixedCode {
+                    self.code = PairingCode(digits: fixedCode, issuedAt: .distantFuture)
+                } else {
+                    self.code = nil
+                    wornOut = true
+                }
                 log.notice("Pairing code worn out by wrong tries")
             } else {
                 self.code = code
@@ -322,21 +425,34 @@ final class RemoteAuth: ObservableObject {
         persistedSeen[device.id] = now
         // Used once.
         if fixedCode == nil { self.code = nil }
+        strikes = 0
+        lastWrongTry = nil
         log.notice("Paired a device")
         return .paired(token: token, device: device)
+    }
+
+    /// The wait after this many codes worn out in a row: 30 s, 2 min, then
+    /// 10 min.
+    static func lockout(after strikes: Int) -> TimeInterval {
+        lockouts[min(max(strikes, 0), lockouts.count - 1)]
     }
 
     // MARK: Devices
 
     /// The device a token belongs to. Every device's hash is compared, in
-    /// constant time.
-    func device(forToken token: String) -> RemoteDevice? {
+    /// constant time. One not seen for 60 days is no longer paired, even
+    /// before it leaves the list.
+    func device(forToken token: String, now: Date = Date()) -> RemoteDevice? {
         guard RemoteToken.isWellFormed(token) else { return nil }
-        load()
+        load(now: now)
         let hash = RemoteToken.hash(token)
         var found: RemoteDevice?
         for device in devices where RemoteToken.matches(device.tokenHash, hash) {
             found = device
+        }
+        if let found, found.isExpired(at: now) {
+            dropExpired(now: now)
+            return nil
         }
         return found
     }
@@ -384,11 +500,13 @@ final class RemoteAuth: ObservableObject {
         if fixedCode == nil { code = nil }
     }
 
-    /// Writes the list, and takes it only if the write worked.
+    /// Writes the list, and takes it only if the write worked. Push prefs
+    /// held back (`updatePushSoon`) go with it.
     private func save(_ next: [RemoteDevice]) -> Bool {
         do {
             try store.save(Self.encoder.encode(next))
             devices = next
+            pushUnsaved = false
             return true
         } catch {
             log.error("Couldn't save the paired devices")
@@ -418,4 +536,36 @@ final class RemoteAuth: ObservableObject {
         for index in next.indices { next[index].push = change(next[index]) }
         return next == devices || save(next)
     }
+
+    /// The same for a change of prefs, which a phone may make tap after tap:
+    /// it holds in memory at once and reaches the store at most once a
+    /// second (the first at once, the rest a second after the last write).
+    func updatePushSoon(_ change: (RemoteDevice) -> RemoteDevicePush?, now: Date = Date()) {
+        load()
+        var next = devices
+        for index in next.indices { next[index].push = change(next[index]) }
+        guard next != devices else { return }
+        devices = next
+        pushUnsaved = true
+        let wait = Self.prefsEvery - now.timeIntervalSince(pushSavedAt)
+        guard wait > 0 else { return savePush(now: now) }
+        guard pushSave == nil else { return }
+        pushSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return }
+            self?.savePush()
+        }
+    }
+
+    /// Writes push prefs held back, if any: a second after the last write,
+    /// and when Bench quits.
+    func savePush(now: Date = Date()) {
+        pushSave?.cancel()
+        pushSave = nil
+        guard pushUnsaved, save(devices) else { return }
+        pushSavedAt = now
+    }
+
+    /// Whether prefs wait to be stored, for tests.
+    var pushWaiting: Bool { pushUnsaved }
 }

@@ -265,9 +265,9 @@ struct TailscaleBridgeTests {
     @Test func theCLIIsLookedForInTheApp() {
         let other = URL(fileURLWithPath: "/Users/example/Applications/Tailscale.app")
         let list = TailscaleCLI.candidates(appURLs: [URL(fileURLWithPath: "/Applications/Tailscale.app"), other])
-        #expect(list.map(\.path) == ["/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-                                     "/Users/example/Applications/Tailscale.app/Contents/MacOS/Tailscale"])
-        #expect(TailscaleCLI.locate(isExecutable: { _ in false }) == nil)
+        #expect(list.map(\.path) == ["/Applications/Tailscale.app", "/Users/example/Applications/Tailscale.app"])
+        #expect(TailscaleCLI.binary(in: other).path == "/Users/example/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+        #expect(TailscaleCLI.locate(isExecutable: { _ in false }, isTrusted: { _ in true }, apps: { [other] }) == nil)
     }
 
     @Test func jsonIsFoundPastAWarning() {
@@ -280,7 +280,7 @@ struct TailscaleBridgeTests {
     @Test func notInstalled() async {
         let bridge = TailscaleBridge(runner: nil)
         #expect(await bridge.status() == .notInstalled)
-        #expect(await bridge.serve(port: 47280) == .failed)
+        #expect(await bridge.serve(port: 47280).outcome == .failed)
         #expect(await !bridge.stopServing())
     }
 
@@ -301,19 +301,19 @@ struct TailscaleBridgeTests {
             TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveEmpty), ok(TailscaleFixture.serveBench())],
             add: [ok(TailscaleFixture.served)],
         ])
-        #expect(await TailscaleBridge(runner: runner).serve(port: 47280) == .serving)
+        #expect(await TailscaleBridge(runner: runner).serve(port: 47280).outcome == .serving)
         #expect(runner.changes == [add])
     }
 
     @Test func alreadyServingChangesNothing() async {
         let runner = FakeTailscaleRunner([TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveBenchAndMine)]])
-        #expect(await TailscaleBridge(runner: runner).serve(port: 47280) == .serving)
+        #expect(await TailscaleBridge(runner: runner).serve(port: 47280).outcome == .serving)
         #expect(runner.changes.isEmpty)
     }
 
     @Test func someoneElses8443IsNeverTaken() async {
         let runner = FakeTailscaleRunner([TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveOther8443)]])
-        #expect(await TailscaleBridge(runner: runner).serve(port: 47280) == .blocked)
+        #expect(await TailscaleBridge(runner: runner).serve(port: 47280).outcome == .blocked)
         #expect(await TailscaleBridge(runner: runner).stopServing())
         #expect(runner.changes.isEmpty)
     }
@@ -324,7 +324,7 @@ struct TailscaleBridgeTests {
             TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveEmpty)],
             add: [TailscaleRun(exitStatus: nil, output: TailscaleFixture.httpsOff)],
         ])
-        let outcome = await TailscaleBridge(runner: runner).serve(port: 47280)
+        let outcome = await TailscaleBridge(runner: runner).serve(port: 47280).outcome
         #expect(outcome == .httpsOff(URL(string: "https://login.tailscale.com/f/serve?node=nExampleNode1")))
     }
 
@@ -334,7 +334,7 @@ struct TailscaleBridgeTests {
             TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveEmpty)],
             add: [TailscaleRun(exitStatus: 1, output: "error: something")],
         ])
-        #expect(await TailscaleBridge(runner: runner).serve(port: 47280) == .failed)
+        #expect(await TailscaleBridge(runner: runner).serve(port: 47280).outcome == .failed)
     }
 
     @Test func stoppingRemovesOnlyBenchsMapping() async {
@@ -353,8 +353,137 @@ struct TailscaleBridgeTests {
 
     @Test func anUnreadableServeStatusChangesNothing() async {
         let runner = FakeTailscaleRunner([TailscaleCommands.serveStatus: [TailscaleRun(exitStatus: 1, output: "")]])
-        #expect(await TailscaleBridge(runner: runner).serve(port: 47280) == .failed)
+        #expect(await TailscaleBridge(runner: runner).serve(port: 47280).outcome == .failed)
         #expect(await !TailscaleBridge(runner: runner).stopServing())
         #expect(runner.changes.isEmpty)
+    }
+}
+
+// MARK: Whose CLI runs, and what removing the mapping came to (since the 0.4.0 review)
+
+/// A runner with no CLI behind it, as the app's is without Tailscale.
+private struct NoCLIRunner: TailscaleRunner {
+    func run(_ arguments: [String], timeout: TimeInterval, stopWhen: (@Sendable (String) -> Bool)?) async -> TailscaleRun { .none }
+}
+
+/// Records the bundles a signature check was asked about.
+private final class Checks: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: [String] = []
+    private var stamps: [String: Date] = [:]
+
+    var asked: [String] { lock.withLock { paths } }
+    func ask(_ url: URL) { lock.withLock { paths.append(url.path) } }
+    func stamp(_ url: URL) -> [Date?] { lock.withLock { [stamps[url.path]] } }
+    func touch(_ url: URL, _ date: Date) { lock.withLock { stamps[url.path] = date } }
+}
+
+struct TailscaleSignatureTests {
+    private let mine = URL(fileURLWithPath: "/Applications/Tailscale.app")
+    private let lookalike = URL(fileURLWithPath: "/Volumes/Example/Tailscale.app")
+
+    @Test func theRequirementIsTailscalesTeamOrItsOwnStoreApp() {
+        var requirement: SecRequirement?
+        #expect(SecRequirementCreateWithString(TailscaleCLI.requirement as CFString, [], &requirement) == errSecSuccess)
+        #expect(TailscaleCLI.requirement.hasPrefix(#"(anchor apple generic and certificate leaf[subject.OU] = "W5364U7YZB")"#))
+        #expect(TailscaleCLI.requirement.contains(#"identifier "io.tailscale.ipn.macos""#))
+    }
+
+    @Test func appsTailscaleDidntSignAreNotTailscale() throws {
+        // Apple's own, signed but not by Tailscale.
+        #expect(!TailscaleSignature.verify(URL(fileURLWithPath: "/System/Applications/Calculator.app")))
+        #expect(!TailscaleSignature.verify(URL(fileURLWithPath: "/nonexistent/Tailscale.app")))
+        // A look-alike bundle, never signed (and never run).
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("bench-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let app = folder.appendingPathComponent("Tailscale.app")
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\necho made-up\n".utf8).write(to: TailscaleCLI.binary(in: app))
+        try Data(#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>io.tailscale.ipn.macsys</string><key>CFBundleExecutable</key><string>Tailscale</string></dict></plist>"#.utf8)
+            .write(to: app.appendingPathComponent("Contents/Info.plist"))
+        #expect(!TailscaleSignature.verify(app))
+    }
+
+    @Test(.enabled(if: FileManager.default.fileExists(atPath: "/Applications/Tailscale.app")))
+    func theInstalledTailscaleIsTailscales() {
+        #expect(TailscaleSignature.verify(TailscaleCLI.standardApp))
+    }
+
+    @Test func theCheckIsRememberedPerPathAndModificationDate() {
+        let checks = Checks()
+        let mine = self.mine
+        let signature = TailscaleSignature(check: { checks.ask($0); return $0 == mine }, stamp: { checks.stamp($0) })
+        #expect(signature.isTrusted(mine))
+        #expect(signature.isTrusted(mine))
+        #expect(!signature.isTrusted(lookalike))
+        #expect(!signature.isTrusted(lookalike))
+        #expect(checks.asked == [mine.path, lookalike.path])
+        // Replaced in place: checked again.
+        checks.touch(mine, Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(signature.isTrusted(mine))
+        #expect(checks.asked == [mine.path, lookalike.path, mine.path])
+    }
+
+    @Test func anAppThatOnlyBorrowsTheBundleIDNeverRuns() {
+        let elsewhere = URL(fileURLWithPath: "/Users/example/Applications/Tailscale.app")
+        // /Applications holds one Tailscale didn't sign: passed over for a signed one elsewhere.
+        #expect(TailscaleCLI.locate(isExecutable: { _ in true }, isTrusted: { $0 == elsewhere }, apps: { [lookalike, elsewhere] })
+                == TailscaleCLI.binary(in: elsewhere))
+        // None signed: as if Tailscale weren't installed.
+        #expect(TailscaleCLI.locate(isExecutable: { _ in true }, isTrusted: { _ in false }, apps: { [lookalike, elsewhere] }) == nil)
+        // A signed one in /Applications: Launch Services isn't asked.
+        var asked = false
+        #expect(TailscaleCLI.locate(isExecutable: { _ in true }, isTrusted: { _ in true }, apps: { asked = true; return [lookalike] })
+                == TailscaleCLI.standard)
+        #expect(!asked)
+    }
+}
+
+struct TailscaleRemovalTests {
+    private func ok(_ output: String) -> TailscaleRun {
+        TailscaleRun(exitStatus: 0, output: output)
+    }
+
+    private let off = ["serve", "--https=8443", "off"]
+
+    @Test func withoutTailscalesCLINothingRuns() async {
+        let bridge = TailscaleBridge(runner: NoCLIRunner())
+        #expect(await bridge.status() == .notInstalled)
+        #expect(await bridge.serveStatus() == nil)
+        #expect(await bridge.removeMapping() == .notInstalled)
+        #expect(await bridge.serve(port: 47280).outcome == .failed)
+    }
+
+    @Test func removingSaysWhatItCameTo() async {
+        let benchs = FakeTailscaleRunner([TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveBench())], off: [ok("")]])
+        #expect(await TailscaleBridge(runner: benchs).removeMapping() == .none)
+        #expect(benchs.changes == [off])
+
+        let someoneElses = FakeTailscaleRunner([TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveOther8443)]])
+        #expect(await TailscaleBridge(runner: someoneElses).removeMapping() == .none)
+        #expect(someoneElses.changes.isEmpty)
+
+        let down = FakeTailscaleRunner([TailscaleCommands.serveStatus: [TailscaleRun(exitStatus: 1, output: "failed to connect")]])
+        #expect(await TailscaleBridge(runner: down).removeMapping() == .unreadable)
+        #expect(down.changes.isEmpty)
+
+        let refused = FakeTailscaleRunner([TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveBench())],
+                                           off: [TailscaleRun(exitStatus: 1, output: "error")]])
+        #expect(await TailscaleBridge(runner: refused).removeMapping() == .failed)
+    }
+
+    @Test func servingSaysWhetherOtherSitesShareTheAddress() async {
+        let shared = FakeTailscaleRunner([TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveBenchAndMine)]])
+        let served = await TailscaleBridge(runner: shared).serve(port: 47280)
+        #expect(served == TailscaleBridge.Served(outcome: .serving, othersShare: true))
+        let alone = FakeTailscaleRunner([TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveBench())]])
+        #expect(await TailscaleBridge(runner: alone).serve(port: 47280).othersShare == false)
+        // Added now: what Serve says after.
+        let add = TailscaleCommands.add(port: 47280)
+        let added = FakeTailscaleRunner([
+            TailscaleCommands.serveStatus: [ok(TailscaleFixture.serveEmpty), ok(TailscaleFixture.serveBenchAndMine)],
+            add: [ok(TailscaleFixture.served)],
+        ])
+        #expect(await TailscaleBridge(runner: added).serve(port: 47280) == TailscaleBridge.Served(outcome: .serving, othersShare: true))
     }
 }

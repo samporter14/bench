@@ -223,8 +223,11 @@ struct RemoteDecideTests {
 
     @Test func aMessageGoesToTheFreshAgentOnlyWhenTheStatusAllows() {
         let request = RemoteActionRequest.message(text: "Try again", intentID: intent)
+        #expect(RemoteDecide.message(request, session: root, fresh: read("failed", agent: "specialist-7"))
+                == .write(.message(frame: root, agent: "specialist-7", projectID: "proj-1", text: "Try again", intentID: intent)))
+        // No project in the fresh read: nothing is sent (`/api/request` without one makes a project).
         #expect(RemoteDecide.message(request, session: root, fresh: read("failed", agent: "specialist-7", project: nil))
-                == .write(.message(frame: root, agent: "specialist-7", projectID: nil, text: "Try again", intentID: intent)))
+                == .answer(.unavailable))
         for status in ["completed", "success", "processing", "cancelled"] {
             guard case .write = RemoteDecide.message(request, session: root, fresh: read(status)) else {
                 Issue.record("no write for \(status)")
@@ -436,6 +439,20 @@ struct RemoteSessionsTests {
         page.now = page.now.addingTimeInterval(6)
         sessions.dropExpired()
         #expect(sessions.cachedSessions.isEmpty)
+    }
+
+    @Test func whatWasHeldGoesAtEveryAskNotOnlyInAPause() async {
+        let other = "1c8d3f5a-2b3c-4d4e-9fa0-b1c2d3e4f5a6"
+        page.reads[root] = read("completed", turns: [])
+        page.reads[other] = read("completed", turns: [])
+        page.known.append(Fixture.session(other, .running, title: "Another made-up session"))
+        let sessions = page.sessions()
+        _ = await sessions.sessionJSON(root)
+        #expect(sessions.cachedSessions == [root])
+        // Phone after phone keeps asking, never pausing: still nothing older than 5 s stays.
+        page.now = page.now.addingTimeInterval(6)
+        _ = await sessions.sessionJSON(other)
+        #expect(sessions.cachedSessions == [other])
     }
 
     @Test func anActionDropsWhatWasHeld() async {

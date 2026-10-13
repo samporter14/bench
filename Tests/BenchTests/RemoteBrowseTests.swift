@@ -447,7 +447,7 @@ struct RemoteBrowserTests {
         let lost = await start()
         #expect(json(lost.body)["result"] as? String == "started")
         #expect(json(lost.body)["id"] as? String == root)
-        #expect(fake.calls == ["create", "intent", "pause", "intent"])
+        #expect(fake.calls == ["projects", "create", "intent", "pause", "intent"])
 
         fake.created = RemoteWriteResult(status: 409, code: "intent_conflict")
         fake.intents = [madeUpID(5)]
@@ -462,7 +462,37 @@ struct RemoteBrowserTests {
     @Test func aRefusedNewSessionLooksForNothing() async {
         fake.created = RemoteWriteResult(status: 404, code: "not_found")
         #expect(json(await start().body)["result"] as? String == "unavailable")
-        #expect(fake.calls == ["create"])
+        #expect(fake.calls == ["projects", "create"])
+    }
+
+    @Test func aNewSessionStartsOnlyInAProjectTheListShows() async {
+        fake.created = RemoteWriteResult(status: 200, bodyStatus: "accepted", rootFrameID: root)
+        // A hidden concierge or archived project isn't in the list: 404, nothing written.
+        let hidden = await fake.respond("POST", "/api/projects/proj_concierge_sys_1/sessions",
+                                        body: #"{"text":"Made-up question","id":"\#(intent)"}"#)
+        #expect(hidden.status == 404)
+        #expect(fake.writes.isEmpty)
+        #expect(fake.calls == ["projects"])
+        // The list is held a minute: the next start reads it no more.
+        #expect(await start().status == 200)
+        #expect(fake.calls == ["projects", "create"])
+        fake.now = fake.now.addingTimeInterval(61)
+        _ = await start(#"{"text":"Another","id":"6ba7b810-9dad-41d1-80b4-00c04fd430c8"}"#)
+        #expect(fake.calls.filter { $0 == "projects" }.count == 2)
+    }
+
+    @Test func aNewSessionWaitsForAProjectsListItCanRead() async {
+        fake.projects = nil
+        fake.created = RemoteWriteResult(status: 200, bodyStatus: "accepted", rootFrameID: root)
+        #expect(await start().status == 503)
+        #expect(fake.writes.isEmpty)
+    }
+
+    @Test func theProjectsRouteFillsTheListANewSessionChecks() async {
+        fake.created = RemoteWriteResult(status: 200, bodyStatus: "accepted", rootFrameID: root)
+        #expect(await fake.respond("GET", "/api/projects").status == 200)
+        #expect(await start().status == 200)
+        #expect(fake.calls == ["projects", "create"])
     }
 
     @Test func aNewSessionNeedsActionsAndAGoodBody() async {
@@ -624,8 +654,9 @@ struct DemoBrowseTests {
         let again = json(await browser.respond(.newSession("proj_demo_cloning"), target: "/api/projects/proj_demo_cloning/sessions",
                                                device: "d", body: body).body)
         #expect(again["id"] as? String == id)
-        let elsewhere = json(await browser.respond(.newSession("proj_nowhere"), target: "/api/projects/proj_nowhere/sessions",
-                                                   device: "d", body: Data(#"{"text":"x","id":"6ba7b810-9dad-41d1-80b4-00c04fd430c8"}"#.utf8)).body)
-        #expect(elsewhere["result"] as? String == "unavailable")
+        // A project the list doesn't show: no session starts there.
+        let elsewhere = await browser.respond(.newSession("proj_nowhere"), target: "/api/projects/proj_nowhere/sessions",
+                                              device: "d", body: Data(#"{"text":"x","id":"6ba7b810-9dad-41d1-80b4-00c04fd430c8"}"#.utf8))
+        #expect(elsewhere.status == 404)
     }
 }

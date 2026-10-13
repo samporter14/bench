@@ -487,6 +487,11 @@ final class RemoteBrowser {
 
     let sessions: RemoteSessions
     private let dependencies: Dependencies
+    /// The projects `/api/projects` lists, and when they were read: a new
+    /// session starts only in one of them (no hidden concierge or archived
+    /// project), held a minute.
+    private var listed: (ids: Set<String>, at: Date)?
+    static let projectsLifetime: TimeInterval = 60
 
     init(sessions: RemoteSessions, dependencies: Dependencies) {
         self.sessions = sessions
@@ -501,6 +506,7 @@ final class RemoteBrowser {
         case .projects:
             guard BrowseQuery.parse(target, allowed: []) != nil else { return .badRequest }
             guard let rows = await dependencies.projects() else { return Self.unreadable }
+            listed = (Set(rows.map(\.id)), dependencies.now())
             return Self.json(RemoteAPI.encode(BrowseAPI.projects(rows)))
         case .projectSessions(let project):
             return await sessionsPage(project, target: target)
@@ -557,12 +563,15 @@ final class RemoteBrowser {
     // MARK: A new session
 
     /// Browse on (checked before), actions on (403), the device's limit
-    /// (429), the body (400); then the in-page write. Lost or refused as a
+    /// (429), the body (400), a project the projects list shows (404; 503
+    /// when it can't be read); then the in-page write. Lost or refused as a
     /// repeat, the database says whether the session was made after all.
     private func newSession(_ project: String, device: String, body: Data) async -> RemoteActionReply {
         guard dependencies.actionsOn() else { return .actionsOff }
         guard sessions.allowAction(device: device) else { return .tooMany }
         guard BrowseSQL.isProjectID(project), let request = NewSessionRequest.parse(body) else { return .badRequest }
+        guard let projects = await listedProjects() else { return Self.unreadable }
+        guard projects.contains(project) else { return .notFound }
         let reply = await dependencies.create(.newSession(project: project, text: request.text,
                                                           planMode: request.planFirst, intentID: request.intentID))
         if let reply, reply.status == 200, reply.isJSON, reply.bodyStatus == "accepted", let id = reply.rootFrameID {
@@ -579,6 +588,16 @@ final class RemoteBrowser {
             if let found, PlanCheck.isFrameID(found) { return started(found, project: project, request: request) }
         }
         return .ok(.unavailable)
+    }
+
+    /// The projects the list shows, read again when a minute old.
+    private func listedProjects() async -> Set<String>? {
+        let now = dependencies.now()
+        if let listed, listed.at <= now, now.timeIntervalSince(listed.at) < Self.projectsLifetime { return listed.ids }
+        guard let rows = await dependencies.projects() else { return nil }
+        let ids = Set(rows.map(\.id))
+        listed = (ids, now)
+        return ids
     }
 
     private func started(_ id: String, project: String, request: NewSessionRequest) -> RemoteActionReply {

@@ -1333,6 +1333,17 @@ message, and push notifications.
   `tailscale serve status --json` first and add or remove only Bench's own
   mapping. The CLI is `/Applications/Tailscale.app/Contents/MacOS/Tailscale`
   (not on PATH); a Mac App Store install has the same binary in its bundle.
+  Bench runs it only from an app bundle Tailscale signed: before a run,
+  `SecStaticCodeCheckValidity` checks the bundle against
+  `anchor apple generic and certificate leaf[subject.OU] = "W5364U7YZB"`
+  (Tailscale Inc's Developer ID), or, for the Mac App Store app, whose leaf
+  certificate is Apple's and names no team, the store's marker
+  (`certificate leaf[field.1.2.840.113635.100.6.1.9] exists`) with
+  `identifier "io.tailscale.ipn.macos"`. The answer is remembered per bundle
+  path and modification date. A bundle that fails is passed over as if it
+  weren't there; none left is "not installed". Launch Services is asked only
+  when `/Applications` has none, and the CLI is looked for only when Bench
+  first needs it, never for someone who never turns Remote on.
 - The URL is `https://<node>.<tailnet>.ts.net:8443/` from
   `tailscale status --json` (`Self.DNSName`, trailing dot dropped).
 - **Every request**:
@@ -1344,7 +1355,10 @@ message, and push notifications.
     (HttpOnly, Secure, SameSite=Strict, Path=/). 401 without it. The token is
     the real gate: any local process can reach loopback and forge headers.
   - `Tailscale-User-Login` (set by Serve) must equal the login recorded when
-    Remote was turned on; checked as an extra, not relied on.
+    Remote was turned on; checked as an extra, not relied on. Bench keeps
+    that login only as the SHA-256 (hex) of its lowercased form
+    (`remoteLogin`), hashes Serve's the same way and compares the hashes; an
+    address an earlier build stored is hashed and written back at launch.
   - Responses: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`,
     `Referrer-Policy: no-referrer`, and for HTML a strict CSP:
     `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`.
@@ -1354,7 +1368,9 @@ message, and push notifications.
     `/message`).
   - Never log request bodies, tokens or session text. Log only route + status.
 - **Pairing**: Settings → Phone shows a QR code of the URL and a one-time
-  6-digit code (expires after 10 minutes, 5 wrong tries then a new code).
+  6-digit code (expires after 10 minutes; 5 wrong tries wear it out, and
+  Settings then shows "Too many wrong codes." with New Code rather than a new
+  code by itself).
   `POST /pair {"code","name"}` → sets the cookie; Bench stores only a SHA-256
   hash of each token, with the device name and when it was paired / last
   seen, in `~/Library/Application Support/Bench/remote-devices.json` (folder
@@ -1453,7 +1469,16 @@ say-so).
 3. Pair a device: the QR code (CoreImage) of the URL, the 6-digit code with
    a countdown, and the three steps (scan, Add to Home Screen, open it and
    enter the code).
-4. Paired devices: name, paired, last seen, Remove.
+4. Paired devices: name, paired, last seen, Remove; the footnote "Expires if
+   unused for 60 days."
+
+Also, when they apply: in the checks, "Bench couldn't remove its Tailscale
+mapping" with Try Again (the switch is off and removing the mapping failed);
+while serving, when Serve has other sites on this node
+(`ServeStatus.hasOtherMappings`), "Other Tailscale Serve sites on this Mac
+share its address, and can see your devices' Bench sign-in. Serve only things
+you trust here." The cookie keeps its name (`bench_device`), so paired
+phones stay paired.
 Turning the switch off stops the listener, removes Bench's serve mapping
 only, and keeps paired devices (so turning it back on needs no re-pairing);
 "Remove all devices" is separate.
@@ -1476,7 +1501,9 @@ only, and keeps paired devices (so turning it back on needs no re-pairing);
 
 Serves the app on `http://127.0.0.1:<port>` with made-up sessions, a fixed
 pairing code `000000`, and the Host check relaxed to localhost. Never in a
-real launch, never touches Tailscale, the stored devices or the real settings.
+real launch, never touches Tailscale, the stored devices or the real settings. Quitting it
+removes no mapping: the quit hook doesn't run in a demo. Its budgets are the
+real ones.
 
 ### How the server does it (0.4.0)
 
@@ -1500,15 +1527,25 @@ store (in memory in tests and the demo).
   path exactly, never decoded. The log names the route's pattern, the status
   and, for a refusal, which check refused (`host`, `login`, `funnel`,
   `route`, `method`, `type`, `origin`, `xbench`, `size`, `token`, `device`),
-  never a path. A request has 10 s to arrive whole; at most 32 connections and 8
-  event streams (the oldest goes).
+  never a path. Every check above reads the head alone, so they all run as
+  soon as the head has parsed, before any body is waited for: a head that
+  fails is answered at once, with its body still to come. One that passes has
+  3 s for its body. A head has 10 s to arrive; at most 32 connections. Then
+  the device's budget (Budgets, below).
 - **The code** exists only once Settings → Phone shows one, and goes when
-  used. The fifth wrong try still answers 403 but wears the code out
-  (Settings shows a new one) and starts a 30 s wait in which tries get 429,
-  so a loopback process can't run through the million codes. The demo keeps
-  `000000` but waits the same way.
+  used. The fifth wrong try still answers 403 but wears the code out and
+  starts a wait in which tries get 429: 30 s, then 2 minutes, then 10 minutes
+  each time after, starting again from 30 s after a pairing or an hour
+  without a wrong try. No new code comes by itself after one is worn out:
+  Settings says "Too many wrong codes." with a New Code button, so someone
+  guessing doesn't get a fresh code after every wait and the real phone isn't
+  kept waiting by them. (An expired code is still replaced by itself.) The
+  demo keeps `000000` but waits the same way.
 - **The cookie** has `Max-Age` 400 days, so a Home Screen app stays paired;
-  the demo leaves out `Secure` (plain HTTP). Unpair clears it and ends the
+  the demo leaves out `Secure` (plain HTTP). A device not seen for 60 days
+  (`lastSeen`, else when it was paired) is no longer paired: its token stops
+  working at once, and it leaves the list (and the file) on the next load,
+  with a log line that says how many, never which. Unpair clears it and ends the
   device's event streams, as Remove in Settings does. `lastSeen` changes at
   most once a minute and reaches the file at most every 5 minutes.
   Bench reads the file only once the Phone tab shows or the switch is on.
@@ -1524,7 +1561,27 @@ store (in memory in tests and the demo).
   `login.tailscale.com` page to turn HTTPS on, Bench stops it there and
   offers the page as a button. With the switch on and Tailscale not up yet,
   Bench looks again 15 s, 1 min and 5 min later, and whenever it comes to
-  the front. The mapping stays when Bench quits (the phone then gets 502).
+  the front.
+- **The mapping lasts only while Bench answers behind it.** Otherwise
+  whatever binds the loopback port while Bench is away (another user's
+  process, another app) would get what the phone sends, its `bench_device`
+  cookie included, and could serve its own page on the trusted origin. So:
+  - **Quitting** (`applicationWillTerminate`) removes Bench's mapping,
+    synchronously and best effort: `serve status`, then `serve --https=8443
+    off` only when 8443 is Bench's alone, waiting at most 2 s in all. Never in
+    a demo; never for someone who never served (no switch on, no remembered
+    port). It runs whether the switch is on or off; on, the next launch adds
+    the mapping again. The phone then sees no Bench until then.
+  - **Launching with the switch off** removes a mapping Bench left behind,
+    the same way.
+  - **Turning the switch off** when the mapping can't be removed (Tailscale
+    not running, or `off` failing) leaves "Bench couldn't remove its
+    Tailscale mapping" in Settings with Try Again, and Bench tries again on
+    Check Again, when it comes to the front, and 15 s, 1 min and 5 min later.
+  - The mapping is still `--bg`: Bench doesn't keep a foreground `serve` as
+    a child process.
+  - What remains: a crash, or a quit that Tailscale doesn't answer within
+    2 s, leaves the mapping until Bench next launches.
 
 ### Phase 2: read, act, notify (0.4.0)
 
@@ -1541,7 +1598,8 @@ the page*, so Swift only ever receives the fields below. Allowed GETs, exactly:
 `/api/frames/<36>?shallow=true` and `/api/frames/<36>/messages?from=-12&limit=12`.
 `no-store`, never logged, never saved, held only while a response is built
 and then at most 5 s in memory (so a burst of requests reads the page once;
-dropped after any action on the session).
+dropped after any action on the session; whatever is older goes at every ask,
+not only once the asking pauses).
 
 - From the shallow frame: `status` (one of the eight known values, else
   unreadable), `agent_name`, `project_id`, `status_description` (≤ 200 chars),
@@ -1600,7 +1658,7 @@ declared-length check takes the route's own limit.
 |---|---|---|
 | `POST /api/sessions/<id>/approve` | `{"version":"…"}` | `PlanApprover` as on the card: re-GET, require `awaiting_plan_approval`, not approved, same plan version; then `approve-plan` `{}`. |
 | `POST /api/sessions/<id>/answer` | `{"toolId":"…","answers":{"<question>":"<text>"}}` or `{"toolId":"…","action":"chooseForMe"\|"cancel"}` | Re-GET; require `awaiting_user_response`, the same `tool_id` pending on the root, the same question texts; every question answered (≤ 1,000 chars each). Then `resolve-input` `{responses:[{tool_id, action:"answer", answers}]}`; chooseForMe sends `action:"answer"` with every question answered "Use your best judgment for this question"; cancel sends `{tool_id, action:"cancel", answers:{}}`. |
-| `POST /api/sessions/<id>/message` | `{"text":"…","id":"<uuid v4>"}` | Text trimmed, 1…4,000 chars. Re-GET; allowed only for `completed`/`success`, `processing`, `failed`/`cancelled`. Then `POST /api/request` `{target_agent: <agent_name from the re-GET>, root_frame_id, project_id, input_data:{request:text}, intent_id: id, plan_mode:false}`. The phone's `id` is the intent id, so a retry dedupes. |
+| `POST /api/sessions/<id>/message` | `{"text":"…","id":"<uuid v4>"}` | Text trimmed, 1…4,000 chars. Re-GET; allowed only for `completed`/`success`, `processing`, `failed`/`cancelled`. Then `POST /api/request` `{target_agent: <agent_name from the re-GET>, root_frame_id, project_id, input_data:{request:text}, intent_id: id, plan_mode:false}`. A re-GET without a `project_id` sends nothing (`unavailable`): `/api/request` without one is how the daemon makes a project. The phone's `id` is the intent id, so a retry dedupes. |
 
 Each answers `{"result": …, "sentence": "…"}`: approve → `approved` |
 `changed` | `unavailable`; answer → `sent` | `changed` | `unavailable`;
@@ -1614,7 +1672,8 @@ unexpected status, 404/405, unknown 4xx `code` or non-JSON reply is
   `/frames/<36>/resolve-input` and `/request`, and builds each body in the page
   from typed arguments (never string interpolation), checking the shape again
   there.
-- **Limits**: at most 6 actions a minute per device (429 after). Settings →
+- **Limits**: at most 6 actions a minute per device (429 after), within the
+  device's budget for every route (Budgets, below). Settings →
   Phone has "Let paired devices answer, approve and send messages"
   (`remoteActions`, on); off, the routes answer 403 and `can` is all off with
   `why` "Actions are off in Bench's Settings".
@@ -1713,7 +1772,8 @@ them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
   prefs, Send a test. Taps work off the tailnet too (the push comes through
   Apple), but opening the session needs Tailscale on.
 - **Test**: `POST /api/push/test` ignores `onlyAway` (Sam is at the Mac when
-  he presses it) and the other prefs.
+  he presses it) and the other prefs. At most three a minute per device (429
+  `slowDown`): each is a push signed with the one key every device shares.
 - **Demo**: `--demo remote` makes no keys and no network calls; subscribe
   answers as if subscribed, and the test does nothing.
 - **Promise**: README's line gains "and, if you turn on notifications on a
@@ -1744,7 +1804,10 @@ lines marked `// Phase 2 push`.
 - **Replies**: every push route but the test answers as `GET /api/push`
   does; the test answers `{"sent":true}` once it is on its way. Errors: 400
   `{"error":"body"|"endpoint"|"keys"|"prefs"|"notSubscribed"}`, 500
-  `"key"|"store"`.
+  `"key"|"store"`. A change of prefs holds in memory at once and reaches the
+  file at most once a second (the first at once, the rest a second after the
+  last write, or with the next write of the file, or when Bench quits), so
+  `/prefs` never answers `"store"`.
 - **When**: `LabModel.pushRaised`, called with `cardRaised`, and only while
   the Phone switch is on. The cards are `NotificationRules`' (needs you,
   errors, finishes but not while a focus session holds them, and the "While
@@ -1917,8 +1980,8 @@ demo's files). The shared files only gained hooks marked `// Phase 3 files`.
   widest; a text cut short loses its incomplete last record. `truncated`
   when anything was cut.
 - **Size**: a response is built whole (the body up to 8 MB) and sent once;
-  nothing times out once the request has arrived, so a slow phone still gets
-  all of it.
+  the phone has 60 s to take it (then the connection goes), and a device has
+  at most two files under way at once (Budgets, below).
 - **`--demo remote`**: "Primer design" has one file of every kind (a chart
   drawn with CoreGraphics as a PNG, its WebP thumbnails written by Bench as
   two-colour lossless VP8L since ImageIO can't write WebP, markdown, a CSV
@@ -1938,7 +2001,9 @@ or `unavailable`. Not retry-safe on the daemon (a reused intent gets 409 with no
 ids), so on a timeout or 409 Bench looks up, in SQLite, a root in that project
 from the last 10 minutes whose `input_data` `_intent_id` equals `id` (the test
 runs in SQLite; nothing else is read) and answers `started` with its id. It
-counts toward the 6-a-minute action limit and needs `remoteActions` too.
+counts toward the 6-a-minute action limit and needs `remoteActions` too. It
+starts only in a project `/api/projects` lists (so never in a hidden concierge
+or archived one): else 404, nothing written.
 
 #### How the server does it (Phase 3 browse)
 
@@ -1984,7 +2049,9 @@ shared files gained lines marked `// Phase 3 browse`.
   `"at": null`. `/turn/<i>` is 404 for a row that isn't a turn.
 - **New session**: browse, then actions (403 `actionsOff`), the device's six
   a minute (shared with the actions, 429), then the body (400; `planFirst`
-  false when left out; up to 16 KB). 200 `accepted` with a full
+  false when left out; up to 16 KB), then the project: one the projects query
+  lists, that list held a minute (`/api/projects` fills it too), else 404 (503
+  when it can't be read). 200 `accepted` with a full
   `root_frame_id` is `started`. A timeout, a 409 or a 200 without an id looks
   the intent up, and once more a second later; anything else is
   `unavailable`. README's "changes nothing" line gains "or start a session".
@@ -2013,3 +2080,43 @@ text through the safe renderer (`<pre>` for text), tables as a scrollable
 table with a sticky header, everything else a Download button (size shown;
 over 8 MB, "Open it on your Mac"). New session: a sheet with the project's
 name, a text field, "Plan first" (off), Start → navigates to the new session.
+
+Thumbnails, texts and downloads take turns, two at a time (Bench's limit), an
+image loading once it is near the screen. A read Bench asks to wait (429) is
+tried again quietly after the `Retry-After` it gives, twice; a thumbnail that
+still fails shows its icon. Downloads are fetched first and then saved from
+the bytes, so a refusal is a sentence under the button ("Another file is
+still coming. Try again in a moment.") and never a saved file holding Bench's
+answer. Every map the page keys by an id has no prototype, and an address
+naming a project or file `__proto__`, `constructor` or `prototype` opens Now.
+
+### Budgets (since the 0.4.0 security review)
+
+What a paired device may ask, so that a lost, stolen or buggy one can't hold
+Bench's memory, the page's main thread or the push key every device shares.
+Pure (`Remote/RemoteBudget.swift`) and tested; the server asks once a
+request's head has passed its checks and its device is known, before
+anything is read. Over budget is 429 `{"error":"slowDown"}`, too many files
+at once 429 `{"error":"busy"}`, each with `Retry-After` in whole seconds.
+
+- **A token bucket per device** on every authenticated `/api/*` route: 120
+  a minute, refilled evenly (two a second), at most 120 saved up. A request
+  costs 1; `/history`, `/turn` and `/api/files/*` cost 3, and
+  `/api/files/<v>/download` costs 10. A refused request spends nothing.
+- **Two file transfers at a time** per device (`/api/files/<v>/thumb`,
+  `/text`, `/download`): a third is `busy`, before anything is spent. One is
+  under way while its connection is open and while the page is still reading
+  for it.
+- **A 60 s send timeout** for every response, and for each write to an
+  events stream: one the phone hasn't taken by then ends the connection.
+- **Open on Mac** at most once every 3 s per device; **the test push** at
+  most three a minute per device. Both `slowDown`.
+- **Event streams**: at most two per device (that device's oldest goes),
+  eight in all (the oldest goes).
+- **Push prefs** reach the devices file at most once a second.
+- **`ListedFiles` and `ListedFileInfo`**, past their capacity, drop what has
+  expired and then the oldest down to nine tenths of it in one sort, so a
+  full list isn't sorted at every insert.
+- **The phone** waits and tries a read again quietly (twice), takes its file
+  transfers two at a time, and says a short sentence when an action of the
+  person's is refused ("That's a lot at once. Try again in a moment.").

@@ -61,7 +61,8 @@ final class ListedFileInfo {
     static let shared = ListedFileInfo()
 
     static let lifetime = ListedFiles.lifetime
-    /// At most this many versions; the oldest go first.
+    /// At most this many versions; the oldest go first, a tenth at a time
+    /// (`ListedFiles.evict`), so a full list isn't sorted at every insert.
     static let capacity = 8_000
 
     struct Info: Equatable, Sendable {
@@ -82,12 +83,11 @@ final class ListedFileInfo {
         let time = now()
         infos[version] = (info, time)
         guard infos.count > Self.capacity else { return }
-        infos = infos.filter { time.timeIntervalSince($0.value.at) < Self.lifetime }
-        if infos.count > Self.capacity {
-            let keep = infos.sorted { $0.value.at > $1.value.at }.prefix(Self.capacity)
-            infos = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
-        }
+        infos = ListedFiles.evict(infos, capacity: Self.capacity, at: time, lifetime: Self.lifetime, when: \.at)
     }
+
+    /// How many versions are held: for tests.
+    var count: Int { infos.count }
 
     func info(_ version: String) -> Info? {
         guard let entry = infos[version], now().timeIntervalSince(entry.at) < Self.lifetime else { return nil }

@@ -481,7 +481,8 @@ final class PushCenter {
             guard let patch = Self.decode(PushPrefsPatch.self, body) else { return .error(400, "prefs") }
             var push = current.push ?? RemoteDevicePush(subscription: nil, prefs: PushPrefs())
             patch.apply(to: &push.prefs)
-            guard push == current.push || set(push, for: current.id) else { return .error(500, "store") }
+            // Tap after tap: in memory at once, in the file at most once a second.
+            if push != current.push { auth.updatePushSoon { $0.id == current.id ? push : $0.push } }
             return status(current.id)
         case .unsubscribe:
             demoSubscribed.remove(current.id)

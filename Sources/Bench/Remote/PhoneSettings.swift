@@ -46,7 +46,7 @@ struct PhoneSettingsView: View {
                 PairSection(url: url)
             }
 
-            Section("Paired devices") {
+            Section {
                 if auth.devices.isEmpty {
                     Text("No devices yet. Paired devices stay paired when the switch is off.")
                         .foregroundStyle(.secondary)
@@ -65,6 +65,12 @@ struct PhoneSettingsView: View {
                         Button("Remove All Devices…") { confirmingRemoveAll = true }
                     }
                 }
+            } header: {
+                Text("Paired devices")
+            } footer: {
+                Text("Expires if unused for 60 days.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -75,6 +81,8 @@ struct PhoneSettingsView: View {
             // A demo reads no stored devices and asks Tailscale nothing.
             guard Demo.mode == nil else { return }
             auth.load()
+            // Devices not seen for 60 days leave the list.
+            auth.dropExpired()
             remote.refresh()
         }
         .confirmationDialog("Remove all paired devices?", isPresented: $confirmingRemoveAll) {
@@ -109,6 +117,22 @@ struct PhoneSettingsView: View {
         }
         CheckRow(title: status.url.map { "Serving at \($0.absoluteString)" } ?? "Serving at https://…:8443",
                  state: servingState, detail: servingDetail)
+        if status.mappingLeft {
+            LabeledContent {
+                Button("Try Again") { remote.refresh() }
+                    .disabled(status.checking)
+            } label: {
+                CheckLabel(title: "Bench couldn't remove its Tailscale mapping", state: .failed,
+                           detail: "Tailscale still passes what your devices ask to a port Bench no longer listens on. Bench tries again when Tailscale is running.")
+            }
+        }
+        if status.othersShare, status.serve == .serving {
+            Label {
+                Text("Other Tailscale Serve sites on this Mac share its address, and can see your devices' Bench sign-in. Serve only things you trust here.")
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+        }
     }
 
     private var installedState: CheckState {
@@ -178,7 +202,11 @@ private struct PairSection: View {
                         .accessibilityLabel("QR code of \(url.absoluteString)")
                 }
                 VStack(alignment: .leading, spacing: 10) {
-                    if let code = auth.code {
+                    if auth.wornOut {
+                        Text("Too many wrong codes.")
+                            .font(.headline)
+                        Button("New Code") { RemoteController.shared.newCode() }
+                    } else if let code = auth.code {
                         Text(Self.spaced(code.digits))
                             .font(.system(size: 30, weight: .semibold, design: .monospaced))
                             .textSelection(.enabled)
@@ -200,8 +228,8 @@ private struct PairSection: View {
             }
             .padding(.vertical, 4)
         }
-        // A new code when there is none (used, or worn out by wrong tries)
-        // and when this one runs out.
+        // A new code when there is none (used) and when this one runs out;
+        // after one worn out by wrong tries, only from New Code.
         .task(id: auth.code) {
             guard let code = auth.code, !code.isExpired(at: Date()) else {
                 RemoteController.shared.issueCode()

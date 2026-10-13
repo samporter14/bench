@@ -64,9 +64,44 @@ struct ListedFilesTests {
         let files = ListedFiles(now: { now })
         files.record(["first"], device: "phone")
         now += 1
-        files.record((0..<ListedFiles.capacity).map { "v\($0)" }, device: "phone")
+        files.record((0..<ListedFiles.capacity - 1).map { "v\($0)" }, device: "phone")
+        #expect(files.allows("first", device: "phone"))
+        #expect(files.count("phone") == ListedFiles.capacity)
+        now += 1
+        files.record(["newest"], device: "phone")
         #expect(!files.allows("first", device: "phone"))
-        #expect(files.allows("v0", device: "phone"))
+        #expect(files.allows("newest", device: "phone"))
+    }
+
+    @Test func pastCapacityATenthGoesAtOnceSoTheNextInsertsSortNothing() {
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        let files = ListedFiles(now: { now })
+        for n in 0...ListedFiles.capacity {
+            now += 1
+            files.record(["v\(n)"], device: "phone")
+        }
+        let room = ListedFiles.capacity - ListedFiles.capacity / 10
+        #expect(files.count("phone") == room)
+        // The newest stayed, the oldest went.
+        #expect(files.allows("v\(ListedFiles.capacity)", device: "phone"))
+        #expect(files.allows("v\(ListedFiles.capacity - room + 1)", device: "phone"))
+        #expect(!files.allows("v\(ListedFiles.capacity - room)", device: "phone"))
+        // The next tenth just goes in.
+        for n in 1..<(ListedFiles.capacity / 10) {
+            now += 1
+            files.record(["w\(n)"], device: "phone")
+        }
+        #expect(files.count("phone") == ListedFiles.capacity - 1)
+    }
+
+    @Test func whatExpiredGoesFirstPastCapacity() {
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        let files = ListedFiles(now: { now })
+        files.record((0..<ListedFiles.capacity).map { "old\($0)" }, device: "phone")
+        now += ListedFiles.lifetime
+        files.record(["fresh"], device: "phone")
+        #expect(files.count("phone") == 1)
+        #expect(files.allows("fresh", device: "phone"))
     }
 }
 

@@ -51,9 +51,9 @@ struct RemoteAuthTests {
             Issue.record("not paired: \(result)")
             return
         }
-        #expect(auth.device(forToken: token) == device)
-        #expect(auth.device(forToken: RemoteToken.make()) == nil)
-        #expect(auth.device(forToken: "not a token") == nil)
+        #expect(auth.device(forToken: token, now: start) == device)
+        #expect(auth.device(forToken: RemoteToken.make(), now: start) == nil)
+        #expect(auth.device(forToken: "not a token", now: start) == nil)
         #expect(device.name == "Pat's iPhone")
         #expect(device.tokenHash == RemoteToken.hash(token))
         let stored = String(decoding: store.data ?? Data(), as: UTF8.self)
@@ -62,8 +62,8 @@ struct RemoteAuthTests {
 
         // A second Bench reading the same store knows the device.
         let again = RemoteAuth(store: store)
-        again.load()
-        #expect(again.device(forToken: token)?.id == device.id)
+        again.load(now: start)
+        #expect(again.device(forToken: token, now: start)?.id == device.id)
     }
 
     // MARK: The code
@@ -154,12 +154,12 @@ struct RemoteAuthTests {
         let auth = auth(store: store)
         let first = token(auth.pair(code: auth.issueCode(now: start).digits, name: "One", now: start))!
         let second = token(auth.pair(code: auth.issueCode(now: start).digits, name: "Two", now: start))!
-        let one = auth.device(forToken: first)!
+        let one = auth.device(forToken: first, now: start)!
         auth.remove(one.id)
-        #expect(auth.device(forToken: first) == nil)
-        #expect(auth.device(forToken: second)?.name == "Two")
+        #expect(auth.device(forToken: first, now: start) == nil)
+        #expect(auth.device(forToken: second, now: start)?.name == "Two")
         let reread = RemoteAuth(store: store)
-        reread.load()
+        reread.load(now: start)
         #expect(reread.devices.map(\.name) == ["Two"])
     }
 
@@ -170,7 +170,7 @@ struct RemoteAuthTests {
         auth.removeAll()
         #expect(auth.devices.isEmpty)
         #expect(store.data == nil)
-        #expect(auth.device(forToken: token) == nil)
+        #expect(auth.device(forToken: token, now: start) == nil)
     }
 
     @Test func aStoreThatFailsPairsNothing() {
@@ -193,7 +193,7 @@ struct RemoteAuthTests {
         let store = MemoryDeviceStore()
         let auth = auth(store: store)
         let token = token(auth.pair(code: auth.issueCode(now: start).digits, name: "One", now: start))!
-        let id = auth.device(forToken: token)!.id
+        let id = auth.device(forToken: token, now: start)!.id
         let saved = store.data
         // A minute on: in memory, not stored.
         auth.touch(id, now: start.addingTimeInterval(90))
@@ -203,7 +203,242 @@ struct RemoteAuthTests {
         auth.touch(id, now: start.addingTimeInterval(400))
         #expect(store.data != saved)
         let reread = RemoteAuth(store: store)
-        reread.load()
+        reread.load(now: start)
         #expect(reread.devices.first?.lastSeen == start.addingTimeInterval(400))
+    }
+}
+
+// MARK: Guessing the code, expiry, prefs, the login (since the 0.4.0 review)
+
+@MainActor
+struct RemoteAuthHardeningTests {
+    private let start = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func auth(store: MemoryDeviceStore = MemoryDeviceStore()) -> RemoteAuth {
+        var next = 100_000
+        return RemoteAuth(store: store, makeDigits: {
+            next += 1
+            return String(next)
+        })
+    }
+
+    private func token(_ result: PairingResult) -> String? {
+        if case .paired(let token, _) = result { token } else { nil }
+    }
+
+    /// Five wrong tries at `at`: the code wears out.
+    private func wearOut(_ auth: RemoteAuth, at time: Date) {
+        _ = auth.issueCode(now: time)
+        for _ in 1...RemoteAuth.maxWrongTries { _ = auth.pair(code: "000000", name: "x", now: time) }
+    }
+
+    private func pairs(_ auth: RemoteAuth, at time: Date) -> Bool {
+        guard let code = auth.code else { return false }
+        return token(auth.pair(code: code.digits, name: "x", now: time)) != nil
+    }
+
+    @Test func aWornOutCodeIsNotReplacedUntilAsked() {
+        let auth = auth()
+        _ = auth.codeForSettings(now: start)
+        wearOut(auth, at: start)
+        #expect(auth.code == nil)
+        #expect(auth.wornOut)
+        // Settings shows none by itself, now or after the wait.
+        #expect(auth.codeForSettings(now: start) == nil)
+        #expect(auth.codeForSettings(now: start.addingTimeInterval(3_600)) == nil)
+        #expect(auth.pair(code: "100002", name: "x", now: start.addingTimeInterval(3_600)) == .refused(.noCode))
+        // New Code.
+        let fresh = auth.issueCode(now: start.addingTimeInterval(3_600))
+        #expect(!auth.wornOut)
+        #expect(auth.codeForSettings(now: start.addingTimeInterval(3_600)) == fresh)
+    }
+
+    @Test func anExpiredCodeIsStillReplacedBySettings() {
+        let auth = auth()
+        let first = auth.codeForSettings(now: start)
+        let next = auth.codeForSettings(now: start.addingTimeInterval(RemoteAuth.codeLifetime + 1))
+        #expect(next != nil && next != first)
+    }
+
+    @Test func theWaitsGrowThirtySecondsTwoMinutesTenMinutes() {
+        let auth = auth()
+        var now = start
+        for (round, wait) in [30.0, 120, 600, 600].enumerated() {
+            wearOut(auth, at: now)
+            _ = auth.issueCode(now: now)
+            #expect(auth.pair(code: "000000", name: "x", now: now.addingTimeInterval(wait - 1)) == .refused(.tooManyTries),
+                    "round \(round)")
+            now = now.addingTimeInterval(wait)
+        }
+        #expect(RemoteAuth.lockout(after: 0) == 30)
+        #expect(RemoteAuth.lockout(after: 1) == 120)
+        #expect(RemoteAuth.lockout(after: 7) == 600)
+    }
+
+    @Test func aPairingStartsTheWaitsAgain() {
+        let auth = auth()
+        wearOut(auth, at: start)
+        var now = start.addingTimeInterval(30)
+        wearOut(auth, at: now)
+        now = now.addingTimeInterval(120)
+        _ = auth.issueCode(now: now)
+        #expect(pairs(auth, at: now))
+        wearOut(auth, at: now)
+        // 30 s again, not 10 minutes.
+        _ = auth.issueCode(now: now)
+        #expect(pairs(auth, at: now.addingTimeInterval(30)))
+    }
+
+    @Test func anHourWithoutAWrongTryStartsTheWaitsAgain() {
+        let auth = auth()
+        wearOut(auth, at: start)
+        wearOut(auth, at: start.addingTimeInterval(30))
+        // The next would be 10 minutes; after an hour without a wrong try it is 30 s.
+        let later = start.addingTimeInterval(30 + RemoteAuth.lockoutMemory + 1)
+        wearOut(auth, at: later)
+        _ = auth.issueCode(now: later)
+        #expect(pairs(auth, at: later.addingTimeInterval(30)))
+    }
+
+    @Test func theDemoKeepsItsCodeButWaitsLongerToo() {
+        let auth = RemoteAuth(store: MemoryDeviceStore(), fixedCode: "000000")
+        for _ in 1...5 { _ = auth.pair(code: "123456", name: "x", now: start) }
+        let second = start.addingTimeInterval(30)
+        for _ in 1...5 { _ = auth.pair(code: "123456", name: "x", now: second) }
+        #expect(!auth.wornOut)
+        #expect(auth.code?.digits == "000000")
+        #expect(auth.pair(code: "000000", name: "x", now: second.addingTimeInterval(119)) == .refused(.tooManyTries))
+        #expect(token(auth.pair(code: "000000", name: "x", now: second.addingTimeInterval(120))) != nil)
+    }
+
+    // MARK: Expiry
+
+    @Test func aDeviceNotSeenForSixtyDaysIsNoLongerPaired() {
+        let store = MemoryDeviceStore()
+        let auth = auth(store: store)
+        let kept = token(auth.pair(code: auth.issueCode(now: start).digits, name: "Kept", now: start))!
+        // The lost one is paired ten days later and never seen again.
+        let later = start.addingTimeInterval(10 * 86_400)
+        let lost = token(auth.pair(code: auth.issueCode(now: later).digits, name: "Lost", now: later))!
+        let keptID = auth.device(forToken: kept, now: start.addingTimeInterval(50 * 86_400))!.id
+        auth.touch(keptID, now: start.addingTimeInterval(50 * 86_400))
+        // 59 days after it was last seen: still paired.
+        let almost = later.addingTimeInterval(59 * 86_400)
+        #expect(auth.device(forToken: lost, now: almost)?.name == "Lost")
+        // 60: its token stops working, and it leaves the list and the file.
+        let gone = later.addingTimeInterval(RemoteAuth.expiry)
+        #expect(auth.device(forToken: lost, now: gone) == nil)
+        #expect(auth.devices.map(\.name) == ["Kept"])
+        let reread = RemoteAuth(store: MemoryDeviceStore(data: store.data))
+        reread.load(now: gone)
+        #expect(reread.devices.map(\.name) == ["Kept"])
+        #expect(auth.device(forToken: kept, now: gone)?.name == "Kept")
+    }
+
+    @Test func expiredDevicesLeaveTheListOnTheNextLoad() throws {
+        let store = MemoryDeviceStore()
+        let auth = auth(store: store)
+        _ = token(auth.pair(code: auth.issueCode(now: start).digits, name: "Old", now: start))
+        let saves = store.saves
+        let reread = RemoteAuth(store: store)
+        reread.load(now: start.addingTimeInterval(RemoteAuth.expiry - 1))
+        #expect(reread.devices.count == 1)
+        #expect(store.saves == saves)
+        let late = RemoteAuth(store: store)
+        late.load(now: start.addingTimeInterval(RemoteAuth.expiry))
+        #expect(late.devices.isEmpty)
+        #expect(store.saves == saves + 1)
+        let data = try #require(store.data)
+        #expect((try JSONSerialization.jsonObject(with: data) as? [Any])?.isEmpty == true)
+    }
+
+    @Test func aDeviceNeverSeenCountsFromWhenItWasPaired() {
+        let device = RemoteDevice(id: "d", name: "x", tokenHash: Data(count: 32), pairedAt: start, lastSeen: nil)
+        #expect(!device.isExpired(at: start.addingTimeInterval(RemoteAuth.expiry - 1)))
+        #expect(device.isExpired(at: start.addingTimeInterval(RemoteAuth.expiry)))
+        var seen = device
+        seen.lastSeen = start.addingTimeInterval(30 * 86_400)
+        #expect(!seen.isExpired(at: start.addingTimeInterval(RemoteAuth.expiry)))
+    }
+
+    // MARK: Push prefs
+
+    @Test func prefsReachTheFileAtMostOnceASecond() {
+        let store = MemoryDeviceStore()
+        let auth = auth(store: store)
+        _ = token(auth.pair(code: auth.issueCode(now: start).digits, name: "Phone", now: start))
+        let before = store.saves
+        func set(_ names: Bool, at second: Double) {
+            auth.updatePushSoon({ _ in RemoteDevicePush(subscription: nil, prefs: PushPrefs(names: names)) },
+                                now: start.addingTimeInterval(second))
+        }
+        // The first at once.
+        set(true, at: 10)
+        #expect(store.saves == before + 1)
+        // The next within the second: in memory now, in the file later.
+        set(false, at: 10.2)
+        set(true, at: 10.4)
+        set(false, at: 10.6)
+        #expect(store.saves == before + 1)
+        #expect(auth.devices.first?.push?.prefs.names == false)
+        #expect(auth.pushWaiting)
+        auth.savePush(now: start.addingTimeInterval(11))
+        #expect(store.saves == before + 2)
+        #expect(!auth.pushWaiting)
+        let reread = RemoteAuth(store: MemoryDeviceStore(data: store.data))
+        reread.load(now: start.addingTimeInterval(11))
+        #expect(reread.devices.first?.push?.prefs.names == false)
+        // Nothing waiting: nothing written.
+        auth.savePush(now: start.addingTimeInterval(12))
+        #expect(store.saves == before + 2)
+        // The same prefs again change nothing.
+        set(false, at: 20)
+        #expect(store.saves == before + 2)
+    }
+
+    @Test func anotherWriteCarriesPrefsHeldBack() {
+        let store = MemoryDeviceStore()
+        let auth = auth(store: store)
+        let phone = token(auth.pair(code: auth.issueCode(now: start).digits, name: "Phone", now: start))!
+        auth.updatePushSoon({ _ in RemoteDevicePush(subscription: nil, prefs: PushPrefs(names: true)) }, now: start)
+        auth.updatePushSoon({ _ in RemoteDevicePush(subscription: nil, prefs: PushPrefs(finishes: true)) }, now: start)
+        #expect(auth.pushWaiting)
+        // Five minutes on, `lastSeen` is written: the prefs go with it.
+        auth.touch(auth.device(forToken: phone, now: start)!.id, now: start.addingTimeInterval(400))
+        #expect(!auth.pushWaiting)
+        let reread = RemoteAuth(store: MemoryDeviceStore(data: store.data))
+        reread.load(now: start.addingTimeInterval(400))
+        #expect(reread.devices.first?.push?.prefs.finishes == true)
+    }
+
+    // MARK: The login
+
+    @Test func theLoginIsKeptOnlyAsTheHashOfItsLowercaseForm() {
+        let hash = RemoteLogin.hash("Pat@Example.com")
+        #expect(hash == RemoteLogin.hash("pat@example.com"))
+        #expect(RemoteLogin.isHash(hash))
+        #expect(!hash.contains("@") && !hash.contains("pat"))
+        // SHA-256 of "pat@example.com", in hex.
+        #expect(hash == "fe9733fcc96501276776fc927df08a395835461a2c5b12c65ebab3454877e227")
+        #expect(RemoteLogin.matches("PAT@example.com", hash: hash))
+        #expect(!RemoteLogin.matches("someone@example.com", hash: hash))
+        #expect(!RemoteLogin.isHash("pat@example.com"))
+        #expect(!RemoteLogin.isHash(hash.uppercased()))
+    }
+
+    @Test func anAddressAnEarlierBuildKeptIsHashedAndWrittenBack() throws {
+        let suite = "bench.tests.remoteLogin.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        #expect(RemoteLogin.recorded(defaults) == nil)
+        defaults.set("Pat@example.com", forKey: SettingsKey.remoteLogin)
+        let hashed = RemoteLogin.recorded(defaults)
+        #expect(hashed == RemoteLogin.hash("pat@example.com"))
+        #expect(defaults.string(forKey: SettingsKey.remoteLogin) == hashed)
+        // A hash stays as it is.
+        #expect(RemoteLogin.recorded(defaults) == hashed)
+        #expect(RemoteLogin.normalized(hashed!) == hashed)
+        RemoteLogin.record("someone@example.com", in: defaults)
+        #expect(defaults.string(forKey: SettingsKey.remoteLogin) == RemoteLogin.hash("someone@example.com"))
     }
 }

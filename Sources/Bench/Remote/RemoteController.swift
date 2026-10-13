@@ -3,6 +3,11 @@
 // Bench's Serve mapping; off stops the listener and removes that mapping
 // only, keeping the paired devices. It publishes what Settings → Phone shows.
 //
+// The mapping lasts only as long as Bench is there to answer behind it: it
+// goes when Bench quits, and at launch with the switch off any left behind
+// (a crash) goes too. Otherwise whatever took the loopback port meanwhile
+// would get what the phone sends, its sign-in cookie included.
+//
 // Never in a demo but `--demo remote`, which serves made-up sessions on
 // 127.0.0.1 with the fixed code 000000, and touches no Tailscale, stored device or
 // setting.
@@ -45,6 +50,13 @@ final class RemoteController: ObservableObject {
         /// Tailscale is signed in as someone other than when the switch was
         /// turned on: Serve's identity check refuses the phone.
         var otherLogin = false
+        /// Other Tailscale Serve sites on this Mac share Bench's address, so
+        /// pages they serve receive the phone's Bench sign-in.
+        var othersShare = false
+        /// The switch is off but Bench couldn't remove its Serve mapping
+        /// (Tailscale wasn't running, or `serve … off` failed): Settings says
+        /// so, and Bench tries again when Tailscale is back.
+        var mappingLeft = false
 
         var tailscaleStatus: TailscaleStatus? {
             if case .status(let status)? = tailscale { status } else { nil }
@@ -62,6 +74,9 @@ final class RemoteController: ObservableObject {
 
     private let bridge: TailscaleBridge
     private let defaults: UserDefaults
+    /// `--demo remote` or another demo: Tailscale, the devices file and the
+    /// settings are never touched.
+    private let isDemo: Bool
     private var server: RemoteServer?
     private let feed = RemoteFeed()
     /// The state last sent to the events streams, at a fixed moment, so a
@@ -72,34 +87,38 @@ final class RemoteController: ObservableObject {
     private var retry: Task<Void, Never>?
     private var activation: AnyCancellable?
 
-    init(auth: RemoteAuth, bridge: TailscaleBridge, defaults: UserDefaults = .standard) {
+    init(auth: RemoteAuth, bridge: TailscaleBridge, defaults: UserDefaults = .standard, isDemo: Bool = Demo.mode != nil) {
         self.auth = auth
         self.bridge = bridge
         self.defaults = defaults
+        self.isDemo = isDemo
         enabled = defaults.bool(forKey: SettingsKey.remoteEnabled)
+        // A login an earlier build kept as an address becomes its hash now.
+        if !isDemo { _ = RemoteLogin.recorded(defaults) }
     }
 
     // MARK: The switch
 
-    /// At launch: back on if it was on. Never in a demo.
+    /// At launch: back on if it was on; off, any mapping Bench left behind
+    /// goes. Never in a demo.
     func start() {
-        guard Demo.mode == nil, activation == nil else { return }
+        guard !isDemo, activation == nil else { return }
         PushCenter.shared.start() // Phase 2 push
         // Back from turning HTTPS on in the browser, or from opening
-        // Tailscale: check again.
+        // Tailscale: check again, or try again to remove the mapping.
         activation = NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, self.enabled, self.status.serve != .serving else { return }
+                    guard let self, self.enabled ? self.status.serve != .serving : self.status.mappingLeft else { return }
                     self.refresh()
                 }
             }
-        if enabled { enqueue { await self.turnOn(recordingLogin: false) } }
+        if enabled { enqueue { await self.turnOn(recordingLogin: false) } } else { reconcileAtLaunch() }
     }
 
     /// The switch in Settings.
     func setEnabled(_ on: Bool) {
-        guard Demo.mode == nil, on != enabled else { return }
+        guard !isDemo, on != enabled else { return }
         enabled = on
         defaults.set(on, forKey: SettingsKey.remoteEnabled)
         enqueue { on ? await self.turnOn(recordingLogin: true) : await self.turnOff() }
@@ -107,11 +126,20 @@ final class RemoteController: ObservableObject {
 
     /// Check Again, the Phone tab appearing, Bench coming to the front.
     func refresh() {
-        guard Demo.mode == nil else { return }
+        guard !isDemo else { return }
         enqueue {
             await self.checkTailscale(recordingLogin: false)
-            if self.enabled { await self.serveIfReady() }
+            if self.enabled {
+                await self.serveIfReady()
+            } else if self.status.mappingLeft {
+                await self.removeMappingOrRetry()
+            }
         }
+    }
+
+    /// Waits for every change asked for so far: for tests.
+    func settle() async {
+        await pending?.value
     }
 
     private func enqueue(_ work: @escaping @MainActor () async -> Void) {
@@ -125,6 +153,8 @@ final class RemoteController: ObservableObject {
     private func turnOn(recordingLogin: Bool) async {
         guard enabled else { return }
         auth.load()
+        // Bench's mapping is wanted again: the one left is replaced.
+        status.mappingLeft = false
         status.serve = .starting
         let server = server ?? makeServer()
         self.server = server
@@ -153,10 +183,65 @@ final class RemoteController: ObservableObject {
         lastPushed = nil
         status.port = nil
         status.serve = .off
+        status.othersShare = false
         auth.withdrawCode()
         // Bench's own mapping only; any other stays as it is.
-        if bridge.isInstalled, await !bridge.stopServing() {
-            log.error("Couldn't remove Bench's Serve mapping")
+        await removeMappingOrRetry()
+    }
+
+    // MARK: Bench's mapping when it shouldn't be there
+
+    /// Bench may have made a Serve mapping: the switch is on, or a listener
+    /// ran on some launch (its port is remembered), the only time Bench adds
+    /// one. Someone who never turned Remote on has Tailscale asked nothing.
+    private var everServed: Bool {
+        enabled || defaults.object(forKey: SettingsKey.remotePort) != nil
+    }
+
+    /// At launch with the switch off: a mapping Bench left behind (it
+    /// crashed, or quit while Tailscale couldn't be asked) goes now.
+    func reconcileAtLaunch() {
+        guard ServeCleanup.shouldLook(demo: isDemo, everServed: everServed), !enabled else { return }
+        enqueue { await self.removeMappingOrRetry() }
+    }
+
+    /// Removes Bench's mapping, only when `serve status` says it is
+    /// Bench's. When that can't be done, Settings says so and Bench tries
+    /// again: on Check Again, when it comes to the front, and a few times
+    /// on its own.
+    private func removeMapping() async {
+        switch await bridge.removeMapping() {
+        case .none, .notInstalled:
+            status.mappingLeft = false
+        case .unreadable, .failed:
+            if !status.mappingLeft { log.error("Couldn't remove Bench's Serve mapping") }
+            status.mappingLeft = true
+        }
+    }
+
+    private func removeMappingOrRetry() async {
+        await removeMapping()
+        if status.mappingLeft, retry == nil { scheduleRetry(attempt: 0) }
+    }
+
+    /// Bench is quitting: its own 8443 mapping goes, so nothing that takes
+    /// the loopback port while Bench is away gets what the phone sends.
+    /// Synchronous and best effort, and never longer than `limit` seconds;
+    /// never in a demo, and `off` runs only when `serve status` says the
+    /// mapping is Bench's. A crash leaves it until the next launch.
+    func removeMappingAtQuit(within limit: TimeInterval = 2) {
+        guard !isDemo else { return }
+        auth.savePush() // Phase 2 push: prefs held back reach the file.
+        guard ServeCleanup.shouldLook(demo: isDemo, everServed: everServed) else { return }
+        let bridge = self.bridge
+        let done = DispatchSemaphore(value: 0)
+        // Off the main thread, which waits: nothing on the way needs it.
+        Task.detached {
+            _ = await bridge.removeMapping(statusTimeout: limit / 2, offTimeout: limit / 2)
+            done.signal()
+        }
+        if done.wait(timeout: .now() + limit) == .timedOut {
+            log.error("Bench quit before its Serve mapping was removed")
         }
     }
 
@@ -169,18 +254,19 @@ final class RemoteController: ObservableObject {
         let check = await bridge.status()
         status.checking = false
         status.tailscale = check
-        var recorded = defaults.string(forKey: SettingsKey.remoteLogin)
+        // Only its hash is kept (`RemoteLogin`).
+        var recorded = RemoteLogin.recorded(defaults)
         if enabled, case .status(let tailscale) = check, let login = tailscale.login,
            recordingLogin || recorded == nil {
-            defaults.set(login, forKey: SettingsKey.remoteLogin)
-            recorded = login
+            RemoteLogin.record(login, in: defaults)
+            recorded = RemoteLogin.hash(login)
         }
         let current = status.tailscaleStatus
         status.otherLogin = enabled && current?.login.map { login in
-            recorded.map { $0.caseInsensitiveCompare(login) != .orderedSame } ?? false
+            recorded.map { $0 != RemoteLogin.hash(login) } ?? false
         } ?? false
         if let current, current.running, let name = current.dnsName, let recorded {
-            server?.policy = .tailnet(dnsName: name, login: recorded)
+            server?.policy = .tailnet(dnsName: name, loginHash: recorded)
         } else {
             server?.policy = .closed
         }
@@ -194,7 +280,9 @@ final class RemoteController: ObservableObject {
             status.serve = .waitingForTailscale
             return
         }
-        switch await bridge.serve(port: port) {
+        let served = await bridge.serve(port: port)
+        status.othersShare = served.othersShare
+        switch served.outcome {
         case .serving:
             status.serve = .serving
             log.notice("Remote serving over Tailscale")
@@ -208,7 +296,8 @@ final class RemoteController: ObservableObject {
     }
 
     /// Tailscale may start after Bench at login: a few more looks, then
-    /// none until Bench comes to the front or Settings asks.
+    /// none until Bench comes to the front or Settings asks. The same for a
+    /// mapping that couldn't be removed with the switch off.
     private func scheduleRetry(attempt: Int) {
         let waits: [Duration] = [.seconds(15), .seconds(60), .seconds(300)]
         retry?.cancel()
@@ -216,19 +305,36 @@ final class RemoteController: ObservableObject {
         guard attempt < waits.count else { return }
         retry = Task { [weak self] in
             try? await Task.sleep(for: waits[attempt])
-            guard !Task.isCancelled, let self, self.enabled, self.status.serve == .waitingForTailscale else { return }
+            guard !Task.isCancelled, let self else { return }
+            self.retry = nil
+            guard self.needsRetry else { return }
             self.enqueue {
-                await self.checkTailscale(recordingLogin: false)
-                await self.serveIfReady()
-                if self.status.serve == .waitingForTailscale { self.scheduleRetry(attempt: attempt + 1) }
+                if self.enabled {
+                    await self.checkTailscale(recordingLogin: false)
+                    await self.serveIfReady()
+                } else {
+                    await self.removeMapping()
+                }
+                if self.needsRetry { self.scheduleRetry(attempt: attempt + 1) }
             }
         }
     }
 
+    private var needsRetry: Bool {
+        enabled ? status.serve == .waitingForTailscale : status.mappingLeft
+    }
+
     // MARK: Pairing and devices
 
-    /// The code Settings shows, new when the last has gone.
+    /// The code Settings shows, new when the last has gone: but not after
+    /// one was worn out by wrong tries (`newCode` then).
     func issueCode() {
+        guard enabled || Demo.mode == .remote else { return }
+        _ = auth.codeForSettings()
+    }
+
+    /// New Code in Settings, after "Too many wrong codes."
+    func newCode() {
         guard enabled || Demo.mode == .remote else { return }
         auth.issueCode()
     }

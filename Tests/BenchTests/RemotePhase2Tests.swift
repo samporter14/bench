@@ -59,12 +59,15 @@ struct RemoteActionRouteTests {
         func parse(_ target: String, length: Int) -> RemoteHTTP.Parse {
             RemoteHTTP.parse(Data("POST \(target) HTTP/1.1\r\nContent-Length: \(length)\r\n\r\n".utf8))
         }
+        func waits(_ parsed: RemoteHTTP.Parse) -> Bool {
+            if case .head = parsed { true } else { false }
+        }
         let message = "/api/sessions/\(Self.id)/message"
-        #expect(parse(message, length: 16 * 1024) == .incomplete)
+        #expect(waits(parse(message, length: 16 * 1024)))
         #expect(parse(message, length: 16 * 1024 + 1) == .reject(413))
-        #expect(parse(message + "?x=1", length: 16 * 1024) == .incomplete)
+        #expect(waits(parse(message + "?x=1", length: 16 * 1024)))
         #expect(parse("/api/sessions/\(Self.id)/approve", length: 8 * 1024 + 1) == .reject(413))
-        #expect(parse("/api/sessions/\(Self.id)/approve", length: 8 * 1024) == .incomplete)
+        #expect(waits(parse("/api/sessions/\(Self.id)/approve", length: 8 * 1024)))
         // Under another method, or anywhere else: 8 KB.
         #expect(RemoteHTTP.parse(Data("GET \(message) HTTP/1.1\r\nContent-Length: 9000\r\n\r\n".utf8)) == .reject(413))
         #expect(parse("/nothing", length: 8 * 1024 + 1) == .reject(413))
