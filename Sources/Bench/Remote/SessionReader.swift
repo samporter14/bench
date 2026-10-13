@@ -138,8 +138,9 @@ enum SessionReaderScript {
                 }
                 // Tool calls or results only, or nothing.
                 if (text === "") { continue; }
+                // Rows may carry no `_ts` (seen on the daemon in October):
+                // the turn shows without a time.
                 const at = typeof m._ts === "number" ? time(m._ts) : null;
-                if (at === null) { return null; }
                 turns.push({ role: m.role === "user" ? "you" : "claude", at: at, text: cut(text, 2000) });
             }
             return turns.slice(-12);
@@ -295,7 +296,7 @@ struct SessionProjection: Equatable, Sendable {
     struct Turn: Equatable, Sendable {
         enum Role: String, Sendable { case you, claude }
         let role: Role
-        let at: Date
+        let at: Date?
         let text: String
     }
 
@@ -396,7 +397,7 @@ struct SessionProjection: Equatable, Sendable {
             for raw in rawTurns {
                 guard let turn = raw as? [String: Any],
                       let role = Pick.string(turn["role"]).flatMap(Turn.Role.init(rawValue:)),
-                      let atValue = Pick.optionalTime(turn["at"]), let at = atValue,
+                      let at = Pick.optionalTime(turn["at"]),
                       let text = Pick.text(turn["text"], limit: Limit.turn) else { return nil }
                 list.append(Turn(role: role, at: at, text: text))
             }

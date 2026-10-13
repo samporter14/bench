@@ -313,8 +313,18 @@ enum RemoteAPI {
     struct Turn: Encodable, Equatable {
         /// "you" or "claude".
         let role: String
-        let at: Date
+        /// Null when the daemon's row has no time.
+        let at: Date?
         let text: String
+
+        private enum CodingKeys: String, CodingKey { case role, at, text }
+
+        func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(role, forKey: .role)
+            try c.encode(at, forKey: .at)
+            try c.encode(text, forKey: .text)
+        }
     }
 
     struct Note: Encodable, Equatable {

@@ -185,13 +185,23 @@ struct SessionProjectionTests {
         ReaderFixture.page(#"[{"role": "user", "content": 12, "_ts": 1791833000000}]"#),
         ReaderFixture.page(#"[{"role": "user", "content": [{"text": "no type"}], "_ts": 1791833000000}]"#),
         ReaderFixture.page(#"[{"role": "user", "content": [{"type": "text", "text": 5}], "_ts": 1791833000000}]"#),
-        ReaderFixture.page(#"[{"role": "user", "content": "No time"}]"#),
-        ReaderFixture.page(#"[{"role": "user", "content": "Odd time", "_ts": "yesterday"}]"#),
-        ReaderFixture.page(#"[{"role": "assistant", "content": "Too early", "_ts": 12}]"#),
         ReaderFixture.page(#"["row"]"#),
     ])
     func messagesThatDoNotMatchAreUnreadable(_ page: String) {
         #expect(project(ReaderFixture.frame(), page).read == nil)
+    }
+
+    /// The daemon's rows can come without `_ts` (seen live in October): the
+    /// turn shows, without a time.
+    @Test(arguments: [
+        ReaderFixture.page(#"[{"role": "user", "content": "No time"}]"#),
+        ReaderFixture.page(#"[{"role": "user", "content": "Odd time", "_ts": "yesterday"}]"#),
+        ReaderFixture.page(#"[{"role": "assistant", "content": "Too early", "_ts": 12}]"#),
+    ])
+    func aTurnWithoutAUsableTimeShowsWithoutOne(_ page: String) throws {
+        let read = try #require(project(ReaderFixture.frame(), page).read)
+        let turn = try #require(read.turns?.first)
+        #expect(turn.at == nil)
     }
 
     @Test func aMissingPageIsUnreadableWhenTurnsAreAskedFor() {
@@ -316,7 +326,7 @@ struct SessionProjectionTests {
             ("plan", ["version": NSNull(), "artifact": NSNull(), "approval": "maybe"]),
             ("turns", Array(repeating: ["role": "you", "at": 1_791_833_000_000, "text": "t"] as [String: Any], count: 13)),
             ("turns", [["role": "system", "at": 1_791_833_000_000, "text": "t"]]),
-            ("turns", [["role": "you", "at": NSNull(), "text": "t"]]),
+            ("turns", [["role": "you", "at": "yesterday", "text": "t"]]),
             ("turns", [["role": "you", "at": 1_791_833_000_000, "text": String(repeating: "t", count: 2001)]]),
         ]
     }
