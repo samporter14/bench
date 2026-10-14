@@ -59,6 +59,30 @@ struct RemoteAPITests {
         #expect(afterFocus?["afterFocus"] as? Bool == true)
     }
 
+    @Test func theBadgeIsWhatNeedsYouPlusWhatStopped() {
+        #expect(RemoteAPI.state(input()).badge == 0)
+        let plan = session("a", .needsInput, reason: .plan)
+        let state = RemoteAPI.state(input(waiting: [plan, session("b", .needsInput, reason: .question)],
+                                          snoozed: [SnoozedReminder(session: plan, due: now.addingTimeInterval(600))],
+                                          failed: [session("f", .error)], working: [session("w", .running)]))
+        // A session put off still waits; one that works doesn't count.
+        #expect(state.badge == 3)
+        #expect(state.badge == state.needsYou.count + state.failed.count)
+    }
+
+    @Test func theLabsBadgeIsTheStatesBadge() {
+        let lab = LabModel()
+        #expect(RemoteAPI.badge(lab: lab) == 0)
+        lab.ingest(Fixture.snapshot(Fixture.session("a", .running), Fixture.session("b", .running), Fixture.session("c", .running)))
+        lab.ingest(Fixture.snapshot(Fixture.session("a", .needsInput, reason: .plan), Fixture.session("b", .error),
+                                    Fixture.session("c", .finished)))
+        // A finish is not something that needs you.
+        #expect(RemoteAPI.badge(lab: lab) == 2)
+        let input = RemoteAPI.input(lab: lab, usage: PlanUsageModel.shared, bench: "test", now: now)
+        #expect(RemoteAPI.state(input).badge == RemoteAPI.badge(lab: lab))
+        #expect(RemoteAPI.failedSessions(lab: lab).map(\.id) == ["b"])
+    }
+
     @Test func failedWorkingAndRecent() {
         let failed = session("f", .error)
         let working = session("w", .running, started: -125)

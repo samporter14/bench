@@ -235,6 +235,7 @@ function showPair(msg = '') {
   S.view = 'pair';
   S.pairMsg = msg;
   S.state = null;
+  applyBadge();
   S.sig = '';
   S.sess = dict();
   S.ui = dict();
@@ -328,6 +329,7 @@ function gotState(st) {
   const wasApp = S.view === 'app';
   const sig = JSON.stringify(st, (k, v) => (k === 'updatedAt' ? undefined : v));
   S.state = st;
+  applyBadge();
   pill();
   if (!wasApp) {
     S.view = 'app';
@@ -2091,14 +2093,39 @@ function settingsContent() {
 /* ---------- Notifications (Web Push, opt in per device) ---------- */
 
 const canPush = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-const DEFAULT_PREFS = { needsYou: true, errors: true, finishes: false, names: false, onlyAway: true };
+const DEFAULT_PREFS = { needsYou: true, errors: true, finishes: false, names: false, onlyAway: true, badge: true };
+const BADGE_LABEL = ['badge', 'Show a count on the Bench icon'];
 const PREF_LABELS = [
   ['needsYou', 'When a session needs you'],
   ['errors', 'When a session stops with an error'],
   ['finishes', 'When a session finishes'],
   ['names', 'Show session names'],
   ['onlyAway', 'Only when I’m away from my Mac'],
+  BADGE_LABEL,
 ];
+
+/* ---------- The count on the Home Screen icon ---------- */
+
+// Sessions that need you plus sessions that stopped with an error, as on Mail's icon. iOS shows it only for a
+// Home Screen app that has notification permission, so the app asks for nothing more. The choice is kept in
+// localStorage (per device, there before Settings has loaded) and in this device's push prefs on the Mac,
+// because the service worker can't read localStorage and sets the count when a push arrives.
+const BADGE_KEY = 'bench-badge';
+const storedBadge = () => { try { return localStorage.getItem(BADGE_KEY) !== 'off'; } catch { return true; } };
+const storeBadge = (on) => { try { localStorage.setItem(BADGE_KEY, on ? 'on' : 'off'); } catch { /* this run only */ } };
+const currentPrefs = () => S.push.prefs || { ...DEFAULT_PREFS, badge: storedBadge() };
+const badgeOn = () => currentPrefs().badge !== false;
+
+// Called whenever the state arrives or the choice changes. Off, or no state (signed out), clears it.
+function applyBadge() {
+  if (!('setAppBadge' in navigator) || !standalone()) return;
+  const st = S.state;
+  const n = badgeOn() && st ? (st.needsYou || []).length + (st.failed || []).length : 0;
+  try {
+    const done = n > 0 ? navigator.setAppBadge(n) : navigator.clearAppBadge();
+    if (done && done.catch) done.catch(() => { /* not allowed: no count */ });
+  } catch { /* not allowed: no count */ }
+}
 
 const swReady = () => Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(r, 3000))]);
 const keyBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
@@ -2110,6 +2137,8 @@ async function loadPush() {
     const info = await api('/api/push');
     p.key = info.publicKey || '';
     p.prefs = { ...DEFAULT_PREFS, ...(info.prefs || {}) };
+    storeBadge(p.prefs.badge !== false);
+    applyBadge();
     let have = false;
     if (canPush() && Notification.permission === 'granted') {
       try { const reg = await swReady(); have = !!(reg && (await reg.pushManager.getSubscription())); } catch { /* none */ }
@@ -2152,7 +2181,7 @@ async function pushOn() {
       sub = await reg.pushManager.subscribe(options);
     }
     const j = sub.toJSON();
-    const out = await send('/api/push/subscribe', { endpoint: j.endpoint, keys: { p256dh: j.keys.p256dh, auth: j.keys.auth }, prefs: p.prefs || DEFAULT_PREFS });
+    const out = await send('/api/push/subscribe', { endpoint: j.endpoint, keys: { p256dh: j.keys.p256dh, auth: j.keys.auth }, prefs: currentPrefs() });
     if (out.status >= 300) throw new Error('refused');
     p.on = true;
     p.msg = 'Notifications are on.';
@@ -2210,10 +2239,11 @@ async function pushTest() {
 
 async function setPref(key) {
   const p = S.push;
-  const before = p.prefs || DEFAULT_PREFS;
+  const before = currentPrefs();
   const prefs = { ...before, [key]: !before[key] };
   p.prefs = prefs;
   p.msg = '';
+  if (key === 'badge') { storeBadge(prefs.badge); applyBadge(); }
   redrawSettings();
   try {
     const out = await send('/api/push/prefs', prefs);
@@ -2221,9 +2251,16 @@ async function setPref(key) {
   } catch (e) {
     if (e instanceof Unauth) return showPair();
     p.prefs = before;
+    if (key === 'badge') { storeBadge(before.badge); applyBadge(); }
     p.msg = isSlow(e) ? 'Couldn’t save that just now. Try again in a moment.' : 'Couldn’t save that. Try again.';
     redrawSettings();
   }
+}
+
+function prefRow([k, label]) {
+  return h('li', null, h('button', {
+    class: 'row sw', type: 'button', role: 'switch', 'aria-checked': currentPrefs()[k] ? 'true' : 'false', 'data-key': 'sw:' + k, onclick: () => setPref(k),
+  }, h('span', { class: 'row-main' }, h('span', { class: 'title', text: label })), h('span', { class: 'switch', 'aria-hidden': 'true' })));
 }
 
 function notifSection() {
@@ -2244,13 +2281,12 @@ function notifSection() {
       h('div', { class: 'act tight' }, h('button', {
         class: 'btn primary', type: 'button', text: p.busy ? 'Turning on…' : 'Turn On Notifications', disabled: p.busy, 'data-key': 'push-on', onclick: () => pushOn(),
       })),
+      // Notifications off but allowed: the icon's count still works, so it can still be turned off.
+      Notification.permission === 'granted' ? h('ul', { class: 'group' }, prefRow(BADGE_LABEL)) : null,
     ];
   } else {
-    const prefs = p.prefs || DEFAULT_PREFS;
     body = [
-      h('ul', { class: 'group' }, PREF_LABELS.map(([k, label]) => h('li', null, h('button', {
-        class: 'row sw', type: 'button', role: 'switch', 'aria-checked': prefs[k] ? 'true' : 'false', 'data-key': 'sw:' + k, onclick: () => setPref(k),
-      }, h('span', { class: 'row-main' }, h('span', { class: 'title', text: label })), h('span', { class: 'switch', 'aria-hidden': 'true' }))))),
+      h('ul', { class: 'group' }, PREF_LABELS.map((entry) => prefRow(entry))),
       h('div', { class: 'act tight pair-btns' },
         h('button', { class: 'btn', type: 'button', text: 'Send a Test', disabled: p.busy, 'data-key': 'push-test', onclick: () => pushTest() }),
         h('button', { class: 'btn', type: 'button', text: 'Turn Off', disabled: p.busy, 'data-key': 'push-off', onclick: () => pushOff() })),

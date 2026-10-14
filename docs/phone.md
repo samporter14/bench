@@ -98,6 +98,8 @@ Bench: when a session needs you, stops with an error, or finishes.
   twice. **Send a Test** always comes through.
 - **Show session names** is off by default: a notification just says "A
   session needs you".
+- The Bench icon on your Home Screen shows how many sessions need you or
+  stopped with an error. Turn this off in the app's Settings.
 - Notifications travel through Apple's push service, encrypted so only your
   device can read them. They arrive even when Tailscale is off; opening the
   session needs it on.

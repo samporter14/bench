@@ -47,13 +47,19 @@ struct PushPrefs: Codable, Equatable, Sendable {
     var names = false
     /// Only while the Mac isn't in use.
     var onlyAway = true
+    /// The count on the phone's Home Screen icon. The service worker can't
+    /// read the app's localStorage, so the Mac keeps the choice and leaves
+    /// the count out of this device's pushes when it's off.
+    var badge = true
 
-    init(needsYou: Bool = true, errors: Bool = true, finishes: Bool = false, names: Bool = false, onlyAway: Bool = true) {
+    init(needsYou: Bool = true, errors: Bool = true, finishes: Bool = false, names: Bool = false, onlyAway: Bool = true,
+         badge: Bool = true) {
         self.needsYou = needsYou
         self.errors = errors
         self.finishes = finishes
         self.names = names
         self.onlyAway = onlyAway
+        self.badge = badge
     }
 
     // A key left out (an older record, or a phone sending a few) keeps its default.
@@ -71,6 +77,7 @@ struct PushPrefsPatch: Decodable, Equatable {
     var finishes: Bool?
     var names: Bool?
     var onlyAway: Bool?
+    var badge: Bool?
 
     func apply(to prefs: inout PushPrefs) {
         if let needsYou { prefs.needsYou = needsYou }
@@ -78,6 +85,7 @@ struct PushPrefsPatch: Decodable, Equatable {
         if let finishes { prefs.finishes = finishes }
         if let names { prefs.names = names }
         if let onlyAway { prefs.onlyAway = onlyAway }
+        if let badge { prefs.badge = badge }
     }
 }
 
@@ -120,6 +128,16 @@ struct PushMessage: Equatable, Sendable {
     let url: String
     /// `Urgency: high`, for needs you and errors; else `normal`.
     let urgent: Bool
+    /// The count for the Home Screen icon (`needsYou` plus `failed`, as
+    /// `/api/state` says them), when the device wants it. Nil leaves the
+    /// icon as it is.
+    var badge: Int? = nil
+
+    func badged(_ count: Int?) -> PushMessage {
+        var message = self
+        message.badge = count
+        return message
+    }
 }
 
 enum PushRules {
@@ -226,13 +244,15 @@ enum PushRules {
 
     // MARK: The wire
 
-    /// `{"v":1,"title","body","tag","url"}`, at most 1 KB: a long title or
-    /// body is cut short, the body first.
+    /// `{"v":1,"title","body","tag","url"}` and, for a device that wants the
+    /// icon's count, `"badge"`: at most 1 KB, a long title or body cut short,
+    /// the body first.
     static func payload(_ message: PushMessage) -> Data {
         var title = clip(message.title, to: 120)
         var body = clip(message.body, to: 240)
         while true {
-            let object: [String: Any] = ["v": 1, "title": title, "body": body, "tag": message.tag, "url": message.url]
+            var object: [String: Any] = ["v": 1, "title": title, "body": body, "tag": message.tag, "url": message.url]
+            if let badge = message.badge { object["badge"] = max(0, badge) }
             let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
             if data.count <= maxPayload || (title.isEmpty && body.isEmpty) { return data }
             if !body.isEmpty { body = clip(body, to: body.count - 16) } else { title = clip(title, to: title.count - 16) }
@@ -396,7 +416,8 @@ final class PushCenter {
         transport: URLSessionPushTransport(),
         presence: .live,
         enabled: { RemoteController.shared.enabled },
-        holdingFinishes: { NidusFocus.shared.holding })
+        holdingFinishes: { NidusFocus.shared.holding },
+        badge: { RemoteAPI.badge(lab: LabModel.shared) })
 
     /// The file beside the devices that holds the VAPID key.
     nonisolated static let keyFile = "remote-push-key.json"
@@ -419,6 +440,8 @@ final class PushCenter {
     private let presence: MacPresence
     private let enabled: () -> Bool
     private let holdingFinishes: () -> Bool
+    /// What the icon should show: the phone's own sum, from the live lab.
+    private let badge: () -> Int
     private let now: () -> Date
     private let wait: (TimeInterval) async -> Void
 
@@ -437,7 +460,7 @@ final class PushCenter {
     var isDemo: Bool { keyStore == nil }
 
     init(auth: RemoteAuth, keyStore: (any RemoteDeviceStore)?, transport: any PushTransport, presence: MacPresence,
-         enabled: @escaping () -> Bool, holdingFinishes: @escaping () -> Bool,
+         enabled: @escaping () -> Bool, holdingFinishes: @escaping () -> Bool, badge: @escaping () -> Int,
          now: @escaping () -> Date = Date.init,
          wait: @escaping (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) }) {
         self.auth = auth
@@ -446,6 +469,7 @@ final class PushCenter {
         self.presence = presence
         self.enabled = enabled
         self.holdingFinishes = holdingFinishes
+        self.badge = badge
         self.now = now
         self.wait = wait
     }
@@ -454,7 +478,7 @@ final class PushCenter {
     /// worked, and the test sends nothing.
     static func demo(auth: RemoteAuth) -> PushCenter {
         PushCenter(auth: auth, keyStore: nil, transport: NoTransport(), presence: MacPresence(secondsSinceInput: { 0 }, screenLocked: { false }),
-                   enabled: { false }, holdingFinishes: { false })
+                   enabled: { false }, holdingFinishes: { false }, badge: { 0 })
     }
 
     private struct NoTransport: PushTransport {
@@ -495,7 +519,8 @@ final class PushCenter {
         case .test:
             guard isSubscribed(current) else { return .error(400, "notSubscribed") }
             // Sam is at the Mac when he presses it: no onlyAway, no prefs.
-            if !isDemo { deliver(PushRules.test, to: current.id) }
+            // The icon's count rides along, so a test shows what the phone will do.
+            if !isDemo { deliver(PushRules.test, to: current.id, withBadge: (current.push?.prefs ?? PushPrefs()).badge) }
             return Reply(status: 200, json: Data(#"{"sent":true}"#.utf8))
         }
     }
@@ -554,7 +579,7 @@ final class PushCenter {
             "publicKey": publicKey,
             "subscribed": isSubscribed(device),
             "prefs": ["needsYou": prefs.needsYou, "errors": prefs.errors, "finishes": prefs.finishes,
-                      "names": prefs.names, "onlyAway": prefs.onlyAway],
+                      "names": prefs.names, "onlyAway": prefs.onlyAway, "badge": prefs.badge],
         ]
         let json = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
         return Reply(status: 200, json: json)
@@ -644,7 +669,7 @@ final class PushCenter {
                 if busy { continue }
             }
             sent[device.id, default: [:]][event.key] = now()
-            deliver(PushRules.message(event, names: prefs.names), to: device.id)
+            deliver(PushRules.message(event, names: prefs.names), to: device.id, withBadge: prefs.badge)
         }
     }
 
@@ -656,10 +681,16 @@ final class PushCenter {
 
     // MARK: Sending
 
-    private func deliver(_ message: PushMessage, to deviceID: String) {
+    /// `withBadge` puts the icon's count in the push. It is read when the push
+    /// goes, a turn after it was decided: LabModel raises a card before it
+    /// updates `waiting`, so the count read at that moment would miss the
+    /// session that just began to wait.
+    private func deliver(_ message: PushMessage, to deviceID: String, withBadge: Bool) {
         let id = UUID()
         inFlight[id] = Task { [weak self] in
-            await self?.send(message, to: deviceID, retried: false)
+            if let self {
+                await self.send(withBadge ? message.badged(self.badge()) : message, to: deviceID, retried: false)
+            }
             self?.inFlight[id] = nil
         }
     }

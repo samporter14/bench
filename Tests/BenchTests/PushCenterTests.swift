@@ -62,6 +62,7 @@ struct FakeBrowser {
 private enum IDs {
     static let a = "0f8fad5b-d9cb-469f-a165-70867728950e"
     static let b = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+    static let c = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
 }
 
 // MARK: Rules
@@ -178,6 +179,39 @@ struct PushRulesTests {
         #expect(PushRules.payload(huge).count <= 1024)
     }
 
+    @Test func theBadgeIsInThePayloadOnlyWhenTheMessageHasOne() throws {
+        let message = PushRules.message(try #require(PushRules.event(for: waiting, holdingFinishes: false)), names: false)
+        #expect(message.badge == nil)
+        #expect(!String(decoding: PushRules.payload(message), as: UTF8.self).contains("badge"))
+        let json = String(decoding: PushRules.payload(message.badged(3)), as: UTF8.self)
+        #expect(json == #"{"badge":3,"body":"A session needs you: plan ready for review","tag":"needs-\#(IDs.a)","title":"Claude Science","url":"/#/session/\#(IDs.a)","v":1}"#)
+        // Nothing waits any more: the count is 0, which clears the icon, and is still sent.
+        let zero = try #require(try JSONSerialization.jsonObject(with: PushRules.payload(message.badged(0))) as? [String: Any])
+        #expect(zero["badge"] as? Int == 0)
+        // A long title and body are cut, never the count.
+        let huge = PushMessage(title: String(repeating: "😀", count: 2000), body: String(repeating: "😀", count: 2000),
+                               tag: "x", url: "/", urgent: false, badge: 12)
+        let data = PushRules.payload(huge)
+        #expect(data.count <= 1024)
+        #expect(try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])["badge"] as? Int == 12)
+        // The test push can carry it too.
+        #expect(PushRules.test.badge == nil)
+        #expect(PushRules.test.badged(2).badge == 2)
+    }
+
+    @Test func prefsFromBeforeTheBadgeReadAsOn() throws {
+        let old = Data(#"{"needsYou":true,"errors":false,"finishes":true,"names":true,"onlyAway":false}"#.utf8)
+        let prefs = try JSONDecoder().decode(PushPrefs.self, from: old)
+        #expect(prefs == PushPrefs(needsYou: true, errors: false, finishes: true, names: true, onlyAway: false, badge: true))
+        // A whole device record from before, too.
+        let record = Data(#"{"prefs":{"needsYou":true,"errors":true,"finishes":false,"names":false,"onlyAway":true}}"#.utf8)
+        #expect(try JSONDecoder().decode(RemoteDevicePush.self, from: record).prefs.badge)
+        #expect(try JSONDecoder().decode(PushPrefs.self, from: Data("{}".utf8)) == PushPrefs())
+        // Off is kept.
+        let off = try JSONEncoder().encode(PushPrefs(badge: false))
+        #expect(try JSONDecoder().decode(PushPrefs.self, from: off).badge == false)
+    }
+
     @Test func theTopicIs22Base64URLCharactersOfTheTagsHash() {
         let topic = PushRules.topic("needs-\(IDs.a)")
         #expect(topic.count == 22)
@@ -267,6 +301,8 @@ struct PushCenterTests {
         var enabled = true
         var holding = false
         var waits: [TimeInterval] = []
+        /// What the icon's count is, as the lab says it.
+        var badge = 0
     }
 
     /// Whether someone is at the Mac, as the presence closures read it.
@@ -284,7 +320,7 @@ struct PushCenterTests {
         let device: RemoteDevice
     }
 
-    private func setup(answers: [PushResponse] = []) throws -> Setup {
+    private func setup(answers: [PushResponse] = [], badge: (() -> Int)? = nil) throws -> Setup {
         let auth = RemoteAuth(store: MemoryDeviceStore(), fixedCode: "000000")
         guard case .paired(_, let device) = auth.pair(code: "000000", name: "Phone") else { throw CancellationError() }
         let keys = MemoryDeviceStore()
@@ -293,8 +329,8 @@ struct PushCenterTests {
         let atTheMac = AtTheMac()
         let presence = MacPresence(secondsSinceInput: { atTheMac.value.withLock { $0 } ? 3 : 600 }, screenLocked: { false })
         let center = PushCenter(auth: auth, keyStore: keys, transport: service, presence: presence,
-                                enabled: { clock.enabled }, holdingFinishes: { clock.holding }, now: { clock.now },
-                                wait: { clock.waits.append($0) })
+                                enabled: { clock.enabled }, holdingFinishes: { clock.holding }, badge: badge ?? { clock.badge },
+                                now: { clock.now }, wait: { clock.waits.append($0) })
         return Setup(center: center, auth: auth, keys: keys, service: service, clock: clock, atTheMac: atTheMac, device: device)
     }
 
@@ -331,13 +367,13 @@ struct PushCenterTests {
         #expect(publicKey.count == 87)
         #expect(WebPush.data(base64URL: publicKey)?.first == 0x04)
         #expect(object["subscribed"] as? Bool == false)
-        #expect(object["prefs"] as? [String: Bool] == ["needsYou": true, "errors": true, "finishes": false, "names": false, "onlyAway": true])
+        #expect(object["prefs"] as? [String: Bool] == ["needsYou": true, "errors": true, "finishes": false, "names": false, "onlyAway": true, "badge": true])
         let stored = try #require(s.keys.data)
         #expect(!String(decoding: stored, as: UTF8.self).contains(publicKey))
         // The same key the next time, and from the store after a relaunch.
         #expect(try json(s.center.respond(.status, body: Data(), device: s.device))["publicKey"] as? String == publicKey)
         let relaunched = PushCenter(auth: s.auth, keyStore: s.keys, transport: s.service, presence: .live,
-                                    enabled: { true }, holdingFinishes: { false })
+                                    enabled: { true }, holdingFinishes: { false }, badge: { 0 })
         #expect(relaunched.publicKey(creating: false) == publicKey)
         // The devices' item is untouched by it.
         #expect(s.auth.devices.first?.push == nil)
@@ -389,7 +425,7 @@ struct PushCenterTests {
         let reply = s.center.respond(.prefs, body: Data(#"{"onlyAway":false,"names":true}"#.utf8), device: s.device)
         #expect(reply.status == 200)
         #expect(try json(reply)["prefs"] as? [String: Bool]
-                == ["needsYou": true, "errors": true, "finishes": false, "names": true, "onlyAway": false])
+                == ["needsYou": true, "errors": true, "finishes": false, "names": true, "onlyAway": false, "badge": true])
         #expect(s.center.respond(.prefs, body: Data(#"{"names":"yes"}"#.utf8), device: s.device) == .error(400, "prefs"))
         #expect(s.center.respond(.prefs, body: Data(#"{"names":1}"#.utf8), device: s.device) == .error(400, "prefs"))
         #expect(s.auth.devices.first?.push?.prefs.names == true)
@@ -453,7 +489,89 @@ struct PushCenterTests {
         #expect(payload["title"] as? String == "Claude Science")
     }
 
+    @Test func theTestPushShowsTheCountUnlessThatIsOff() async throws {
+        let s = try setup()
+        s.clock.badge = 4
+        let browser = FakeBrowser()
+        try subscribe(s, browser)
+        _ = s.center.respond(.test, body: Data("{}".utf8), device: s.device)
+        await s.center.settle()
+        #expect(try browser.open(try #require(s.service.requests.last?.httpBody))["badge"] as? Int == 4)
+        _ = s.center.respond(.prefs, body: Data(#"{"badge":false}"#.utf8), device: s.device)
+        _ = s.center.respond(.test, body: Data("{}".utf8), device: s.device)
+        await s.center.settle()
+        #expect(try browser.open(try #require(s.service.requests.last?.httpBody))["badge"] == nil)
+    }
+
+    @Test func theBadgePrefChangesWithThePrefsRoute() throws {
+        let s = try setup()
+        try subscribe(s)
+        #expect(s.auth.devices.first?.push?.prefs.badge == true)
+        let reply = s.center.respond(.prefs, body: Data(#"{"badge":false}"#.utf8), device: s.device)
+        #expect(try json(reply)["prefs"] as? [String: Bool]
+                == ["needsYou": true, "errors": true, "finishes": false, "names": false, "onlyAway": true, "badge": false])
+        #expect(s.center.respond(.prefs, body: Data(#"{"badge":"no"}"#.utf8), device: s.device) == .error(400, "prefs"))
+        // Asking for it again leaves the rest alone.
+        _ = s.center.respond(.prefs, body: Data(#"{"badge":true,"names":true}"#.utf8), device: s.device)
+        #expect(s.auth.devices.first?.push?.prefs == PushPrefs(names: true))
+    }
+
     // MARK: Announcing
+
+    @Test func aPushCarriesTheIconsCountWhenTheDeviceWantsIt() async throws {
+        let s = try setup()
+        s.clock.badge = 3
+        let browser = FakeBrowser()
+        try subscribe(s, browser)
+        s.center.announce(plan)
+        await s.center.settle()
+        let on = try browser.open(try #require(s.service.requests.last?.httpBody))
+        #expect(on["badge"] as? Int == 3)
+        // Turned off on the phone: the Mac leaves it out, and the worker leaves the icon alone.
+        _ = s.center.respond(.prefs, body: Data(#"{"badge":false}"#.utf8), device: s.device)
+        s.center.announce(.failed(Fixture.session(IDs.b, .error)))
+        await s.center.settle()
+        #expect(s.service.requests.count == 2)
+        let off = try browser.open(try #require(s.service.requests.last?.httpBody))
+        #expect(off["badge"] == nil)
+        #expect(off["tag"] as? String == "failed-\(IDs.b)")
+        // And on again.
+        _ = s.center.respond(.prefs, body: Data(#"{"badge":true}"#.utf8), device: s.device)
+        s.clock.badge = 0
+        s.center.announce(.failed(Fixture.session(IDs.a, .error)))
+        await s.center.settle()
+        #expect(try browser.open(try #require(s.service.requests.last?.httpBody))["badge"] as? Int == 0)
+    }
+
+    @Test func theCountIsReadWhenThePushGoesNotWhenItIsDecided() async throws {
+        let s = try setup()
+        let browser = FakeBrowser()
+        try subscribe(s, browser)
+        s.clock.badge = 1
+        s.center.announce(plan)
+        // LabModel raises a card before it updates what waits: the count settles after.
+        s.clock.badge = 2
+        await s.center.settle()
+        #expect(try browser.open(try #require(s.service.requests.first?.httpBody))["badge"] as? Int == 2)
+    }
+
+    @Test func theLabsOwnCountReachesThePush() async throws {
+        let lab = LabModel()
+        let s = try setup(badge: { RemoteAPI.badge(lab: lab) })
+        let browser = FakeBrowser()
+        try subscribe(s, browser)
+        lab.pushRaised = { s.center.announce($0) }
+        lab.ingest(Fixture.snapshot(Fixture.session(IDs.a, .running), Fixture.session(IDs.b, .running), Fixture.session(IDs.c, .running)))
+        lab.ingest(Fixture.snapshot(Fixture.session(IDs.a, .needsInput, reason: .plan), Fixture.session(IDs.b, .error),
+                                    Fixture.session(IDs.c, .running)))
+        await s.center.settle()
+        // One session needs you and one stopped: 2, even for the push sent as the first one began to wait.
+        #expect(RemoteAPI.badge(lab: lab) == 2)
+        #expect(s.service.requests.count == 2)
+        for request in s.service.requests {
+            #expect(try browser.open(try #require(request.httpBody))["badge"] as? Int == 2)
+        }
+    }
 
     @Test func aCardThatNeedsYouPushesOncePerEvent() async throws {
         let s = try setup()

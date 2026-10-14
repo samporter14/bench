@@ -61,6 +61,10 @@ enum RemoteAPI {
             try c.encode(usage, forKey: .usage)
         }
 
+        /// The count on the phone's Home Screen icon: what needs you plus what
+        /// stopped with an error. The app adds the same two lists.
+        var badge: Int { needsYou.count + failed.count }
+
         /// The same state at another moment: for telling a real change from
         /// a tick.
         func at(_ date: Date) -> State {
@@ -471,8 +475,18 @@ enum RemoteAPI {
     /// The input, from the models as they are now.
     static func input(lab: LabModel, usage: PlanUsageModel, bench: String, now: Date = Date()) -> Input {
         Input(bench: bench, now: now, problem: lab.problem, waiting: lab.waiting, snoozed: lab.snoozed,
-              failed: lab.cards.compactMap { if case .failed(let session) = $0 { session } else { nil } },
+              failed: failedSessions(lab: lab),
               working: lab.working, recent: lab.recent, limits: usage.limits, forecasts: usage.forecasts)
+    }
+
+    /// The sessions of the failure cards: `failed` in `/api/state`.
+    static func failedSessions(lab: LabModel) -> [SessionStatus] {
+        lab.cards.compactMap { if case .failed(let session) = $0 { session } else { nil } }
+    }
+
+    /// `State.badge` of the lab as it is now, for a push to carry.
+    static func badge(lab: LabModel) -> Int {
+        lab.waiting.count + failedSessions(lab: lab).count
     }
 
     /// Every session Bench knows of now, the freshest reading first: what

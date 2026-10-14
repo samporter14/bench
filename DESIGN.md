@@ -1797,16 +1797,18 @@ them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
   `*.notify.windows.com`. The subscription is stored with the device's
   record and goes when the device is removed or unpaired.
 - **Prefs** (per device): `needsYou` (on), `errors` (on), `finishes` (off),
-  `names` (off), `onlyAway` (on).
+  `names` (off), `onlyAway` (on), `badge` (on: the count on the Bench icon,
+  below). A record from before reads `badge` as on.
 - **When**: from the same moments that raise a card (LabModel's announce hook),
   once per device per event (session + kind + since). Finishes held during a
   Nidus focus session follow the hold. `onlyAway`: skip while the Mac is in use
   (screen unlocked and input within the last 2 minutes).
 - **Payload** (JSON, ≤ 1 KB before encryption):
-  `{"v":1,"title":"…","body":"…","tag":"<kind>-<id>","url":"/#/session/<id>"}`.
-  With `names` off: title "Claude Science", body "A session needs you: plan
-  ready for review" / "A session stopped with an error" / "A session
-  finished". With names on: the session's title, then its sentence and
+  `{"v":1,"title":"…","body":"…","tag":"<kind>-<id>","url":"/#/session/<id>","badge":2}`.
+  `badge` (an integer, 0 or more) is there only for a device whose `badge`
+  pref is on (see the icon's count, below). With `names` off: title "Claude
+  Science", body "A session needs you: plan ready for review" / "A session
+  stopped with an error" / "A session finished". With names on: the session's title, then its sentence and
   project. Headers: `TTL: 3600`, `Urgency: high` (needs you, errors) or
   `normal`, `Topic` = a 22-char base64url hash of tag, so a newer push replaces
   an older one.
@@ -1816,11 +1818,47 @@ them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
 - **Phone**: `/sw.js` (served from the binary, scope `/`) shows the push with
   `icon:/icon-180.png` and `tag`, and on tap focuses the app or opens `url`.
   Settings on the phone: "Notifications" with a Turn On button (needs a tap,
-  and only works from the Home Screen app; in Safari it says so), the five
-  prefs, Send a test. Taps work off the tailnet too (the push comes through
-  Apple), but opening the session needs Tailscale on.
+  and only works from the Home Screen app; in Safari it says so), the six
+  prefs (the last is "Show a count on the Bench icon"), Send a test. Taps
+  work off the tailnet too (the push comes through Apple), but opening the
+  session needs Tailscale on.
+- **The icon's count** (Home Screen badge, like Mail's unread count): the
+  number of sessions that need you plus the number that stopped with an
+  error, i.e. `needsYou.length + failed.length` of `/api/state`. It is
+  the same number on the Mac side (`RemoteAPI.badge(lab:)`, which reads the
+  two lists the state is built from) and in the app.
+  - *In the app* (`applyBadge` in `app.js`): every time a state arrives (the
+    stream, a poll, or opening the app) it calls `navigator.setAppBadge(n)`,
+    or `clearAppBadge()` at 0 or when signed out. Only when
+    `'setAppBadge' in navigator` and the app runs from the Home Screen
+    (`navigator.standalone` or `display-mode: standalone`), and every call
+    sits in try/catch, since the promise rejects when iOS doesn't allow it.
+    It never asks for permission: iOS shows a Home Screen app's badge only
+    when it has notification permission, so the count rides on the
+    Notifications permission the user already gave.
+  - *In a push*: Bench puts `"badge": <count>` in the payload, and `sw.js`
+    calls `self.navigator.setAppBadge(badge)` (or `clearAppBadge()` for 0,
+    in try/catch) next to `showNotification`. A payload without a numeric
+    `badge` leaves the icon alone.
+  - *No silent pushes*: iOS doesn't deliver a push that shows nothing, so
+    Bench can't refresh the icon on its own. It changes when a push arrives
+    (any push carries the count as it is then) or when the app is opened. A
+    count that only goes down (answering a question on the Mac sends nothing),
+    or goes up with no push (you were at your Mac, or turned that kind off),
+    stays as it was until one of those.
+  - *The switch*: "Show a count on the Bench icon" in the phone's Settings →
+    Notifications (on by default; also shown when notifications are off but
+    allowed, since the app's count still works then). The app keeps it in
+    `localStorage` (`bench-badge`: per device, and there before Settings has
+    loaded; the phone app used no storage before this), and sends it as the
+    `badge` pref with `POST /api/push/prefs`, because the service worker
+    can't read `localStorage`. Off: the app clears the icon and doesn't set
+    it, and Bench leaves `badge` out of that device's pushes. When Settings
+    loads, the Mac's value is written back to `localStorage` (so a
+    re-paired phone follows what its pushes do).
 - **Test**: `POST /api/push/test` ignores `onlyAway` (Sam is at the Mac when
-  he presses it) and the other prefs. At most three a minute per device (429
+  he presses it) and the other prefs (but `badge` decides whether it carries
+  the count). At most three a minute per device (429
   `slowDown`): each is a push signed with the one key every device shares.
 - **Demo**: `--demo remote` makes no keys and no network calls; subscribe
   answers as if subscribed, and the test does nothing.
@@ -1866,6 +1904,13 @@ lines marked `// Phase 2 push`.
   console) and `CGEventSource.secondsSinceLastEventType` (any input) only
   when a device needs it. A push skipped for it isn't remembered, so the same
   moment coming again while away (a reminder) still goes.
+- **The count is read when the push goes**, not when it is decided:
+  `PushCenter.deliver` reads it inside the delivery task, a turn after
+  `announce`. LabModel raises a card (and so calls `pushRaised`) before it
+  assigns `waiting` from the same read, so a count taken at the announce
+  would miss the session that has just begun to wait. A retry sends the same
+  payload. The test push carries the count too when the device's `badge`
+  pref is on, so Send a Test shows what a real push will do.
 - **Words**: names off, the needs-you body names the kind of wait ("a
   question to answer", "permission to reach the web", or just "A session
   needs you"); the held finishes say "A session finished" or "Sessions
