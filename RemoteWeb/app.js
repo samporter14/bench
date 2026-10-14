@@ -90,6 +90,8 @@ const PATHS = {
   msg: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   helper: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
   share: '<path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>',
+  camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
+  x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
 };
 
 function icon(name, cls = '') {
@@ -193,6 +195,7 @@ async function api(path, method = 'GET', body) {
         if (!res.ok) {
           const e = new Error('http ' + res.status);
           e.status = res.status;
+          e.wait = Number(res.headers.get('Retry-After')) || 0;
           try { e.data = await res.json(); } catch { /* not JSON */ }
           throw e;
         }
@@ -409,6 +412,7 @@ function tick() {
     // Keepalive comments never reach page code, so poll when the stream is quiet.
     if (now - S.lastOk > 30000 && !S.refreshing && now - S.lastTry > 25000) refresh(false);
     pill();
+    syncLive(); // a quiet spell may be over
   } else if (S.view === 'offline' && !S.refreshing && now - S.lastTry > 15000) {
     refresh(true);
   }
@@ -434,12 +438,14 @@ function onVisible() {
       connect();
       const r = route();
       if (r.name === 'session') loadSession(r.id);
+      syncLive();
     }
   }
 }
 function onHidden() {
   stopTicker();
   disconnect();
+  syncLive();
 }
 
 /* ---------- routing ---------- */
@@ -557,6 +563,7 @@ function render(fresh = false, force = false) {
     const t = root.querySelector('.detail h1') || root.querySelector('h1');
     if (t) t.focus({ preventScroll: true });
   }
+  syncLive();
 }
 
 const detailKey = (r) => (['session', 'artifacts', 'file', 'settings'].includes(r.name) ? routeKey(r) : 'empty');
@@ -922,6 +929,117 @@ function md(src, ctx) {
   return out;
 }
 
+/* ---------- Live text: what Claude is writing now, while the open session works ---------- */
+
+// Asked every 1.5 s, one request at a time, only while this session's screen is showing and it is
+// working. What comes back is the current model call's text, which Bench starts over now and then, so
+// the card REPLACES what it shows each time and never adds to it.
+const LIVE_EVERY = 1500;
+const LIVE = { id: '', seq: 0, timer: 0, busy: false, shown: false, text: null, activity: null, fails: 0, quiet: null, off: dict() };
+
+const snapSig = (id) => JSON.stringify(lookup(id));
+
+// The session whose live text should be coming in right now, or ''. The state stream says first; a session
+// the stream doesn't list falls back to what its own page said.
+function liveWanted() {
+  const r = route();
+  if (S.view !== 'app' || document.hidden || r.name !== 'session' || LIVE.off[r.id]) return '';
+  const rec = S.sess[r.id];
+  if (rec && rec.phase === 'missing') return '';
+  const snap = lookup(r.id);
+  const d = rec && rec.data;
+  if (!(snap ? snap.bucket === 'working' : !!d && d.state === 'working')) return '';
+  // Told it isn't working a moment ago: wait for the state to change before asking again, or 3 s, then
+  // twice as long (to a minute) each time the state still says working and Bench says not.
+  const q = LIVE.quiet;
+  if (q && q.id === r.id && q.sig === snapSig(r.id) && Date.now() - q.at < q.wait) return '';
+  return r.id;
+}
+
+function syncLive() {
+  const want = liveWanted();
+  if (want === LIVE.id) return;
+  stopLive();
+  if (want) {
+    LIVE.id = want;
+    LIVE.timer = setTimeout(() => liveTick(LIVE.seq), 0);
+  }
+}
+
+function stopLive() {
+  const had = LIVE.id;
+  clearTimeout(LIVE.timer);
+  LIVE.seq++;
+  Object.assign(LIVE, { id: '', timer: 0, shown: false, text: null, activity: null, fails: 0 }); // `busy` is cleared only by the request itself
+  if (had) paintLive();
+}
+
+async function liveTick(seq) {
+  if (seq !== LIVE.seq || !LIVE.id) return;
+  if (LIVE.busy) { LIVE.timer = setTimeout(() => liveTick(seq), 300); return; } // an earlier ask is still out: never two at once
+  const id = LIVE.id;
+  LIVE.busy = true;
+  let d = null;
+  let err = null;
+  try { d = await api('/api/sessions/' + encodeURIComponent(id) + '/live'); } catch (e) { err = e; }
+  LIVE.busy = false;
+  if (seq !== LIVE.seq) return; // left, hidden or finished while it was coming
+  let wait = LIVE_EVERY;
+  if (err || !d || typeof d.working !== 'boolean') {
+    if (err instanceof Unauth) return showPair();
+    if (err && (err.status === 404 || err.status === 405 || err.status === 403)) { LIVE.off[id] = true; return stopLive(); } // an older Bench, or the session is gone
+    LIVE.fails++;
+    // Bench asked to wait (the api helper has already tried twice): do as it says, then go on.
+    wait = err && isSlow(err) ? Math.min(10, Math.max(2, err.wait || 2)) * 1000 + Math.random() * 500 : Math.min(15000, LIVE_EVERY * 2 ** LIVE.fails);
+  } else if (!d.working) {
+    return liveDone(id);
+  } else {
+    LIVE.fails = 0;
+    LIVE.shown = true;
+    LIVE.text = typeof d.text === 'string' && d.text ? d.text : null;
+    LIVE.activity = typeof d.activity === 'string' && d.activity ? d.activity : null;
+    paintLive();
+  }
+  LIVE.timer = setTimeout(() => liveTick(seq), wait);
+}
+
+// It stopped working: the card goes, and the saved reply is read from Bench.
+function liveDone(id) {
+  const sig = snapSig(id);
+  const before = LIVE.quiet;
+  LIVE.quiet = { id, sig, at: Date.now(), wait: before && before.id === id && before.sig === sig ? Math.min(60000, before.wait * 2) : 3000 };
+  stopLive();
+  loadSession(id); // reads the history too
+}
+
+// The card sits in its own region and is updated in place, so a reader's place in the text is kept.
+function paintLive(sv = root.querySelector('.sessview')) {
+  if (!sv) return;
+  const el = sv.querySelector('.sess-body > [data-r="live"]');
+  if (!el) return;
+  if (!(LIVE.shown && LIVE.id && sv.dataset.sess === LIVE.id)) { if (el.firstChild) el.replaceChildren(); return; }
+  let sec = el.firstChild;
+  if (!sec) {
+    sec = h('section', { class: 'sec', 'aria-labelledby': 'live-h' },
+      h('h2', { class: 'sec-h', id: 'live-h' }, h('span', { class: 'live-dot', 'aria-hidden': 'true' }), 'Writing…'),
+      h('div', { class: 'card live' }, h('p', { class: 'live-act' }), h('div', { class: 'md live-text', tabindex: '0', role: 'region', 'aria-label': 'What Claude is writing' })));
+    el.append(sec);
+  }
+  const card = sec.querySelector('.card');
+  const act = card.querySelector('.live-act');
+  const box = card.querySelector('.live-text');
+  card.hidden = !LIVE.activity && !LIVE.text;
+  act.hidden = !LIVE.activity;
+  if (act.textContent !== (LIVE.activity || '')) act.textContent = LIVE.activity || '';
+  box.hidden = !LIVE.text;
+  if (LIVE.text && box._t !== LIVE.text) {
+    const stick = box._t === undefined || box.scrollHeight - box.scrollTop - box.clientHeight < 28; // follow the end unless the reader scrolled up
+    box.replaceChildren(...md(LIVE.text));
+    box._t = LIVE.text;
+    if (stick) box.scrollTop = box.scrollHeight;
+  }
+}
+
 /* ---------- Session: built from regions, so a refresh never disturbs what you are typing ---------- */
 
 const STATE_LABELS = {
@@ -1011,9 +1129,9 @@ function statusMark(state) {
 }
 
 // What the person has typed or chosen on a session, kept across every redraw.
-const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: dict(), other: dict(), otherOn: dict(), qTool: '', busy: dict(), note: null, noteT: 0, shown: 4, more: dict() });
+const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: dict(), other: dict(), otherOn: dict(), qTool: '', busy: dict(), note: null, noteT: 0, shown: 4, more: dict(), photo: null, permId: '', permAll: false, permDecision: '' });
 
-const REGIONS = ['head', 'open', 'unread', 'question', 'plan', 'reply', 'toyou', 'artifacts', 'convo', 'times', 'openlow'];
+const REGIONS = ['head', 'open', 'unread', 'permission', 'question', 'plan', 'live', 'reply', 'toyou', 'artifacts', 'convo', 'times', 'openlow'];
 
 function sessionView(id, inPane) {
   const body = h('div', { class: (inPane ? 'detail-in' : 'wrap') + ' sess-body' }, REGIONS.map((n) => h('div', { 'data-r': n })));
@@ -1050,19 +1168,25 @@ function fillSession(sv, id) {
   const u = ui(id);
   const q = d && d.question;
   if (q && u.qTool !== q.toolId) Object.assign(u, { qTool: q.toolId, picks: dict(), other: dict(), otherOn: dict() });
+  const perm = validPermission(d && d.permission);
+  if (perm && u.permId !== perm.id) Object.assign(u, { permId: perm.id, permAll: false, permDecision: '' });
   const set = (name, sig, build) => setRegion(body, name, JSON.stringify(sig) ?? '', build);
   const none = () => [];
 
   set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze]], () => headNodes(id, rec, d, snap));
   // When the phone can act, Open on Mac is a quiet button after the details; otherwise it is the main one.
-  const acts = !!(d && d.can && (d.can.approve || d.can.answer || d.can.message));
+  // A permission the phone can't allow carries its own Open on Mac, so there is only ever one.
+  const acts = !!(d && d.can && (d.can.approve || d.can.answer || d.can.message)) || !!(perm && (perm.canAllow || perm.canDeny));
   const gone = rec && rec.phase === 'missing';
-  set('open', gone || acts ? 0 : 1, () => (gone || acts ? [] : [openBlock(id)]));
-  set('openlow', acts ? 1 : 0, () => (acts ? [openBlock(id, true)] : []));
+  const permOpen = !!perm && !perm.canAllow;
+  set('open', gone || acts || permOpen ? 0 : 1, () => (gone || acts || permOpen ? [] : [openBlock(id)]));
+  set('openlow', acts && !permOpen ? 1 : 0, () => (acts && !permOpen ? [openBlock(id, true)] : []));
   set('unread', d && d.version >= 2 && d.readable === false, () => (d && d.version >= 2 && d.readable === false
     ? [h('p', { class: 'quiet', text: 'Bench can’t show this session’s messages. Open it on your Mac.' })] : []));
+  set('permission', perm ? [perm, u.busy.permission, u.permDecision, u.permAll] : 0, () => (perm ? [permissionCard(id, perm, u)] : []));
   set('question', d && q ? [q, u.picks, u.otherOn, u.busy.question] : 0, () => (d && q ? [questionCard(id, q, u)] : []));
   set('plan', d && d.plan ? [d.plan, d.can && d.can.approve, u.busy.plan] : 0, () => (d && d.plan ? [planCard(id, d, u)] : []));
+  paintLive(sv);
   set('reply', d && d.reply ? d.reply : 0, () => (d && d.reply && d.reply.text
     ? [section('Latest reply', 0, h('div', { class: 'card reply' }, h('div', { class: 'md' }, md(d.reply.text)), d.reply.at ? h('p', { class: 'foot-t' }, rel(d.reply.at)) : null))] : []));
   set('toyou', d && d.toYou && d.toYou.length ? d.toYou : 0, () => (d && d.toYou && d.toYou.length
@@ -1092,6 +1216,7 @@ function fillSession(sv, id) {
     paintDock(id, dock);
   } else if (dock) dock.remove();
   requestAnimationFrame(() => { measureClamps(sv); watchHistTop(sv, id); });
+  syncLive();
 }
 
 function headNodes(id, rec, d, snap) {
@@ -1147,6 +1272,69 @@ function planCard(id, d, u) {
         run: () => doAction(id, 'plan', '/api/sessions/' + id + '/approve', { version: plan.version }),
       }),
     }) : null));
+}
+
+/* ----- the permission card ----- */
+
+const PERM_LINES = 12;
+const CODE_MAX = 8000;
+
+// The one request the phone may answer, or null when the page sent something else.
+function validPermission(p) {
+  if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !p.id || p.id.length > 200) return null;
+  return {
+    id: p.id,
+    kind: typeof p.kind === 'string' ? p.kind : '',
+    title: typeof p.title === 'string' && p.title ? p.title : 'Wants your permission',
+    detail: typeof p.detail === 'string' ? p.detail : '',
+    code: typeof p.code === 'string' && p.code ? p.code.slice(0, CODE_MAX) : '',
+    helper: p.helper === true,
+    canAllow: p.canAllow === true,
+    canDeny: p.canDeny === true,
+    why: typeof p.why === 'string' ? p.why : '',
+  };
+}
+
+function askPermission(id, p, decision) {
+  const u = ui(id);
+  u.permDecision = decision;
+  return doAction(id, 'permission', '/api/sessions/' + id + '/permission', { id: p.id, decision });
+}
+
+function permissionCard(id, p, u) {
+  const busy = !!u.busy.permission;
+  const lines = p.code ? p.code.replace(/\n+$/, '').split('\n').length : 0;
+  const long = lines > PERM_LINES;
+  const isCode = !!p.code;
+  const buttons = [];
+  if (p.canAllow) {
+    buttons.push(h('button', {
+      class: 'btn primary', type: 'button', text: busy && u.permDecision === 'allow' ? 'Allowing…' : 'Allow once', disabled: busy, 'data-key': 'perm-allow',
+      onclick: () => confirmSheet({
+        title: p.kind === 'local_exec' ? 'Run this code once?' : 'Allow this once?',
+        message: (isCode ? 'It runs on your Mac, this one time.' : 'Only this once.') + ' Anything more asks you again.',
+        confirm: 'Allow once',
+        run: () => askPermission(id, p, 'allow'),
+      }),
+    }));
+  }
+  if (p.canDeny) {
+    buttons.push(h('button', {
+      class: 'btn', type: 'button', text: busy && u.permDecision === 'deny' ? 'Denying…' : 'Deny', disabled: busy, 'data-key': 'perm-deny',
+      onclick: () => askPermission(id, p, 'deny'),
+    }));
+  }
+  return h('div', { class: 'card perm', role: 'group', 'aria-labelledby': 'perm-t' },
+    h('div', { class: 'perm-body' },
+      h('p', { class: 'sec-h perm-over', text: 'Permission' }),
+      p.helper ? h('p', { class: 'perm-who' }, icon('helper', 'sm'), h('span', { text: 'A helper agent is asking' })) : null,
+      h('p', { class: 'perm-title', id: 'perm-t', text: p.title }),
+      p.detail ? h('p', { class: 'perm-detail', text: p.detail }) : null,
+      isCode ? h('pre', { class: 'perm-code' + (u.permAll ? ' all' : ''), tabindex: '0', role: 'region', 'aria-label': 'The code to run' }, h('code', { text: p.code })) : null,
+      isCode && long ? h('button', { class: 'more', type: 'button', text: u.permAll ? 'Show less' : 'Show all', 'aria-expanded': u.permAll ? 'true' : 'false', 'data-key': 'perm-more', onclick: () => { u.permAll = !u.permAll; redrawSession(id); } }) : null,
+      !p.canAllow ? h('p', { class: 'perm-why', text: p.why || 'Open it on your Mac to answer.' }) : null),
+    buttons.length ? h('div', { class: 'q-actions' }, buttons) : null,
+    !p.canAllow ? h('div', { class: 'perm-open' }, openBlock(id, true)) : null);
 }
 
 /* ----- the question card ----- */
@@ -1252,6 +1440,119 @@ function redrawSession(id) {
   if (sv && sv.dataset.sess === id) fillSession(sv, id);
 }
 
+/* ----- photos: made ready in the page, sent as one JPEG ----- */
+
+// The page draws the picture at 3,072 px on its long side (the browser applies the camera's rotation) and
+// sends a JPEG. Bench takes a body up to 6 MB; base64 adds a third, so the JPEG stays under 4.2 MB.
+// The page's CSP has no blob: images, so a picture is only ever read as a data: URL.
+const PHOTO_SIDE = 3072;
+const PHOTO_BYTES = 4200000;
+const PHOTO_STEPS = [[PHOTO_SIDE, 0.85], [PHOTO_SIDE, 0.7], [2400, 0.7], [1800, 0.7], [1200, 0.7]];
+const PHOTO_NOTE_KEY = 'bench-photo-note';
+const PHOTO_NOTE = 'Photos are saved to the project’s uploads, where its other sessions can see them.';
+const notPhoto = () => Object.assign(new Error('not a photo'), { code: 'notImage' });
+
+const readDataURL = (blob) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result));
+  r.onerror = () => reject(r.error || new Error('read'));
+  r.readAsDataURL(blob);
+});
+
+async function decodePhoto(file) {
+  if ('createImageBitmap' in window) {
+    try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { /* an older browser: use an Image */ }
+  }
+  const url = await readDataURL(file);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('decode'));
+    img.src = url;
+  });
+}
+
+const toJPEG = (canvas, q) => new Promise((resolve) => { try { canvas.toBlob(resolve, 'image/jpeg', q); } catch { resolve(null); } });
+
+// -> { blob, thumb (a small data: URL), w, h, size }. Throws with code 'notImage' when it can't be read as a picture.
+async function preparePhoto(file) {
+  let src;
+  try { src = await decodePhoto(file); } catch { throw notPhoto(); }
+  const w0 = src.naturalWidth || src.width;
+  const h0 = src.naturalHeight || src.height;
+  if (!w0 || !h0) throw notPhoto();
+  let out = null;
+  for (const [side, q] of PHOTO_STEPS) {
+    const k = Math.min(1, side / Math.max(w0, h0));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w0 * k));
+    c.height = Math.max(1, Math.round(h0 * k));
+    const g = c.getContext('2d');
+    g.fillStyle = '#fff'; // a picture with see-through parts is flattened onto white, not black
+    g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(src, 0, 0, c.width, c.height);
+    const blob = await toJPEG(c, q);
+    if (!blob) continue;
+    out = { blob, w: c.width, h: c.height, size: blob.size };
+    if (blob.size <= PHOTO_BYTES) break;
+  }
+  if (!out) throw new Error('encode');
+  const t = document.createElement('canvas');
+  t.width = t.height = 96;
+  const tg = t.getContext('2d');
+  const k = Math.max(96 / w0, 96 / h0);
+  tg.fillStyle = '#fff';
+  tg.fillRect(0, 0, 96, 96);
+  tg.drawImage(src, (96 - w0 * k) / 2, (96 - h0 * k) / 2, w0 * k, h0 * k);
+  out.thumb = t.toDataURL('image/jpeg', 0.7);
+  if (src.close) src.close();
+  return out;
+}
+
+const photoNoteSeen = () => { try { return localStorage.getItem(PHOTO_NOTE_KEY) === '1'; } catch { return S.photoNote === true; } };
+const photoNoteSeenNow = () => { S.photoNote = true; try { localStorage.setItem(PHOTO_NOTE_KEY, '1'); } catch { /* this run only */ } };
+
+// `holder.photo` is the photo being added to a message or a new session: { phase: prep | ready | err, blob, thumb, w, h, size, id, note, err }.
+// The first photo a person ever picks also says where it goes. `repaint` redraws whatever shows it.
+async function stagePhoto(holder, file, repaint) {
+  const mine = { phase: 'prep', id: uuid(), note: !photoNoteSeen(), sent: null };
+  if (mine.note) photoNoteSeenNow();
+  holder.photo = mine;
+  repaint();
+  try {
+    Object.assign(mine, await preparePhoto(file), { phase: 'ready' });
+  } catch (e) {
+    Object.assign(mine, { phase: 'err', err: e && e.code === 'notImage' ? 'That doesn’t look like a photo. Try another.' : 'Couldn’t get that photo ready. Try another.' });
+  }
+  if (holder.photo === mine) repaint();
+}
+
+const photoReady = (p) => !!p && p.phase === 'ready';
+
+function photoChip(p, remove, locked) {
+  const label = p.phase === 'prep' ? 'Getting the photo ready…' : p.phase === 'err' ? p.err : `Photo · ${fmtSize(p.size)}`;
+  return h('div', { class: 'photo' },
+    h('div', { class: 'photo-chip' + (p.phase === 'err' ? ' bad' : '') },
+      p.thumb ? h('img', { class: 'photo-img', src: p.thumb, alt: 'The photo you picked', width: '44', height: '44' }) : h('span', { class: 'photo-ph', 'aria-hidden': 'true' }, icon('camera', 'sm')),
+      h('span', { class: 'photo-t', role: p.phase === 'err' ? 'alert' : null, text: label }),
+      h('button', { class: 'photo-x', type: 'button', 'aria-label': 'Remove the photo', 'data-key': 'photo-x', disabled: !!locked, onclick: remove }, icon('x', 'sm'))),
+    p.note ? h('p', { class: 'photo-note', text: PHOTO_NOTE }) : null);
+}
+
+// A hidden picker and the button that opens it. iOS offers the camera or the library.
+function photoButton(cls, label, onFile, ...kids) {
+  const input = h('input', { type: 'file', accept: 'image/*', hidden: true, tabindex: '-1', 'aria-hidden': 'true' });
+  input.addEventListener('change', () => {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (f) onFile(f);
+  });
+  const button = h('button', { class: cls, type: 'button', 'aria-label': label, onclick: () => input.click() }, kids);
+  return { input, button };
+}
+
+const blobBase64 = async (blob) => (await readDataURL(blob)).split(',')[1] || '';
+
 /* ----- the composer, pinned at the bottom ----- */
 
 const PLACEHOLDER = {
@@ -1292,9 +1593,11 @@ function buildDock(id) {
   ta.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touchOnly()) { e.preventDefault(); sendMessage(id); }
   });
+  const cam = photoButton('cam', 'Add a photo', (f) => stagePhoto(u, f, () => paintDock(id)), icon('camera'));
   return h('div', { class: 'dock', 'data-sess': id }, h('div', { class: 'dock-in' },
+    h('div', { class: 'dock-photo', hidden: true }),
     h('div', { class: 'dock-note', role: 'status', hidden: true }),
-    h('div', { class: 'composer' }, grow, h('button', { class: 'send', type: 'button', 'aria-label': 'Send', onclick: () => sendMessage(id) }, icon('up'))),
+    h('div', { class: 'composer' }, cam.button, cam.input, grow, h('button', { class: 'send', type: 'button', 'aria-label': 'Send', onclick: () => sendMessage(id) }, icon('up'))),
     h('p', { class: 'dock-count', hidden: true })));
 }
 
@@ -1307,11 +1610,14 @@ function paintDock(id, dock = root.querySelector('.dock')) {
   const ta = dock.querySelector('textarea');
   const note = dock.querySelector('.dock-note');
   const count = dock.querySelector('.dock-count');
-  const posting = !!u.busy.message;
+  const posting = !!u.busy.message || !!u.sending;
   ta.disabled = !can.message;
   ta.readOnly = posting;
   ta.placeholder = can.message ? PLACEHOLDER[can.message] || 'Message Claude' : can.why || 'You can’t message this session right now';
-  dock.querySelector('.send').disabled = !can.message || posting || !u.draft.trim();
+  // A photo can go with no words; a photo still being made ready, or one that failed, holds Send back.
+  dock.querySelector('.send').disabled = !can.message || posting || (u.photo ? !photoReady(u.photo) : !u.draft.trim());
+  dock.querySelector('.cam').disabled = !can.message || posting;
+  paintDockPhoto(id, dock, posting);
   dock.classList.toggle('off', !can.message);
   // The field grows to its text, or to its hint when empty, so a long hint is never clipped.
   ta.parentElement.dataset.v = u.draft || ta.placeholder;
@@ -1336,6 +1642,18 @@ function paintDock(id, dock = root.querySelector('.dock')) {
   }
 }
 
+// The chip for the photo that is about to go, redrawn only when it changes.
+function paintDockPhoto(id, dock, posting) {
+  const u = ui(id);
+  const area = dock.querySelector('.dock-photo');
+  const p = u.photo;
+  const sig = p ? [p.id, p.phase, !!p.note, !!posting].join('|') : '';
+  if (area.dataset.sig === sig) return;
+  area.dataset.sig = sig;
+  area.hidden = !p;
+  area.replaceChildren(...(p ? [photoChip(p, () => { u.photo = null; paintDock(id); }, posting)] : []));
+}
+
 function setNote(id, note, ms = 6000) {
   const u = ui(id);
   clearTimeout(u.noteT);
@@ -1344,21 +1662,32 @@ function setNote(id, note, ms = 6000) {
   if (note) u.noteT = setTimeout(() => { u.note = null; paintDock(id); }, ms);
 }
 
+// What went wrong with a photo, in a sentence: too big, not a picture, or a caption holding a file link.
+function photoTrouble(status, data) {
+  const err = data && typeof data.error === 'string' ? data.error : '';
+  if (status === 413) return 'That photo is too big to send from here. Try a smaller one.';
+  if (status === 415 || err === 'notAnImage') return 'That doesn’t look like a photo Bench can use. Try another.';
+  if (status === 400 && err === 'reference') return 'The message has something that looks like a file link in it. Take that out and try again.';
+  return '';
+}
+
 function describe(out) {
   const { status, data } = out;
   const result = data && typeof data.result === 'string' ? data.result : '';
   const sentence = data && typeof data.sentence === 'string' ? data.sentence : '';
   if (status === 429) return { ok: false, refetch: false, text: data && data.error === 'tooMany' ? 'Too many actions just now. Try again in a minute.' : slowText(data) };
+  const trouble = photoTrouble(status, data);
+  if (trouble) return { ok: false, refetch: false, text: trouble };
   if (result === 'changed') return { ok: false, refetch: true, text: 'This changed on your Mac. Showing the latest.' };
-  if (['approved', 'sent', 'queued', 'resumed'].includes(result) && status < 300) {
-    return { ok: true, refetch: true, text: sentence || { approved: 'Approved', sent: 'Sent', queued: 'Queued', resumed: 'Picked up again' }[result] };
+  if (['approved', 'allowed', 'denied', 'sent', 'queued', 'resumed'].includes(result) && status < 300) {
+    return { ok: true, refetch: true, text: sentence || { approved: 'Approved', allowed: 'Allowed once', denied: 'Denied', sent: 'Sent', queued: 'Queued', resumed: 'Picked up again' }[result] };
   }
   if (result === 'blocked') return { ok: false, refetch: true, text: sentence || 'That isn’t possible right now.' };
   if (status === 403 && !sentence) return { ok: false, refetch: true, text: 'Actions are off in Bench’s Settings.' };
   return { ok: false, refetch: true, open: true, text: sentence || 'Couldn’t do that from here. Open it on your Mac.' };
 }
 
-// One path for approve, answer and message: disable, post, say what happened, refetch.
+// One path for approve, answer, permission and message: disable, post, say what happened, refetch.
 async function doAction(id, kind, path, body) {
   const u = ui(id);
   if (u.busy[kind]) return null;
@@ -1382,17 +1711,40 @@ async function sendMessage(id) {
   const u = ui(id);
   const text = u.draft.trim();
   const d = S.sess[id] && S.sess[id].data;
-  if (!text || u.busy.message || !d || !d.can || !d.can.message) return;
+  if (u.busy.message || u.sending || !d || !d.can || !d.can.message) return;
+  if (u.photo) {
+    if (photoReady(u.photo)) await sendPhoto(id, text, u.photo);
+    return;
+  }
+  if (!text) return;
   if (!u.msg || u.msg.text !== text) u.msg = { id: uuid(), text }; // a retry of the same words keeps its id
   const result = await doAction(id, 'message', '/api/sessions/' + id + '/message', { text, id: u.msg.id });
-  if (result && result.ok) {
-    u.draft = '';
-    u.msg = null;
-    const dock = root.querySelector('.dock');
-    const ta = dock && dock.dataset.sess === id ? dock.querySelector('.composer-ta') : null;
-    if (ta) ta.value = '';
-    paintDock(id);
-  }
+  if (result && result.ok) clearComposer(id);
+}
+
+function clearComposer(id) {
+  const u = ui(id);
+  u.draft = '';
+  u.msg = null;
+  u.photo = null;
+  const dock = root.querySelector('.dock');
+  const ta = dock && dock.dataset.sess === id ? dock.querySelector('.composer-ta') : null;
+  if (ta) ta.value = '';
+  paintDock(id);
+}
+
+// The photo, with the words as its caption, as one message. A retry of the same photo and words keeps its id.
+async function sendPhoto(id, text, photo) {
+  const u = ui(id);
+  if (!photo.sent || photo.sent.text !== text) photo.sent = { id: photo.sent ? uuid() : photo.id, text };
+  u.sending = true;
+  setNote(id, { text: 'Sending photo…' }, 180000);
+  let image = '';
+  try { image = await blobBase64(photo.blob); } catch { /* handled below */ }
+  u.sending = false;
+  if (!image) return setNote(id, { text: 'Couldn’t read the photo. Remove it and pick it again.' }, 9000);
+  const result = await doAction(id, 'message', '/api/sessions/' + id + '/photo', { image, text, id: photo.sent.id });
+  if (result && result.ok) clearComposer(id);
 }
 
 /* ---------- Browse: projects, a project's sessions, starting a session ---------- */
@@ -1538,7 +1890,7 @@ function projectContent(pid) {
 /* ----- starting a session ----- */
 
 function newSessionSheet(pid) {
-  const st = (S.newSess[pid] ||= { text: '', msg: null, plan: false });
+  const st = (S.newSess[pid] ||= { text: '', msg: null, plan: false, photo: null });
   const before = document.activeElement;
   let busy = false;
   const ta = h('textarea', {
@@ -1553,15 +1905,25 @@ function newSessionSheet(pid) {
   h('span', { class: 'switch', 'aria-hidden': 'true' }));
   const note = h('p', { class: 'msg', role: 'status', hidden: true });
   const say = (t) => { note.textContent = t; note.hidden = !t; };
-  const start = h('button', { class: 'btn primary', type: 'button', text: 'Start', disabled: !st.text.trim(), 'data-key': 'ns-start', onclick: () => go() });
+  // A photo can start a session with no words; one still being made ready, or one that failed, holds Start back.
+  const canStart = () => !busy && (st.photo ? photoReady(st.photo) : !!ta.value.trim());
+  const start = h('button', { class: 'btn primary', type: 'button', text: 'Start', disabled: !st.text.trim() && !photoReady(st.photo), 'data-key': 'ns-start', onclick: () => go() });
+  const cam = photoButton('btn small ns-cam', 'Add a photo', (f) => stagePhoto(st, f, paintPhoto), icon('camera', 'sm'), 'Add a photo');
+  const photoBox = h('div', { class: 'ns-photo' });
+  function paintPhoto() {
+    const p = st.photo;
+    photoBox.replaceChildren(...(p ? [photoChip(p, () => { st.photo = null; paintPhoto(); }, busy)] : [cam.button]));
+    start.disabled = !canStart();
+  }
   const cancel = h('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: () => close() });
   const scrim = h('div', { class: 'scrim top', onclick: (e) => { if (e.target === scrim) close(); } },
     h('div', { class: 'sheet wide', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'ns-h' },
       h('div', { class: 'box left' },
         h('p', { class: 'sec-h', id: 'ns-h', text: projName(pid) }),
-        ta, h('div', { class: 'group ns-opts' }, sw), note, start),
+        ta, photoBox, cam.input, h('div', { class: 'group ns-opts' }, sw), note, start),
       cancel));
-  ta.addEventListener('input', () => { st.text = ta.value; start.disabled = busy || !ta.value.trim(); });
+  paintPhoto();
+  ta.addEventListener('input', () => { st.text = ta.value; start.disabled = !canStart(); });
   function key(e) { if (e.key === 'Escape') close(); }
   function close() {
     document.removeEventListener('keydown', key);
@@ -1571,34 +1933,44 @@ function newSessionSheet(pid) {
   }
   async function go() {
     const text = ta.value.trim();
-    if (!text || busy) return;
-    if (!st.msg || st.msg.text !== text || st.msg.plan !== st.plan) st.msg = { id: uuid(), text, plan: st.plan }; // a retry of the same words keeps its id
+    const photo = photoReady(st.photo) ? st.photo : null;
+    if ((!text && !photo) || busy || (st.photo && !photo)) return;
+    // a retry of the same words (and photo) keeps its id
+    if (!st.msg || st.msg.text !== text || st.msg.plan !== st.plan || st.msg.photo !== (photo ? photo.id : '')) st.msg = { id: photo && !st.msg ? photo.id : uuid(), text, plan: st.plan, photo: photo ? photo.id : '' };
     busy = true;
     start.disabled = true;
-    start.textContent = 'Starting…';
+    start.textContent = photo ? 'Sending photo…' : 'Starting…';
+    if (st.photo) paintPhoto();
     say('');
     let out;
     try {
-      out = await send(`/api/projects/${pid}/sessions`, { text, id: st.msg.id, planFirst: st.plan });
+      if (photo) {
+        const image = await blobBase64(photo.blob);
+        out = await send(`/api/projects/${pid}/photo`, { image, text, id: st.msg.id, planFirst: st.plan });
+      } else out = await send(`/api/projects/${pid}/sessions`, { text, id: st.msg.id, planFirst: st.plan });
     } catch (e) {
       busy = false;
       start.textContent = 'Start';
-      start.disabled = false;
+      if (st.photo) paintPhoto();
+      start.disabled = !canStart();
       if (e instanceof Unauth) { close(); return showPair(); }
-      say('Couldn’t reach your Mac. Try again.');
+      say(e instanceof Down ? 'Couldn’t reach your Mac. Try again.' : 'Couldn’t read the photo. Remove it and pick it again.');
       return;
     }
     busy = false;
     start.textContent = 'Start';
-    start.disabled = !ta.value.trim();
+    if (st.photo) paintPhoto();
+    start.disabled = !canStart();
     const d = out.data;
     if (d && d.result === 'started' && typeof d.id === 'string' && RE.sid.test(d.id) && out.status < 300) {
-      Object.assign(st, { text: '', msg: null, plan: false });
+      Object.assign(st, { text: '', msg: null, plan: false, photo: null });
       close();
       location.hash = '#/session/' + d.id;
       return;
     }
-    if (out.status === 429) say(d && d.error === 'tooMany' ? 'Too many actions just now. Try again in a minute.' : slowText(d));
+    const trouble = photoTrouble(out.status, d);
+    if (trouble) say(trouble);
+    else if (out.status === 429) say(d && d.error === 'tooMany' ? 'Too many actions just now. Try again in a minute.' : slowText(d));
     else if (isBrowseOff(out)) { close(); setBrowseOff(); } else if (out.status === 403 && !(d && d.sentence)) say('Actions are off in Bench’s Settings.');
     else say((d && typeof d.sentence === 'string' && d.sentence) || 'Couldn’t start it from here. Open Bench on your Mac.');
   }

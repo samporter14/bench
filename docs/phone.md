@@ -88,6 +88,55 @@ On an **iPad**, your list and the session sit side by side.
   <img src="phone/ipad-plan.png" width="720" alt="Bench on an iPad: Now in a sidebar, and a session's plan with Approve plan beside it.">
 </p>
 
+### Permission requests
+
+*Needs Bench 0.5.0 or later.*
+
+When a session stops to ask permission, its page shows a **Permission**
+card: what it wants and, for code, the code itself in a box you can scroll
+(tap **Show all** to see every line). Tap **Allow once** and confirm, and it
+runs this one time. **Deny** says no. A request from one of Claude's helper
+agents says so at the top.
+
+Only running code and read-only tools can be allowed from the phone, because
+those are the only requests where "once" really is once: anything else (a
+website, a file, a login) could give lasting access. For those you can Deny
+from the phone, or **Open on Mac** and decide there.
+
+Before it answers, Bench checks that it's still the same request waiting. If
+it isn't, you see the latest instead.
+
+### Watching it work
+
+*Needs Bench 0.5.0 or later.*
+
+While a session is working and its page is open, a **Writing…** card above the
+conversation shows what Claude is writing right now, with a line such as
+"Executing code" for what it's doing. It updates every second or two and
+disappears when the session stops, and the finished reply then appears in the
+conversation. It only asks while the page is showing: leave the page or lock
+your phone and it stops.
+
+You see the current passage, not the whole reply: when Claude starts its next
+step the card starts over. Only the text it writes shows, never its thinking or
+tool output.
+
+### Sending a photo
+
+*Needs Bench 0.5.0 or later.*
+
+Tap the camera button beside the message box (or in **New session**) to
+take a photo or pick one from your library. A small preview appears above the
+box; tap ✕ to remove it. Add words if you like, then send. Your phone
+shrinks the photo to 3,072 pixels on its long side before it leaves, and
+Bench saves it again as a plain JPEG, which drops the location and camera
+details.
+
+Photos are saved to the project's uploads, where its other sessions can see
+them, so send only what you're happy for them to see. If a photo is too big,
+isn't a picture, or your words contain a file link, you get a short sentence
+saying so, and the photo stays put so you can try again.
+
 ### Notifications
 
 In the phone app, tap the gear, then **Turn On Notifications** (this only
@@ -111,10 +160,13 @@ Bench: when a session needs you, stops with an error, or finishes.
 - **Only paired devices get in.** Each has its own sign-in, which you can
   remove in Settings → Phone. A device unused for 60 days is dropped.
 - **Your phone sees only text and files.** Replies and messages arrive as
-  text: no tool output, code or file paths. A device can only open files
-  Bench has just listed to it.
-- **Two switches** in Settings → Phone: one for answering, approving and
-  sending messages, one for browsing projects, full conversations and files.
+  text: no tool output or file paths. The one exception is a permission
+  request, which shows the code it wants to run (up to 4 KB) so you can read
+  it before you say yes. A device can only open files Bench has just listed
+  to it.
+- **Two switches** in Settings → Phone: one for answering, approving,
+  allowing code to run and sending messages and photos, one for browsing
+  projects, full conversations and files.
 - **When Bench quits,** it takes down its Tailscale address, so nothing else
   on your Mac can answer in its place.
 - Bench stores paired devices as one-way hashes, in a file only your account
