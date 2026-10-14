@@ -333,15 +333,17 @@ if (here.name === 'session' && here.id === id) loadHistory(id);
 if (!had) S.sess[id] = { phase: 'loading', data: null };
 try {
 const data = await api('/api/sessions/' + encodeURIComponent(id));
-if (had && had.phase === 'ok' && JSON.stringify(had.data) === JSON.stringify(data)) return;
+if (had && had.phase === 'ok' && JSON.stringify(had.data) === JSON.stringify(data)) return true;
 S.sess[id] = { phase: 'ok', data };
 } catch (e) {
 if (e instanceof Unauth) return showPair();
 if (e.status === 404) S.sess[id] = had && had.data ? { ...had, gone: true } : { phase: 'missing', data: null };
 else if (!had || !had.data) S.sess[id] = { phase: 'error', data: null, down: e instanceof Down };
+else return false; // kept what we had; the caller may try again
 }
 const r = route();
 if (S.view === 'app' && r.name === 'session' && r.id === id) render();
+return true;
 }
 function gotState(st) {
 if (S.view === 'pair') return; // a late reply from before we were signed out
@@ -886,10 +888,15 @@ return r.id;
 function syncLive() {
 const want = liveWanted();
 if (want === LIVE.id) return;
+const was = LIVE.id;
+const showed = LIVE.shown;
 stopLive();
 if (want) {
 LIVE.id = want;
 LIVE.timer = setTimeout(() => liveTick(LIVE.seq), 0);
+} else if (was && showed) {
+const r = route();
+if (S.view === 'app' && !document.hidden && r.name === 'session' && r.id === was) loadSession(was);
 }
 }
 function stopLive() {
@@ -931,7 +938,7 @@ const sig = snapSig(id);
 const before = LIVE.quiet;
 LIVE.quiet = { id, sig, at: Date.now(), wait: before && before.id === id && before.sig === sig ? Math.min(60000, before.wait * 2) : 3000 };
 stopLive();
-loadSession(id); // reads the history too
+loadSession(id).then((ok) => { if (ok === false) setTimeout(() => loadSession(id), 4000); });
 }
 function paintLive(sv = root.querySelector('.sessview')) {
 if (!sv) return;

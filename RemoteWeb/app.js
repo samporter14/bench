@@ -315,15 +315,17 @@ async function loadSession(id) {
   if (!had) S.sess[id] = { phase: 'loading', data: null };
   try {
     const data = await api('/api/sessions/' + encodeURIComponent(id));
-    if (had && had.phase === 'ok' && JSON.stringify(had.data) === JSON.stringify(data)) return;
+    if (had && had.phase === 'ok' && JSON.stringify(had.data) === JSON.stringify(data)) return true;
     S.sess[id] = { phase: 'ok', data };
   } catch (e) {
     if (e instanceof Unauth) return showPair();
     if (e.status === 404) S.sess[id] = had && had.data ? { ...had, gone: true } : { phase: 'missing', data: null };
     else if (!had || !had.data) S.sess[id] = { phase: 'error', data: null, down: e instanceof Down };
+    else return false; // kept what we had; the caller may try again
   }
   const r = route();
   if (S.view === 'app' && r.name === 'session' && r.id === id) render();
+  return true;
 }
 
 function gotState(st) {
@@ -959,10 +961,16 @@ function liveWanted() {
 function syncLive() {
   const want = liveWanted();
   if (want === LIVE.id) return;
+  const was = LIVE.id;
+  const showed = LIVE.shown;
   stopLive();
   if (want) {
     LIVE.id = want;
     LIVE.timer = setTimeout(() => liveTick(LIVE.seq), 0);
+  } else if (was && showed) {
+    // The state stream said it stopped working before our own ask did: read the saved reply now.
+    const r = route();
+    if (S.view === 'app' && !document.hidden && r.name === 'session' && r.id === was) loadSession(was);
   }
 }
 
@@ -1009,7 +1017,8 @@ function liveDone(id) {
   const before = LIVE.quiet;
   LIVE.quiet = { id, sig, at: Date.now(), wait: before && before.id === id && before.sig === sig ? Math.min(60000, before.wait * 2) : 3000 };
   stopLive();
-  loadSession(id); // reads the history too
+  // Reads the history too. If Bench was too busy to answer, once more a moment later.
+  loadSession(id).then((ok) => { if (ok === false) setTimeout(() => loadSession(id), 4000); });
 }
 
 // The card sits in its own region and is updated in place, so a reader's place in the text is kept.
