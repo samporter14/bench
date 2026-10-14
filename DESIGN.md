@@ -2213,3 +2213,90 @@ at once 429 `{"error":"busy"}`, each with `Retry-After` in whole seconds.
 - **The phone** waits and tries a read again quietly (twice), takes its file
   transfers two at a time, and says a short sentence when an action of the
   person's is refused ("That's a lot at once. Try again in a moment.").
+
+### Phase 4: permissions, live text, photos (0.5.0)
+
+Sam's picks (2026-10-14): answer a session's permission requests from the
+phone, watch its reply as it's written, and send it a photo. Research (outside
+the repo, read them): `Bench-phone-permissions-streaming-research.md` and
+`Bench-phone-upload-research.md`.
+
+#### Permission requests
+
+The phone sees the **head** of a session's queue of non-`ask` requests (root
+or a sub-agent of it) and may answer it. Only two kinds can be **allowed**
+from the phone, because only their allow is truly once:
+
+| Kind | Allow once from the phone | Shown as |
+|---|---|---|
+| `local_exec` (python, r, bash, powershell; not a shared environment) | yes | "Run Python code" (etc.) and the code, ≤ 4 KB, monospace |
+| `mcp_tool` with `read_only: true` and source `directory`, `bundled` or `antmcp` | yes | "Use <tool> from <server>" |
+| every other known kind (`network`, `host`, `host_delete`, `skill_license`, credential kinds, `byoc_*`, `infer_submit`, `remote_*`, `usage_checkpoint`, `customize_mutation`, `managed_endpoint_register`, `artifact_delete`, …) | no, Deny or Open on Mac | a plain line from its own fields ("Wants to reach <host>", "Wants to read <path>"…) |
+| unknown kinds | nothing but Open on Mac | "Wants your permission" |
+
+- **Reading**: Bench's session read adds, in the page, the pending requests of
+  the root and of its children (the children's come from `trace-shallow`,
+  which keeps `output_data.pending_input_requests`). Projected fields only:
+  `requestId`, `tool_id`, `mode`, `kind`, the holder frame id, and the plain
+  description fields per kind (host, path, tool and server names, language,
+  the code ≤ 4 KB for `local_exec`). Never credentials, never secrets' values.
+- `/api/sessions/<id>` version 2 gains
+  `"permission": {"id": "<requestId>", "kind": "local_exec", "title": "Run Python code",
+  "detail": "…", "code": "…" | null, "helper": true|false, "canAllow": true,
+  "canDeny": true, "why": null | "…"}` or null. `helper` says a sub-agent is
+  asking. `why` when `canAllow` is false: "Allowing this from your phone would
+  give lasting access. Open it on your Mac."
+- **Answering**: `POST /api/sessions/<id>/permission`
+  `{"id": "<requestId>", "decision": "allow" | "deny"}`. Bench re-reads; the
+  same request must still be the head, of the same kind, its holder's parent
+  chain must reach this session's root, and an allow must be allowed. Then
+  `POST /api/frames/<holder>/resolve-input`
+  `{"responses": [{"requestId", "tool_id", "approved": true|false, "action": "allow"|"deny"}]}`
+  with **no `scope`** (an omitted scope is "once"). Answers
+  `{"result": "allowed" | "denied" | "changed" | "unavailable", "sentence"}`;
+  the daemon's `accepted`, `buffered` and `partial` count as done,
+  `already_resolved` as `changed`. Counts toward the action limit; needs
+  `remoteActions`.
+- **Push**: a session waiting on a permission already raises a needs-you card
+  and push; nothing new there.
+
+#### Live text
+
+`GET /api/sessions/<id>/live` → `{"working": bool, "text": "…" | null,
+"activity": "Executing code" | null}`. In the page: `GET
+/api/frames/<root>/streaming` → its `text` only (never `thinking` or
+`tool_stdout`), the last 4,000 characters; plus the activity line in the UI's
+own words, from pending requests and the last assistant message's unresolved
+tool names (names only). The buffer is the current model call's and resets, so
+the phone **replaces** what it shows each time, never appends. The phone polls
+every 1.5 s only while a working session's screen is visible, and stops when
+it isn't working. Costs 1 in the budget. Allowlisted GET:
+`^/frames/<36>/streaming$`.
+
+#### Photos
+
+- **Phone**: a camera button by the message box (and in New session):
+  `<input type="file" accept="image/*">` (iOS offers camera or library). The
+  phone draws it to a canvas at ≤ 3,072 px on the long side (orientation
+  applied by the browser), exports JPEG at quality 0.85, and posts base64.
+- **Routes**: `POST /api/sessions/<id>/photo` `{"image": "<base64>", "text": "…0–4,000", "id": "<uuid>"}`
+  and `POST /api/projects/<pid>/photo` `{"image", "text", "id", "planFirst"}`.
+  Body ≤ 6 MB on these two routes only, with the body timeout re-armed as
+  data arrives (not a flat 3 s).
+- **Bench**: magic bytes must say JPEG, PNG or HEIC; decode with ImageIO and
+  re-encode through the thumbnail API with the transform flag (orientation
+  baked in, all metadata, GPS and EXIF dropped) as JPEG ≤ 3,072 px and ≤ 3 MB.
+  Name it `phone-photo-YYYYMMDD-HHMMSS.jpg`. Text containing any of the UI's
+  reference prefixes (`{{artifact:`, `{"type":"artifact"`,
+  `{"type":"attachment"`, `{"type":"skill"`, `{"type":"session"`,
+  `{"artifact_ref":`, `{"file_path":`) is refused (400).
+- **Upload** in the page: `POST /api/projects/<pid>/attachments`, multipart,
+  one `file` part (pid from the session's fresh read, or the route's). Gate:
+  200, UUID `id` and `version_id`, the same filename and content type,
+  `size_bytes` equal to what was sent; drop `file_path`, ignore
+  `root_frame_id`. Then the message (or new session) as before, with
+  `input_data.request` = the text, a blank line, and the attachment line
+  `{"type":"attachment","id","version_id","filename","artifact_ref":"{{artifact:<vid>}}","content_type","size_bytes"}`
+  in exactly that key order. Same send / queue / resume rules and results.
+- The upload lands in the project's "User Uploads", which every session in the
+  project can see; the phone says so once, under the button.
