@@ -14,11 +14,19 @@ blank lines and full-line comments removed (nothing else changes, so the code
 behaves the same). The stripped JS is syntax-checked with node when node exists.
 Pass --readable to embed the files exactly as they are.
 
+index.html is rewritten in the embedded copy only: its /app.js and /app.css references gain
+?v=<hash>, a short SHA-256 of the exact bytes embedded for that file (RemoteWebApp.assetVersions).
+RemoteServer serves those two files with an immutable Cache-Control only when the request's
+query is exactly that v=<hash>. /sw.js stays unversioned (a service worker's URL is its identity),
+and / and every /api route stay no-store.
+
 It also embeds Resources/AppIcon.icon/Assets/bench-glyph.png as base64
 (RemoteWebApp.iconGlyph). The raw glyph is not in the app bundle, and
 RemoteIcon draws the Home Screen icons from it at run time.
 """
 import base64
+import functools
+import hashlib
 import pathlib
 import re
 import shutil
@@ -65,6 +73,36 @@ def strip(src: str, body: str) -> str:
     return text
 
 
+# Files served under a versioned URL: their content hash goes in index.html and RemoteWebApp.assetVersions.
+VERSIONED = ["/app.js", "/app.css"]
+
+
+@functools.lru_cache(maxsize=None)
+def embedded_body(src: str) -> str:
+    """The text of one file as embedded (stripped unless --readable), as the Swift string will hold it."""
+    body = (WEB / src).read_text(encoding="utf-8")
+    if "--readable" not in sys.argv:
+        body = strip(src, body)
+    return body.rstrip("\n")
+
+
+def versions() -> dict:
+    """Served path -> the first 12 hex digits of the SHA-256 of the exact UTF-8 bytes RemoteServer sends."""
+    by_path = {path: src for path, src, _const, _ctype in FILES}
+    return {path: hashlib.sha256(embedded_body(by_path[path]).encode("utf-8")).hexdigest()[:12] for path in VERSIONED}
+
+
+def version_references(index: str, hashes: dict) -> str:
+    """index.html with each versioned file's reference pointing at /file?v=<hash>. Exactly one reference each."""
+    for path, digest in hashes.items():
+        attr = "href" if path.endswith(".css") else "src"
+        plain = f'{attr}="{path}"'
+        if index.count(plain) != 1:
+            sys.exit(f"index.html must reference {path} exactly once as {plain}")
+        index = index.replace(plain, f'{attr}="{path}?v={digest}"')
+    return index
+
+
 def literal(body: str) -> str:
     """A multi-line raw string literal that cannot be closed or interpolated by the body."""
     n = 1
@@ -76,6 +114,7 @@ def literal(body: str) -> str:
 
 
 def generate() -> str:
+    hashes = versions()
     lines = [
         "import Foundation",
         "",
@@ -94,6 +133,15 @@ def generate() -> str:
     lines += [
         "    ]",
         "",
+        "    /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and",
+        "    /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.",
+        "    static let assetVersions: [String: String] = [",
+    ]
+    for path, digest in hashes.items():
+        lines.append(f'        "{path}": "{digest}",')
+    lines += [
+        "    ]",
+        "",
         "    /// Ready-made PNG icons. nil: the server draws them from `iconGlyph` (RemoteIcon).",
         "    static let icon180: Data? = nil",
         "    static let icon512: Data? = nil",
@@ -103,9 +151,9 @@ def generate() -> str:
         "",
     ]
     for _path, src, const, _ctype in FILES:
-        body = (WEB / src).read_text(encoding="utf-8")
-        if "--readable" not in sys.argv:
-            body = strip(src, body)
+        body = embedded_body(src)
+        if src == "index.html":
+            body = version_references(body, hashes)
         lines.append(f"    // {src}")
         lines.append(f"    private static let {const}: String = " + literal(body))
         lines.append("")

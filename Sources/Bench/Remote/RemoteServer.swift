@@ -40,6 +40,14 @@ struct RemoteRequest: Equatable, Sendable {
         target.prefix { $0 != "?" }
     }
 
+    /// Everything after the first `?`, exactly as sent and never decoded;
+    /// nil when there is no `?`. Routes match `path` alone: the query only
+    /// ever decides a static file's cache header (`RemoteResponse.assetHeaders`).
+    var query: Substring? {
+        guard let mark = target.firstIndex(of: "?") else { return nil }
+        return target[target.index(after: mark)...]
+    }
+
     /// The header's value when it was sent exactly once.
     func single(_ name: String) -> String? {
         guard let values = headers[name], values.count == 1 else { return nil }
@@ -401,6 +409,20 @@ enum RemoteResponse {
 
     static let json = "application/json; charset=utf-8"
 
+    /// What a versioned phone-app file may be kept for: a year, by this browser only.
+    static let immutableCache = "private, max-age=31536000, immutable"
+
+    /// The headers a static file gets beyond the defaults. `/app.js` and
+    /// `/app.css` are kept for a year, but only when the request's whole query
+    /// is `v=<the file's current hash>` (`RemoteWebApp.assetVersions`, which
+    /// index.html names): a missing, stale, doubled or padded `v` keeps the
+    /// default `no-store`, and so does every other path, `/sw.js` included
+    /// (a service worker is looked up by its fixed URL). Nothing is decoded.
+    static func assetHeaders(path: String, query: Substring?, versions: [String: String] = RemoteWebApp.assetVersions) -> [(String, String)] {
+        guard let version = versions[path], let query, query == "v=\(version)" else { return [] }
+        return [("Cache-Control", immutableCache)]
+    }
+
     /// A whole response, closing the connection after it.
     static func make(status: Int, contentType: String, body: Data, headers: [(String, String)] = []) -> Data {
         var all = headers
@@ -429,7 +451,9 @@ enum RemoteResponse {
 
     static func head(status: Int, headers: [(String, String)]) -> Data {
         var text = "HTTP/1.1 \(status) \(phrase(status))\r\n"
-        for (name, value) in securityHeaders + headers { text += "\(name): \(value)\r\n" }
+        // A route may replace a default (a versioned file's Cache-Control), never repeat it.
+        let kept = securityHeaders.filter { fixed in !headers.contains { $0.0.caseInsensitiveCompare(fixed.0) == .orderedSame } }
+        for (name, value) in kept + headers { text += "\(name): \(value)\r\n" }
         text += "\r\n"
         return Data(text.utf8)
     }
@@ -785,7 +809,8 @@ final class RemoteServer {
         case .shell, .file:
             let path = route == .shell ? "/" : route.pattern
             guard let file = RemoteWebApp.files[path] else { return send(id, RemoteResponse.error(404), route: route, closing: true) }
-            send(id, RemoteResponse.make(status: 200, contentType: file.contentType, body: Data(file.body.utf8)), route: route, closing: true)
+            let headers = RemoteResponse.assetHeaders(path: path, query: request.query)
+            send(id, RemoteResponse.make(status: 200, contentType: file.contentType, body: Data(file.body.utf8), headers: headers), route: route, closing: true)
         case .icon(let size):
             guard let png = icon(size) else { return send(id, RemoteResponse.error(404), route: route, closing: true) }
             send(id, RemoteResponse.make(status: 200, contentType: "image/png", body: png), route: route, closing: true)

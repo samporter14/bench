@@ -93,9 +93,10 @@ On an **iPad**, your list and the session sit side by side.
 *Needs Bench 0.5.0 or later.*
 
 When a session stops to ask permission, its page shows a **Permission**
-card: what it wants and, for code, the code itself in a box you can scroll
-(tap **Show all** to see every line). Tap **Allow once** and confirm, and it
-runs this one time. **Deny** says no. A request from one of Claude's helper
+card: what it wants and, for code, all of the code, every line numbered and
+wrapped to fit the screen (a number marks where a line starts, so a wrapped
+row has none). Tap **Allow once**, check the line count in the sheet, and
+confirm, and it runs this one time. **Deny** says no. A request from one of Claude's helper
 agents says so at the top.
 
 Only running code and read-only tools can be allowed from the phone, because

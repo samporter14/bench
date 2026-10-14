@@ -1362,7 +1362,11 @@ message, and push notifications.
     that login only as the SHA-256 (hex) of its lowercased form
     (`remoteLogin`), hashes Serve's the same way and compares the hashes; an
     address an earlier build stored is hashed and written back at launch.
-  - Responses: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`,
+  - Responses: `Cache-Control: no-store` (but `/app.js` and `/app.css` are
+    `private, max-age=31536000, immutable` when asked for as `?v=<hash>`, the
+    first 12 hex digits of the SHA-256 of the file as embedded; `/` names those
+    two URLs, and a missing, stale or padded `v` stays `no-store`, as do `/`,
+    `/sw.js` and every `/api/*`), `X-Content-Type-Options: nosniff`,
     `Referrer-Policy: no-referrer`, and for HTML a strict CSP:
     `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`.
     All assets inline-free files served by Bench itself (no CDNs).
@@ -2273,8 +2277,9 @@ from the phone, because only their allow is truly once:
 own words, from pending requests and the last assistant message's unresolved
 tool names (names only). The buffer is the current model call's and resets, so
 the phone **replaces** what it shows each time, never appends. The phone polls
-every 1.5 s only while a working session's screen is visible, and stops when
-it isn't working. Costs 1 in the budget. Allowlisted GET:
+every 1.5 s only while a working session's screen is visible and the text is
+changing (3 s after 3 polls alike, 5 s after 6, 1.5 s again on any change),
+and stops when it isn't working. Costs 1 in the budget. Allowlisted GET:
 `^/frames/<36>/streaming$`.
 
 #### How the server does it (Phase 4 permissions and live)

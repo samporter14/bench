@@ -278,7 +278,7 @@ function refresh(fg = true) {
 function refreshAll(fg) {
   const r = route();
   const jobs = [refresh(fg)];
-  if (r.name === 'session') { jobs.push(loadSession(r.id)); if (browseOn()) jobs.push(loadArtifacts(r.id)); }
+  if (r.name === 'session') { jobs.push(loadSession(r.id, true)); if (browseOn()) jobs.push(loadArtifacts(r.id)); }
   else if (r.name === 'artifacts') jobs.push(loadArtifacts(r.id));
   else if (r.name === 'projects') jobs.push(loadProjects(true));
   else if (r.name === 'project') jobs.push(loadProjects(true), loadProject(r.pid, false));
@@ -306,15 +306,32 @@ async function loadMe() {
   if (S.view === 'app' && route().name === 'settings') render();
 }
 
-async function loadSession(id) {
+// What the session says about its own conversation. While it is the same, no message has been added, so the
+// history already held is still right; `total` itself only comes with the history, which is why the session's stamp stands in for it.
+const histStamp = (d) => {
+  const last = d && Array.isArray(d.turns) && d.turns.length ? d.turns[d.turns.length - 1] : null;
+  return d ? [d.updatedAt, d.state, last && last.at].join('|') : '';
+};
+
+// Read after the session, so the stamp it is filed under is never newer than what was read. Asked for on a first look,
+// when the stamp moved, or when the caller knows something just happened (`fresh`: a refresh the person asked for,
+// an action that was sent, a session that stopped working).
+function wantHistory(id, data, fresh) {
+  const r = route();
+  if (r.name !== 'session' || r.id !== id || !browseOn()) return;
+  const at = histStamp(data);
+  const H = hist(id);
+  if (fresh || !H.loaded || H.at !== at) loadHistory(id, at);
+}
+
+async function loadSession(id, fresh = false) {
   const had = S.sess[id];
   S.sessAt[id] = Date.now();
   S.sessSig[id] = JSON.stringify(lookup(id));
-  const here = route();
-  if (here.name === 'session' && here.id === id) loadHistory(id);
   if (!had) S.sess[id] = { phase: 'loading', data: null };
   try {
     const data = await api('/api/sessions/' + encodeURIComponent(id));
+    wantHistory(id, data, fresh);
     if (had && had.phase === 'ok' && JSON.stringify(had.data) === JSON.stringify(data)) return true;
     S.sess[id] = { phase: 'ok', data };
   } catch (e) {
@@ -933,11 +950,14 @@ function md(src, ctx) {
 
 /* ---------- Live text: what Claude is writing now, while the open session works ---------- */
 
-// Asked every 1.5 s, one request at a time, only while this session's screen is showing and it is
+// Asked every 1.5 s while the text is changing (less often once it stops), one request at a time, only while this session's screen is showing and it is
 // working. What comes back is the current model call's text, which Bench starts over now and then, so
 // the card REPLACES what it shows each time and never adds to it.
 const LIVE_EVERY = 1500;
-const LIVE = { id: '', seq: 0, timer: 0, busy: false, shown: false, text: null, activity: null, fails: 0, quiet: null, off: dict() };
+// While the text and activity stay the same it is asked for less often: after 3 polls alike every 3 s, after 6 every 5 s, and every
+// 1.5 s again the moment either changes. `same` counts the polls in a row that came back alike.
+const liveEvery = (same) => (same >= 6 ? 5000 : same >= 3 ? 3000 : LIVE_EVERY);
+const LIVE = { id: '', seq: 0, timer: 0, busy: false, shown: false, text: null, activity: null, same: 0, fails: 0, quiet: null, off: dict() };
 
 const snapSig = (id) => JSON.stringify(lookup(id));
 
@@ -978,7 +998,7 @@ function stopLive() {
   const had = LIVE.id;
   clearTimeout(LIVE.timer);
   LIVE.seq++;
-  Object.assign(LIVE, { id: '', timer: 0, shown: false, text: null, activity: null, fails: 0 }); // `busy` is cleared only by the request itself
+  Object.assign(LIVE, { id: '', timer: 0, shown: false, text: null, activity: null, same: 0, fails: 0 }); // `busy` is cleared only by the request itself
   if (had) paintLive();
 }
 
@@ -1003,9 +1023,13 @@ async function liveTick(seq) {
     return liveDone(id);
   } else {
     LIVE.fails = 0;
+    const text = typeof d.text === 'string' && d.text ? d.text : null;
+    const activity = typeof d.activity === 'string' && d.activity ? d.activity : null;
+    LIVE.same = LIVE.shown && text === LIVE.text && activity === LIVE.activity ? LIVE.same + 1 : 1;
     LIVE.shown = true;
-    LIVE.text = typeof d.text === 'string' && d.text ? d.text : null;
-    LIVE.activity = typeof d.activity === 'string' && d.activity ? d.activity : null;
+    LIVE.text = text;
+    LIVE.activity = activity;
+    wait = liveEvery(LIVE.same);
     paintLive();
   }
   LIVE.timer = setTimeout(() => liveTick(seq), wait);
@@ -1018,7 +1042,7 @@ function liveDone(id) {
   LIVE.quiet = { id, sig, at: Date.now(), wait: before && before.id === id && before.sig === sig ? Math.min(60000, before.wait * 2) : 3000 };
   stopLive();
   // Reads the history too. If Bench was too busy to answer, once more a moment later.
-  loadSession(id).then((ok) => { if (ok === false) setTimeout(() => loadSession(id), 4000); });
+  loadSession(id, true).then((ok) => { if (ok === false) setTimeout(() => loadSession(id, true), 4000); });
 }
 
 // The card sits in its own region and is updated in place, so a reader's place in the text is kept.
@@ -1138,7 +1162,7 @@ function statusMark(state) {
 }
 
 // What the person has typed or chosen on a session, kept across every redraw.
-const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: dict(), other: dict(), otherOn: dict(), qTool: '', busy: dict(), note: null, noteT: 0, shown: 4, more: dict(), photo: null, permId: '', permAll: false, permDecision: '' });
+const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: dict(), other: dict(), otherOn: dict(), qTool: '', busy: dict(), note: null, noteT: 0, shown: 4, more: dict(), photo: null, permId: '', permDecision: '' });
 
 const REGIONS = ['head', 'open', 'unread', 'permission', 'question', 'plan', 'live', 'reply', 'toyou', 'artifacts', 'convo', 'times', 'openlow'];
 
@@ -1178,7 +1202,7 @@ function fillSession(sv, id) {
   const q = d && d.question;
   if (q && u.qTool !== q.toolId) Object.assign(u, { qTool: q.toolId, picks: dict(), other: dict(), otherOn: dict() });
   const perm = validPermission(d && d.permission);
-  if (perm && u.permId !== perm.id) Object.assign(u, { permId: perm.id, permAll: false, permDecision: '' });
+  if (perm && u.permId !== perm.id) Object.assign(u, { permId: perm.id, permDecision: '' });
   const set = (name, sig, build) => setRegion(body, name, JSON.stringify(sig) ?? '', build);
   const none = () => [];
 
@@ -1192,7 +1216,7 @@ function fillSession(sv, id) {
   set('openlow', acts && !permOpen ? 1 : 0, () => (acts && !permOpen ? [openBlock(id, true)] : []));
   set('unread', d && d.version >= 2 && d.readable === false, () => (d && d.version >= 2 && d.readable === false
     ? [h('p', { class: 'quiet', text: 'Bench can’t show this session’s messages. Open it on your Mac.' })] : []));
-  set('permission', perm ? [perm, u.busy.permission, u.permDecision, u.permAll] : 0, () => (perm ? [permissionCard(id, perm, u)] : []));
+  set('permission', perm ? [perm, u.busy.permission, u.permDecision] : 0, () => (perm ? [permissionCard(id, perm, u)] : []));
   set('question', d && q ? [q, u.picks, u.otherOn, u.busy.question] : 0, () => (d && q ? [questionCard(id, q, u)] : []));
   set('plan', d && d.plan ? [d.plan, d.can && d.can.approve, u.busy.plan] : 0, () => (d && d.plan ? [planCard(id, d, u)] : []));
   paintLive(sv);
@@ -1235,7 +1259,7 @@ function headNodes(id, rec, d, snap) {
       : rec.phase === 'missing' ? 'This session isn’t available any more.'
       : rec.down ? 'Couldn’t reach your Mac.' : 'Couldn’t load this session.';
     const retry = rec && rec.phase === 'error'
-      ? h('div', { class: 'act' }, h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: () => { delete S.sess[id]; loadSession(id); render(); } }))
+      ? h('div', { class: 'act' }, h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: () => { delete S.sess[id]; loadSession(id, true); render(); } }))
       : null;
     return [heading, snap ? h('p', { class: 'sub tight-sub', text: snap.project }) : null, h('p', { class: 'lede', text: note }), retry];
   }
@@ -1285,22 +1309,50 @@ function planCard(id, d, u) {
 
 /* ----- the permission card ----- */
 
-const PERM_LINES = 12;
 const CODE_MAX = 8000;
+
+// The code the person is asked to run, as the lines a reader (and Python) would count: every line break
+// the page could mistake is a break here too, so a lone CR can't hide a second statement on one drawn line.
+const LINE_BREAK = /\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]/;
+// Characters that draw nothing (or change what is drawn) are shown as their code point, never left invisible.
+const UNSEEN = /[\u0000-\u0008\u000e-\u001b\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\ufff9-\ufffb]|[\u{e0000}-\u{e0fff}]/gu;
+const codeLines = (code) => code.replace(/(?:\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029])+$/, '').split(LINE_BREAK);
+
+function codeLine(text) {
+  const parts = [];
+  let at = 0;
+  for (const m of text.matchAll(UNSEEN)) {
+    if (m.index > at) parts.push(text.slice(at, m.index));
+    const hex = m[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+    parts.push(h('span', { class: 'unseen', title: 'U+' + hex, text: '‹' + hex + '›' }));
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) parts.push(text.slice(at));
+  return h('span', { class: 'ln' }, parts);
+}
 
 // The one request the phone may answer, or null when the page sent something else.
 function validPermission(p) {
-  if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !p.id || p.id.length > 200) return null;
+  if (!p || typeof p !== 'object') return null;
+  const canAllow = p.canAllow === true;
+  const canDeny = p.canDeny === true;
+  const named = typeof p.id === 'string' && !!p.id && p.id.length <= 200;
+  if (!named && (canAllow || canDeny)) return null; // an answer has to name the request
+  const kind = typeof p.kind === 'string' ? p.kind : '';
+  const code = typeof p.code === 'string' && p.code ? p.code : '';
+  const cut = code.length > CODE_MAX; // never offer Allow on code the phone could only show a part of
+  const why = typeof p.why === 'string' ? p.why : '';
   return {
-    id: p.id,
-    kind: typeof p.kind === 'string' ? p.kind : '',
-    title: typeof p.title === 'string' && p.title ? p.title : 'Wants your permission',
+    id: named ? p.id : 'kind:' + kind,
+    kind,
+    title: typeof p.title === 'string' && p.title ? p.title : kind === 'ask' ? (p.helper === true ? 'A helper agent asked a question' : 'Asks you a question') : 'Wants your permission',
     detail: typeof p.detail === 'string' ? p.detail : '',
-    code: typeof p.code === 'string' && p.code ? p.code.slice(0, CODE_MAX) : '',
+    code: code.slice(0, CODE_MAX),
+    cut,
     helper: p.helper === true,
-    canAllow: p.canAllow === true,
-    canDeny: p.canDeny === true,
-    why: typeof p.why === 'string' ? p.why : '',
+    canAllow: canAllow && !cut,
+    canDeny,
+    why: canAllow && cut ? 'This code is too long to read here. Open it on your Mac.' : why,
   };
 }
 
@@ -1312,15 +1364,14 @@ function askPermission(id, p, decision) {
 
 function permissionCard(id, p, u) {
   const busy = !!u.busy.permission;
-  const lines = p.code ? p.code.replace(/\n+$/, '').split('\n').length : 0;
-  const long = lines > PERM_LINES;
   const isCode = !!p.code;
+  const lines = isCode ? codeLines(p.code) : [];
   const buttons = [];
   if (p.canAllow) {
     buttons.push(h('button', {
       class: 'btn primary', type: 'button', text: busy && u.permDecision === 'allow' ? 'Allowing…' : 'Allow once', disabled: busy, 'data-key': 'perm-allow',
       onclick: () => confirmSheet({
-        title: p.kind === 'local_exec' ? 'Run this code once?' : 'Allow this once?',
+        title: p.kind === 'local_exec' ? (lines.length === 1 ? 'Run this 1 line of code once?' : `Run these ${lines.length} lines of code once?`) : 'Allow this once?',
         message: (isCode ? 'It runs on your Mac, this one time.' : 'Only this once.') + ' Anything more asks you again.',
         confirm: 'Allow once',
         run: () => askPermission(id, p, 'allow'),
@@ -1333,14 +1384,18 @@ function permissionCard(id, p, u) {
       onclick: () => askPermission(id, p, 'deny'),
     }));
   }
+  const asks = p.kind === 'ask';
+  // The helper is named once: in the title when it asks a question, in its own line otherwise.
+  const named = asks && /helper/i.test(p.title);
   return h('div', { class: 'card perm', role: 'group', 'aria-labelledby': 'perm-t' },
     h('div', { class: 'perm-body' },
-      h('p', { class: 'sec-h perm-over', text: 'Permission' }),
-      p.helper ? h('p', { class: 'perm-who' }, icon('helper', 'sm'), h('span', { text: 'A helper agent is asking' })) : null,
+      h('p', { class: 'sec-h perm-over', text: asks ? 'Question' : 'Permission' }),
+      p.helper && !named ? h('p', { class: 'perm-who' }, icon('helper', 'sm'), h('span', { text: 'A helper agent is asking' })) : null,
       h('p', { class: 'perm-title', id: 'perm-t', text: p.title }),
       p.detail ? h('p', { class: 'perm-detail', text: p.detail }) : null,
-      isCode ? h('pre', { class: 'perm-code' + (u.permAll ? ' all' : ''), tabindex: '0', role: 'region', 'aria-label': 'The code to run' }, h('code', { text: p.code })) : null,
-      isCode && long ? h('button', { class: 'more', type: 'button', text: u.permAll ? 'Show less' : 'Show all', 'aria-expanded': u.permAll ? 'true' : 'false', 'data-key': 'perm-more', onclick: () => { u.permAll = !u.permAll; redrawSession(id); } }) : null,
+      // The whole code, wrapped inside the page: the page scrolls, never the box. A number marks each line it starts.
+      isCode ? h('pre', { class: 'perm-code', role: 'region', 'aria-label': `The code to run, ${lines.length === 1 ? '1 line' : lines.length + ' lines'}` }, h('code', null, lines.map(codeLine))) : null,
+      isCode && p.cut ? h('p', { class: 'perm-why', text: 'Only the first part is shown here.' }) : null,
       !p.canAllow ? h('p', { class: 'perm-why', text: p.why || 'Open it on your Mac to answer.' }) : null),
     buttons.length ? h('div', { class: 'q-actions' }, buttons) : null,
     !p.canAllow ? h('div', { class: 'perm-open' }, openBlock(id, true)) : null);
@@ -1711,7 +1766,7 @@ async function doAction(id, kind, path, body) {
   }
   u.busy[kind] = false;
   setNote(id, { text: result.text, open: !!result.open }, result.open ? 12000 : result.ok ? 5000 : 9000);
-  if (result.refetch) await loadSession(id);
+  if (result.refetch) await loadSession(id, true);
   redrawSession(id);
   return result;
 }
@@ -2275,7 +2330,7 @@ function fileContent(id, v) {
 
 /* ---------- History: the whole conversation, paged backward ---------- */
 
-const hist = (id) => (S.hist[id] ||= { items: dict(), total: 0, from: null, busy: false, err: false, loaded: false, failed: false, rev: 0, full: dict(), cutBusy: dict(), cutErr: dict() });
+const hist = (id) => (S.hist[id] ||= { items: dict(), total: 0, from: null, at: '', busy: false, err: false, loaded: false, failed: false, rev: 0, full: dict(), cutBusy: dict(), cutErr: dict() });
 
 function mergeHist(H, d) {
   for (const it of Array.isArray(d && d.items) ? d.items : []) {
@@ -2288,14 +2343,15 @@ function mergeHist(H, d) {
   H.rev++;
 }
 
-// The newest page, merged by index. Called with the session itself, so it follows the same throttle.
-async function loadHistory(id) {
+// The newest page, merged by index. `at` is the session's stamp (histStamp) it was read after, kept once it has been read.
+async function loadHistory(id, at = '') {
   if (!browseOn()) return;
   const H = hist(id);
   try {
     mergeHist(H, await api(`/api/sessions/${id}/history`));
     H.loaded = true;
     H.failed = false;
+    H.at = at;
   } catch (e) {
     if (e instanceof Unauth) return showPair();
     if (isBrowseOff(e)) return setBrowseOff();

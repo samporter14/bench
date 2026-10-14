@@ -552,14 +552,18 @@ dl.group.sec, ul.group.sec { margin: 0 0 26px; }
 .perm-who .ico { flex: none; }
 .perm-title { margin: 0 0 6px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
 .perm-detail { margin: 0 0 10px; color: var(--body); overflow-wrap: anywhere; }
+/* The code is shown whole: each line wrapped inside the page (the page scrolls, never the box) and numbered where it starts. */
+/* break-spaces where supported, so a long run of spaces wraps like text and none hangs off the edge; pre-wrap before it. */
 .perm-code {
-  margin: 0 0 4px;
-  padding: 10px 12px;
+  margin: 0 0 8px;
+  padding: 10px 12px 10px 8px;
   max-width: 100%;
-  max-height: calc(12 * 1.45 * .82rem + 20px);
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  white-space: pre;
+  overflow: visible;
+  counter-reset: ln;
+  white-space: pre-wrap;
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+  word-break: normal;
   tab-size: 4;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -567,9 +571,27 @@ dl.group.sec, ul.group.sec { margin: 0 0 26px; }
   color: var(--ink);
   font: .82rem/1.45 var(--mono);
 }
-.perm-code.all { max-height: none; }
-.perm-code code { font: inherit; }
-.perm-body > .more { margin: 0 0 6px; }
+.perm-code code { display: block; font: inherit; }
+.perm-code .ln {
+  display: block;
+  counter-increment: ln;
+  padding-left: 2.8em;
+  text-indent: -2.8em;
+}
+.perm-code .ln::before {
+  content: counter(ln);
+  display: inline-block;
+  box-sizing: border-box;
+  width: 2.2em;
+  margin-right: .6em;
+  text-indent: 0;
+  text-align: right;
+  white-space: pre;
+  color: var(--muted);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.perm-code .unseen { padding: 0 2px; border: 1px solid var(--clay-ink); border-radius: 3px; color: var(--clay-ink); font-size: .85em; }
 .perm-why { margin: 0 0 10px; font-size: .9rem; color: var(--muted); overflow-wrap: anywhere; }
 .perm-open { padding: 0 16px 6px; }
 .perm-open .act { margin: 0 0 10px; }

@@ -16,6 +16,13 @@ enum RemoteWebApp {
         "/sw.js": (contentType: "text/javascript; charset=utf-8", body: serviceWorkerJS),
     ]
 
+    /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
+    /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
+    static let assetVersions: [String: String] = [
+        "/app.js": "23d34c481b0d",
+        "/app.css": "0083573d59b6",
+    ]
+
     /// Ready-made PNG icons. nil: the server draws them from `iconGlyph` (RemoteIcon).
     static let icon180: Data? = nil
     static let icon512: Data? = nil
@@ -42,14 +49,14 @@ enum RemoteWebApp {
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
 <link rel="icon" type="image/png" href="/icon-180.png">
-<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/app.css?v=0083573d59b6">
 </head>
 <body>
 <div id="root"></div>
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Bench needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js"></script>
+<script type="module" src="/app.js?v=23d34c481b0d"></script>
 </body>
 </html>
 """#
@@ -299,7 +306,7 @@ return p;
 function refreshAll(fg) {
 const r = route();
 const jobs = [refresh(fg)];
-if (r.name === 'session') { jobs.push(loadSession(r.id)); if (browseOn()) jobs.push(loadArtifacts(r.id)); }
+if (r.name === 'session') { jobs.push(loadSession(r.id, true)); if (browseOn()) jobs.push(loadArtifacts(r.id)); }
 else if (r.name === 'artifacts') jobs.push(loadArtifacts(r.id));
 else if (r.name === 'projects') jobs.push(loadProjects(true));
 else if (r.name === 'project') jobs.push(loadProjects(true), loadProject(r.pid, false));
@@ -324,15 +331,25 @@ return;
 }
 if (S.view === 'app' && route().name === 'settings') render();
 }
-async function loadSession(id) {
+const histStamp = (d) => {
+const last = d && Array.isArray(d.turns) && d.turns.length ? d.turns[d.turns.length - 1] : null;
+return d ? [d.updatedAt, d.state, last && last.at].join('|') : '';
+};
+function wantHistory(id, data, fresh) {
+const r = route();
+if (r.name !== 'session' || r.id !== id || !browseOn()) return;
+const at = histStamp(data);
+const H = hist(id);
+if (fresh || !H.loaded || H.at !== at) loadHistory(id, at);
+}
+async function loadSession(id, fresh = false) {
 const had = S.sess[id];
 S.sessAt[id] = Date.now();
 S.sessSig[id] = JSON.stringify(lookup(id));
-const here = route();
-if (here.name === 'session' && here.id === id) loadHistory(id);
 if (!had) S.sess[id] = { phase: 'loading', data: null };
 try {
 const data = await api('/api/sessions/' + encodeURIComponent(id));
+wantHistory(id, data, fresh);
 if (had && had.phase === 'ok' && JSON.stringify(had.data) === JSON.stringify(data)) return true;
 S.sess[id] = { phase: 'ok', data };
 } catch (e) {
@@ -871,7 +888,8 @@ out.push(h('p', null, mdLines(para)));
 return out;
 }
 const LIVE_EVERY = 1500;
-const LIVE = { id: '', seq: 0, timer: 0, busy: false, shown: false, text: null, activity: null, fails: 0, quiet: null, off: dict() };
+const liveEvery = (same) => (same >= 6 ? 5000 : same >= 3 ? 3000 : LIVE_EVERY);
+const LIVE = { id: '', seq: 0, timer: 0, busy: false, shown: false, text: null, activity: null, same: 0, fails: 0, quiet: null, off: dict() };
 const snapSig = (id) => JSON.stringify(lookup(id));
 function liveWanted() {
 const r = route();
@@ -903,7 +921,7 @@ function stopLive() {
 const had = LIVE.id;
 clearTimeout(LIVE.timer);
 LIVE.seq++;
-Object.assign(LIVE, { id: '', timer: 0, shown: false, text: null, activity: null, fails: 0 }); // `busy` is cleared only by the request itself
+Object.assign(LIVE, { id: '', timer: 0, shown: false, text: null, activity: null, same: 0, fails: 0 }); // `busy` is cleared only by the request itself
 if (had) paintLive();
 }
 async function liveTick(seq) {
@@ -926,9 +944,13 @@ wait = err && isSlow(err) ? Math.min(10, Math.max(2, err.wait || 2)) * 1000 + Ma
 return liveDone(id);
 } else {
 LIVE.fails = 0;
+const text = typeof d.text === 'string' && d.text ? d.text : null;
+const activity = typeof d.activity === 'string' && d.activity ? d.activity : null;
+LIVE.same = LIVE.shown && text === LIVE.text && activity === LIVE.activity ? LIVE.same + 1 : 1;
 LIVE.shown = true;
-LIVE.text = typeof d.text === 'string' && d.text ? d.text : null;
-LIVE.activity = typeof d.activity === 'string' && d.activity ? d.activity : null;
+LIVE.text = text;
+LIVE.activity = activity;
+wait = liveEvery(LIVE.same);
 paintLive();
 }
 LIVE.timer = setTimeout(() => liveTick(seq), wait);
@@ -938,7 +960,7 @@ const sig = snapSig(id);
 const before = LIVE.quiet;
 LIVE.quiet = { id, sig, at: Date.now(), wait: before && before.id === id && before.sig === sig ? Math.min(60000, before.wait * 2) : 3000 };
 stopLive();
-loadSession(id).then((ok) => { if (ok === false) setTimeout(() => loadSession(id), 4000); });
+loadSession(id, true).then((ok) => { if (ok === false) setTimeout(() => loadSession(id, true), 4000); });
 }
 function paintLive(sv = root.querySelector('.sessview')) {
 if (!sv) return;
@@ -1042,7 +1064,7 @@ if (state === 'error' || state === 'failed') return icon('alert', 'sm mark-err')
 if (state === 'working') return h('span', { class: 'dot live', 'aria-hidden': 'true' });
 return h('span', { class: 'dot idle', 'aria-hidden': 'true' });
 }
-const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: dict(), other: dict(), otherOn: dict(), qTool: '', busy: dict(), note: null, noteT: 0, shown: 4, more: dict(), photo: null, permId: '', permAll: false, permDecision: '' });
+const ui = (id) => (S.ui[id] ||= { draft: '', msg: null, picks: dict(), other: dict(), otherOn: dict(), qTool: '', busy: dict(), note: null, noteT: 0, shown: 4, more: dict(), photo: null, permId: '', permDecision: '' });
 const REGIONS = ['head', 'open', 'unread', 'permission', 'question', 'plan', 'live', 'reply', 'toyou', 'artifacts', 'convo', 'times', 'openlow'];
 function sessionView(id, inPane) {
 const body = h('div', { class: (inPane ? 'detail-in' : 'wrap') + ' sess-body' }, REGIONS.map((n) => h('div', { 'data-r': n })));
@@ -1077,7 +1099,7 @@ const u = ui(id);
 const q = d && d.question;
 if (q && u.qTool !== q.toolId) Object.assign(u, { qTool: q.toolId, picks: dict(), other: dict(), otherOn: dict() });
 const perm = validPermission(d && d.permission);
-if (perm && u.permId !== perm.id) Object.assign(u, { permId: perm.id, permAll: false, permDecision: '' });
+if (perm && u.permId !== perm.id) Object.assign(u, { permId: perm.id, permDecision: '' });
 const set = (name, sig, build) => setRegion(body, name, JSON.stringify(sig) ?? '', build);
 const none = () => [];
 set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze]], () => headNodes(id, rec, d, snap));
@@ -1088,7 +1110,7 @@ set('open', gone || acts || permOpen ? 0 : 1, () => (gone || acts || permOpen ? 
 set('openlow', acts && !permOpen ? 1 : 0, () => (acts && !permOpen ? [openBlock(id, true)] : []));
 set('unread', d && d.version >= 2 && d.readable === false, () => (d && d.version >= 2 && d.readable === false
 ? [h('p', { class: 'quiet', text: 'Bench can’t show this session’s messages. Open it on your Mac.' })] : []));
-set('permission', perm ? [perm, u.busy.permission, u.permDecision, u.permAll] : 0, () => (perm ? [permissionCard(id, perm, u)] : []));
+set('permission', perm ? [perm, u.busy.permission, u.permDecision] : 0, () => (perm ? [permissionCard(id, perm, u)] : []));
 set('question', d && q ? [q, u.picks, u.otherOn, u.busy.question] : 0, () => (d && q ? [questionCard(id, q, u)] : []));
 set('plan', d && d.plan ? [d.plan, d.can && d.can.approve, u.busy.plan] : 0, () => (d && d.plan ? [planCard(id, d, u)] : []));
 paintLive(sv);
@@ -1127,7 +1149,7 @@ const note = !rec || rec.phase === 'loading' ? 'Loading…'
 : rec.phase === 'missing' ? 'This session isn’t available any more.'
 : rec.down ? 'Couldn’t reach your Mac.' : 'Couldn’t load this session.';
 const retry = rec && rec.phase === 'error'
-? h('div', { class: 'act' }, h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: () => { delete S.sess[id]; loadSession(id); render(); } }))
+? h('div', { class: 'act' }, h('button', { class: 'btn', type: 'button', text: 'Try again', onclick: () => { delete S.sess[id]; loadSession(id, true); render(); } }))
 : null;
 return [heading, snap ? h('p', { class: 'sub tight-sub', text: snap.project }) : null, h('p', { class: 'lede', text: note }), retry];
 }
@@ -1172,20 +1194,43 @@ run: () => doAction(id, 'plan', '/api/sessions/' + id + '/approve', { version: p
 }),
 }) : null));
 }
-const PERM_LINES = 12;
 const CODE_MAX = 8000;
+const LINE_BREAK = /\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]/;
+const UNSEEN = /[\u0000-\u0008\u000e-\u001b\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\ufff9-\ufffb]|[\u{e0000}-\u{e0fff}]/gu;
+const codeLines = (code) => code.replace(/(?:\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029])+$/, '').split(LINE_BREAK);
+function codeLine(text) {
+const parts = [];
+let at = 0;
+for (const m of text.matchAll(UNSEEN)) {
+if (m.index > at) parts.push(text.slice(at, m.index));
+const hex = m[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+parts.push(h('span', { class: 'unseen', title: 'U+' + hex, text: '‹' + hex + '›' }));
+at = m.index + m[0].length;
+}
+if (at < text.length) parts.push(text.slice(at));
+return h('span', { class: 'ln' }, parts);
+}
 function validPermission(p) {
-if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !p.id || p.id.length > 200) return null;
+if (!p || typeof p !== 'object') return null;
+const canAllow = p.canAllow === true;
+const canDeny = p.canDeny === true;
+const named = typeof p.id === 'string' && !!p.id && p.id.length <= 200;
+if (!named && (canAllow || canDeny)) return null; // an answer has to name the request
+const kind = typeof p.kind === 'string' ? p.kind : '';
+const code = typeof p.code === 'string' && p.code ? p.code : '';
+const cut = code.length > CODE_MAX; // never offer Allow on code the phone could only show a part of
+const why = typeof p.why === 'string' ? p.why : '';
 return {
-id: p.id,
-kind: typeof p.kind === 'string' ? p.kind : '',
-title: typeof p.title === 'string' && p.title ? p.title : 'Wants your permission',
+id: named ? p.id : 'kind:' + kind,
+kind,
+title: typeof p.title === 'string' && p.title ? p.title : kind === 'ask' ? (p.helper === true ? 'A helper agent asked a question' : 'Asks you a question') : 'Wants your permission',
 detail: typeof p.detail === 'string' ? p.detail : '',
-code: typeof p.code === 'string' && p.code ? p.code.slice(0, CODE_MAX) : '',
+code: code.slice(0, CODE_MAX),
+cut,
 helper: p.helper === true,
-canAllow: p.canAllow === true,
-canDeny: p.canDeny === true,
-why: typeof p.why === 'string' ? p.why : '',
+canAllow: canAllow && !cut,
+canDeny,
+why: canAllow && cut ? 'This code is too long to read here. Open it on your Mac.' : why,
 };
 }
 function askPermission(id, p, decision) {
@@ -1195,15 +1240,14 @@ return doAction(id, 'permission', '/api/sessions/' + id + '/permission', { id: p
 }
 function permissionCard(id, p, u) {
 const busy = !!u.busy.permission;
-const lines = p.code ? p.code.replace(/\n+$/, '').split('\n').length : 0;
-const long = lines > PERM_LINES;
 const isCode = !!p.code;
+const lines = isCode ? codeLines(p.code) : [];
 const buttons = [];
 if (p.canAllow) {
 buttons.push(h('button', {
 class: 'btn primary', type: 'button', text: busy && u.permDecision === 'allow' ? 'Allowing…' : 'Allow once', disabled: busy, 'data-key': 'perm-allow',
 onclick: () => confirmSheet({
-title: p.kind === 'local_exec' ? 'Run this code once?' : 'Allow this once?',
+title: p.kind === 'local_exec' ? (lines.length === 1 ? 'Run this 1 line of code once?' : `Run these ${lines.length} lines of code once?`) : 'Allow this once?',
 message: (isCode ? 'It runs on your Mac, this one time.' : 'Only this once.') + ' Anything more asks you again.',
 confirm: 'Allow once',
 run: () => askPermission(id, p, 'allow'),
@@ -1216,14 +1260,16 @@ class: 'btn', type: 'button', text: busy && u.permDecision === 'deny' ? 'Denying
 onclick: () => askPermission(id, p, 'deny'),
 }));
 }
+const asks = p.kind === 'ask';
+const named = asks && /helper/i.test(p.title);
 return h('div', { class: 'card perm', role: 'group', 'aria-labelledby': 'perm-t' },
 h('div', { class: 'perm-body' },
-h('p', { class: 'sec-h perm-over', text: 'Permission' }),
-p.helper ? h('p', { class: 'perm-who' }, icon('helper', 'sm'), h('span', { text: 'A helper agent is asking' })) : null,
+h('p', { class: 'sec-h perm-over', text: asks ? 'Question' : 'Permission' }),
+p.helper && !named ? h('p', { class: 'perm-who' }, icon('helper', 'sm'), h('span', { text: 'A helper agent is asking' })) : null,
 h('p', { class: 'perm-title', id: 'perm-t', text: p.title }),
 p.detail ? h('p', { class: 'perm-detail', text: p.detail }) : null,
-isCode ? h('pre', { class: 'perm-code' + (u.permAll ? ' all' : ''), tabindex: '0', role: 'region', 'aria-label': 'The code to run' }, h('code', { text: p.code })) : null,
-isCode && long ? h('button', { class: 'more', type: 'button', text: u.permAll ? 'Show less' : 'Show all', 'aria-expanded': u.permAll ? 'true' : 'false', 'data-key': 'perm-more', onclick: () => { u.permAll = !u.permAll; redrawSession(id); } }) : null,
+isCode ? h('pre', { class: 'perm-code', role: 'region', 'aria-label': `The code to run, ${lines.length === 1 ? '1 line' : lines.length + ' lines'}` }, h('code', null, lines.map(codeLine))) : null,
+isCode && p.cut ? h('p', { class: 'perm-why', text: 'Only the first part is shown here.' }) : null,
 !p.canAllow ? h('p', { class: 'perm-why', text: p.why || 'Open it on your Mac to answer.' }) : null),
 buttons.length ? h('div', { class: 'q-actions' }, buttons) : null,
 !p.canAllow ? h('div', { class: 'perm-open' }, openBlock(id, true)) : null);
@@ -1541,7 +1587,7 @@ result = { ok: false, refetch: false, text: 'Couldn’t reach your Mac. Try agai
 }
 u.busy[kind] = false;
 setNote(id, { text: result.text, open: !!result.open }, result.open ? 12000 : result.ok ? 5000 : 9000);
-if (result.refetch) await loadSession(id);
+if (result.refetch) await loadSession(id, true);
 redrawSession(id);
 return result;
 }
@@ -2045,7 +2091,7 @@ nodes.push(downloadBlock(id, f, false));
 }
 return nodes;
 }
-const hist = (id) => (S.hist[id] ||= { items: dict(), total: 0, from: null, busy: false, err: false, loaded: false, failed: false, rev: 0, full: dict(), cutBusy: dict(), cutErr: dict() });
+const hist = (id) => (S.hist[id] ||= { items: dict(), total: 0, from: null, at: '', busy: false, err: false, loaded: false, failed: false, rev: 0, full: dict(), cutBusy: dict(), cutErr: dict() });
 function mergeHist(H, d) {
 for (const it of Array.isArray(d && d.items) ? d.items : []) {
 if (!it || !Number.isInteger(it.i)) continue;
@@ -2056,13 +2102,14 @@ if (Number.isInteger(d && d.total)) H.total = d.total;
 if (Number.isInteger(d && d.from)) H.from = H.from == null ? d.from : Math.min(H.from, d.from);
 H.rev++;
 }
-async function loadHistory(id) {
+async function loadHistory(id, at = '') {
 if (!browseOn()) return;
 const H = hist(id);
 try {
 mergeHist(H, await api(`/api/sessions/${id}/history`));
 H.loaded = true;
 H.failed = false;
+H.at = at;
 } catch (e) {
 if (e instanceof Unauth) return showPair();
 if (isBrowseOff(e)) return setBrowseOff();
@@ -3114,13 +3161,15 @@ resize: none;
 .perm-title { margin: 0 0 6px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
 .perm-detail { margin: 0 0 10px; color: var(--body); overflow-wrap: anywhere; }
 .perm-code {
-margin: 0 0 4px;
-padding: 10px 12px;
+margin: 0 0 8px;
+padding: 10px 12px 10px 8px;
 max-width: 100%;
-max-height: calc(12 * 1.45 * .82rem + 20px);
-overflow: auto;
--webkit-overflow-scrolling: touch;
-white-space: pre;
+overflow: visible;
+counter-reset: ln;
+white-space: pre-wrap;
+white-space: break-spaces;
+overflow-wrap: anywhere;
+word-break: normal;
 tab-size: 4;
 border: 1px solid var(--line);
 border-radius: 8px;
@@ -3128,9 +3177,27 @@ background: var(--fill);
 color: var(--ink);
 font: .82rem/1.45 var(--mono);
 }
-.perm-code.all { max-height: none; }
-.perm-code code { font: inherit; }
-.perm-body > .more { margin: 0 0 6px; }
+.perm-code code { display: block; font: inherit; }
+.perm-code .ln {
+display: block;
+counter-increment: ln;
+padding-left: 2.8em;
+text-indent: -2.8em;
+}
+.perm-code .ln::before {
+content: counter(ln);
+display: inline-block;
+box-sizing: border-box;
+width: 2.2em;
+margin-right: .6em;
+text-indent: 0;
+text-align: right;
+white-space: pre;
+color: var(--muted);
+-webkit-user-select: none;
+user-select: none;
+}
+.perm-code .unseen { padding: 0 2px; border: 1px solid var(--clay-ink); border-radius: 3px; color: var(--clay-ink); font-size: .85em; }
 .perm-why { margin: 0 0 10px; font-size: .9rem; color: var(--muted); overflow-wrap: anywhere; }
 .perm-open { padding: 0 16px 6px; }
 .perm-open .act { margin: 0 0 10px; }
