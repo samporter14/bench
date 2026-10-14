@@ -1,14 +1,16 @@
 // SQLiteSource.swift
 // ScienceStatus — DroppyKit-free core. No DroppyKit import in this file.
 //
-// Reads the daemon's SQLite database with the system `sqlite3` tool in
-// read-only mode (`file:...?mode=ro`), one short query per poll, connection
-// never held open. Metadata only: ids, names, statuses, timestamps.
-// Never input_data / output_data / task_summary / payload bodies; the one
-// look at an output is a count of its pending input requests, taken inside
-// SQLite (see `pendingInputSQL`).
+// Reads the daemon's SQLite database through the system SQLite library, on
+// one read-only connection kept open between reads (`SQLiteReader`; until
+// Bench 0.5.0 every query ran `/usr/bin/sqlite3` afresh). Metadata only: ids,
+// names, statuses, timestamps. Never input_data / output_data / task_summary /
+// payload bodies; the one look at an output is a count of its pending input
+// requests and the first one's kind, taken inside SQLite (see
+// `pendingInputSQL`).
 
 import Foundation
+import SQLite3
 
 /// The org database the daemon is using, without guessing where its data
 /// lives (Bench's version; the droplet's looked only in ~/.claude-science):
@@ -67,43 +69,215 @@ func orgDatabases(in base: URL) -> (all: [OrgDatabase], picked: URL?) {
     return (all, newest.url)
 }
 
-func resolveSqlite3() -> URL {
-    // For testing against another sqlite3 build (Bench's own addition).
-    if let path = ProcessInfo.processInfo.environment["BENCH_SQLITE3"],
-       FileManager.default.isExecutableFile(atPath: path) {
-        return URL(fileURLWithPath: path)
-    }
-    for path in ["/usr/bin/sqlite3", "/opt/homebrew/bin/sqlite3"] {
-        if FileManager.default.isExecutableFile(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-    }
-    return URL(fileURLWithPath: "/usr/bin/sqlite3")
+// MARK: The connection
+
+/// A value bound to a `?` in a statement: values are never written into SQL.
+enum SQLArgument: Sendable, Equatable {
+    case text(String)
+    case integer(Int64)
 }
 
-/// Run one read-only query, return raw rows split on `separator`.
-func runReadOnlyQuery(db: URL, sql: String, timeout: TimeInterval = 8) throws -> [[String]] {
-    let separator = "\u{1F}"
-    let result: (status: Int32, output: Data)
-    do {
-        // The mode before the separator: since sqlite3 3.52 or so, `-list`
-        // resets the separator to "|", so the other way round every row came
-        // back as one field and parsed as nothing (macOS 27 ships 3.54).
-        result = try runProcess(
-            resolveSqlite3(), ["-list", "-separator", separator, "file:\(db.path)?mode=ro", sql],
-            timeout: timeout)
-    } catch SubprocessFailure.timedOut {
-        throw ScienceError.databaseUnreadable("query timed out")
-    } catch {
-        throw ScienceError.databaseUnreadable("\(error)")
+/// Run one read-only query and return its rows, every value as text: NULL
+/// as "", numbers as SQLite writes them (as `sqlite3 -list` printed them).
+func runReadOnlyQuery(db: URL, sql: String, arguments: [SQLArgument] = [], timeout: TimeInterval = 8) throws -> [[String]] {
+    try SQLiteReader.shared.rows(db: db, sql: sql, arguments: arguments, timeout: timeout)
+}
+
+/// Claude Science's database, read through one connection that stays open,
+/// with the system SQLite library. Until Bench 0.5.0 every query started
+/// `/usr/bin/sqlite3` (5–10 ms a spawn, about once a second while a session
+/// works).
+///
+/// - Read-only twice over: `SQLITE_OPEN_READONLY` and a `file:…?mode=ro`
+///   URI. A write fails with SQLITE_READONLY.
+/// - Every statement runs on one serial queue, so the connection needs no
+///   mutex of its own (`SQLITE_OPEN_NOMUTEX`). Callers are off the main thread
+///   already (`Task.detached`, or `--diagnose` before the app starts); a read
+///   must never start another from inside the queue.
+/// - Statements are prepared once and kept, by their SQL; values are bound.
+///   Each is reset the moment its rows are read, so no read transaction stays
+///   open to hold up the daemon's checkpoints.
+/// - It opens again when the path names another file (a new inode: the
+///   database was replaced), when another database is asked for (the active
+///   org or the daemon's data folder changed), and after any error, retrying
+///   a failed read once on the fresh connection.
+/// - A writer's lock is waited on for 2 s; a statement still running at
+///   `timeout` is interrupted ("query timed out").
+final class SQLiteReader: @unchecked Sendable {
+    static let shared = SQLiteReader()
+    /// How long a read waits for a lock the daemon holds, in milliseconds.
+    static let busyTimeout: Int32 = 2_000
+    /// More distinct statements than this and the kept ones are let go.
+    static let statementLimit = 64
+
+    /// The library's version, as `--diagnose` reports it.
+    static var libraryVersion: String { String(cString: sqlite3_libversion()) }
+
+    private let queue = DispatchQueue(label: "local.sam.bench.sqlite", qos: .utility)
+    // Touched only on `queue`.
+    private var connection: Connection?
+    private var opens = 0
+
+    /// Tests make their own; the app uses `shared`.
+    init() {}
+
+    /// How many connections have been opened: for tests.
+    var openCount: Int { queue.sync { opens } }
+
+    /// The rows of one read; see `runReadOnlyQuery`.
+    func rows(db: URL, sql: String, arguments: [SQLArgument] = [], timeout: TimeInterval = 8) throws -> [[String]] {
+        dispatchPrecondition(condition: .notOnQueue(queue))
+        return try queue.sync { try read(path: db.path, sql: sql, arguments: arguments, timeout: timeout) }
     }
-    guard result.status == 0 else {
-        throw ScienceError.databaseUnreadable("query failed (schema changed?)")
+
+    /// Lets the connection go; the next read opens it again.
+    func close() {
+        queue.sync { connection = nil }
     }
-    let out = String(data: result.output, encoding: .utf8) ?? ""
-    return out
-        .split(separator: "\n", omittingEmptySubsequences: true)
-        .map { $0.split(separator: Character(separator), omittingEmptySubsequences: false).map(String.init) }
+
+    private func read(path: String, sql: String, arguments: [SQLArgument], timeout: TimeInterval) throws -> [[String]] {
+        var retried = false
+        while true {
+            let (current, fresh) = try open(path)
+            do {
+                return try current.rows(sql, arguments, until: .now() + timeout)
+            } catch let failure as SQLiteFailure {
+                // Whatever went wrong, the next read starts on a new connection.
+                connection = nil
+                if failure.primary == SQLITE_INTERRUPT { throw ScienceError.databaseUnreadable("query timed out") }
+                // Once more on a fresh connection, unless this one was fresh or
+                // it was a lock that outlasted the 2 s wait.
+                if !fresh, !retried, failure.primary != SQLITE_BUSY, failure.primary != SQLITE_LOCKED {
+                    retried = true
+                    continue
+                }
+                throw ScienceError.databaseUnreadable("query failed: \(failure.message)")
+            }
+        }
+    }
+
+    /// The connection for `path`: the open one while it still reads that very
+    /// file, else a new one.
+    private func open(_ path: String) throws -> (Connection, fresh: Bool) {
+        var info = stat()
+        let found = stat(path, &info) == 0
+        if let connection, connection.path == path, found,
+           connection.device == info.st_dev, connection.inode == info.st_ino {
+            return (connection, false)
+        }
+        connection = nil
+        do {
+            let opened = try Connection(path: path, device: found ? info.st_dev : 0, inode: found ? info.st_ino : 0)
+            connection = opened
+            opens += 1
+            return (opened, true)
+        } catch let failure as SQLiteFailure {
+            throw ScienceError.databaseUnreadable("couldn't open: \(failure.message)")
+        }
+    }
+}
+
+/// What SQLite said when a call failed.
+private struct SQLiteFailure: Error {
+    let code: Int32
+    let message: String
+
+    var primary: Int32 { code & 0xFF }
+}
+
+/// One open connection and its kept statements. Used only on the reader's queue.
+private final class Connection {
+    let path: String
+    let device: dev_t
+    let inode: ino_t
+    private let handle: OpaquePointer
+    private var statements: [String: OpaquePointer] = [:]
+    /// When the statement under way must stop; the progress handler reads it.
+    fileprivate var deadline = DispatchTime.distantFuture
+
+    init(path: String, device: dev_t, inode: ino_t) throws {
+        self.path = path
+        self.device = device
+        self.inode = inode
+        // A URI, so `mode=ro` holds whatever the flags say; the path is
+        // escaped, so a `?`, `#` or `%` in it is part of the path.
+        let escaped = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+        var opened: OpaquePointer?
+        let status = sqlite3_open_v2("file:\(escaped)?mode=ro", &opened,
+                                     SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_URI, nil)
+        guard status == SQLITE_OK, let opened else {
+            let message = opened.map { String(cString: sqlite3_errmsg($0)) } ?? "out of memory"
+            sqlite3_close_v2(opened)
+            throw SQLiteFailure(code: status, message: message)
+        }
+        handle = opened
+        sqlite3_extended_result_codes(handle, 1)
+        sqlite3_busy_timeout(handle, SQLiteReader.busyTimeout)
+        // Every 10,000 steps of a statement's program: past the deadline, stop.
+        sqlite3_progress_handler(handle, 10_000, { context in
+            guard let context else { return 0 }
+            let connection = Unmanaged<Connection>.fromOpaque(context).takeUnretainedValue()
+            return DispatchTime.now() > connection.deadline ? 1 : 0
+        }, Unmanaged.passUnretained(self).toOpaque())
+    }
+
+    deinit {
+        for statement in statements.values { sqlite3_finalize(statement) }
+        sqlite3_close_v2(handle)
+    }
+
+    /// SQLite copies a bound value at once.
+    private static var transient: sqlite3_destructor_type { unsafeBitCast(-1, to: sqlite3_destructor_type.self) }
+
+    func rows(_ sql: String, _ arguments: [SQLArgument], until deadline: DispatchTime) throws -> [[String]] {
+        let statement = try prepared(sql)
+        self.deadline = deadline
+        defer {
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
+            self.deadline = .distantFuture
+        }
+        for (index, argument) in arguments.enumerated() {
+            let position = Int32(index + 1)
+            let status = switch argument {
+            case .text(let text): sqlite3_bind_text(statement, position, text, Int32(text.utf8.count), Self.transient)
+            case .integer(let value): sqlite3_bind_int64(statement, position, value)
+            }
+            guard status == SQLITE_OK else { throw failure(status) }
+        }
+        let columns = sqlite3_column_count(statement)
+        var rows: [[String]] = []
+        while true {
+            let status = sqlite3_step(statement)
+            if status == SQLITE_DONE { return rows }
+            guard status == SQLITE_ROW else { throw failure(status) }
+            rows.append((0..<columns).map { column in
+                guard let text = sqlite3_column_text(statement, column) else { return "" }
+                let count = Int(sqlite3_column_bytes(statement, column))
+                return String(decoding: UnsafeBufferPointer(start: text, count: count), as: UTF8.self)
+            })
+        }
+    }
+
+    private func prepared(_ sql: String) throws -> OpaquePointer {
+        if let kept = statements[sql] { return kept }
+        if statements.count >= SQLiteReader.statementLimit {
+            for statement in statements.values { sqlite3_finalize(statement) }
+            statements = [:]
+        }
+        var statement: OpaquePointer?
+        let status = sqlite3_prepare_v3(handle, sql, -1, UInt32(SQLITE_PREPARE_PERSISTENT), &statement, nil)
+        guard status == SQLITE_OK, let statement else {
+            sqlite3_finalize(statement)
+            throw status == SQLITE_OK ? SQLiteFailure(code: SQLITE_MISUSE, message: "not a statement") : failure(status)
+        }
+        statements[sql] = statement
+        return statement
+    }
+
+    private func failure(_ status: Int32) -> SQLiteFailure {
+        SQLiteFailure(code: status, message: String(cString: sqlite3_errmsg(handle)))
+    }
 }
 
 /// One session row: a conversation root, metadata only.
@@ -168,7 +342,15 @@ private func pendingKindSQL(_ alias: String) -> String {
 private func sessionFilterSQL(_ alias: String) -> String {
     """
     \(alias).parent_frame_id IS NULL
-      AND \(alias).is_hidden IS NOT 1
+      AND \(sessionKindSQL(alias))
+    """
+}
+
+/// `sessionFilterSQL` without its first line, for the poll, which says
+/// "a root" its own way.
+private func sessionKindSQL(_ alias: String) -> String {
+    """
+    \(alias).is_hidden IS NOT 1
       AND \(alias).conversation_type != 'uploads'
       AND \(alias).agent_name NOT IN ('CONCIERGE','CANVAS_CONCIERGE')
     """
@@ -177,43 +359,16 @@ private func sessionFilterSQL(_ alias: String) -> String {
 /// Recent sessions, the way Claude Science's own dashboard picks them (see
 /// `sessionFilterSQL`). Working and waiting sessions sort first so they are
 /// never pushed out of `limit`, then by the latest activity anywhere in the
-/// tree. `limit` keeps the poll cheap against a 1 GB db.
+/// tree. Only the few roots that can make the list are looked at closely
+/// (`sessionsPollSQL`), so the poll stays cheap however many sessions there
+/// have ever been.
 func fetchRecentFrames(db: URL, limit: Int = 25) throws -> [FrameRow] {
-    let awaiting = "'awaiting_user_response','awaiting_plan_approval'"
-    let sql = """
-        SELECT f.id, COALESCE(f.project_id,''), \(oneLineSQL("f.name")), f.status,
-               f.created_at, f.updated_at, COALESCE(f.completed_at,''),
-               MAX(f.created_at, COALESCE(f.last_user_message_at, 0)),
-               CASE WHEN f.status = 'processing' AND (\(pendingInputSQL("f")) OR EXISTS (
-                   SELECT 1 FROM frames c
-                   WHERE c.root_frame_id = f.id AND c.parent_frame_id IS NOT NULL
-                     AND c.is_hidden IS NOT 1
-                     AND (c.status IN (\(awaiting))
-                          OR (c.status = 'processing' AND \(pendingInputSQL("c"))))
-               )) THEN 1 ELSE 0 END,
-               (SELECT COALESCE(SUM(COALESCE(c.input_tokens, 0) + COALESCE(c.output_tokens, 0)), 0)
-                FROM frames c WHERE c.root_frame_id = f.id),
-               CASE WHEN f.status = 'awaiting_user_response' THEN COALESCE(NULLIF(\(pendingKindSQL("f")), 'ask'), f.status)
-                    WHEN f.status IN (\(awaiting)) THEN f.status
-                    WHEN f.status = 'processing' THEN COALESCE(\(pendingKindSQL("f")), (
-                        SELECT CASE WHEN c.status = 'awaiting_user_response'
-                                    THEN COALESCE(NULLIF(\(pendingKindSQL("c")), 'ask'), c.status)
-                                    WHEN c.status IN (\(awaiting)) THEN c.status ELSE \(pendingKindSQL("c")) END
-                        FROM frames c
-                        WHERE c.root_frame_id = f.id AND c.parent_frame_id IS NOT NULL
-                          AND c.is_hidden IS NOT 1
-                          AND (c.status IN (\(awaiting))
-                               OR (c.status = 'processing' AND \(pendingInputSQL("c"))))
-                        ORDER BY c.updated_at DESC LIMIT 1))
-               END
-        FROM frames f
-        WHERE \(sessionFilterSQL("f"))
-        ORDER BY f.status IN ('processing',\(awaiting)) DESC,
-                 MAX(f.updated_at, COALESCE((SELECT MAX(c.updated_at) FROM frames c
-                     WHERE c.root_frame_id = f.id AND c.parent_frame_id IS NOT NULL), 0)) DESC
-        LIMIT \(max(1, min(limit, 50)));
-        """
-    let rows = try runReadOnlyQuery(db: db, sql: sql)
+    // Whether SQLite can walk the roots newest first, and find the working
+    // ones, by the daemon's own indexes; a failed look is a no.
+    let byTime = (try? ColumnProbe.shared.leadsIndex(db: db, table: "frames", column: "updated_at")) ?? false
+    let byStatus = (try? ColumnProbe.shared.leadsIndex(db: db, table: "frames", column: "status")) ?? false
+    let rows = try runReadOnlyQuery(db: db, sql: sessionsPollSQL(byTime: byTime, byStatus: byStatus),
+                                    arguments: [.integer(Int64(max(1, min(limit, 50))))])
     return rows.compactMap { cols in
         guard cols.count >= 10 else { return nil }
         let created = Int64(cols[4]) ?? 0
@@ -229,6 +384,108 @@ func fetchRecentFrames(db: URL, limit: Int = 25) throws -> [FrameRow] {
     }
 }
 
+/// The poll's statement, its limit bound as `?1`. The order is the one it
+/// always was: working and waiting roots first, then by the latest write
+/// anywhere in the tree, `MAX(root's updated_at, its helpers' latest)`. What
+/// changed is which rows are looked at:
+///
+/// 1. The candidates, by cheap columns only: the roots that work or wait;
+///    the newest `?1` roots by their own `updated_at` (`newest`); the roots
+///    of every helper written since the oldest of those (`helped`), since a
+///    helper's write can lift a root above them; and, only while fewer than
+///    `?1` roots have a status, the ones without (they sort last).
+///    Nothing outside these can make the list: a root that isn't one has
+///    its own and all its helpers' writes older than the oldest in `newest`,
+///    so at least `?1` roots sort before it.
+/// 2. Their trees, metadata only (`tree`), and the order key for those alone
+///    (`picked`).
+/// 3. The tokens, the pending-input test and the waiting signal (the JSON
+///    reads) for the `?1` picked roots only, as before.
+///
+/// With an index that starts with `updated_at` (`byTime`), SQLite walks it
+/// newest first and stops at `?1` roots, and finds the helpers' writes by
+/// range; with one that starts with `status` (`byStatus`), it finds the
+/// working roots by it. The `+` in front of `parent_frame_id` keeps it off a
+/// parent index for those, which would mean visiting every root. Without such
+/// indexes it reads each root once (`roots`), never once per root as before.
+func sessionsPollSQL(byTime: Bool, byStatus: Bool) -> String {
+    let awaiting = "'awaiting_user_response','awaiting_plan_approval'"
+    let active = "'processing',\(awaiting)"
+    let firstLook: String
+    if byTime {
+        firstLook = """
+            newest AS MATERIALIZED (
+                SELECT f.id, f.updated_at FROM frames f
+                WHERE +f.parent_frame_id IS NULL AND f.status IS NOT NULL AND \(sessionKindSQL("f"))
+                ORDER BY f.updated_at DESC LIMIT ?1),
+            working AS MATERIALIZED (
+                SELECT f.id FROM frames f
+                WHERE f.status IN (\(active)) AND \(byStatus ? "+" : "")f.parent_frame_id IS NULL AND \(sessionKindSQL("f"))),
+            unsorted AS MATERIALIZED (
+                SELECT f.id FROM frames f
+                WHERE (SELECT COUNT(*) FROM newest) < ?1 AND f.status IS NULL AND \(sessionFilterSQL("f"))),
+            """
+    } else {
+        firstLook = """
+            roots AS MATERIALIZED (
+                SELECT f.id, f.updated_at, f.status FROM frames f WHERE \(sessionFilterSQL("f"))),
+            newest AS MATERIALIZED (
+                SELECT id, updated_at FROM roots WHERE status IS NOT NULL ORDER BY updated_at DESC LIMIT ?1),
+            working AS MATERIALIZED (
+                SELECT id FROM roots WHERE status IN (\(active))),
+            unsorted AS MATERIALIZED (
+                SELECT id FROM roots WHERE status IS NULL AND (SELECT COUNT(*) FROM newest) < ?1),
+            """
+    }
+    // A helper of root `f`, in `tree t`, that holds a request: waiting on the
+    // user, or working with one pending. Its output is read only then.
+    let holding = """
+        t.root_frame_id = f.id AND t.parent_frame_id IS NOT NULL AND t.is_hidden IS NOT 1
+          AND (t.status IN (\(awaiting))
+               OR (t.status = 'processing' AND (SELECT \(pendingInputSQL("x")) FROM frames x WHERE x.id = t.id)))
+        """
+    return """
+        WITH \(firstLook)
+        helped AS MATERIALIZED (
+            SELECT c.root_frame_id AS id FROM frames c
+            WHERE c.updated_at >= (SELECT MIN(updated_at) FROM newest) AND +c.parent_frame_id IS NOT NULL),
+        candidates(id) AS MATERIALIZED (
+            SELECT id FROM working UNION SELECT id FROM newest UNION SELECT id FROM helped
+            UNION SELECT id FROM unsorted),
+        tree AS MATERIALIZED (
+            SELECT c.id, c.root_frame_id, c.parent_frame_id, c.status, c.updated_at, c.is_hidden,
+                   c.input_tokens, c.output_tokens
+            FROM frames c WHERE c.root_frame_id IN (SELECT id FROM candidates)),
+        picked AS MATERIALIZED (
+            SELECT f.id AS id, f.status IN (\(active)) AS active,
+                   MAX(f.updated_at, COALESCE((SELECT MAX(t.updated_at) FROM tree t
+                       WHERE t.root_frame_id = f.id AND t.parent_frame_id IS NOT NULL), 0)) AS recency
+            FROM candidates k CROSS JOIN frames f ON f.id = k.id
+            WHERE \(sessionFilterSQL("f"))
+            ORDER BY active DESC, recency DESC
+            LIMIT ?1)
+        SELECT f.id, COALESCE(f.project_id,''), \(oneLineSQL("f.name")), f.status,
+               f.created_at, f.updated_at, COALESCE(f.completed_at,''),
+               MAX(f.created_at, COALESCE(f.last_user_message_at, 0)),
+               CASE WHEN f.status = 'processing' AND (\(pendingInputSQL("f"))
+                        OR EXISTS (SELECT 1 FROM tree t WHERE \(holding))) THEN 1 ELSE 0 END,
+               (SELECT COALESCE(SUM(COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0)), 0)
+                FROM tree t WHERE t.root_frame_id = f.id),
+               CASE WHEN f.status = 'awaiting_user_response' THEN COALESCE(NULLIF(\(pendingKindSQL("f")), 'ask'), f.status)
+                    WHEN f.status IN (\(awaiting)) THEN f.status
+                    WHEN f.status = 'processing' THEN COALESCE(\(pendingKindSQL("f")), (
+                        SELECT CASE WHEN t.status = 'awaiting_user_response'
+                                    THEN COALESCE(NULLIF(\(pendingKindSQL("y")), 'ask'), t.status)
+                                    WHEN t.status IN (\(awaiting)) THEN t.status ELSE \(pendingKindSQL("y")) END
+                        FROM tree t CROSS JOIN frames y ON y.id = t.id
+                        WHERE \(holding)
+                        ORDER BY t.updated_at DESC LIMIT 1))
+               END
+        FROM picked p CROSS JOIN frames f ON f.id = p.id
+        ORDER BY p.active DESC, p.recency DESC;
+        """
+}
+
 /// Sessions started per local day over the last `days`, for the activity
 /// graph. One grouped count; no names, no content.
 func fetchDailySessionCounts(db: URL, days: Int, now: Date = Date()) throws -> [String: Int] {
@@ -236,10 +493,10 @@ func fetchDailySessionCounts(db: URL, days: Int, now: Date = Date()) throws -> [
     let sql = """
         SELECT date(f.created_at / 1000, 'unixepoch', 'localtime'), COUNT(*)
         FROM frames f
-        WHERE \(sessionFilterSQL("f")) AND f.created_at >= \(since)
+        WHERE \(sessionFilterSQL("f")) AND f.created_at >= ?1
         GROUP BY 1;
         """
-    return try dailyCounts(db: db, sql: sql)
+    return try dailyCounts(db: db, sql: sql, since: since)
 }
 
 /// Messages the user sent per local day, for the activity graph.
@@ -257,15 +514,15 @@ func fetchDailyMessageCounts(db: URL, days: Int, now: Date = Date()) throws -> [
         SELECT date(json_extract(m.msg_json, '$._ts') / 1000, 'unixepoch', 'localtime'), COUNT(*)
         FROM frame_messages m JOIN frames f ON f.id = m.frame_id
         WHERE \(sessionFilterSQL("f"))
-          AND m.frame_id IN \(recentFramesSQL(since))
+          AND m.frame_id IN \(recentFramesSQL)
           AND json_valid(m.msg_json)
           AND json_extract(m.msg_json, '$.role') = 'user'
           AND json_type(m.msg_json, '$._intent_id') IS NOT NULL
           AND json_type(m.msg_json, '$._ts') = 'integer'
-          AND json_extract(m.msg_json, '$._ts') >= \(since)
+          AND json_extract(m.msg_json, '$._ts') >= ?1
         GROUP BY 1;
         """
-    return try dailyCounts(db: db, sql: sql)
+    return try dailyCounts(db: db, sql: sql, since: since)
 }
 
 /// Tokens the model processed per local day, for the activity graph: every
@@ -279,29 +536,27 @@ func fetchDailyTokenCounts(db: URL, days: Int, now: Date = Date()) throws -> [St
                SUM(COALESCE(json_extract(msg_json, '$._tokens.input'), 0)
                    + COALESCE(json_extract(msg_json, '$._tokens.output'), 0))
         FROM frame_messages
-        WHERE frame_id IN \(recentFramesSQL(since))
+        WHERE frame_id IN \(recentFramesSQL)
           AND json_valid(msg_json)
           AND json_type(msg_json, '$._tokens') = 'object'
           AND json_type(msg_json, '$._ts') = 'integer'
-          AND json_extract(msg_json, '$._ts') >= \(since)
+          AND json_extract(msg_json, '$._ts') >= ?1
         GROUP BY 1;
         """
-    return try dailyCounts(db: db, sql: sql)
+    return try dailyCounts(db: db, sql: sql, since: since)
 }
 
-/// Frames updated since `since` (ms). A frame's `updated_at` never trails
+/// Frames updated since `?1` (ms). A frame's `updated_at` never trails
 /// its messages' `_ts` (checked on a real db, 2026-09-27: 43,391 dated
 /// messages, none later than their frame), so a message sent since then is
 /// in one of these frames. Looking only there lets SQLite use the frame_id
 /// index instead of reading every message: 0.14 s instead of 2.2 s for two
 /// weeks of tokens, 0.8 s instead of 1.9 s for a year, same counts.
-private func recentFramesSQL(_ since: Int64) -> String {
-    "(SELECT id FROM frames WHERE updated_at >= \(since))"
-}
+private let recentFramesSQL = "(SELECT id FROM frames WHERE updated_at >= ?1)"
 
-private func dailyCounts(db: URL, sql: String) throws -> [String: Int] {
+private func dailyCounts(db: URL, sql: String, since: Int64) throws -> [String: Int] {
     var out: [String: Int] = [:]
-    for cols in try runReadOnlyQuery(db: db, sql: sql) where cols.count >= 2 {
+    for cols in try runReadOnlyQuery(db: db, sql: sql, arguments: [.integer(since)]) where cols.count >= 2 {
         out[cols[0]] = Int(cols[1]) ?? 0
     }
     return out
@@ -324,8 +579,8 @@ func fetchProjectNames(db: URL) throws -> [String: String] {
 // whose value never leaves the database: `task_summary IS NOT NULL` (Claude
 // Science's own list shows only sessions with one), and, to find a new session
 // whose reply was lost, whether `input_data`'s `_intent_id` is the phone's id.
-// Every value put into the SQL is checked first (ids by their shape, numbers
-// as numbers) or escaped (`q`); sqlite3 takes the statement as one argument.
+// Every value is checked first (ids by their shape, numbers as numbers), then
+// bound to the statement, never written into it.
 
 /// A project for the phone: how many sessions it has, and when the newest
 /// was last active (milliseconds; nil without sessions).
@@ -370,20 +625,19 @@ enum BrowseSQL {
         }
     }
 
-    /// `'%text%'` for `LIKE … ESCAPE '\'`: the quote doubled, and `\`, `%` and
-    /// `_` escaped, so the text matches only itself.
+    /// `%text%`, bound to `LIKE ? ESCAPE '\'`: `\`, `%` and `_` escaped, so
+    /// the text matches only itself.
     static func containsPattern(_ text: String) -> String {
         var out = ""
         for scalar in text.unicodeScalars {
             switch scalar {
-            case "'": out += "''"
             case "\\": out += "\\\\"
             case "%": out += "\\%"
             case "_": out += "\\_"
             default: out.unicodeScalars.append(scalar)
             }
         }
-        return "'%" + out + "%'"
+        return "%" + out + "%"
     }
 
     /// The columns of a `BrowseRow`, from `frames f` and `projects p`.
@@ -411,14 +665,27 @@ private final class ColumnProbe: @unchecked Sendable {
     private var known: [String: (has: Bool, at: Date)] = [:]
 
     func has(db: URL, table: String, column: String) throws -> Bool {
-        let key = "\(db.path)\u{1F}\(table)\u{1F}\(column)"
+        try look(db: db, key: "column\u{1F}\(table)\u{1F}\(column)",
+                 sql: "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2;", table, column)
+    }
+
+    /// Whether a whole (not partial) index on `table` starts with `column`, so
+    /// SQLite can walk the table in that column's order. The same five minutes.
+    func leadsIndex(db: URL, table: String, column: String) throws -> Bool {
+        try look(db: db, key: "index\u{1F}\(table)\u{1F}\(column)", sql: """
+            SELECT COUNT(*) FROM pragma_index_list(?1) AS l, pragma_index_info(l.name) AS i
+            WHERE l.partial = 0 AND i.seqno = 0 AND i.name = ?2;
+            """, table, column)
+    }
+
+    private func look(db: URL, key: String, sql: String, _ table: String, _ column: String) throws -> Bool {
+        let key = "\(db.path)\u{1F}\(key)"
         lock.lock()
         let cached = known[key]
         lock.unlock()
         if let cached, Date().timeIntervalSince(cached.at) < 300 { return cached.has }
-        let rows = try runReadOnlyQuery(
-            db: db, sql: "SELECT COUNT(*) FROM pragma_table_info('\(table)') WHERE name = '\(column)';")
-        let has = rows.first?.first == "1"
+        let rows = try runReadOnlyQuery(db: db, sql: sql, arguments: [.text(table), .text(column)])
+        let has = (rows.first?.first).flatMap { Int($0) }.map { $0 > 0 } ?? false
         lock.lock()
         known[key] = (has, Date())
         lock.unlock()
@@ -453,15 +720,20 @@ func fetchProjects(db: URL) throws -> [ProjectRow] {
 /// Nil (nothing read) for a project id or cursor out of shape.
 func fetchProjectSessions(db: URL, project: String, after cursor: BrowseCursor?, search: String?) throws -> [BrowseRow]? {
     guard BrowseSQL.isProjectID(project) else { return nil }
-    var conditions = ["\(sessionFilterSQL("f"))", "f.task_summary IS NOT NULL", "f.project_id = '\(project)'"]
+    var conditions = ["\(sessionFilterSQL("f"))", "f.task_summary IS NOT NULL", "f.project_id = ?"]
+    var arguments: [SQLArgument] = [.text(project)]
     if let cursor {
         guard PlanCheck.isFrameID(cursor.id), cursor.updatedMs >= 0 else { return nil }
         conditions.append("""
-            (COALESCE(f.updated_at,0) < \(cursor.updatedMs) \
-            OR (COALESCE(f.updated_at,0) = \(cursor.updatedMs) AND f.id < '\(cursor.id)'))
+            (COALESCE(f.updated_at,0) < ? \
+            OR (COALESCE(f.updated_at,0) = ? AND f.id < ?))
             """)
+        arguments += [.integer(cursor.updatedMs), .integer(cursor.updatedMs), .text(cursor.id)]
     }
-    if let search { conditions.append("f.name LIKE \(BrowseSQL.containsPattern(search)) ESCAPE '\\'") }
+    if let search {
+        conditions.append("f.name LIKE ? ESCAPE '\\'")
+        arguments.append(.text(BrowseSQL.containsPattern(search)))
+    }
     let sql = """
         SELECT \(BrowseSQL.rowColumns)
         FROM frames f LEFT JOIN projects p ON p.id = f.project_id
@@ -469,7 +741,7 @@ func fetchProjectSessions(db: URL, project: String, after cursor: BrowseCursor?,
         ORDER BY COALESCE(f.updated_at,0) DESC, f.id DESC
         LIMIT \(BrowseSQL.pageSize + 1);
         """
-    return try runReadOnlyQuery(db: db, sql: sql).compactMap(BrowseSQL.row)
+    return try runReadOnlyQuery(db: db, sql: sql, arguments: arguments).compactMap(BrowseSQL.row)
 }
 
 /// One root session by its full id, as the session list's filter counts
@@ -480,10 +752,10 @@ func fetchSession(db: URL, id: String) throws -> BrowseRow? {
     let sql = """
         SELECT \(BrowseSQL.rowColumns)
         FROM frames f LEFT JOIN projects p ON p.id = f.project_id
-        WHERE \(sessionFilterSQL("f")) AND f.id = '\(id)'
+        WHERE \(sessionFilterSQL("f")) AND f.id = ?1
         LIMIT 1;
         """
-    return try runReadOnlyQuery(db: db, sql: sql).compactMap(BrowseSQL.row).first
+    return try runReadOnlyQuery(db: db, sql: sql, arguments: [.text(id)]).compactMap(BrowseSQL.row).first
 }
 
 /// The root session a new-session request with this intent id made in this
@@ -496,10 +768,10 @@ func fetchSessionByIntent(db: URL, project: String, intent: String, now: Date = 
     let since = Int64((now.timeIntervalSince1970 - window) * 1000)
     let sql = """
         SELECT f.id FROM frames f
-        WHERE \(sessionFilterSQL("f")) AND f.project_id = '\(project)' AND COALESCE(f.created_at,0) >= \(since)
-          AND json_extract(CASE WHEN json_valid(f.input_data) THEN f.input_data END, '$._intent_id') = '\(intent)'
+        WHERE \(sessionFilterSQL("f")) AND f.project_id = ?1 AND COALESCE(f.created_at,0) >= ?2
+          AND json_extract(CASE WHEN json_valid(f.input_data) THEN f.input_data END, '$._intent_id') = ?3
         ORDER BY f.created_at DESC
         LIMIT 1;
         """
-    return try runReadOnlyQuery(db: db, sql: sql).first.flatMap { $0.first }.flatMap { PlanCheck.isFrameID($0) ? $0 : nil }
+    return try runReadOnlyQuery(db: db, sql: sql, arguments: [.text(project), .integer(since), .text(intent)]).first.flatMap { $0.first }.flatMap { PlanCheck.isFrameID($0) ? $0 : nil }
 }

@@ -30,7 +30,7 @@ enum Diagnose {
     }
 
     /// The whole report, one line per step. Blocking (it runs the CLI and
-    /// sqlite3): call it off the main thread in the app.
+    /// reads the database): call it off the main thread in the app.
     static func report() -> [String] {
         var out: [String] = []
         let info = Bundle.main.infoDictionary
@@ -83,16 +83,22 @@ enum Diagnose {
             return out
         }
         out.append("✓ Reading: \(tilde(db.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path)) (\(fileSize(db)))")
-        let sqlite = resolveSqlite3()
-        let version = (try? runProcess(sqlite, ["--version"], timeout: 3)).map {
-            String(decoding: $0.output, as: UTF8.self).split(separator: " ").first.map(String.init) ?? "?"
-        } ?? "?"
-        out.append("✓ sqlite3: \(sqlite.path) (\(version))")
+        // The library Bench reads with, and whether the database opens with it,
+        // read-only, on the connection the app's reads use.
+        let library = "SQLite \(SQLiteReader.libraryVersion) (the system library)"
+        do {
+            _ = try runReadOnlyQuery(db: db, sql: "SELECT COUNT(*) FROM sqlite_schema;")
+            out.append("✓ \(library): the database opens read-only")
+        } catch let error as ScienceError {
+            out.append("✗ \(library): \(detail(error))")
+        } catch {
+            out.append("✗ \(library): \(error)")
+        }
 
         // 3. Its layout: a table or column the queries need that isn't there
         // is the likeliest break after a Claude Science update.
         for (table, columns) in expected {
-            switch schema(of: table, in: db, sqlite: sqlite) {
+            switch schema(of: table, in: db) {
             case .failure(let message):
                 out.append("✗ Table \(table): \(message)")
             case .success(let present) where present.isEmpty:
@@ -131,26 +137,16 @@ enum Diagnose {
         case failure(String)
     }
 
-    /// The table's column names, or SQLite's own error message: the one thing
-    /// the app's reads throw away.
-    private static func schema(of table: String, in db: URL, sqlite: URL) -> Columns {
-        let task = Process()
-        task.executableURL = sqlite
-        task.arguments = ["-list", "file:\(db.path)?mode=ro", "SELECT name FROM pragma_table_info('\(table)');"]
-        let out = Pipe(), err = Pipe()
-        task.standardOutput = out
-        task.standardError = err
-        task.standardInput = FileHandle.nullDevice
-        do { try task.run() } catch { return .failure("couldn't run sqlite3: \(error.localizedDescription)") }
-        let output = out.fileHandleForReading.readDataToEndOfFile()
-        let errors = err.fileHandleForReading.readDataToEndOfFile()
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else {
-            let message = String(decoding: errors, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failure(message.isEmpty ? "sqlite3 exited \(task.terminationStatus)" : message)
+    /// The table's column names, or SQLite's own error message.
+    private static func schema(of table: String, in db: URL) -> Columns {
+        do {
+            let rows = try runReadOnlyQuery(db: db, sql: "SELECT name FROM pragma_table_info(?1);", arguments: [.text(table)])
+            return .success(Set(rows.compactMap(\.first)))
+        } catch let error as ScienceError {
+            return .failure(detail(error))
+        } catch {
+            return .failure("\(error)")
         }
-        let names = String(decoding: output, as: UTF8.self).split(separator: "\n").map(String.init)
-        return .success(Set(names))
     }
 
     private static func detail(_ error: ScienceError) -> String {
