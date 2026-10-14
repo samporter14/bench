@@ -276,8 +276,10 @@ enum HistoryReaderScript {
                 const joined = blocks.filter(b => b.type === "text").map(b => b.text).join("\n\n").trim();
                 if (joined !== "" && !HIDDEN_STARTS.some(start => joined.startsWith(start))) {
                     const { rest, found } = attached(joined);
+                    // Notes the daemon adds inside a message ("[System] Attached file: …") stay hidden.
+                    const own = rest.split("\n").filter(l => !HIDDEN_STARTS.some(s => l.trim().startsWith(s))).join("\n").trim();
                     turn += 1;
-                    const item = text("you", i, at, rest);
+                    const item = text("you", i, at, own);
                     if (item !== null && found.length > 0) { item.files.push(...found); }
                 }
             } else {
@@ -404,7 +406,7 @@ enum HistoryReaderScript {
             const t = line.trim();
             if (!t.startsWith('{"type":"attachment"')) { return true; }
             try { const o = JSON.parse(t); return !(isObject(o) && o.type === "attachment"); } catch (e) { return true; }
-        }).join("\n").trim();
+        }).filter(line => m.role !== "user" || !HIDDEN_STARTS.some(s => line.trim().startsWith(s))).join("\n").trim();
         let at = null;
         if (typeof m._ts === "number" && isFinite(m._ts)) {
             const ms = m._ts < 1e11 ? m._ts * 1000 : m._ts;

@@ -152,6 +152,8 @@ enum SessionReaderScript {
                 if (m.role === "user") {
                     if (HIDDEN_FLAGS.some(flag => Boolean(m[flag]))) { continue; }
                     if (HIDDEN_STARTS.some(start => text.startsWith(start))) { continue; }
+                    // Notes the daemon adds inside a message ("[System] Attached file: …") stay hidden.
+                    text = text.split("\n").filter(l => !HIDDEN_STARTS.some(s => l.trim().startsWith(s))).join("\n").trim();
                 }
                 // Tool calls or results only, or nothing.
                 if (text === "") { continue; }

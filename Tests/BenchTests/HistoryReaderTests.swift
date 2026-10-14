@@ -369,3 +369,14 @@ struct HistoryAttachmentTests {
         #expect(files.isEmpty)
     }
 }
+
+struct HistorySystemNoteTests {
+    @Test func theDaemonsAttachedFileNoteStaysHidden() throws {
+        let rows = #"[{"role": "user", "_ts": 1791833000000, "content": [{"type": "text", "text": "Made-up question"}, {"type": "text", "text": "[System] Attached file: phone-photo-20261014-120000.jpg"}]}]"#
+        let page = try #require(project(page(rows, total: 1)).page)
+        guard case .turn(_, .you, _, let text, _, _) = try #require(page.items.first) else {
+            Issue.record("not a turn"); return
+        }
+        #expect(text == "Made-up question")
+    }
+}
