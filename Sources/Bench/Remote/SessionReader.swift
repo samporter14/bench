@@ -4,6 +4,9 @@
 // line, the last reply, a few short turns, the agent's messages to the user,
 // the root's own question and the plan fields Approve uses. Never thinking,
 // tool calls or results, images, paths, attachments, sub-agents or artifacts.
+// Phase 4 adds one thing to a full read: the head of the queue of permission
+// requests, the root's and its helpers' (Remote/RemotePermissions.swift), as
+// its plain fields only.
 //
 // The projection is plain JavaScript with no fetch and no DOM, so the tests
 // run the very same string in JavaScriptCore on made-up frames. Swift checks
@@ -21,7 +24,7 @@ enum SessionReaderScript {
     /// `benchProjectSession(shallow, page, withTurns)`: the projection, or null
     /// when a shape doesn't match. Pure: no fetch, no DOM, no globals.
     static let projection = #"""
-    function benchProjectSession(shallow, page, withTurns) {
+    function benchProjectSession(shallow, page, withTurns, trace, rootId) {
         "use strict";
         // The daemon's frame statuses. Anything else is a daemon Bench doesn't know.
         const KNOWN = ["processing", "awaiting_user_response", "awaiting_plan_approval", "completed",
@@ -181,6 +184,9 @@ enum SessionReaderScript {
             if (turns === null) { return null; }
         }
 
+        // Phase 4 permissions: the head of the queue across the root and its helpers.
+        const permission = isObject(trace) ? benchProjectPermission(shallow, trace, rootId) : null;
+
         return {
             status: status,
             agentName: whole(shallow.agent_name, 200),
@@ -197,9 +203,10 @@ enum SessionReaderScript {
                 approval: approval([ctx._plan_approved, out.plan_approved]),
             },
             turns: turns,
+            permission: permission,
         };
     }
-    """#
+    """# + "\n" + PermissionScript.reading // Phase 4 permissions
 
     /// What `callAsyncJavaScript` runs, with the arguments `frameId` and
     /// `withTurns`: the projection, then the two GETs, exactly. Answers a
@@ -232,8 +239,18 @@ enum SessionReaderScript {
         if (messages.failed) { return JSON.stringify({ outcome: "unreadable" }); }
         page = messages.json;
     }
+    // Phase 4 permissions: a frame that may hold requests has its children read too.
+    let trace = null;
+    if (wantTurns && benchNeedsTrace(frame.json)) {
+        const tracePath = benchReadPath("trace", frameId);
+        if (tracePath !== null) {
+            const traced = await get(tracePath);
+            if (traced.lost) { return JSON.stringify({ outcome: "lost" }); }
+            trace = traced.failed ? null : traced.json;
+        }
+    }
     let session = null;
-    try { session = benchProjectSession(frame.json, page, wantTurns); } catch (e) { session = null; }
+    try { session = benchProjectSession(frame.json, page, wantTurns, trace, frameId); } catch (e) { session = null; }
     return JSON.stringify(session === null ? { outcome: "unreadable" } : { outcome: "read", session: session });
     """#
 
@@ -334,11 +351,15 @@ struct SessionProjection: Equatable, Sendable {
     let planFrame: PlanFrame
     /// Oldest first. Nil when only the frame was read (an action's check).
     let turns: [Turn]?
+    /// The head of the queue of the root's and its helpers' permission
+    /// requests, when there is one and it could be read: only in a full read
+    /// (with turns). Phase 4 permissions.
+    let permission: PermissionRequest?
 
     init(status: String, agentName: String?, projectID: String?, statusLine: String? = nil, reply: String? = nil,
          replyAt: Date? = nil, toYou: [Note] = [], queued: Int = 0, asks: [Ask?] = [],
          planVersion: String? = nil, planArtifact: String? = nil, approval: PlanFrame.Approval = .no,
-         turns: [Turn]? = nil) {
+         turns: [Turn]? = nil, permission: PermissionRequest? = nil) {
         self.status = status
         self.agentName = agentName
         self.projectID = projectID
@@ -350,6 +371,7 @@ struct SessionProjection: Equatable, Sendable {
         self.asks = asks
         planFrame = PlanFrame(status: status, versionID: planVersion, artifactID: planArtifact, approval: approval)
         self.turns = turns
+        self.permission = permission
     }
 
     /// The first root question, when it is readable. A first one that isn't
@@ -403,10 +425,12 @@ struct SessionProjection: Equatable, Sendable {
             }
             turns = list
         }
+        // Phase 4 permissions: one that doesn't match is left out, not a reason to refuse the session.
+        let permission = Pick.isNull(root["permission"]) ? nil : PermissionRequest(object: root["permission"])
         self.init(status: status, agentName: agentName.value, projectID: projectID.value,
                   statusLine: statusLine.value, reply: reply.value, replyAt: replyAt, toYou: notes, queued: queued,
                   asks: asks, planVersion: planVersion.value, planArtifact: planArtifact.value, approval: approval,
-                  turns: turns)
+                  turns: turns, permission: permission)
     }
 
     private static func approval(_ word: String) -> PlanFrame.Approval? {

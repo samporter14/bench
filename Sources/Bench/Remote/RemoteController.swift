@@ -391,7 +391,8 @@ final class RemoteController: ObservableObject {
             act: { await RemoteSessions.shared.act($0, session: $1, device: $2, body: $3) }, // Phase 2 actions
             files: { await RemoteArtifacts.shared.respond($0, target: $1, device: $2).response }, // Phase 3 files
             browse: { await RemoteBrowser.shared.respond($0, target: $1, device: $2, body: $3) }, // Phase 3 browse
-            photo: { await RemotePhotos.shared.respond($0, device: $1, body: $2) })) // Phase 4 photos
+            photo: { await RemotePhotos.shared.respond($0, device: $1, body: $2) }, // Phase 4 photos
+            live: { await RemoteSessions.shared.liveJSON($0) })) // Phase 4 live
     }
 
     private static func state(now: Date = Date()) -> RemoteAPI.State {
@@ -440,7 +441,8 @@ final class RemoteController: ObservableObject {
             act: { await sessions.act($0, session: $1, device: $2, body: $3) }, // Phase 2 actions
             files: { await artifacts.respond($0, target: $1, device: $2).response }, // Phase 3 files
             browse: { await browser.respond($0, target: $1, device: $2, body: $3) }, // Phase 3 browse
-            photo: { await photos.respond($0, device: $1, body: $2) })) // Phase 4 photos
+            photo: { await photos.respond($0, device: $1, body: $2) }, // Phase 4 photos
+            live: { await sessions.liveJSON($0) })) // Phase 4 live
         demoServer = server
         server.push = PushCenter.demo(auth: auth) // Phase 2 push
         Task {

@@ -5,7 +5,10 @@
 // Reads (the title bar's usage and context readouts, a plan's card) are GETs
 // to an allowed list of paths; a frame only as its shallow read or its token
 // series, never its messages (the phone's session reader, Remote/
-// SessionReader.swift, reads those and projects them in the page). The card's
+// SessionReader.swift, reads those and projects them in the page). Phase 4's
+// two reads, `trace-shallow` and `streaming`, are made by the phone's own
+// readers (Remote/RemotePermissions.swift, Remote/RemoteLive.swift) against
+// their own strict paths, and are not in this list either. The card's
 // one write is approving a plan (DESIGN.md, Approving a plan from its card), a
 // POST with an empty body to one route and nothing else; the phone's writes
 // go through their own writer (Remote/SessionWriter.swift).

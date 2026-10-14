@@ -1418,6 +1418,8 @@ message, and push notifications.
 | GET | `/api/sessions/<id>/turn/<i>` | token | One cut turn whole (Phase 3, History). |
 | POST | `/api/sessions/<id>/photo` | token | Send it a photo and a message: `{"image","text","id"}`; body up to 6 MB (Phase 4, Photos). |
 | POST | `/api/projects/<pid>/photo` | token | Start a session with a photo: `{"image","text","id","planFirst"}`; body up to 6 MB (Phase 4, Photos). |
+| POST | `/api/sessions/<id>/permission` | token | Allow once or deny the head of its permission requests: `{"id","decision":"allow"\|"deny"}` (optionally `"kind"`); answers `{"result":"allowed"\|"denied"\|"changed"\|"unavailable","sentence"}` (Phase 4, Permission requests). |
+| GET | `/api/sessions/<id>/live` | token | A working session's text so far (its last 4,000 characters) and its activity line: `{"working","text","activity"}` (Phase 4, Live text). |
 
 ### `/api/state` (version 1)
 
@@ -2274,6 +2276,110 @@ the phone **replaces** what it shows each time, never appends. The phone polls
 every 1.5 s only while a working session's screen is visible, and stops when
 it isn't working. Costs 1 in the budget. Allowlisted GET:
 `^/frames/<36>/streaming$`.
+
+#### How the server does it (Phase 4 permissions and live)
+
+Files: `Remote/RemotePermissions.swift` (the page's projection of the queue,
+Swift's checks, the table of kinds, the decisions and the writer's body
+builder), `Remote/RemoteLive.swift` (the streaming and activity reads, the
+route's small state), `Remote/RemotePermissionsDemo.swift` (`--demo remote`).
+The shared files only gained hooks marked `// Phase 4 permissions` and
+`// Phase 4 live`.
+
+- **Reading the queue.** A full read (the one with turns) of a root that is
+  `processing` or `awaiting_user_response` also GETs
+  `/frames/<root>/trace-shallow?include_messages=false`, after the messages.
+  The path is built in the page from the id and checked there against
+  `^/api/frames/[0-9a-f-]{36}/trace-shallow\?include_messages=false$` (Swift
+  mirrors it in `PermissionPaths`); `apiGET`'s list is unchanged, and the
+  card's reader still refuses both new paths. The reply is a frame with its
+  children nested under `children`. It is validated whole: every frame an id
+  of 36 characters, its `parent_frame_id` the id it hangs under, a known
+  status, at most 2,000 frames and 16 levels, a holding frame's
+  `output_data` an object (or a string holding one). A tree that doesn't
+  match offers nothing, the root's own request included: an earlier request
+  under a frame Bench can't read might be the head. A failed trace, the same.
+  An action's check of a plan, a question or a message still reads the frame
+  alone.
+- **Which frames hold requests.** Those `processing` (a live request leaves
+  the frame working) or `awaiting_user_response` (a parked one), the root and
+  every one under it. Each frame's `pending_input_requests` goes in one
+  queue, ordered by `createdAt` (ISO text, seconds or milliseconds), then
+  `requestId` (else `tool_id`), then frame id, as the UI orders them. A
+  request with no readable time sorts first, so nothing behind it is offered.
+  When the head is an `ask` there is no `permission` (the root's question has
+  its own field; a helper's isn't offered).
+- **What leaves the page**, one request: `requestId`, `tool_id`, `mode`,
+  `kind`, the holder's frame id, `chain` (the ids from the holder up to the
+  root, built from the tree), whether the daemon's own shape for the kind
+  held (`network`/`host` a `target`; `host_delete` non-empty `paths` and
+  `covering_roots`; `mcp_tool` `server_id`, `server_name`, `tool_name` and a
+  `server_source`; a known `mode`; a readable time; an id), and a few plain
+  lines: a host or path (the first of `host_delete`'s, and a count), a
+  language or tool and server name, a source, a provider, a name. For
+  `local_exec` the code whole, or not at all: over 4,000 characters, or with a
+  control or direction-override character in it, it isn't passed on. Lines
+  lose control characters and are cut. Never `input`, `reason`, `warning`,
+  `command`, `preview`, `credentials`, `environment`, `working_dir`, another
+  request behind the head, nor any other field of a frame; the tests hold
+  "SECRET" in each.
+- **Swift decides** (`RemotePermission`, pure): an unknown kind or a shape
+  that didn't hold is Open on Mac only. Allow: `local_exec` in python, r, bash
+  or powershell, with no shared environment (`shared_env` absent or false) and
+  its code shown whole; `mcp_tool` with `read_only` exactly `true` from
+  `directory`, `bundled` or `antmcp`. Deny: those two and `network`, `host`,
+  `host_delete`, `artifact_delete`, `remote_exec`, `remote_read`,
+  `byoc_submit`, `byoc_kernel`, `infer_submit`, `customize_mutation`,
+  `managed_endpoint_register`, `credential_access`. Open on Mac only:
+  `skill_license`, `contact_email`, `credential_request`, `ssh_password`,
+  `usage_checkpoint`, `set_goal`, `grant_scan`, `provider_discovery`. Both
+  ids (`requestId` and `tool_id`) must be there for either. Actions off:
+  neither, and `why` says so. `why` for a kind that gives lasting access is
+  the spec's sentence; for the others (a shared environment, code too long to
+  show, a tool that isn't read-only, an Open kind) its own.
+- **Answering**: the setting (403), the device's limit (429, shared with the
+  other actions), a known session (404), the body (400), then one at a time
+  per session: a full fresh read, the same request still the head (by `id`,
+  and by `kind` when the phone sent it), the holder's `chain` ending at this
+  session's root, the allow or deny allowed, then exactly one
+  `POST /api/frames/<holder>/resolve-input`
+  `{"responses":[{"requestId","tool_id","approved","action"}]}`, in that
+  order, to the frame that holds the request (the root, or a helper): no
+  `scope`, `mode`, `text` or `redirect`, ever. The body is built in the
+  page from typed arguments and its shape checked there. Reply: `accepted`,
+  `buffered` and `partial` → `allowed`/`denied`; `already_resolved`, "Frame
+  not awaiting user response", "No pending request…", "no pending input
+  requests", `live_approval_stale:…` and "Frame state changed while
+  resolving input" → `changed`; anything else `unavailable`. A refused allow
+  or deny writes nothing and says why.
+- **Live**: the page reads the shallow frame (`working` is `processing`, and
+  nothing else is read when it isn't), then, while it works,
+  `/frames/<root>/streaming`, allowlisted as
+  `^/api/frames/[0-9a-f-]{36}/streaming$`. Only `text` leaves, its last 4,000
+  characters (by code point), null when empty; `thinking` and `tool_stdout`
+  never. A shape that isn't the daemon's (`null`, or an object with string
+  `text` and `thinking` and array `tool_stdout`), a 404, a 405, another 4xx
+  except 401, 408 and 429, or a reply that isn't JSON switches streaming off
+  for ten minutes; a 5xx or a failed fetch doesn't. The activity is worked out
+  every fourth second only, from the pending requests of the root and its
+  helpers and the last 12 messages (the same paths as the reads above),
+  in the UI's order: "Waiting for your approval", then "Waiting on subagents"
+  (every unresolved tool is `delegate` or `wait_for_notification`), "Executing
+  code" (any is `bash`, `powershell`, `python` or `r`), "Running a tool" (any
+  other that isn't a meta tool: `boundary`, `request_review`,
+  `send_user_message`, `update_step_status`), else "Working". A call with a
+  result in a later row is done; a visible user row ends the walk; tool names
+  are read and never leave the page. While there is text only a pending
+  request keeps its label, as in the UI. Askers at the same moment share one
+  read; between activity reads only the shallow frame and the text are read. A
+  read that fails answers `working` from what Bench knows of the session.
+- **`--demo remote`** has "Peak calling script" (a Python cell waits: allow
+  or deny), "Reference genome download" (a network request: deny only),
+  "Citation check" (a helper asks to use a read-only tool), and a live
+  "Literature sweep" whose text grows 52 characters a read, then five reads of
+  "Executing code", then starts over; "Plate layout" is always running code.
+  Answers are the daemon's `accepted` and the request leaves the screen;
+  nothing is sent.
 
 #### Photos
 

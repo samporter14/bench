@@ -160,6 +160,8 @@ enum RemoteRoute: Equatable, Sendable {
     case turn(String, Int)
     /// `POST /api/sessions/<id>/photo` and `POST /api/projects/<pid>/photo` (RemotePhoto.swift). // Phase 4 photos
     case photo(RemotePhotoRoute)
+    /// `GET /api/sessions/<id>/live`: the working session's text so far. // Phase 4 live
+    case live(String)
 
     enum Match: Equatable {
         case found(RemoteRoute)
@@ -203,6 +205,7 @@ enum RemoteRoute: Equatable, Sendable {
         switch parts.count {
         case 1: return .session(id)
         case 2 where parts[1] == "open": return .openSession(id)
+        case 2 where parts[1] == "live": return .live(id) // Phase 4 live
         case 2: return RemoteAction(rawValue: String(parts[1])).map { .action($0, id) } // Phase 2 actions
         default: return nil
         }
@@ -249,6 +252,7 @@ enum RemoteRoute: Equatable, Sendable {
         case .history: "/api/sessions/<id>/history"
         case .turn: "/api/sessions/<id>/turn/<i>"
         case .photo(let photo): photo.pattern // Phase 4 photos
+        case .live: "/api/sessions/<id>/live" // Phase 4 live
         }
     }
 }
@@ -492,6 +496,8 @@ struct RemoteBackend {
     var browse: @MainActor (RemoteRoute, String, String, Data) async -> RemoteActionReply = { _, _, _, _ in .notFound }
     /// A photo route (the route, device id, body). // Phase 4 photos
     var photo: @MainActor (RemotePhotoRoute, String, Data) async -> RemoteActionReply = { _, _, _ in .notFound }
+    /// One session's live text (the session id); nil when the phone may not open it. // Phase 4 live
+    var live: @MainActor (String) async -> Data? = { _ in nil }
 }
 
 enum RemoteServerError: Error, Equatable {
@@ -861,6 +867,14 @@ final class RemoteServer {
                 let reply = await self.backend.photo(photoRoute, deviceID, body)
                 self.send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.body),
                           route: route, closing: true)
+            }
+        case .live(let sessionID): // Phase 4 live
+            Task { [weak self] in
+                guard let self else { return }
+                guard let json = await self.backend.live(sessionID) else {
+                    return self.send(id, RemoteResponse.error(404), route: route, closing: true)
+                }
+                self.send(id, RemoteResponse.make(status: 200, contentType: RemoteResponse.json, body: json), route: route, closing: true)
             }
         case .projects, .projectSessions, .newSession, .history, .turn: // Phase 3 browse
             let deviceID = device?.id ?? "", target = request.target, body = request.body
