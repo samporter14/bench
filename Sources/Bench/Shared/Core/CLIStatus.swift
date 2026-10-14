@@ -49,6 +49,26 @@ enum ScienceDataDirectory {
     }
 }
 
+/// The running daemon's process, as its last `status` said, so the Lab can
+/// hear the moment it exits (Bench's own addition). Its write-ahead log going
+/// away used to say so, but the log stays when another connection (Bench's)
+/// is open as the daemon closes.
+enum ScienceDaemonProcess {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var known: Int32?
+
+    static var current: Int32? {
+        lock.lock(); defer { lock.unlock() }
+        return known
+    }
+
+    static func remember(_ pid: Int32?) {
+        guard let pid, pid > 0 else { return }
+        lock.lock(); defer { lock.unlock() }
+        known = pid
+    }
+}
+
 /// Locate the `claude-science` binary. Never writes, only resolves a path.
 func resolveCLI() -> URL? {
     let candidates = [
@@ -87,6 +107,7 @@ public func fetchCLIStatus(timeout: TimeInterval = 5) throws -> CLIStatus {
     }
     let parsed = try parseCLIStatus(data, exitStatus: status)
     ScienceDataDirectory.remember(parsed.dataDir)
+    ScienceDaemonProcess.remember(parsed.pid)
     return parsed
 }
 

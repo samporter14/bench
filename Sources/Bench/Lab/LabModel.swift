@@ -58,6 +58,20 @@ private extension LabCard {
 
 }
 
+extension SessionStatus {
+    /// Whether everything shown of a working session is the same: all but
+    /// its tokens and the time of its last write. Of a working session, the
+    /// panel shows the title, the project and the turn's clock (which ticks
+    /// on its own); the activity list, the Dock menu, the capsule and the
+    /// menu bar specimen the same or less; `/api/state` the id, the title,
+    /// the project and the turn's start; and opening one takes its link.
+    func drawsTheSame(as other: SessionStatus) -> Bool {
+        id == other.id && projectID == other.projectID && projectName == other.projectName
+            && title == other.title && state == other.state && startedAt == other.startedAt
+            && deepLink == other.deepLink && waitingReason == other.waitingReason
+    }
+}
+
 extension LabCard {
     /// The session a card is about, if it is about one.
     var session: SessionStatus? {
@@ -154,11 +168,26 @@ struct LabEvent: Identifiable, Equatable {
     }
 }
 
+/// Every session of the last read (the ~25 most recently active), whatever
+/// its state, its tokens and last write included: what Quick Open searches
+/// and shows. An object of its own, so a read that moves only a working
+/// session's tokens or last write redraws Quick Open, when it is open, and
+/// not the panel and the lists, which observe `LabModel` (Fable's review of
+/// 0.5.0, P2). In memory only, like Recent.
+@MainActor
+final class LabReads: ObservableObject {
+    @Published fileprivate(set) var sessions: [SessionStatus] = []
+}
+
 @MainActor
 final class LabModel: ObservableObject {
     static let shared = LabModel()
 
-    /// Sessions running, the most recently active first.
+    /// Sessions running, the most recently active first. Reassigned only
+    /// when something drawn of them changes (`drawsTheSame`), not for a
+    /// session's tokens or the time of its last write, which move with
+    /// nearly every read while it works: each publish redraws the panel's
+    /// glass. `workingAsRead` has those as read.
     @Published private(set) var working: [SessionStatus] = []
     /// Sessions parked on the user, the most recently active first.
     @Published private(set) var waiting: [SessionStatus] = []
@@ -180,9 +209,17 @@ final class LabModel: ObservableObject {
     /// even right after Bench starts.
     @Published private(set) var latest: [SessionStatus] = []
     static let latestLimit = 5
+    /// The last read's sessions (`LabReads`), published on their own.
+    let reads = LabReads()
     /// Every session of the last read (the ~25 most recently active), whatever
     /// its state: what Quick Open searches. In memory only, like Recent.
-    @Published private(set) var sessions: [SessionStatus] = []
+    var sessions: [SessionStatus] { reads.sessions }
+
+    /// `working` as the last read has it, tokens and last write included.
+    var workingAsRead: [SessionStatus] {
+        let read = Dictionary(reads.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return working.map { read[$0.id] ?? $0 }
+    }
     /// The waiting sessions whose cards are put off with Later and when each
     /// comes back, in the order they wait: the activity list and the Dock menu
     /// show them. In memory only, like Recent.
@@ -215,6 +252,8 @@ final class LabModel: ObservableObject {
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
     private var watcher: DatabaseWatcher?
     private var watched: URL?
+    /// The daemon's process, watched for its exit (ProcessExitWatcher.swift).
+    private var daemonExit: ProcessExitWatcher?
     private var fallback: Task<Void, Never>?
     private var expiries: [LabCard.ID: Task<Void, Never>] = [:]
     /// Needs-input cards put off with Later, by session id. Kept apart from
@@ -274,6 +313,8 @@ final class LabModel: ObservableObject {
         watcher?.stop()
         watcher = nil
         watched = nil
+        daemonExit?.stop()
+        daemonExit = nil
         fallback?.cancel()
         fallback = nil
         expiries.values.forEach { $0.cancel() }
@@ -487,6 +528,7 @@ final class LabModel: ObservableObject {
     private func apply(_ readout: Readout) {
         reading = false
         watch(readout.database)
+        watchDaemon(ScienceDaemonProcess.current)
         let snapshot = readout.snapshot
         // A read that failed outright says nothing about the sessions: keep
         // what was known, as the engine does. The exception is a daemon that
@@ -531,18 +573,40 @@ final class LabModel: ObservableObject {
         log.info("Watching the Science database")
     }
 
-    /// The timer only backs up the watcher: quick while something works, so
-    /// the clock and states stay true even if a write is missed, and slow when
-    /// idle. Nothing else runs while nothing happens.
+    /// Hears the daemon's exit the moment it happens, and reads: the read finds
+    /// its process gone and says Claude Science isn't running. A new process
+    /// (a restart, as the next status says) is watched in its place.
+    private func watchDaemon(_ pid: Int32?) {
+        guard started, let pid, pid != daemonExit?.pid else { return }
+        daemonExit?.stop()
+        let epoch = generation
+        daemonExit = ProcessExitWatcher(pid: pid) { [weak self] in
+            guard let self, self.generation == epoch else { return }
+            self.readSoon()
+        }
+    }
+
+    /// The timer only backs up the watcher. Nothing else runs while nothing
+    /// happens.
     private func scheduleFallback() {
         let busy = !working.isEmpty || !waiting.isEmpty
-        let wait: Duration = busy ? .seconds(3) : .seconds(30)
+        let wait = Self.fallbackInterval(busy: busy, watching: watcher?.isWatching == true)
         fallback?.cancel()
         fallback = Task { [weak self] in
-            try? await Task.sleep(for: wait, tolerance: busy ? .milliseconds(500) : .seconds(5))
+            try? await Task.sleep(for: wait, tolerance: wait < .seconds(30) ? .milliseconds(500) : .seconds(5))
             guard !Task.isCancelled else { return }
             self?.read()
         }
+    }
+
+    /// How long the fallback timer waits. While the watcher has the write-ahead
+    /// log open, every write is reported within a second, so the timer only
+    /// covers what no write tells: a daemon that stopped without a word,
+    /// another org's database taking over. Without the watcher (no database
+    /// yet, the log gone), it is quick while something works, so the states
+    /// stay true, and slow when idle.
+    nonisolated static func fallbackInterval(busy: Bool, watching: Bool) -> Duration {
+        busy && !watching ? .seconds(3) : .seconds(30)
     }
 
     // MARK: Turning a snapshot into state and cards
@@ -596,9 +660,9 @@ final class LabModel: ObservableObject {
         let quiet = snapshot.sessions.filter { $0.state != .running && $0.state != .needsInput }
         let newest = Array(quiet.sorted(by: recentFirst).prefix(Self.latestLimit))
         if !daemonDown, latest.map(\.id) != newest.map(\.id) { latest = newest }
-        if !daemonDown, sessions != snapshot.sessions { sessions = snapshot.sessions }
+        if !daemonDown, reads.sessions != snapshot.sessions { reads.sessions = snapshot.sessions }
         if workingHidden, Set(running.map(\.id)) != Set(working.map(\.id)) { workingHidden = false }
-        if working != running { working = running }
+        if !working.elementsEqual(running, by: { $0.drawsTheSame(as: $1) }) { working = running }
         if !daemonDown, waiting != parked {
             waiting = parked
             NSApplication.shared.dockTile.badgeLabel = parked.isEmpty ? nil : String(parked.count)

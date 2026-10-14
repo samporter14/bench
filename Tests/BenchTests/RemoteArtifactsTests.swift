@@ -376,6 +376,24 @@ struct ArtifactCodecTests {
         #expect(base64(big) == Data(big).base64EncodedString())
     }
 
+    private func chunked(_ bytes: [UInt8]) -> String? {
+        page.set("__bytes", String(decoding: try! JSONEncoder().encode(bytes), as: UTF8.self))
+        _ = page.evaluate("""
+            var __chunked = null;
+            benchBase64Chunked(new Uint8Array(JSON.parse(__bytes))).then(function (v) { __chunked = v; });
+            """)
+        return page.evaluate("__chunked")
+    }
+
+    /// Fable's review of 0.5.0, P3: in pieces, the same text as in one go.
+    @Test func base64InPiecesIsTheSameAtEveryEdge() {
+        let chunk = 3 * 174_762
+        for length in [0, 1, 2, 3, chunk - 1, chunk, chunk + 1, chunk + 2, 2 * chunk + 2, 3 * chunk] {
+            let bytes = (0..<length).map { UInt8(truncatingIfNeeded: $0 &* 131 &+ 7) }
+            #expect(chunked(bytes) == Data(bytes).base64EncodedString(), "length \(length)")
+        }
+    }
+
     @Test func utf8DecodesAsSwiftDoes() {
         let cases: [[UInt8]] = [
             Array("plain ascii".utf8), Array("é 日本 🧪 Ω".utf8),

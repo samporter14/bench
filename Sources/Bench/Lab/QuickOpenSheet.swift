@@ -5,6 +5,8 @@ import SwiftUI
 
 struct QuickOpenSheet: View {
     @ObservedObject private var model = LabModel.shared
+    /// The last read's sessions, published apart from `LabModel`.
+    @ObservedObject private var reads = LabModel.shared.reads
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     /// The highlighted session, by id: a read that reorders the list while
@@ -18,7 +20,7 @@ struct QuickOpenSheet: View {
     private static let listHeight: CGFloat = 366
 
     var body: some View {
-        let results = QuickOpen.rank(model.sessions, query: query)
+        let results = QuickOpen.rank(reads.sessions, query: query)
         let selected = results.first { $0.id == selectedID }?.id ?? results.first?.id
         VStack(spacing: 0) {
             HStack(spacing: 10) {

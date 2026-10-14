@@ -245,6 +245,8 @@ private final class FakeBrowse {
     var intents: [String?] = []
     var now = Date(timeIntervalSince1970: 1_791_833_400)
     private(set) var calls: [String] = []
+    /// The `knownTotal` each history read was given.
+    private(set) var knownTotals: [Int?] = []
     private(set) var writes: [RemoteWrite] = []
     private(set) var listed: [(versions: [String], device: String)] = []
     private(set) var sessionReads: [(project: String, after: BrowseCursor?, search: String?)] = []
@@ -270,7 +272,11 @@ private final class FakeBrowse {
             return self.rows
         },
         known: { [unowned self] in self.known },
-        history: { [unowned self] _, before in self.calls.append("history \(before.map(String.init) ?? "last")"); return self.history },
+        history: { [unowned self] _, before, knownTotal in
+            self.calls.append("history \(before.map(String.init) ?? "last")")
+            self.knownTotals.append(knownTotal)
+            return self.history
+        },
         turn: { [unowned self] _, index in self.calls.append("turn \(index)"); return self.turn },
         create: { [unowned self] write in self.calls.append("create"); self.writes.append(write); return self.created },
         findIntent: { [unowned self] _, _ in
@@ -408,6 +414,99 @@ struct RemoteBrowserTests {
         #expect(fake.calls == ["history last"])
         // Known sessions need no lookup.
         #expect(!fake.calls.contains("lookup"))
+    }
+
+    // MARK: Pages kept (Fable's review of 0.5.0, P3)
+
+    private func page(total: Int, from: Int, text: String = "Made-up answer") -> RemoteBrowser.HistoryRead {
+        .page(HistoryPage(total: total, from: from, items: [.turn(i: from, role: .claude, at: nil, text: text, cut: false, files: [
+            HistoryFile(v: "v-\(from)", a: nil, name: "plot.png", kind: .image, size: 10),
+        ])]))
+    }
+
+    @Test func theNewestPageOfAHistoryAsLongIsTheOneKept() async {
+        fake.known = [Fixture.session(root, .running)]
+        fake.history = page(total: 100, from: 50)
+        let first = await fake.respond("GET", "/api/sessions/\(root)/history")
+        #expect(first.status == 200)
+        // The page is asked whether the history is still 100 rows long: it is.
+        fake.history = .same(total: 100)
+        fake.now = fake.now.addingTimeInterval(10)
+        let second = await fake.respond("GET", "/api/sessions/\(root)/history", device: "device-2")
+        #expect(second == first)
+        #expect(fake.calls == ["history last", "history last"])
+        #expect(fake.knownTotals == [nil, 100])
+        // Its files are listed to the device that asked, as for a read.
+        #expect(fake.listed.map(\.device) == ["device-1", "device-2"])
+        // Longer now: read whole, and that page is the one kept.
+        fake.history = page(total: 104, from: 54, text: "Newer answer")
+        let third = await fake.respond("GET", "/api/sessions/\(root)/history")
+        #expect(String(decoding: third.body, as: UTF8.self).contains("Newer answer"))
+        #expect(fake.knownTotals.last == 100)
+        fake.history = .same(total: 104)
+        #expect(await fake.respond("GET", "/api/sessions/\(root)/history") == third)
+        #expect(fake.knownTotals.last == 104)
+    }
+
+    @Test func anEarlierPageOfAHistoryAsLongNeedsNoRead() async {
+        fake.known = [Fixture.session(root, .running)]
+        fake.history = page(total: 100, from: 50)
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history")
+        fake.history = page(total: 100, from: 0, text: "Earlier answer")
+        let earlier = await fake.respond("GET", "/api/sessions/\(root)/history?before=50")
+        #expect(String(decoding: earlier.body, as: UTF8.self).contains("Earlier answer"))
+        fake.history = .unreadable
+        #expect(await fake.respond("GET", "/api/sessions/\(root)/history?before=50") == earlier)
+        #expect(fake.calls == ["history last", "history 50"])
+        // The history grew: the earlier page is read again, with the new length.
+        fake.history = page(total: 101, from: 51)
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history")
+        fake.history = page(total: 101, from: 0, text: "Earlier answer")
+        let again = await fake.respond("GET", "/api/sessions/\(root)/history?before=50")
+        #expect(fake.calls == ["history last", "history 50", "history last", "history 50"])
+        #expect(String(decoding: again.body, as: UTF8.self).contains(#""total":101"#))
+    }
+
+    @Test func keptPagesLastThirtySeconds() async {
+        fake.known = [Fixture.session(root, .running)]
+        fake.history = page(total: 100, from: 50)
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history")
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history?before=50")
+        fake.now = fake.now.addingTimeInterval(29)
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history?before=50")
+        #expect(fake.calls == ["history last", "history 50"])
+        fake.now = fake.now.addingTimeInterval(2)
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history?before=50")
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history")
+        #expect(fake.calls == ["history last", "history 50", "history 50", "history last"])
+        #expect(fake.knownTotals == [nil, nil, nil, nil])
+    }
+
+    @Test func anActionLetsTheSessionsPagesGo() async {
+        fake.known = [Fixture.session(root, .running)]
+        fake.history = page(total: 100, from: 50)
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history")
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history?before=50")
+        #expect(fake.sessions.historyPages.count == 2)
+        _ = await fake.sessions.act(.message, session: root, device: "d", body: Data(#"{"text":"Hi","id":"\#(intent)"}"#.utf8))
+        #expect(fake.sessions.historyPages.count == 0)
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history?before=50")
+        _ = await fake.respond("GET", "/api/sessions/\(root)/history")
+        #expect(fake.calls.filter { $0.hasPrefix("history") } == ["history last", "history 50", "history 50", "history last"])
+        #expect(fake.knownTotals == [nil, nil, nil, nil])
+    }
+
+    @Test func aReadUnderWayWhenAnActionLandsIsntKept() {
+        let pages = HistoryPages()
+        let now = Date(timeIntervalSince1970: 1_791_833_400)
+        let started = pages.generation(of: root)
+        pages.forget(root)
+        pages.keep(HistoryPage(total: 3, from: 0, items: []), session: root, before: nil, at: now, generation: started)
+        #expect(pages.count == 0)
+        #expect(pages.total(of: root, now: now) == nil)
+        pages.keep(HistoryPage(total: 3, from: 0, items: []), session: root, before: nil, at: now,
+                   generation: pages.generation(of: root))
+        #expect(pages.page(root, total: 3, before: nil, now: now) != nil)
     }
 
     @Test func everyKindAsTheSpecShowsIt() async {

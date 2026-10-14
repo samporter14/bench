@@ -439,11 +439,14 @@ enum HistoryReaderScript {
         && Array.isArray(v.messages) && Number.isInteger(v.total) && v.total >= 0;
     """#
 
-    /// What `callAsyncJavaScript` runs, with `frameId` and `before` (a row
-    /// index, or null for the last page). Without `before`, the session
-    /// reader's `from=-12&limit=12` says how many rows there are, and one more
-    /// GET reads the 38 before them. Answers a JSON string:
-    /// `{"outcome":"read","page":{…}}`, `"unreadable"`, `"lost"` or `"refused"`.
+    /// What `callAsyncJavaScript` runs, with `frameId`, `before` (a row
+    /// index, or null for the last page) and `knownTotal` (the row count of
+    /// the last page Bench already holds, or null). Without `before`, the
+    /// session reader's `from=-12&limit=12` says how many rows there are: the
+    /// same as `knownTotal` answers `{"outcome":"same","total":n}` and reads
+    /// nothing more; otherwise one more GET reads the 38 before them. Answers
+    /// a JSON string: `{"outcome":"read","page":{…}}`, `"same"`,
+    /// `"unreadable"`, `"lost"` or `"refused"`.
     static let pageBody = projection + "\n" + fetcher + #"""
 
     if (typeof frameId !== "string" || !/^[0-9a-f-]{36}$/.test(frameId)) { return JSON.stringify({ outcome: "refused" }); }
@@ -472,6 +475,10 @@ enum HistoryReaderScript {
         total = tail.json.total;
         base = total - tail.json.messages.length;
         if (tail.json.from !== base && tail.json.from !== -12) { return unreadable; }
+        // As long as Bench already holds: no more to read, nothing to project.
+        if (typeof knownTotal === "number" && Number.isInteger(knownTotal) && knownTotal === total) {
+            return JSON.stringify({ outcome: "same", total: total });
+        }
         messages = tail.json.messages;
         const from = Math.max(0, total - 50), limit = base - from;
         if (limit > 0) {
@@ -509,6 +516,8 @@ enum HistoryReaderScript {
     /// What the page said.
     enum Outcome: Equatable {
         case read(HistoryPage)
+        /// The history has `total` rows, as many as the page Bench holds.
+        case same(total: Int)
         case turn(HistoryTurn)
         /// No turn at that index.
         case none
@@ -525,6 +534,9 @@ enum HistoryReaderScript {
         case "lost": return .lost
         case "none": return .none
         case "read": return HistoryPage(object: root["page"]).map(Outcome.read) ?? .unreadable
+        case "same":
+            guard let total = Pick.int(root["total"]), (0...maxIndex + 1).contains(total) else { return .unreadable }
+            return .same(total: total)
         case "turn": return HistoryTurn(object: root["turn"]).map(Outcome.turn) ?? .unreadable
         default: return .unreadable
         }
@@ -741,23 +753,27 @@ struct HistoryTurn: Equatable, Sendable {
 
 extension WebContainer {
     /// A page of a session's history (`HistoryReaderScript.pageBody`): the 50
-    /// rows before `before`, or the last 50. Nil when it can't be read or
-    /// doesn't match; throws when the page isn't up or the id isn't a full
+    /// rows before `before`, or the last 50; for the last, `.same` when the
+    /// history still has `knownTotal` rows. Unreadable when it can't be read
+    /// or doesn't match; throws when the page isn't up or the id isn't a full
     /// frame id.
-    func readHistory(_ frameID: String, before: Int?) async throws -> HistoryPage? {
+    func readHistory(_ frameID: String, before: Int?, knownTotal: Int? = nil) async throws -> RemoteBrowser.HistoryRead {
         guard status == .ready else { throw WebAPIError.notReady }
         guard PlanCheck.isFrameID(frameID) else { throw WebAPIError.notAllowed }
         if let before, !(1...HistoryReaderScript.maxIndex).contains(before) { throw WebAPIError.notAllowed }
         let value = try await webView.callAsyncJavaScript(
-            HistoryReaderScript.pageBody, arguments: ["frameId": frameID, "before": before.map { $0 as Any } ?? NSNull()],
+            HistoryReaderScript.pageBody,
+            arguments: ["frameId": frameID, "before": before.map { $0 as Any } ?? NSNull(),
+                        "knownTotal": knownTotal.map { $0 as Any } ?? NSNull()],
             in: nil, contentWorld: .defaultClient)
         guard let text = value as? String else { throw WebAPIError.badResponse }
         switch HistoryReaderScript.outcome(of: Data(text.utf8)) {
-        case .read(let page): return page
+        case .read(let page): return .page(page)
+        case .same(let total): return .same(total: total)
         case .lost:
             sessionLost()
-            return nil
-        default: return nil
+            return .unreadable
+        default: return .unreadable
         }
     }
 

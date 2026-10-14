@@ -230,11 +230,12 @@ struct LivePageTests {
     private let trace = "/api/frames/\(root)/trace-shallow?include_messages=false"
     private let messages = "/api/frames/\(root)/messages?from=-12&limit=12"
 
-    private func run(_ id: String = root, activity: Bool = false, text: Bool = true,
+    private func run(_ id: String = root, activity: Bool = false, text: Bool = true, mayWait: Bool = false,
                      answers: [String: [PageScript.Answer]]) -> (outcome: LiveScript.Outcome?, raw: String?, requests: [PageScript.Request]) {
         let script = PageScript()
         let (result, requests) = script.runPage(LiveScript.body, arguments: [("frameId", json(id)), ("wantActivity", activity ? "true" : "false"),
-                                                                              ("wantText", text ? "true" : "false")], answers: answers)
+                                                                              ("wantText", text ? "true" : "false"),
+                                                                              ("mayWait", mayWait ? "true" : "false")], answers: answers)
         #expect(script.exception == nil)
         return (result.map { LiveScript.outcome(of: Data($0.utf8)) }, result, requests)
     }
@@ -284,14 +285,16 @@ struct LivePageTests {
     /// A Bool through `callAsyncJavaScript` may arrive as a number.
     @Test func theFlagsMayArriveAsNumbers() {
         let script = PageScript()
-        let (result, requests) = script.runPage(LiveScript.body, arguments: [("frameId", json(root)), ("wantActivity", "1"), ("wantText", "1")], answers: [
+        let (result, requests) = script.runPage(LiveScript.body, arguments: [("frameId", json(root)), ("wantActivity", "1"), ("wantText", "1"),
+                                                                              ("mayWait", "1")], answers: [
             frame: ok(working()), streaming: ok(buffer("Hello")), trace: ok(json(["id": root, "children": [Any]()])), messages: ok(page),
         ])
         #expect(script.exception == nil)
         #expect(result.map { LiveScript.outcome(of: Data($0.utf8)) } == .read(LiveRead(working: true, text: "Hello", activity: "Executing code", streaming: .ok)))
         #expect(requests.map(\.path) == [frame, streaming, trace, messages])
         let off = PageScript()
-        let (none, offRequests) = off.runPage(LiveScript.body, arguments: [("frameId", json(root)), ("wantActivity", "0"), ("wantText", "0")],
+        let (none, offRequests) = off.runPage(LiveScript.body, arguments: [("frameId", json(root)), ("wantActivity", "0"), ("wantText", "0"),
+                                                                           ("mayWait", "0")],
                                               answers: [frame: ok(working())])
         #expect(none.map { LiveScript.outcome(of: Data($0.utf8)) } == .read(LiveRead(working: true, streaming: .skipped)))
         #expect(offRequests.map(\.path) == [frame])
@@ -321,7 +324,7 @@ struct LivePageTests {
     @Test func aRefusedSignInIsLostWhereverItHappens() {
         #expect(run(answers: [frame: [.init(status: 401, body: "{}")]]).outcome == .lost)
         #expect(run(answers: [frame: ok(working()), streaming: [.init(status: 401, body: "{}")]]).outcome == .lost)
-        #expect(run(activity: true, answers: [frame: ok(working()), streaming: ok("null"), trace: [.init(status: 401, body: "{}")]]).outcome == .lost)
+        #expect(run(activity: true, mayWait: true, answers: [frame: ok(working()), streaming: ok("null"), trace: [.init(status: 401, body: "{}")]]).outcome == .lost)
         #expect(run(activity: true, answers: [frame: ok(working()), streaming: ok("null"), trace: ok(json(["id": root, "children": [Any]()])),
                                               messages: [.init(status: 401, body: "{}")]]).outcome == .lost)
     }
@@ -344,7 +347,7 @@ struct LivePageTests {
     // MARK: The activity
 
     @Test func theActivityReadsTheHelpersAndTheLastMessages() {
-        let (outcome, raw, requests) = run(activity: true, answers: [
+        let (outcome, raw, requests) = run(activity: true, mayWait: true, answers: [
             frame: ok(working()), streaming: ok("null"), trace: ok(json(["id": root, "children": [Any]()])), messages: ok(page),
         ])
         #expect(read(outcome) == LiveRead(working: true, text: nil, activity: "Executing code", streaming: .ok))
@@ -359,14 +362,15 @@ struct LivePageTests {
             frame: ok(working([pending])), streaming: ok("null"), trace: ok(json(["id": root, "children": [Any]()])),
         ])
         #expect(read(outcome)?.activity == "Waiting for your approval")
-        #expect(requests.map(\.path) == [frame, streaming, trace])
+        // The root's own request is in its frame: no helpers to read.
+        #expect(requests.map(\.path) == [frame, streaming])
     }
 
     @Test func aPendingRequestOfAHelperIsWaitingForApproval() {
         let asking: [String: Any] = ["id": helper, "parent_frame_id": root, "status": "awaiting_user_response", "children": [Any](),
                                      "output_data": ["pending_input_requests": [["kind": "network", "requestId": "r", "tool_id": "t",
                                                                                  "createdAt": "2026-10-12T19:30:00Z", "mode": "parked", "target": "h"]]]]
-        let (outcome, _, _) = run(activity: true, answers: [
+        let (outcome, _, _) = run(activity: true, mayWait: true, answers: [
             frame: ok(working()), streaming: ok("null"), trace: ok(json(["id": root, "children": [asking]])), messages: ok(page),
         ])
         #expect(read(outcome)?.activity == "Waiting for your approval")
@@ -380,11 +384,59 @@ struct LivePageTests {
     }
 
     @Test func aTraceThatFailsIsReadAsNoHelpersAndTheMessagesStillCount() {
-        let (outcome, _, requests) = run(activity: true, answers: [
+        let (outcome, _, requests) = run(activity: true, mayWait: true, answers: [
             frame: ok(working()), streaming: ok("null"), trace: [.init(status: 500, body: "{}")], messages: ok(page),
         ])
         #expect(read(outcome)?.activity == "Executing code")
         #expect(requests.map(\.path) == [frame, streaming, trace, messages])
+    }
+
+    /// Fable's review of 0.5.0, P3: up to 2,000 frames every 4 s, only while
+    /// something may be pending.
+    @Test func theHelpersAreReadOnlyWhileSomethingMayBePending() {
+        let asking: [String: Any] = ["id": helper, "parent_frame_id": root, "status": "awaiting_user_response", "children": [Any](),
+                                     "output_data": ["pending_input_requests": [["kind": "network", "requestId": "r", "tool_id": "t",
+                                                                                 "createdAt": "2026-10-12T19:30:00Z", "mode": "parked"]]]]
+        let answers: [String: [PageScript.Answer]] = [
+            frame: ok(working()), streaming: ok("null"), trace: ok(json(["id": root, "children": [asking]])), messages: ok(page),
+        ]
+        // Nothing pending as far as the root's frame and Bench's own reading say: no trace.
+        let quiet = run(activity: true, answers: answers)
+        #expect(quiet.requests.map(\.path) == [frame, streaming, messages])
+        #expect(read(quiet.outcome)?.activity == "Executing code")
+        // Bench's reading says the session waits (a helper's request): the trace is read, and the request shows.
+        let waiting = run(activity: true, mayWait: true, answers: answers)
+        #expect(waiting.requests.map(\.path) == [frame, streaming, trace])
+        #expect(read(waiting.outcome)?.activity == "Waiting for your approval")
+        // A request of the root's own is in its frame: nothing more to read.
+        let pending: [String: Any] = ["kind": "local_exec", "requestId": "r", "tool_id": "t", "createdAt": "2026-10-12T19:30:00Z", "mode": "live"]
+        var own = answers
+        own[frame] = ok(working([pending]))
+        let rootAsks = run(activity: true, answers: own)
+        #expect(rootAsks.requests.map(\.path) == [frame, streaming])
+        #expect(read(rootAsks.outcome)?.activity == "Waiting for your approval")
+        // The root waits on helpers (an open `delegate`, here beside an open
+        // `python`): a hidden helper's request is invisible to Bench's own
+        // reading, so the trace is read after the messages.
+        for tools in [["delegate"], ["wait_for_notification"], ["python", "delegate"]] {
+            let calls = tools.enumerated().map { ["type": "tool_use", "id": "t\($0.offset)", "name": $0.element, "input": [String: Any]()] }
+            var delegating = answers
+            delegating[messages] = ok(ReaderFixture.page(json([["role": "user", "content": "Go.", "_ts": 1_791_833_000_000],
+                                                               ["role": "assistant", "content": calls, "_ts": 1_791_833_010_000]])))
+            let asked = run(activity: true, answers: delegating)
+            #expect(asked.requests.map(\.path) == [frame, streaming, messages, trace], "\(tools)")
+            #expect(read(asked.outcome)?.activity == "Waiting for your approval", "\(tools)")
+            // No helper asks: the words the open calls give.
+            delegating[trace] = ok(json(["id": root, "children": [Any]()]))
+            #expect(read(run(activity: true, answers: delegating).outcome)?.activity
+                    == (tools == ["python", "delegate"] ? "Executing code" : "Waiting on subagents"), "\(tools)")
+        }
+        // An empty list, or none at all, is nothing pending.
+        for output in [json(["pending_input_requests": [Any](), "response": "SECRET"]), "null"] {
+            var none = answers
+            none[frame] = ok(ReaderFixture.frame(status: "processing", context: "null", output: output))
+            #expect(run(activity: true, answers: none).requests.map(\.path) == [frame, streaming, messages], "\(output)")
+        }
     }
 
     @Test func messagesThatCantBeReadStillSayWorking() {
@@ -395,7 +447,7 @@ struct LivePageTests {
     }
 
     @Test func theActivityAloneNeedsNoText() {
-        let (outcome, _, requests) = run(activity: true, text: false, answers: [
+        let (outcome, _, requests) = run(activity: true, text: false, mayWait: true, answers: [
             frame: ok(working()), trace: ok(json(["id": root, "children": [Any]()])), messages: ok(page),
         ])
         #expect(read(outcome) == LiveRead(working: true, text: nil, activity: "Executing code", streaming: .skipped))
@@ -451,11 +503,14 @@ private final class FakeLiveReader {
     var answers: [String: LiveRead] = [:]
     var now = Date(timeIntervalSince1970: 1_791_833_400)
     private(set) var asked: [String] = []
+    /// What each read was told of Bench's own reading.
+    private(set) var mayWait: [Bool] = []
     var known: [SessionStatus] = []
 
     func live() -> RemoteLive {
-        RemoteLive(read: { [unowned self] id, activity, text in
+        RemoteLive(read: { [unowned self] id, activity, text, mayWait in
             self.asked.append("\(activity ? "activity" : "-")/\(text ? "text" : "-")")
+            self.mayWait.append(mayWait)
             await Task.yield()
             return self.answers[id]
         }, now: { [unowned self] in self.now }, known: { [unowned self] in self.known })
@@ -548,6 +603,22 @@ struct RemoteLiveStateTests {
         #expect(reader.asked.last == "activity/text")
     }
 
+    @Test func thePageIsToldWhetherBenchSaysTheSessionWaits() async {
+        reader.answers[root] = LiveRead(working: true, text: nil, activity: "Executing code")
+        let live = reader.live()
+        reader.known = [Fixture.session(root, .running)]
+        _ = await ask(live)
+        reader.now = reader.now.addingTimeInterval(5)
+        // A helper asks: Bench's database read has the session waiting.
+        reader.known = [Fixture.session(root, .needsInput, reason: .other)]
+        _ = await ask(live)
+        reader.now = reader.now.addingTimeInterval(5)
+        // A session found by browsing counts as Bench knows it too.
+        reader.known = []
+        _ = await live.json(root, extra: [Fixture.session(root, .needsInput, reason: .question)])
+        #expect(reader.mayWait == [false, true, true])
+    }
+
     @Test func aFailedStreamingReadIsNotRemembered() async {
         let live = reader.live()
         reader.answers[root] = LiveRead(working: true, text: nil, activity: "Working", streaming: .failed)
@@ -613,7 +684,7 @@ struct RemoteLiveRouteTests {
         let sessions = RemoteSessions(dependencies: .init(
             actionsOn: { true }, known: { [known] }, cardPlan: { _ in nil }, read: { _, _ in nil }, readPlan: { _ in nil },
             write: { _ in nil }, now: { Date() },
-            readLive: { id, _, _ in id == root ? LiveRead(working: true, text: "Hello", activity: nil) : nil }))
+            readLive: { id, _, _, _ in id == root ? LiveRead(working: true, text: "Hello", activity: nil) : nil }))
         let data = try #require(await sessions.liveJSON(root))
         #expect(String(decoding: data, as: UTF8.self) == #"{"activity":null,"text":"Hello","working":true}"#)
         #expect(await sessions.liveJSON("9f8e7d6c-5b4a-4321-8fed-cba987654321") == nil)

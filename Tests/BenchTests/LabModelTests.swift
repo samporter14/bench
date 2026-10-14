@@ -163,3 +163,72 @@ struct LatestTests {
         #expect(!ActivityMenu.shared.make().items.isEmpty)
     }
 }
+
+/// The fallback read: quick only while something works and nothing reports
+/// the daemon's writes; with the watcher up, a slow safety net.
+struct FallbackTimerTests {
+    @Test func theTimerIsQuickOnlyWhileSomethingWorksWithoutTheWatcher() {
+        #expect(LabModel.fallbackInterval(busy: true, watching: false) == .seconds(3))
+        #expect(LabModel.fallbackInterval(busy: false, watching: false) == .seconds(30))
+        #expect(LabModel.fallbackInterval(busy: true, watching: true) == .seconds(30))
+        #expect(LabModel.fallbackInterval(busy: false, watching: true) == .seconds(30))
+    }
+}
+
+/// A read that moves only a working session's tokens and last write changes
+/// nothing drawn: the model doesn't publish, so the panel's glass and the
+/// lists don't redraw. What was read is still there for Quick Open and the phone.
+@MainActor
+struct QuietReadTests {
+    private static let started = Date(timeIntervalSince1970: 1_791_800_000)
+
+    private func working(tokens: Int, wroteAt seconds: TimeInterval, title: String = "Made-up session") -> SessionStatus {
+        SessionStatus(id: "a", projectID: "p", projectName: "Made-up project", title: title, state: .running,
+                      updatedAt: Self.started.addingTimeInterval(seconds), startedAt: Self.started, tokens: tokens,
+                      deepLink: URL(string: "http://localhost:8765/projects/p/frames/a"))
+    }
+
+    @Test func tokensAndTheLastWriteAloneDontPublish() {
+        let model = LabModel()
+        let reads = model.reads
+        model.ingest(Fixture.snapshot(working(tokens: 100, wroteAt: 1)))
+        var published = 0
+        var readsPublished = 0
+        let watch = model.objectWillChange.sink { published += 1 }
+        let watchReads = reads.objectWillChange.sink { readsPublished += 1 }
+        defer { watch.cancel(); watchReads.cancel() }
+
+        model.ingest(Fixture.snapshot(working(tokens: 2_500, wroteAt: 9)))
+        #expect(published == 0)
+        // The read is kept all the same, apart from what the panel observes.
+        #expect(readsPublished == 1)
+        #expect(model.sessions.first?.tokens == 2_500)
+        #expect(model.workingAsRead.first?.tokens == 2_500)
+        #expect(model.workingAsRead.first?.updatedAt == Self.started.addingTimeInterval(9))
+        #expect(RemoteAPI.knownSessions(lab: model).first?.updatedAt == Self.started.addingTimeInterval(9))
+        #expect(model.working.map(\.id) == ["a"])
+
+        // Something drawn changes: it publishes, and `working` has it.
+        model.ingest(Fixture.snapshot(working(tokens: 2_600, wroteAt: 10, title: "Renamed session")))
+        #expect(published >= 1)
+        #expect(model.working.first?.title == "Renamed session")
+        #expect(model.working.first?.tokens == 2_600)
+    }
+
+    @Test func aWorkingSessionsOrderStillPublishes() {
+        let model = LabModel()
+        func session(_ id: String, at seconds: TimeInterval) -> SessionStatus {
+            SessionStatus(id: id, projectID: "p", projectName: "Made-up project", title: id, state: .running,
+                          updatedAt: Self.started.addingTimeInterval(seconds), startedAt: Self.started)
+        }
+        model.ingest(Fixture.snapshot(session("a", at: 3), session("b", at: 2), session("c", at: 1)))
+        #expect(model.working.map(\.id) == ["a", "b", "c"])
+        var published = 0
+        let watch = model.objectWillChange.sink { published += 1 }
+        defer { watch.cancel() }
+        // The head keeps its place; the others follow their last writes.
+        model.ingest(Fixture.snapshot(session("a", at: 3), session("b", at: 2), session("c", at: 4)))
+        #expect(model.working.map(\.id) == ["a", "c", "b"])
+        #expect(published >= 1)
+    }
+}

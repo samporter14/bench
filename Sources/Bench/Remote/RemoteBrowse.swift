@@ -398,6 +398,8 @@ final class RemoteBrowser {
     /// What a page of history read gave.
     enum HistoryRead: Equatable {
         case page(HistoryPage)
+        /// The history still has `total` rows: the page Bench holds stands.
+        case same(total: Int)
         case unreadable
     }
 
@@ -418,8 +420,9 @@ final class RemoteBrowser {
         var sessions: @MainActor (_ project: String, _ after: BrowseCursor?, _ search: String?) async -> [BrowseRow]?
         /// Every session Bench knows now, for their own states.
         var known: @MainActor () -> [SessionStatus]
-        /// The history reader (HistoryReader.swift).
-        var history: @MainActor (_ id: String, _ before: Int?) async -> HistoryRead
+        /// The history reader (HistoryReader.swift); `knownTotal`, the length
+        /// of the newest page Bench holds, lets it answer `.same`.
+        var history: @MainActor (_ id: String, _ before: Int?, _ knownTotal: Int?) async -> HistoryRead
         var turn: @MainActor (_ id: String, _ index: Int) async -> TurnRead
         /// The writer: nil when the write didn't complete.
         var create: @MainActor (RemoteWrite) async -> RemoteWriteResult?
@@ -450,10 +453,9 @@ final class RemoteBrowser {
                     }.value
                 },
                 known: { RemoteAPI.knownSessions(lab: .shared) },
-                history: { id, before in
-                    guard Demo.mode == nil, let page = (try? await WebContainer.shared.readHistory(id, before: before)) ?? nil
-                    else { return .unreadable }
-                    return .page(page)
+                history: { id, before, knownTotal in
+                    guard Demo.mode == nil else { return .unreadable }
+                    return (try? await WebContainer.shared.readHistory(id, before: before, knownTotal: knownTotal)) ?? .unreadable
                 },
                 turn: { id, index in
                     guard Demo.mode == nil, let outcome = try? await WebContainer.shared.readTurn(id, index: index) else {
@@ -563,10 +565,33 @@ final class RemoteBrowser {
             before = index
         }
         guard await sessions.admitted(id) != nil else { return .notFound }
-        guard case .page(let read) = await dependencies.history(id, before) else { return Self.unreadable }
+        guard let read = await historyPage(id, before: before) else { return Self.unreadable }
         let page = read.capped { BrowseAPI.encode($0) }
         dependencies.listed(page.files, device)
         return Self.json(BrowseAPI.encode(page))
+    }
+
+    /// A page of the session's history: from `HistoryPages` while the same
+    /// page of a history as long was read in the last 30 s, else read. An
+    /// earlier page of a history whose length is known needs no read at all;
+    /// the newest needs the length, which the page's 12-row tail gives.
+    private func historyPage(_ id: String, before: Int?) async -> HistoryPage? {
+        let kept = sessions.historyPages
+        let now = dependencies.now()
+        let known = kept.total(of: id, now: now)
+        let held = known.flatMap { kept.page(id, total: $0, before: before, now: now) }
+        if let held, before != nil { return held }
+        let generation = kept.generation(of: id)
+        switch await dependencies.history(id, before, held?.total) {
+        case .page(let read):
+            kept.keep(read, session: id, before: before, at: dependencies.now(), generation: generation)
+            return read
+        case .same(let total) where total == held?.total:
+            kept.confirm(id, total: total, at: dependencies.now(), generation: generation)
+            return held
+        default:
+            return nil
+        }
     }
 
     // MARK: A new session
@@ -653,7 +678,7 @@ final class RemoteBrowser {
             projects: { store.projectRows() },
             sessions: { store.page(project: $0, after: $1, search: $2) },
             known: { store.nowSessions },
-            history: { id, before in store.history(id, before: before).map(HistoryRead.page) ?? .unreadable },
+            history: { id, before, _ in store.history(id, before: before).map(HistoryRead.page) ?? .unreadable },
             turn: { id, index in store.turn(id, index: index).map(TurnRead.turn) ?? TurnRead.none },
             create: { store.create($0) },
             findIntent: { store.session(forIntent: $1, in: $0) },
