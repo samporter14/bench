@@ -413,7 +413,7 @@ private final class PhotoRig {
         projects: { [unowned self] in self.log.append("projects"); return self.projects },
         sessions: { _, _, _ in nil },
         known: { [unowned self] in self.known },
-        history: { _, _ in .unreadable },
+        history: { _, _, _ in .unreadable },
         turn: { _, _ in .none },
         create: { [unowned self] write in
             self.log.append("create")

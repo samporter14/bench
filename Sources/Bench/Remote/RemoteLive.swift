@@ -134,11 +134,15 @@ enum LiveScript {
         + "\n" + text + "\n" + tools + "\n" + activity
 
     /// What `callAsyncJavaScript` runs, with the arguments `frameId`,
-    /// `wantActivity` and `wantText`: the shallow frame, then (when the root
-    /// is `processing`) the streaming buffer, and when the activity is wanted
-    /// its pending requests (the helpers' through `trace-shallow`) and the
-    /// last messages. Answers a JSON string: `{"outcome":"read","live":{…}}`,
-    /// `"unreadable"`, `"lost"` (a 401) or `"refused"` (an id that isn't one).
+    /// `wantActivity`, `wantText` and `mayWait`: the shallow frame, then (when
+    /// the root is `processing`) the streaming buffer, and when the activity is
+    /// wanted its pending requests and the last messages. The helpers' requests
+    /// come through `trace-shallow` (up to 2,000 frames), read only while
+    /// something may be pending: the shallow frame lists a request of the
+    /// root's, or `mayWait` (Bench's own database read says the session waits
+    /// on the user, which counts its helpers' requests). Answers a JSON string:
+    /// `{"outcome":"read","live":{…}}`, `"unreadable"`, `"lost"` (a 401) or
+    /// `"refused"` (an id that isn't one).
     static let body = projections + #"""
 
     if (typeof frameId !== "string" || !/^[0-9a-f-]{36}$/.test(frameId)) { return JSON.stringify({ outcome: "refused" }); }
@@ -195,9 +199,13 @@ enum LiveScript {
     }
 
     if (needActivity) {
-        // A pending request, in the root or under it.
+        // A pending request, in the root or under it. The helpers' are read
+        // only while something may be pending; the root's are in its frame.
+        const own = benchObjectOrNull(frame.json.output_data);
+        const rootAsks = benchIsObject(own) && Array.isArray(own.pending_input_requests) && own.pending_input_requests.length > 0;
+        const helpersMayAsk = typeof mayWait !== "undefined" && (mayWait === true || mayWait === 1);
         const tracePath = benchReadPath("trace", frameId);
-        const traced = tracePath === null ? { failed: true } : await getJSON(tracePath);
+        const traced = !(rootAsks || helpersMayAsk) || tracePath === null ? { failed: true } : await getJSON(tracePath);
         if (traced.lost) { return JSON.stringify({ outcome: "lost" }); }
         const tree = traced.failed ? { id: frameId, children: [] } : traced.json;
         let queue = benchPendingQueue(frame.json, tree, frameId);
@@ -300,8 +308,10 @@ extension RemoteAPI {
 @MainActor
 final class RemoteLive {
     /// The page's read: the session's id, whether its activity is wanted,
-    /// whether its text is. Nil when it can't be read.
-    typealias Reader = @MainActor (_ id: String, _ activity: Bool, _ text: Bool) async -> LiveRead?
+    /// whether its text is, and whether Bench's own reading says the session
+    /// waits on the user (so its helpers' requests are worth reading). Nil
+    /// when it can't be read.
+    typealias Reader = @MainActor (_ id: String, _ activity: Bool, _ text: Bool, _ mayWait: Bool) async -> LiveRead?
 
     static let activityLifetime: TimeInterval = 4
     static let streamingRetry: TimeInterval = 10 * 60
@@ -340,9 +350,11 @@ final class RemoteLive {
         let cached = activities[id]
         let fresh = cached.map { $0.at <= moment && moment.timeIntervalSince($0.at) < Self.activityLifetime } ?? false
         let wantText = streamingOffUntil.map { moment >= $0 } ?? true
-        guard let read = await read(id, !fresh, wantText) else {
-            let running = (known() + extra).first { $0.id == id }?.state == .running
-            return RemoteAPI.Live(working: running, text: nil, activity: nil)
+        // Bench's own reading counts a helper's request: the root's frame
+        // alone doesn't show one.
+        let benchsOwn = (known() + extra).first { $0.id == id }
+        guard let read = await read(id, !fresh, wantText, benchsOwn?.state == .needsInput) else {
+            return RemoteAPI.Live(working: benchsOwn?.state == .running, text: nil, activity: nil)
         }
         if read.streaming == .off { streamingOffUntil = moment.addingTimeInterval(Self.streamingRetry) }
         guard read.working else {
@@ -387,11 +399,11 @@ extension WebContainer {
     /// One session's live read, through the page (`LiveScript`). Nil when it
     /// can't be read or doesn't match; throws when the page isn't up or the id
     /// isn't a full frame id.
-    func readLive(_ frameID: String, activity: Bool, text: Bool) async throws -> LiveRead? {
+    func readLive(_ frameID: String, activity: Bool, text: Bool, mayWait: Bool) async throws -> LiveRead? {
         guard status == .ready else { throw WebAPIError.notReady }
         guard PlanCheck.isFrameID(frameID) else { throw WebAPIError.notAllowed }
         let value = try await webView.callAsyncJavaScript(
-            LiveScript.body, arguments: ["frameId": frameID, "wantActivity": activity, "wantText": text],
+            LiveScript.body, arguments: ["frameId": frameID, "wantActivity": activity, "wantText": text, "mayWait": mayWait],
             in: nil, contentWorld: .defaultClient)
         guard let reply = value as? String else { throw WebAPIError.badResponse }
         switch LiveScript.outcome(of: Data(reply.utf8)) {

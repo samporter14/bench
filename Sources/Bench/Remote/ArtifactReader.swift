@@ -205,6 +205,10 @@ enum ArtifactReaderScript {
     /// `benchBase64(bytes)` and `benchDecodeUTF8(bytes, truncated)`: the page
     /// has `btoa` and `TextDecoder`, but these are written out so the tests
     /// run the same code in JavaScriptCore, which has neither.
+    /// `benchBase64Chunked(bytes)` encodes ~512 KB at a time and lets the
+    /// page's main thread go between pieces: it also draws the user's own
+    /// Claude Science UI, and 8 MB in one go held it ~50 ms (Fable's review
+    /// of 0.5.0, P3).
     static let codecs = #"""
     function benchBase64(bytes) {
         "use strict";
@@ -227,6 +231,23 @@ enum ArtifactReaderScript {
         const pieces = [];
         for (let at = 0; at < out.length; at += 32768) {
             pieces.push(String.fromCharCode.apply(null, out.subarray(at, at + 32768)));
+        }
+        return pieces.join("");
+    }
+
+    async function benchBase64Chunked(bytes) {
+        "use strict";
+        // A whole number of 3-byte groups (524,286 bytes, just under 512 KB):
+        // each piece ends without padding, so the pieces join into the whole.
+        const CHUNK = 3 * 174762;
+        const pieces = [];
+        for (let at = 0; at < bytes.length; at += CHUNK) {
+            if (at > 0) {
+                // A task's turn for the page in between (JavaScriptCore, in the
+                // tests, has no timers: a microtask there).
+                await (typeof setTimeout === "function" ? new Promise(r => setTimeout(r, 0)) : Promise.resolve());
+            }
+            pieces.push(benchBase64(bytes.subarray(at, at + CHUNK)));
         }
         return pieces.join("");
     }
@@ -359,7 +380,7 @@ enum ArtifactReaderScript {
     if (read === null) { return answer({ outcome: "unreadable" }); }
 
     if (op !== "text") {
-        return answer(read.more ? { outcome: "tooBig" } : { outcome: "bytes", base64: benchBase64(read.bytes) });
+        return answer(read.more ? { outcome: "tooBig" } : { outcome: "bytes", base64: await benchBase64Chunked(read.bytes) });
     }
 
     let truncated = read.more;

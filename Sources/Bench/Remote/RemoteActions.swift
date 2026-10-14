@@ -429,7 +429,7 @@ final class RemoteSessions {
         /// The live read: whether the root works, its streaming text (when
         /// asked for) and its activity line (when asked for). Nil when it
         /// can't be read.
-        var readLive: RemoteLive.Reader = { _, _, _ in nil }
+        var readLive: RemoteLive.Reader = { _, _, _, _ in nil }
 
         static func live() -> Dependencies {
             Dependencies(
@@ -451,9 +451,9 @@ final class RemoteSessions {
                 },
                 now: { Date() },
                 lookup: { await RemoteBrowser.lookUp($0) }, // Phase 3 browse
-                readLive: { id, activity, text in // Phase 4 live
+                readLive: { id, activity, text, mayWait in // Phase 4 live
                     guard Demo.mode == nil else { return nil }
-                    return (try? await WebContainer.shared.readLive(id, activity: activity, text: text)) ?? nil
+                    return (try? await WebContainer.shared.readLive(id, activity: activity, text: text, mayWait: mayWait)) ?? nil
                 })
         }
     }
@@ -468,6 +468,8 @@ final class RemoteSessions {
     private let dependencies: Dependencies
     /// Phase 4 live: what the live route keeps between asks.
     let live: RemoteLive
+    /// The history pages read lately (HistoryPages.swift), let go with the rest below.
+    let historyPages = HistoryPages()
     private var cache: [String: Entry] = [:]
     private var loading: [String: Task<Entry, Never>] = [:]
     /// Bumped when an action may have changed the session: a read started
@@ -605,6 +607,7 @@ final class RemoteSessions {
     private func forget(_ id: String) {
         cache[id] = nil
         generation[id, default: 0] += 1
+        historyPages.forget(id)
     }
 
     // MARK: Acting
@@ -697,7 +700,7 @@ final class RemoteSessions {
             },
             now: now,
             lookup: { lookup($0) },
-            readLive: { id, activity, text in live.read(id, activity: activity, text: text) })) // Phase 4 live
+            readLive: { id, activity, text, _ in live.read(id, activity: activity, text: text) })) // Phase 4 live
     }
 }
 

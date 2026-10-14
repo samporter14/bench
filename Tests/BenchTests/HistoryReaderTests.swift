@@ -204,10 +204,12 @@ struct HistoryReaderPageTests {
 
     private func path(_ query: String) -> String { "/api/frames/\(root)/messages?\(query)" }
 
-    private func run(before: String = "null", frame: String = "\"\(root)\"", answers: [String: [PageScript.Answer]])
+    private func run(before: String = "null", frame: String = "\"\(root)\"", known: String = "null",
+                     answers: [String: [PageScript.Answer]])
         -> (outcome: HistoryReaderScript.Outcome?, raw: String?, requests: [PageScript.Request]) {
         let script = PageScript()
-        let (raw, requests) = script.runPage(HistoryReaderScript.pageBody, arguments: [("frameId", frame), ("before", before)],
+        let (raw, requests) = script.runPage(HistoryReaderScript.pageBody,
+                                             arguments: [("frameId", frame), ("before", before), ("knownTotal", known)],
                                              answers: answers)
         #expect(script.exception == nil)
         return (raw.map { HistoryReaderScript.outcome(of: Data($0.utf8)) }, raw, requests)
@@ -225,6 +227,34 @@ struct HistoryReaderPageTests {
         #expect(page.total == 100)
         #expect(page.from == 50)
         #expect(page.items.map(\.index) == Array(50..<100))
+    }
+
+    /// Fable's review of 0.5.0, P3: a history as long as the page Bench holds
+    /// is the tail's one request, and nothing is projected.
+    @Test func aHistoryAsLongAsTheOneBenchHoldsIsTheTailAlone() {
+        let answers = [
+            path("from=-12&limit=12"): [reply(from: 88, total: 100, count: 12)],
+            path("from=50&limit=38"): [reply(from: 50, total: 100, count: 38)],
+        ]
+        let same = run(known: "100", answers: answers)
+        #expect(same.outcome == .same(total: 100))
+        #expect(same.raw == #"{"outcome":"same","total":100}"#)
+        #expect(same.requests.map(\.path) == [path("from=-12&limit=12")])
+        // Longer than Bench's: read whole, as before.
+        let grown = run(known: "96", answers: answers)
+        #expect(grown.requests.map(\.path) == [path("from=-12&limit=12"), path("from=50&limit=38")])
+        guard case .read(let page)? = grown.outcome else { Issue.record("not read"); return }
+        #expect(page.total == 100)
+        // Anything but a whole number is no length.
+        for known in ["\"100\"", "100.5", "true"] {
+            #expect(run(known: known, answers: answers).requests.count == 2, "\(known)")
+        }
+        // An earlier page has no tail to stop at: it is read.
+        let earlier = run(before: "120", known: "300", answers: [path("from=70&limit=50"): [reply(from: 70, total: 300, count: 50)]])
+        guard case .read? = earlier.outcome else { Issue.record("not read"); return }
+        // Swift takes a "same" only with a length that could be one.
+        #expect(HistoryReaderScript.outcome(of: Data(#"{"outcome":"same","total":-1}"#.utf8)) == .unreadable)
+        #expect(HistoryReaderScript.outcome(of: Data(#"{"outcome":"same"}"#.utf8)) == .unreadable)
     }
 
     @Test func aTailThatEchoesItsNegativeFromStillReads() {
