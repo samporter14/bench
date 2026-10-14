@@ -321,25 +321,6 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
-## 2026-10-13, Settings → Phone as a setup checklist (after 0.4.0)
-
-- ✅ `swift test`: 738 tests in 97 suites. New: `PhoneSetupTests` (finding
-  the phone in a made-up `status --json`: same user by id or login, iOS,
-  iPadOS and android, offline still counts, tagged and other users' don't;
-  every step's transition, Skip, a step that comes undone, Pair Another
-  Device, the code only while "Pair your phone" is open, across every
-  combination; the demo's steps) and the tab's 5 s look (status only, one
-  at a time, nothing in a demo). The real CLI's key names (`Peer`, `OS`,
-  `UserID`, `Online`, `User`) were checked against its output's structure
-  only.
-- ✅ Captured quietly, light: `--demo phone-settings --step 1` to `7`; dark
-  (`-appearance dark`): step 4. Clay on the open step's button doesn't show
-  in a quiet capture (the window is never key, so prominent buttons and
-  switches draw grey).
-- Not checked live: the ticks appearing by themselves against the real
-  Tailscale (signing in, turning HTTPS on, the phone joining), Open
-  Tailscale, and the look stopping when the tab is hidden.
-
 ## 2026-10-14, Bench 0.5.0 (permissions, live text, photos, icon badge)
 
 - ✅ `swift test`: 972 tests in 129 suites, all made-up data. New: permission
@@ -366,6 +347,25 @@ yet checked live: a real failed session, and a real notification close.
   without asking, so no request came), a helper agent's request, the badge on
   the iPhone's icon, a photo taken on the iPhone (HEIC, rotation), and the
   live card on the phone itself.
+
+## 2026-10-13, Settings → Phone as a setup checklist (after 0.4.0)
+
+- ✅ `swift test`: 738 tests in 97 suites. New: `PhoneSetupTests` (finding
+  the phone in a made-up `status --json`: same user by id or login, iOS,
+  iPadOS and android, offline still counts, tagged and other users' don't;
+  every step's transition, Skip, a step that comes undone, Pair Another
+  Device, the code only while "Pair your phone" is open, across every
+  combination; the demo's steps) and the tab's 5 s look (status only, one
+  at a time, nothing in a demo). The real CLI's key names (`Peer`, `OS`,
+  `UserID`, `Online`, `User`) were checked against its output's structure
+  only.
+- ✅ Captured quietly, light: `--demo phone-settings --step 1` to `7`; dark
+  (`-appearance dark`): step 4. Clay on the open step's button doesn't show
+  in a quiet capture (the window is never key, so prominent buttons and
+  switches draw grey).
+- Not checked live: the ticks appearing by themselves against the real
+  Tailscale (signing in, turning HTTPS on, the phone joining), Open
+  Tailscale, and the look stopping when the tab is hidden.
 
 ## 2026-10-13, Bench 0.4.0 (Bench on your phone)
 
