@@ -340,6 +340,33 @@ yet checked live: a real failed session, and a real notification close.
   Tailscale (signing in, turning HTTPS on, the phone joining), Open
   Tailscale, and the look stopping when the tab is hidden.
 
+## 2026-10-14, Bench 0.5.0 (permissions, live text, photos, icon badge)
+
+- ✅ `swift test`: 972 tests in 129 suites, all made-up data. New: permission
+  kinds (allow only for code and read-only tools, never a `scope`), the
+  head-of-queue and helper parent-chain checks, the live-text projection
+  (text only, the 4,000-character tail), photo checks and re-encoding (a
+  rotated JPEG with GPS comes out upright with no EXIF), the attachment line's
+  key order, the badge count in pushes, attachment lines read as files, and
+  a parked permission read by its kind.
+- ✅ Live, in Claude Science's **Example project** only, from a test device
+  paired with a code from Settings and removed afterwards:
+  - Live text: a 250-word reply grew on the phone's reads (449, 914, 1,350,
+    1,850 characters), with "Working" and "Executing code" between.
+  - A network request ("Wants to reach example.com"): Allow from the phone
+    refused with the lasting-access sentence; Deny answered, and the session
+    carried on and finished.
+  - A photo (a 220 KB JPEG of a demo screenshot) sent to a session: uploaded,
+    attached, and Claude described the picture correctly; the history shows
+    it as a file chip whose thumbnail opens.
+- Found live and fixed: a session waiting on a permission said "Asked you a
+  question" (the status won over the request's kind), and the daemon's
+  "[System] Attached file: …" note showed inside the message.
+- Not checked live: Allow once (Sam's Claude Science already runs code
+  without asking, so no request came), a helper agent's request, the badge on
+  the iPhone's icon, a photo taken on the iPhone (HEIC, rotation), and the
+  live card on the phone itself.
+
 ## 2026-10-13, Bench 0.4.0 (Bench on your phone)
 
 - ✅ `swift test`: 662 tests in 87 suites before the review (719 after), all

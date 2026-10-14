@@ -108,15 +108,20 @@ on what your devices ask, with a certificate for your tailnet.
 - **A session**: its latest reply and the whole conversation (scroll up for
   more), with tool steps as one quiet line each, and the files it made:
   images, documents and tables open on the phone, anything else downloads.
-- **Act on it**: answer its question, approve its plan, or send it a message
-  (it waits for the next pause if Claude is busy). Bench checks the session
-  hasn't changed on your Mac just before it acts.
+- **Act on it**: answer its question, approve its plan, send it a message
+  (it waits for the next pause if Claude is busy) or a photo, and answer its
+  permission requests: running code and read-only tools can be allowed once;
+  anything that would grant lasting access is Deny or Open on Mac. Bench
+  checks the session hasn't changed on your Mac just before it acts.
+- **Watch it work**: while a session works, its reply appears as it's
+  written, with what it's doing ("Executing code").
 - **Projects**: every project and all its sessions, with search, and a new
   session in any of them.
 - **Notifications**, if you turn them on, on each device: when a session
   needs you, stops with an error or (if you like) finishes; by default only
   while you're away from your Mac and without session names. They travel
   through Apple's push service, encrypted so only your device can read them.
+- **A count on the Bench icon** of sessions that need you.
 - On iPad, a sidebar and the session side by side.
 
 It's **off** until you turn it on in **Settings → Phone**, which walks you
