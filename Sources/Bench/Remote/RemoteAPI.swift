@@ -248,10 +248,14 @@ enum RemoteAPI {
         /// The root's own question, while it waits for an answer.
         let question: Question?
         let can: Can
+        /// The head of the root's and its helpers' permission requests, when
+        /// there is one (Phase 4). // Phase 4 permissions
+        var permission: Permission?
 
         private enum CodingKeys: String, CodingKey {
             case version, id, title, project, state, reason, sentence, startedAt, updatedAt, plan, messages
             case readable, statusLine, reply, turns, toYou, queued, question, can
+            case permission // Phase 4 permissions
         }
 
         func encode(to encoder: any Encoder) throws {
@@ -275,6 +279,7 @@ enum RemoteAPI {
             try c.encode(queued, forKey: .queued)
             try c.encode(question, forKey: .question)
             try c.encode(can, forKey: .can)
+            try c.encode(permission, forKey: .permission) // Phase 4 permissions
         }
     }
 
@@ -431,7 +436,8 @@ enum RemoteAPI {
                          options: item.options.map { Option(label: $0.label, detail: $0.detail) })
                 })
             },
-            can: RemoteCan.make(read: read, plan: shown, actionsOn: actionsOn))
+            can: RemoteCan.make(read: read, plan: shown, actionsOn: actionsOn),
+            permission: read?.permission.map { RemotePermission.describe($0, actionsOn: actionsOn) }) // Phase 4 permissions
     }
 
     /// What the session's row says, as the Mac's activity list words it.

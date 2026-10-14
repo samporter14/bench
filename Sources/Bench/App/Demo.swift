@@ -248,6 +248,11 @@ enum Demo {
         let working = [make("d4", "Literature sweep", "Reading group", .running, minutes: 4.2),
                        make("d5", "Plate layout", "Assay design", .running, minutes: 17.5)]
         let finished = make("d6", "Primer design", "Cloning", .finished, minutes: 40)
+        // Phase 4 permissions: one waits to run a Python cell, one to reach a website,
+        // and one has a helper (sub-agent) asking to use a read-only tool.
+        let exec = make(DemoLive.Suffix.exec, "Peak calling script", "Sequencing pilot", .needsInput, .other, minutes: 2)
+        let network = make(DemoLive.Suffix.network, "Reference genome download", "Cloning", .needsInput, .web, minutes: 5)
+        let helper = make(DemoLive.Suffix.helper, "Citation check", "Reading group", .needsInput, .tool, minutes: 3)
         let recent = [
             LabEvent(.finished, session: finished, at: Date().addingTimeInterval(-9 * 60)),
             LabEvent(.failed, session: failed, at: Date().addingTimeInterval(-2 * 60)),
@@ -260,9 +265,10 @@ enum Demo {
         let snoozed = [SnoozedReminder(session: plan, due: Date().addingTimeInterval(11 * 60)),
                        SnoozedReminder(session: afterFocus, due: nil)]
         LabModel.shared.showDemo(working: working,
-                                 cards: [.needsInput(question), .needsInput(plan), .needsInput(afterFocus), .failed(failed)],
+                                 cards: [.needsInput(question), .needsInput(plan), .needsInput(afterFocus), .failed(failed),
+                                         .needsInput(exec), .needsInput(network), .needsInput(helper)],
                                  recent: recent, snoozed: snoozed)
-        return [question, plan, failed, afterFocus] + working + [finished]
+        return [question, plan, failed, afterFocus] + working + [finished, exec, network, helper]
     }
 
     // MARK: The modes
@@ -465,6 +471,8 @@ enum Demo {
                         turn(.you, 40, "Design primers for the three target genes."),
                         turn(.claude, 9, "Designed 6 primer pairs. All have a melting point between 58 and 62 °C."),
                     ])
+            case "Peak calling script", "Reference genome download", "Citation check": // Phase 4 permissions
+                reads[session.id] = DemoLive.read(title: session.title, id: session.id, now: now)
             default:
                 // "Gel quantification": unreadable, so the phone shows its
                 // status and Open on Mac.

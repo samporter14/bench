@@ -9,7 +9,9 @@
 // routes: `/frames/<36>/approve-plan` with `{}`, `/frames/<36>/resolve-input`
 // and `/request`; and since Phase 3, a new session's
 // `/projects/<id>/request`. Only the status and a few whitelisted fields come
-// back.
+// back. Phase 4's permission answer is the same `resolve-input` route, to the
+// frame that holds the request, with its own body builder
+// (Remote/RemotePermissions.swift): never a `scope`.
 import Foundation
 import WebKit
 
@@ -28,12 +30,17 @@ enum RemoteWrite: Equatable, Sendable {
     /// `POST /api/projects/<project>/request`: `{input_data:{request},
     /// plan_mode, intent_id}`, no `target_agent`: a new session. // Phase 3 browse
     case newSession(project: String, text: String, planMode: Bool, intentID: String)
+    /// `POST /api/frames/<holder>/resolve-input`: `{responses:[{requestId,
+    /// tool_id, approved, action}]}`, never a `scope`. // Phase 4 permissions
+    case permission(frame: String, requestID: String, toolID: String, allow: Bool)
 
     /// The script's arguments: every name always there, null when unused.
     var arguments: [String: Any] {
         var all: [String: Any] = ["kind": "", "frameId": "", "toolId": NSNull(), "mode": NSNull(), "answers": NSNull(),
                                   "agent": NSNull(), "projectId": NSNull(), "text": NSNull(), "intentId": NSNull(),
                                   "planMode": NSNull()] // Phase 3 browse
+        all["requestId"] = NSNull() // Phase 4 permissions
+        all["decision"] = NSNull() // Phase 4 permissions
         switch self {
         case .approvePlan(let frame):
             all["kind"] = "approve"
@@ -62,6 +69,12 @@ enum RemoteWrite: Equatable, Sendable {
             all["text"] = text
             all["planMode"] = planMode
             all["intentId"] = intentID
+        case .permission(let frame, let requestID, let toolID, let allow): // Phase 4 permissions
+            all["kind"] = "permission"
+            all["frameId"] = frame
+            all["toolId"] = toolID
+            all["requestId"] = requestID
+            all["decision"] = allow ? "allow" : "deny"
         }
         return all
     }
@@ -75,8 +88,8 @@ struct RemoteWriteResult: Equatable, Sendable {
     /// The body's `code`, when it is a short identifier.
     let code: String?
     /// The body's `status`, when it is one Bench knows: `accepted`,
-    /// `buffered`, `already_resolved`, `message_queued`, `already_delivered`
-    /// or `already_retracted`.
+    /// `buffered`, `already_resolved`, `message_queued`, `already_delivered`,
+    /// `already_retracted` or `partial` (a permission answer's).
     let bodyStatus: String?
     /// How many `remaining_tool_ids`, when the body lists them.
     let remaining: Int?
@@ -106,6 +119,7 @@ struct RemoteWriteResult: Equatable, Sendable {
 
     static let knownBodyStatuses: Set<String> = [
         "accepted", "buffered", "already_resolved", "message_queued", "already_delivered", "already_retracted",
+        "partial", // Phase 4 permissions
     ]
 
     /// The page's summary, checked again. Nil when it isn't one.
@@ -152,6 +166,8 @@ enum SessionWriterScript {
         const isObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
         const points = text => Array.from(text).length;
         const text = (v, min, max) => typeof v === "string" && v.trim() !== "" && points(v) >= min && points(v) <= max;
+        // Phase 4 permissions: resolve-input for a request, built in its own function.
+        if (isObject(a) && a.kind === "permission") { return benchBuildPermissionWrite(a); }
         // Phase 3 browse: a new session in a project, to the server's default agent.
         if (isObject(a) && a.kind === "newSession") {
             if (typeof a.projectId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(a.projectId)) { return null; }
@@ -196,13 +212,14 @@ enum SessionWriterScript {
         }
         return null;
     }
-    """#
+    """# + "\n" + PermissionScript.writeBuilder // Phase 4 permissions
 
     /// `benchSummarizeWrite(status, text)`: the whitelisted fields of an answer.
     static let summarizer = #"""
     function benchSummarizeWrite(status, raw) {
         "use strict";
-        const KNOWN = ["accepted", "buffered", "already_resolved", "message_queued", "already_delivered", "already_retracted"];
+        const KNOWN = ["accepted", "buffered", "already_resolved", "message_queued", "already_delivered", "already_retracted",
+                       "partial"];
         const text = typeof raw === "string" ? raw : "";
         let json = null;
         try { json = JSON.parse(text); } catch (e) { json = null; }
@@ -215,7 +232,7 @@ enum SessionWriterScript {
             remaining: isObject && Array.isArray(json.remaining_tool_ids) ? json.remaining_tool_ids.length : -1,
             noPlanAwaiting: text.indexOf("No plan awaiting") >= 0,
             askPending: /pending question/i.test(text),
-            staleInput: /not awaiting user response|no pending request/i.test(text),
+            staleInput: /not awaiting user response|no pending request|no pending input request|live_approval_stale|frame state changed while resolving/i.test(text),
             rootFrameId: isObject && typeof json.root_frame_id === "string" && /^[0-9a-f-]{36}$/.test(json.root_frame_id)
                 ? json.root_frame_id : "",
         };
@@ -230,7 +247,8 @@ enum SessionWriterScript {
 
     const write = benchBuildWrite({ kind: kind, frameId: frameId, toolId: toolId, mode: mode, answers: answers,
                                     agent: agent, projectId: projectId, text: text, intentId: intentId,
-                                    planMode: planMode });
+                                    planMode: planMode,
+                                    requestId: requestId, decision: decision }); // Phase 4 permissions
     if (write === null) { return JSON.stringify({ refused: true }); }
     const secret = () => {
         const entry = document.cookie.split(";").map(part => part.trim())

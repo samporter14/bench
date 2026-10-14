@@ -15,15 +15,18 @@ import SwiftUI
 
 // MARK: The routes and their answers
 
-/// The three action routes, `POST /api/sessions/<id>/<action>`.
+/// The action routes, `POST /api/sessions/<id>/<action>`; `permission` is
+/// Phase 4's.
 enum RemoteAction: String, CaseIterable, Sendable {
     case approve, answer, message
+    case permission // Phase 4 permissions
 }
 
 /// What an action answers the phone: `{"result": …, "sentence": "…"}`.
 struct RemoteActionResult: Encodable, Equatable, Sendable {
     enum Result: String, Encodable, Sendable {
         case approved, changed, unavailable, sent, queued, resumed, blocked
+        case allowed, denied // Phase 4 permissions
     }
 
     let result: Result
@@ -98,6 +101,9 @@ enum RemoteActionRequest: Equatable, Sendable {
     case cancel(toolID: String)
     /// `{"text","id"}`: the text trimmed, the phone's uuid v4 the intent id.
     case message(text: String, intentID: String)
+    /// `{"id","decision":"allow"|"deny"}`, and optionally the `kind` the phone
+    /// showed. // Phase 4 permissions
+    case permission(id: String, allow: Bool, kind: String?)
 
     static let answerLimit = 1_000
     static let messageLimit = 4_000
@@ -134,6 +140,8 @@ enum RemoteActionRequest: Equatable, Sendable {
                   !text.isEmpty, text.unicodeScalars.count <= messageLimit,
                   let id = Pick.string(root["id"]), isUUIDv4(id) else { return nil }
             return .message(text: text, intentID: id)
+        case .permission: // Phase 4 permissions
+            return parsePermission(root)
         }
     }
 
@@ -197,6 +205,8 @@ enum RemoteCan {
         static let unreadable = "Bench can't read this session"
         static let answerFirst = "Answer its question first"
         static let planFirst = "Approve or revise the plan on your Mac"
+        /// A parked session whose wait is a permission request, not a question. // Phase 4 permissions
+        static let requestFirst = "Answer its request first"
         /// A `replaced` frame: not in the spec's table, so not offered.
         static let noMessage = "This session can't take a message from here"
     }
@@ -212,7 +222,9 @@ enum RemoteCan {
         var mode = RemoteMessageMode(status: read.status)
         // Every message names the root's own agent; without one, none goes.
         if mode.word != nil, read.agentName == nil { mode = .blocked(Why.unreadable) }
-        if case .blocked(let why) = mode {
+        if case .blocked(var why) = mode {
+            // Phase 4 permissions: a parked request is not "its question".
+            if read.status == "awaiting_user_response", read.question == nil, read.permission != nil { why = Why.requestFirst }
             return RemoteAPI.Can(approve: approve, answer: answer, message: nil, why: why)
         }
         return RemoteAPI.Can(approve: approve, answer: answer, message: mode.word, why: nil)
@@ -412,6 +424,11 @@ final class RemoteSessions {
         var browseOn: @MainActor () -> Bool = { RemoteBrowse.isOn }
         /// The database's point lookup: any root session, by its id.
         var lookup: @MainActor (String) async -> SessionStatus? = { _ in nil }
+        // Phase 4 live
+        /// The live read: whether the root works, its streaming text (when
+        /// asked for) and its activity line (when asked for). Nil when it
+        /// can't be read.
+        var readLive: RemoteLive.Reader = { _, _, _ in nil }
 
         static func live() -> Dependencies {
             Dependencies(
@@ -432,7 +449,11 @@ final class RemoteSessions {
                     return try? await WebContainer.shared.writeSession(write)
                 },
                 now: { Date() },
-                lookup: { await RemoteBrowser.lookUp($0) }) // Phase 3 browse
+                lookup: { await RemoteBrowser.lookUp($0) }, // Phase 3 browse
+                readLive: { id, activity, text in // Phase 4 live
+                    guard Demo.mode == nil else { return nil }
+                    return (try? await WebContainer.shared.readLive(id, activity: activity, text: text)) ?? nil
+                })
         }
     }
 
@@ -444,6 +465,8 @@ final class RemoteSessions {
     }
 
     private let dependencies: Dependencies
+    /// Phase 4 live: what the live route keeps between asks.
+    let live: RemoteLive
     private var cache: [String: Entry] = [:]
     private var loading: [String: Task<Entry, Never>] = [:]
     /// Bumped when an action may have changed the session: a read started
@@ -465,6 +488,7 @@ final class RemoteSessions {
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
+        live = RemoteLive(read: dependencies.readLive, now: dependencies.now, known: dependencies.known) // Phase 4 live
     }
 
     // MARK: Reading
@@ -607,7 +631,8 @@ final class RemoteSessions {
     }
 
     private func perform(_ request: RemoteActionRequest, session id: String) async -> RemoteActionReply {
-        let fresh = await dependencies.read(id, false)
+        // Phase 4 permissions: an answer to a request reads the helpers' frames too (a full read).
+        let fresh = await dependencies.read(id, request.isPermission)
         switch request {
         case .approve(let version):
             switch RemoteDecide.approve(version: version, session: id, fresh: fresh) {
@@ -625,6 +650,11 @@ final class RemoteSessions {
             case .write(let write):
                 return .ok(RemoteDecide.messaged(await dependencies.write(write), status: fresh?.status ?? ""))
             }
+        case .permission(_, let allow, _): // Phase 4 permissions
+            switch PermissionDecide.decide(request, session: id, fresh: fresh) {
+            case .answer(let result): return .ok(result)
+            case .write(let write): return .ok(PermissionDecide.answered(await dependencies.write(write), allow: allow))
+            }
         }
     }
 
@@ -641,13 +671,14 @@ final class RemoteSessions {
                      cardPlan: @escaping @MainActor (String) -> PlanPreview? = { RemoteAPI.readyPlan(.shared, sessionID: $0) },
                      now: @escaping @MainActor () -> Date = { Date() },
                      lookup: @escaping @MainActor (String) -> SessionStatus? = { _ in nil },
-                     more: @escaping @MainActor (String) -> SessionProjection? = { _ in nil }) -> RemoteSessions {
+                     more: @escaping @MainActor (String) -> SessionProjection? = { _ in nil },
+                     live: DemoLive = DemoLive()) -> RemoteSessions { // Phase 4 live
         RemoteSessions(dependencies: Dependencies(
             actionsOn: { RemoteSessions.actionsSetting() },
             known: known,
             cardPlan: cardPlan,
             read: { id, turns in
-                guard let read = reads[id] ?? more(id) else { return nil }
+                guard let read = (reads[id] ?? more(id)).map(live.settled) else { return nil } // Phase 4 permissions
                 return turns ? read : read.withoutTurns
             },
             readPlan: { _ in nil },
@@ -657,12 +688,15 @@ final class RemoteSessions {
                     RemoteWriteResult(status: 200, bodyStatus: "message_queued")
                 case .answer, .cancel:
                     RemoteWriteResult(status: 200, bodyStatus: "accepted", remaining: 0)
+                case .permission(_, let requestID, _, _): // Phase 4 permissions
+                    live.answer(requestID)
                 default:
                     RemoteWriteResult(status: 200, bodyStatus: "accepted")
                 }
             },
             now: now,
-            lookup: { lookup($0) }))
+            lookup: { lookup($0) },
+            readLive: { id, activity, text in live.read(id, activity: activity, text: text) })) // Phase 4 live
     }
 }
 
