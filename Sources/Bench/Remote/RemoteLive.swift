@@ -136,11 +136,13 @@ enum LiveScript {
     /// What `callAsyncJavaScript` runs, with the arguments `frameId`,
     /// `wantActivity`, `wantText` and `mayWait`: the shallow frame, then (when
     /// the root is `processing`) the streaming buffer, and when the activity is
-    /// wanted its pending requests and the last messages. The helpers' requests
-    /// come through `trace-shallow` (up to 2,000 frames), read only while
-    /// something may be pending: the shallow frame lists a request of the
-    /// root's, or `mayWait` (Bench's own database read says the session waits
-    /// on the user, which counts its helpers' requests). Answers a JSON string:
+    /// wanted its pending requests and the last messages. The root's requests
+    /// are in its shallow frame; the helpers' come through `trace-shallow` (up
+    /// to 2,000 frames), read only while a helper may hold one: `mayWait`
+    /// (Bench's own database read says the session waits on the user, which
+    /// counts a visible helper's request), or the root has an open call that
+    /// waits on helpers (a hidden helper's request shows nowhere else; a helper
+    /// asks inside the root's open `delegate` call). Answers a JSON string:
     /// `{"outcome":"read","live":{…}}`, `"unreadable"`, `"lost"` (a 401) or
     /// `"refused"` (an id that isn't one).
     static let body = projections + #"""
@@ -199,18 +201,28 @@ enum LiveScript {
     }
 
     if (needActivity) {
-        // A pending request, in the root or under it. The helpers' are read
-        // only while something may be pending; the root's are in its frame.
-        const own = benchObjectOrNull(frame.json.output_data);
-        const rootAsks = benchIsObject(own) && Array.isArray(own.pending_input_requests) && own.pending_input_requests.length > 0;
+        // A pending request, in the root or under it. The root's are in its
+        // frame. The helpers' come through `trace-shallow` (up to 2,000
+        // frames), read only while a helper may hold one: Bench's own reading
+        // says the session waits (`mayWait`), or the root has an open call
+        // that waits on helpers (`delegate`, `wait_for_notification`).
+        const rootOnly = { id: frameId, children: [] };
+        let queue = benchPendingQueue(frame.json, rootOnly, frameId);
+        let pending = queue !== null && queue.length > 0;
+        let traced = false;
+        const readHelpers = async () => {
+            traced = true;
+            const tracePath = benchReadPath("trace", frameId);
+            const read = tracePath === null ? { failed: true } : await getJSON(tracePath);
+            if (read.lost) { return false; }
+            if (!read.failed) {
+                const all = benchPendingQueue(frame.json, read.json, frameId);
+                if (all !== null) { queue = all; pending = all.length > 0; }
+            }
+            return true;
+        };
         const helpersMayAsk = typeof mayWait !== "undefined" && (mayWait === true || mayWait === 1);
-        const tracePath = benchReadPath("trace", frameId);
-        const traced = !(rootAsks || helpersMayAsk) || tracePath === null ? { failed: true } : await getJSON(tracePath);
-        if (traced.lost) { return JSON.stringify({ outcome: "lost" }); }
-        const tree = traced.failed ? { id: frameId, children: [] } : traced.json;
-        let queue = benchPendingQueue(frame.json, tree, frameId);
-        if (queue === null) { queue = benchPendingQueue(frame.json, { id: frameId, children: [] }, frameId); }
-        const pending = queue !== null && queue.length > 0;
+        if (!pending && helpersMayAsk && !(await readHelpers())) { return JSON.stringify({ outcome: "lost" }); }
         let rows = null;
         if (!pending) {
             const messages = await getJSON("/api/frames/" + frameId + "/messages?from=-12&limit=12");
@@ -218,6 +230,9 @@ enum LiveScript {
             if (!messages.failed && benchIsObject(messages.json) && Array.isArray(messages.json.messages)) {
                 rows = messages.json.messages;
             }
+            const WAIT = ["delegate", "wait_for_notification"];
+            if (!traced && benchPendingTools(rows).some(name => WAIT.indexOf(name) >= 0)
+                && !(await readHelpers())) { return JSON.stringify({ outcome: "lost" }); }
         }
         live.activity = benchLiveActivity(true, pending, rows);
     }

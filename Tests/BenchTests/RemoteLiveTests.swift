@@ -362,7 +362,8 @@ struct LivePageTests {
             frame: ok(working([pending])), streaming: ok("null"), trace: ok(json(["id": root, "children": [Any]()])),
         ])
         #expect(read(outcome)?.activity == "Waiting for your approval")
-        #expect(requests.map(\.path) == [frame, streaming, trace])
+        // The root's own request is in its frame: no helpers to read.
+        #expect(requests.map(\.path) == [frame, streaming])
     }
 
     @Test func aPendingRequestOfAHelperIsWaitingForApproval() {
@@ -407,13 +408,29 @@ struct LivePageTests {
         let waiting = run(activity: true, mayWait: true, answers: answers)
         #expect(waiting.requests.map(\.path) == [frame, streaming, trace])
         #expect(read(waiting.outcome)?.activity == "Waiting for your approval")
-        // A request of the root's own, in its frame: the same.
+        // A request of the root's own is in its frame: nothing more to read.
         let pending: [String: Any] = ["kind": "local_exec", "requestId": "r", "tool_id": "t", "createdAt": "2026-10-12T19:30:00Z", "mode": "live"]
         var own = answers
         own[frame] = ok(working([pending]))
         let rootAsks = run(activity: true, answers: own)
-        #expect(rootAsks.requests.map(\.path) == [frame, streaming, trace])
+        #expect(rootAsks.requests.map(\.path) == [frame, streaming])
         #expect(read(rootAsks.outcome)?.activity == "Waiting for your approval")
+        // The root waits on helpers (an open `delegate`, here beside an open
+        // `python`): a hidden helper's request is invisible to Bench's own
+        // reading, so the trace is read after the messages.
+        for tools in [["delegate"], ["wait_for_notification"], ["python", "delegate"]] {
+            let calls = tools.enumerated().map { ["type": "tool_use", "id": "t\($0.offset)", "name": $0.element, "input": [String: Any]()] }
+            var delegating = answers
+            delegating[messages] = ok(ReaderFixture.page(json([["role": "user", "content": "Go.", "_ts": 1_791_833_000_000],
+                                                               ["role": "assistant", "content": calls, "_ts": 1_791_833_010_000]])))
+            let asked = run(activity: true, answers: delegating)
+            #expect(asked.requests.map(\.path) == [frame, streaming, messages, trace], "\(tools)")
+            #expect(read(asked.outcome)?.activity == "Waiting for your approval", "\(tools)")
+            // No helper asks: the words the open calls give.
+            delegating[trace] = ok(json(["id": root, "children": [Any]()]))
+            #expect(read(run(activity: true, answers: delegating).outcome)?.activity
+                    == (tools == ["python", "delegate"] ? "Executing code" : "Waiting on subagents"), "\(tools)")
+        }
         // An empty list, or none at all, is nothing pending.
         for output in [json(["pending_input_requests": [Any](), "response": "SECRET"]), "null"] {
             var none = answers
