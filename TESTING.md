@@ -321,6 +321,40 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-14, Bench 0.5.1 (a Fable review's fixes, faster reads, 519 specimens)
+
+- ✅ A read-only review by Claude Fable 5.1 (`Bench-review-0.5.0-fable.md`,
+  outside the repo): 0 critical or high; 3 medium, 4 low and 1 info on
+  security and correctness, and 2 medium, 4 low and 3 info on performance.
+  Fixed:
+  - Allow once only for code shown whole: the phone shows every line,
+    wrapped, with invisible characters marked; the Mac withholds code holding
+    a CR, zero-width, joiner, filler, tag or other invisible character, more
+    than 60 lines or a line over 160 characters, and code whose `tool_id`
+    another pending request shares.
+  - Messages and new sessions refuse the upload format's reference prefixes,
+    and only the photo flow may carry an attachment line.
+  - A photo retry reuses its upload; a read in flight when an action lands
+    is read again; a helper's question shows a card; photos decode once,
+    at most 24 MP, always to sRGB; archived projects list no sessions.
+  - Reads: one persistent read-only SQLite connection instead of a
+    `sqlite3` process per read (up to 60 a minute while a session worked),
+    and the sessions poll reads closely only its candidates. On made-up
+    databases with the usual indexes: 15.5 / 31.2 / 52.8 ms before, 0.6 /
+    1.0 / 1.5 ms after, at 500 / 3,000 / 8,000 sessions; the same rows as
+    the 0.5.0 SQL on every layout tried. The connection lets go after 10 s
+    idle, and a process watcher hears the daemon quit.
+  - The panel isn't republished for token counts; the phone's history is
+    cached 30 s and re-read only when the session changed; live polling
+    eases to 3 s and 5 s while nothing changes; the app's files are cached
+    by content hash; downloads encode in pieces.
+- ✅ `swift test`: 1,056 tests in 138 suites.
+- ✅ 12 new specimens (519): Gene-set enrichment, Bootstrap resampling, NMR
+  spectrum, Targeted degrader, Allosteric switch, Collagen braid, FRAP
+  recovery, Integrin activation, ATAC accessibility, RNase P, Azobenzene
+  switch, Acoustic levitation (made in another session; preview GIF in
+  `~/Documents/Default Project/new-specimens-batch-O.gif`).
+
 ## 2026-10-14, Bench 0.5.0 (permissions, live text, photos, icon badge)
 
 - ✅ `swift test`: 972 tests in 129 suites, all made-up data. New: permission

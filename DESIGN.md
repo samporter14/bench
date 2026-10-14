@@ -2120,9 +2120,10 @@ shared files gained lines marked `// Phase 3 browse`.
   route, the artifact routes included; off, 403 `{"error":"browseOff"}`
   before anything is read. Off, `/api/sessions/<id>` and the actions open
   only the sessions Bench knows, as in Phase 2.
-- **SQL**: sqlite3 takes no bound parameters, so every value is checked by
-  its shape before it goes in (ids, the cursor's number) and `q` is escaped
-  (`'` doubled; `\`, `%` and `_` with `ESCAPE '\'`). `archived_at` is probed
+- **SQL**: since 0.5.1 Bench reads through one read-only SQLite connection
+  (the system library, not the `sqlite3` tool), so values are bound
+  parameters; ids and the cursor are still checked by shape first, and `q`'s
+  `\`, `%` and `_` are escaped for `LIKE … ESCAPE '\'`. `archived_at` is probed
   with `pragma_table_info` (remembered five minutes), for the projects list and
   for a project's sessions (an archived project lists none; the point lookup by
   id is unchanged). A project's count is of
