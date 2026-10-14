@@ -498,7 +498,7 @@ enum RemoteAPI {
     /// Every session Bench knows of now, the freshest reading first: what
     /// waits and works, the last read, the failure cards, then Recent.
     static func knownSessions(lab: LabModel) -> [SessionStatus] {
-        lab.waiting + lab.working + lab.sessions + lab.cards.compactMap(\.session)
+        lab.waiting + lab.workingAsRead + lab.sessions + lab.cards.compactMap(\.session)
             + lab.recent.compactMap(\.session) + lab.latest
     }
 
