@@ -448,12 +448,15 @@ func fetchProjects(db: URL) throws -> [ProjectRow] {
 }
 
 /// One page of a project's root sessions, newest first by `(updated_at, id)`,
-/// after `cursor`, and with `search` its names containing that text. Up to
+/// after `cursor`, and with `search` its names containing that text; none
+/// when the project is archived (the point lookup below still opens one). Up to
 /// `BrowseSQL.pageSize + 1` rows: the extra one says there is a next page.
 /// Nil (nothing read) for a project id or cursor out of shape.
 func fetchProjectSessions(db: URL, project: String, after cursor: BrowseCursor?, search: String?) throws -> [BrowseRow]? {
     guard BrowseSQL.isProjectID(project) else { return nil }
     var conditions = ["\(sessionFilterSQL("f"))", "f.task_summary IS NOT NULL", "f.project_id = '\(project)'"]
+    // An archived project's sessions are hidden, as `fetchProjects` hides the project.
+    if try ColumnProbe.shared.has(db: db, table: "projects", column: "archived_at") { conditions.append("p.archived_at IS NULL") }
     if let cursor {
         guard PlanCheck.isFrameID(cursor.id), cursor.updatedMs >= 0 else { return nil }
         conditions.append("""

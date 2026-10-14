@@ -25,11 +25,14 @@ enum RemoteWrite: Equatable, Sendable {
     /// The same route: `{responses:[{tool_id, action:"cancel", answers:{}}]}`.
     case cancel(frame: String, toolID: String)
     /// `POST /api/request`: `{target_agent, root_frame_id, project_id?,
-    /// input_data:{request}, intent_id, plan_mode:false}`.
-    case message(frame: String, agent: String, projectID: String?, text: String, intentID: String)
+    /// input_data:{request}, intent_id, plan_mode:false}`. `attachment` (a
+    /// photo's: the text may end in the attachment line) is for the photo
+    /// flow alone.
+    case message(frame: String, agent: String, projectID: String?, text: String, intentID: String, attachment: Bool = false)
     /// `POST /api/projects/<project>/request`: `{input_data:{request},
-    /// plan_mode, intent_id}`, no `target_agent`: a new session. // Phase 3 browse
-    case newSession(project: String, text: String, planMode: Bool, intentID: String)
+    /// plan_mode, intent_id}`, no `target_agent`: a new session. `attachment`
+    /// as above. // Phase 3 browse
+    case newSession(project: String, text: String, planMode: Bool, intentID: String, attachment: Bool = false)
     /// `POST /api/frames/<holder>/resolve-input`: `{responses:[{requestId,
     /// tool_id, approved, action}]}`, never a `scope`. // Phase 4 permissions
     case permission(frame: String, requestID: String, toolID: String, allow: Bool)
@@ -38,7 +41,7 @@ enum RemoteWrite: Equatable, Sendable {
     var arguments: [String: Any] {
         var all: [String: Any] = ["kind": "", "frameId": "", "toolId": NSNull(), "mode": NSNull(), "answers": NSNull(),
                                   "agent": NSNull(), "projectId": NSNull(), "text": NSNull(), "intentId": NSNull(),
-                                  "planMode": NSNull()] // Phase 3 browse
+                                  "planMode": NSNull(), "attachment": false] // Phase 3 browse
         all["requestId"] = NSNull() // Phase 4 permissions
         all["decision"] = NSNull() // Phase 4 permissions
         switch self {
@@ -56,19 +59,21 @@ enum RemoteWrite: Equatable, Sendable {
             all["frameId"] = frame
             all["toolId"] = toolID
             all["mode"] = "cancel"
-        case .message(let frame, let agent, let projectID, let text, let intentID):
+        case .message(let frame, let agent, let projectID, let text, let intentID, let attachment):
             all["kind"] = "message"
             all["frameId"] = frame
             all["agent"] = agent
             all["projectId"] = projectID ?? NSNull()
             all["text"] = text
             all["intentId"] = intentID
-        case .newSession(let project, let text, let planMode, let intentID): // Phase 3 browse
+            all["attachment"] = attachment
+        case .newSession(let project, let text, let planMode, let intentID, let attachment): // Phase 3 browse
             all["kind"] = "newSession"
             all["projectId"] = project
             all["text"] = text
             all["planMode"] = planMode
             all["intentId"] = intentID
+            all["attachment"] = attachment
         case .permission(let frame, let requestID, let toolID, let allow): // Phase 4 permissions
             all["kind"] = "permission"
             all["frameId"] = frame
@@ -168,20 +173,29 @@ enum SessionWriterScript {
         const text = (v, min, max) => typeof v === "string" && v.trim() !== "" && points(v) >= min && points(v) <= max;
         // Phase 4 permissions: resolve-input for a request, built in its own function.
         if (isObject(a) && a.kind === "permission") { return benchBuildPermissionWrite(a); }
-        // Phase 4 photos: a photo's request is the text (4,000 at most), a blank line and one attachment line
-        // of exactly the shape Bench writes, or the line alone. Plain text stays at 4,000.
+        // Phase 4 photos: a photo's request (`a.attachment`, from the photo flow alone) is the text (4,000
+        // at most), a blank line and one attachment line of exactly the shape Bench writes, or the line
+        // alone. Every other request is plain text at 4,000, and refuses what the UI would read as a
+        // reference (the same seven prefixes `PhotoText` refuses, as they are or with their white space gone).
+        const REFERENCES = ['{{artifact:', '{"type":"artifact"', '{"type":"attachment"', '{"type":"skill"',
+                            '{"type":"session"', '{"artifact_ref":', '{"file_path":'];
+        const hasReference = v => {
+            if (v.indexOf("{") < 0) { return false; }
+            const squeezed = v.replace(/\s+/g, "");
+            return REFERENCES.some(prefix => v.indexOf(prefix) >= 0 || squeezed.indexOf(prefix) >= 0);
+        };
         const LINE = /\{"type":"attachment","id":"[0-9A-Fa-f-]{36}","version_id":"[0-9A-Fa-f-]{36}","filename":"phone-photo-[0-9]{8}-[0-9]{6}\.jpg","artifact_ref":"\{\{artifact:[0-9A-Fa-f-]{36}\}\}","content_type":"image\/jpeg","size_bytes":[0-9]{1,8}\}$/;
-        const request = v => {
+        const request = (v, attachment) => {
             if (typeof v !== "string") { return false; }
-            const found = LINE.exec(v);
-            if (found === null) { return text(v, 1, 4000); }
+            const found = attachment === true ? LINE.exec(v) : null;
+            if (found === null) { return text(v, 1, 4000) && !hasReference(v); }
             const head = v.slice(0, found.index);
-            return head === "" || (head.endsWith("\n\n") && text(head.slice(0, -2), 1, 4000));
+            return head === "" || (head.endsWith("\n\n") && text(head.slice(0, -2), 1, 4000) && !hasReference(head));
         };
         // Phase 3 browse: a new session in a project, to the server's default agent.
         if (isObject(a) && a.kind === "newSession") {
             if (typeof a.projectId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(a.projectId)) { return null; }
-            if (!request(a.text) || typeof a.planMode !== "boolean") { return null; }
+            if (!request(a.text, a.attachment) || typeof a.planMode !== "boolean") { return null; }
             if (typeof a.intentId !== "string"
                 || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a.intentId)) { return null; }
             return { path: "/api/projects/" + a.projectId + "/request",
@@ -211,7 +225,7 @@ enum SessionWriterScript {
                      body: { responses: [{ tool_id: a.toolId, action: "answer", answers: Object.fromEntries(entries) }] } };
         }
         if (a.kind === "message") {
-            if (!text(a.agent, 1, 200) || !request(a.text)) { return null; }
+            if (!text(a.agent, 1, 200) || !request(a.text, a.attachment)) { return null; }
             if (typeof a.intentId !== "string"
                 || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a.intentId)) { return null; }
             if (a.projectId !== null && a.projectId !== undefined && !text(a.projectId, 1, 200)) { return null; }
@@ -257,7 +271,7 @@ enum SessionWriterScript {
 
     const write = benchBuildWrite({ kind: kind, frameId: frameId, toolId: toolId, mode: mode, answers: answers,
                                     agent: agent, projectId: projectId, text: text, intentId: intentId,
-                                    planMode: planMode,
+                                    planMode: planMode, attachment: attachment, // Phase 4 photos
                                     requestId: requestId, decision: decision }); // Phase 4 permissions
     if (write === null) { return JSON.stringify({ refused: true }); }
     const secret = () => {

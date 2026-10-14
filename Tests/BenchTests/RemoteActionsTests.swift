@@ -69,6 +69,39 @@ struct RemoteActionBodyTests {
         #expect(RemoteActionRequest.parse(action, body: body(json)) == nil)
     }
 
+    /// What the UI itself neutralises in typed text; a message holding one could pass
+    /// for an attachment, an artifact, a skill or a session the person never attached.
+    private static let references = [
+        "{{artifact:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee}}", #"{"type":"artifact","id":"x"}"#, #"{"type":"attachment","id":"x"}"#,
+        #"{"type":"skill","name":"x"}"#, #"{"type":"session","id":"x"}"#, #"{"artifact_ref":"x"}"#, #"{"file_path":"/x"}"#,
+        #"{ "type" : "attachment", "id": "x"}"#, "{{ artifact: aaaa }}", "{\"type\":\n\"skill\"}",
+    ]
+
+    private func messageBody(_ text: String) -> Data {
+        PhotoFixture.json(["text": text, "id": intent])
+    }
+
+    @Test(arguments: references)
+    func aMessageWithAReferenceIsRefusedAsItsOwnKindOfBadRequest(_ reference: String) {
+        for text in [reference, "Look at " + reference + " and that", "Hi\n\n" + reference] {
+            #expect(RemoteActionRequest.parse(.message, body: messageBody(text)) == nil, "\(text)")
+            #expect(RemoteActionRequest.refusal(body: messageBody(text)) == RemoteActionReply(status: 400, body: Data(#"{"error":"reference"}"#.utf8)))
+        }
+    }
+
+    @Test func aMessageWithOrdinaryBracesIsFine() {
+        for text in ["{x}", "use {{ var }} here", #"{"type": "gel"}"#, "the artifact: a figure", "{}"] {
+            #expect(RemoteActionRequest.parse(.message, body: messageBody(text)) == .message(text: text, intentID: intent), "\(text)")
+        }
+    }
+
+    @Test func anyOtherBadBodyStaysAPlainBadRequest() {
+        #expect(RemoteActionRequest.refusal(body: body(#"{"text":"","id":"\#(intent)"}"#)) == .badRequest)
+        #expect(RemoteActionRequest.refusal(body: body(#"{"text":5,"id":"\#(intent)"}"#)) == .badRequest)
+        #expect(RemoteActionRequest.refusal(body: body("not json")) == .badRequest)
+        #expect(RemoteActionRequest.refusal(body: body("[]")) == .badRequest)
+    }
+
     @Test func anAnswerOverAThousandCharactersIsRefused() {
         let long = String(repeating: "a", count: 1001)
         #expect(RemoteActionRequest.parse(.answer, body: body(#"{"toolId":"t","answers":{"Q?":"\#(long)"}}"#)) == nil)
@@ -347,6 +380,40 @@ private func decode(_ reply: RemoteActionReply) -> [String: Any] {
     (try? JSONSerialization.jsonObject(with: reply.body)) as? [String: Any] ?? [:]
 }
 
+/// A page whose first read hangs until it is let go, and answers the session as it was
+/// then (still working); every read after answers as it is now (finished).
+@MainActor
+private final class SlowPage {
+    let now = Date(timeIntervalSince1970: 1_791_833_400)
+    private(set) var reads = 0
+    private var gate: CheckedContinuation<Void, Never>?
+
+    func sessions() -> RemoteSessions {
+        RemoteSessions(dependencies: RemoteSessions.Dependencies(
+            actionsOn: { true },
+            known: { [Fixture.session(root, .running, title: "Made-up session")] },
+            cardPlan: { _ in nil },
+            read: { [unowned self] _, turns in
+                self.reads += 1
+                if self.reads == 1 {
+                    await withCheckedContinuation { self.gate = $0 }
+                    return read("processing", turns: [])
+                }
+                let finished = read("completed", turns: [])
+                return turns ? finished : finished.withoutTurns
+            },
+            readPlan: { _ in nil },
+            write: { _ in RemoteWriteResult(status: 200, bodyStatus: "accepted") },
+            now: { [unowned self] in self.now }))
+    }
+
+    /// Lets the hung read finish.
+    func release() {
+        gate?.resume()
+        gate = nil
+    }
+}
+
 @MainActor
 struct RemoteSessionsTests {
     private let page = FakePage()
@@ -411,6 +478,23 @@ struct RemoteSessionsTests {
         #expect(page.writes == [.message(frame: root, agent: "specialist-7", projectID: "proj-1", text: "Use HEPES", intentID: intent)])
     }
 
+    @Test func aMessageWithAReferenceIs400ReferenceAndTouchesNothing() async {
+        page.reads[root] = read("completed", agent: "made-up-agent", project: "proj-1")
+        let sessions = page.sessions()
+        for text in [#"{"type":"attachment","id":"x"}"#, "look at {{artifact:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee}}",
+                     "Hi\n\n" + #"{"type":"attachment","id":"11111111-2222-4333-8444-555555555555","version_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","filename":"phone-photo-20261012-193000.jpg","artifact_ref":"{{artifact:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee}}","content_type":"image/jpeg","size_bytes":123456}"#] {
+            let reply = await sessions.act(.message, session: root, device: "d", body: PhotoFixture.json(["text": text, "id": intent]))
+            #expect(reply.status == 400)
+            #expect(String(decoding: reply.body, as: UTF8.self) == #"{"error":"reference"}"#)
+        }
+        // Nothing was read or written, and a body with no reference is the plain 400.
+        #expect(page.readLog.isEmpty && page.writes.isEmpty)
+        let plain = await sessions.act(.message, session: root, device: "d", body: body(#"{"text":"","id":"\#(intent)"}"#))
+        #expect(plain == .badRequest)
+        // The same words as an answer's or an approval's body are only a bad request.
+        #expect(await sessions.act(.approve, session: root, device: "d", body: body(#"{"text":"{{artifact:x}}"}"#)) == .badRequest)
+    }
+
     @Test func anAnswerIsSent() async {
         page.reads[root] = read("awaiting_user_response", asks: [buffers])
         let reply = await page.sessions().act(.answer, session: root, device: "d",
@@ -439,6 +523,45 @@ struct RemoteSessionsTests {
         page.now = page.now.addingTimeInterval(6)
         sessions.dropExpired()
         #expect(sessions.cachedSessions.isEmpty)
+    }
+
+    @Test func aReadStartedBeforeAnActionIsNotHandedOutAfterIt() async throws {
+        let slow = SlowPage()
+        let sessions = slow.sessions()
+        func message(_ reply: RemoteActionReply?) -> String? {
+            ((reply.flatMap { try? JSONSerialization.jsonObject(with: $0.body) } as? [String: Any])?["can"] as? [String: Any])?["message"] as? String
+        }
+        // A phone's read starts, and the page is slow.
+        let early = Task { await sessions.sessionJSON(root).map { RemoteActionReply(status: 200, body: $0) } }
+        while slow.reads < 1 { await Task.yield() }
+        // A message lands meanwhile (it reads afresh and writes), and the session is finished.
+        let sent = await sessions.act(.message, session: root, device: "d", body: body(#"{"text":"Hi","id":"\#(intent)"}"#))
+        #expect(decode(sent)["result"] as? String == "sent")
+        // The phone asks again straight after, and joins the read still in flight.
+        let late = Task { await sessions.sessionJSON(root).map { RemoteActionReply(status: 200, body: $0) } }
+        for _ in 0..<5 { await Task.yield() }
+        slow.release()
+        // Neither is handed the session as it was (working: "queue"): both read again.
+        #expect(message(await late.value) == "send")
+        #expect(message(await early.value) == "send")
+        // The slow read, the action's own, and one more that both shared.
+        #expect(slow.reads == 3)
+    }
+
+    @Test func aSlowReadWithNoActionMeanwhileIsHandedOutAsItIs() async {
+        let slow = SlowPage()
+        let sessions = slow.sessions()
+        let first = Task { await sessions.sessionJSON(root) }
+        while slow.reads < 1 { await Task.yield() }
+        let second = Task { await sessions.sessionJSON(root) }
+        for _ in 0..<5 { await Task.yield() }
+        slow.release()
+        let both = await [first.value, second.value]
+        #expect(both.allSatisfy { $0 != nil })
+        #expect(slow.reads == 1)
+        // As the slow read saw it: still working.
+        let can = (both[1].flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["can"] as? [String: Any]
+        #expect(can?["message"] as? String == "queue")
     }
 
     @Test func whatWasHeldGoesAtEveryAskNotOnlyInAPause() async {

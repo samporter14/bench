@@ -114,7 +114,7 @@ final class DemoBrowseStore {
     /// that opens and lists; 404 for a project it doesn't have; 409 for an
     /// intent id used before.
     func create(_ write: RemoteWrite) -> RemoteWriteResult? {
-        guard case .newSession(let project, let text, let planMode, let intent) = write else { return nil }
+        guard case .newSession(let project, let text, let planMode, let intent, _) = write else { return nil }
         guard Self.projects.contains(where: { $0.id == project }) else { return RemoteWriteResult(status: 404) }
         guard intents[intent] == nil else { return RemoteWriteResult(status: 409, code: "intent_conflict") }
         let id = UUID().uuidString.lowercased()

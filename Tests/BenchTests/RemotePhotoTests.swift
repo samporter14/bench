@@ -488,6 +488,13 @@ struct PhotoImageTests {
         #expect(squeezed.data.count <= 200_000)
         #expect(squeezed.data.count < first.data.count)
         #expect(squeezed.data.starts(with: [0xFF, 0xD8, 0xFF]))
+        // Squeezed small enough, the picture itself is smaller too, drawn from the one decode.
+        let tight = try made(PhotoImage.process(png, at: when, maxBytes: 20_000))
+        #expect(tight.data.count <= 20_000)
+        #expect(tight.width < 900 && tight.height < 700)
+        #expect(abs(Double(tight.width) / Double(tight.height) - 900.0 / 700.0) < 0.03)
+        let after = PhotoFixture.properties(tight.data)
+        #expect(after["PixelWidth"] as? Int == tight.width && after["PixelHeight"] as? Int == tight.height)
         // Nothing smaller than a few bytes is a JPEG.
         let tiny = try #require(PhotoFixture.encode(PhotoFixture.noise(300, 200), as: .png))
         #expect(PhotoImage.process(tiny, at: when, maxBytes: 100) == .failure(.tooBig))
@@ -497,7 +504,27 @@ struct PhotoImageTests {
         let jpeg = try #require(PhotoFixture.encode(PhotoFixture.picture(400, 300), as: .jpeg))
         #expect(PhotoImage.process(jpeg, at: when, maxPixels: 100_000) == .failure(.tooBig))
         #expect(PhotoImage.process(jpeg, at: when, maxPixels: 120_000) != .failure(.tooBig))
-        #expect(PhotoImage.maxPixels == 64_000_000)
+        // 24 megapixels: 7× what the phone sends (3,072 px on a side is 9.4).
+        #expect(PhotoImage.maxPixels == 24_000_000)
+    }
+
+    @Test func aPictureOver24MegapixelsIsRefusedBeforeItIsDecoded() throws {
+        // 5,000 × 5,000 is 25 MP, a few flat colours that make a small PNG.
+        let big = try #require(PhotoFixture.encode(PhotoFixture.picture(5000, 5000), as: .png))
+        let started = Date()
+        #expect(PhotoImage.process(big, at: when) == .failure(.tooBig))
+        #expect(Date().timeIntervalSince(started) < 1)
+        // And a wide strip over the same count in one side alone.
+        let strip = try #require(PhotoFixture.encode(PhotoFixture.picture(24_001, 1000), as: .png))
+        #expect(PhotoImage.process(strip, at: when) == .failure(.tooBig))
+    }
+
+    @Test func aPictureJustUnderTheCapIsStillMadeAndComesOutAtTheSendSize() throws {
+        // 6,000 × 3,999 is 23.99 MP: one decode, straight to 3,072 on the long side.
+        let big = try #require(PhotoFixture.encode(PhotoFixture.picture(6000, 3999), as: .jpeg))
+        let photo = try made(PhotoImage.process(big, at: when))
+        #expect(photo.width == 3072 && (2047...2048).contains(photo.height))
+        #expect(photo.data.count <= PhotoImage.maxBytes)
     }
 
     @Test func theFileNameIsUTCWhateverTheMacsZone() {
@@ -507,6 +534,98 @@ struct PhotoImageTests {
         for date in [0.0, 1_791_833_400, 1_798_761_599] {
             #expect(PhotoAttachment.isPhotoName(PhotoImage.fileName(at: Date(timeIntervalSince1970: date))))
         }
+    }
+
+    // MARK: The colour profile
+
+    /// A picture in Display P3: the one a phone's camera or screenshot may carry.
+    private func displayP3(_ width: Int, _ height: Int) throws -> CGImage {
+        let space = try #require(CGColorSpace(name: CGColorSpace.displayP3))
+        let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                             space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(CGColor(colorSpace: space, components: [1, 0, 0, 1])!)
+        context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+        context.setFillColor(CGColor(colorSpace: space, components: [0, 0, 1, 1])!)
+        context.fill(CGRect(x: width / 2, y: 0, width: width - width / 2, height: height))
+        return try #require(context.makeImage())
+    }
+
+    /// The ICC profiles a JPEG carries: each APP2 `ICC_PROFILE` payload, in order.
+    private func profiles(_ jpeg: Data) -> [Data] {
+        let bytes = [UInt8](jpeg)
+        var found: [Data] = []
+        var i = 2
+        while i + 4 <= bytes.count, bytes[i] == 0xFF {
+            let marker = bytes[i + 1]
+            let length = Int(bytes[i + 2]) << 8 | Int(bytes[i + 3])
+            if marker == 0xE2, bytes[(i + 4)...].starts(with: Array("ICC_PROFILE\0".utf8)) {
+                found.append(Data(bytes[(i + 4)..<(i + 2 + length)]))
+            }
+            if marker == 0xDA { break }
+            i += 2 + length
+        }
+        return found
+    }
+
+    @Test func aDisplayP3PictureComesOutAsSRGBWithOnlyThatProfile() throws {
+        let picture = try displayP3(400, 300)
+        let p3 = try #require(PhotoFixture.encode(picture, as: .jpeg))
+        // The input really is in Display P3, with its profile in it.
+        #expect((PhotoFixture.properties(p3)["ProfileName"] as? String)?.contains("Display P3") == true)
+        let photo = try made(PhotoImage.process(p3, at: when))
+        let out = PhotoFixture.properties(photo.data)
+        #expect(out["ProfileName"] as? String == "sRGB IEC61966-2.1")
+        // At most one, and it is the small standard one, not the source's.
+        let carried = profiles(photo.data)
+        #expect(carried.count <= 1)
+        #expect(carried.allSatisfy { $0.count < 4_096 })
+        #expect(photo.data.range(of: Data("Display P3".utf8)) == nil)
+        // The colours were converted, not just relabelled: P3's pure red is outside sRGB and is clamped to it.
+        #expect(near(PhotoFixture.pixel(photo.data, x: 50, y: 150), 255, 0, 0))
+        #expect(near(PhotoFixture.pixel(photo.data, x: 350, y: 150), 0, 0, 255))
+    }
+
+    @Test func aProfileOfTheSourcesOwnMakingNeverSurvives() throws {
+        // A hostile file's ICC segment: big, and bytes nothing should pass on.
+        let marker = Array("hostile-profile-bytes".utf8)
+        let junk = Array("ICC_PROFILE\0".utf8) + [1, 1] + (0..<60_000).map { marker[$0 % marker.count] }
+        let base = try #require(PhotoFixture.encode(PhotoFixture.picture(120, 90), as: .jpeg))
+        let hostile = withSegments([segment(0xE2, junk)], into: base)
+        #expect(hostile.range(of: Data(marker)) != nil)
+        let photo = try made(PhotoImage.process(hostile, at: when))
+        #expect(photo.data.range(of: Data(marker)) == nil)
+        #expect(profiles(photo.data).allSatisfy { $0.count < 4_096 })
+        #expect(PhotoFixture.properties(photo.data)["ProfileName"] as? String == "sRGB IEC61966-2.1")
+        // The picture is still the picture.
+        #expect(photo.width == 120 && photo.height == 90)
+    }
+
+    @Test(arguments: ["png", "grey", "cmyk", "alpha"])
+    func everyKindOfSourceComesOutAsSRGB(_ kind: String) throws {
+        let data: Data
+        switch kind {
+        case "grey":
+            let space = CGColorSpaceCreateDeviceGray()
+            let context = try #require(CGContext(data: nil, width: 60, height: 40, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                                 bitmapInfo: CGImageAlphaInfo.none.rawValue))
+            context.setFillColor(gray: 0.5, alpha: 1)
+            context.fill(CGRect(x: 0, y: 0, width: 60, height: 40))
+            let drawn = try #require(context.makeImage())
+            data = try #require(PhotoFixture.encode(drawn, as: .png))
+        case "cmyk":
+            let space = CGColorSpaceCreateDeviceCMYK()
+            let context = try #require(CGContext(data: nil, width: 60, height: 40, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                                 bitmapInfo: CGImageAlphaInfo.none.rawValue))
+            context.setFillColor(CGColor(colorSpace: space, components: [0, 1, 1, 0, 1])!)
+            context.fill(CGRect(x: 0, y: 0, width: 60, height: 40))
+            let drawn = try #require(context.makeImage())
+            data = try #require(PhotoFixture.encode(drawn, as: .jpeg))
+        case "alpha": data = try #require(PhotoFixture.encode(PhotoFixture.halfTransparent(60, 40), as: .png))
+        default: data = PhotoFixture.png
+        }
+        let photo = try made(PhotoImage.process(data, at: when))
+        #expect(PhotoFixture.properties(photo.data)["ProfileName"] as? String == "sRGB IEC61966-2.1", "\(kind)")
+        #expect(profiles(photo.data).count <= 1 && profiles(photo.data).allSatisfy { $0.count < 4_096 }, "\(kind)")
     }
 
     // MARK: Stripping

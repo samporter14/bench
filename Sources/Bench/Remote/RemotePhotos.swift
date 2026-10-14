@@ -16,8 +16,11 @@
 // The two daemon calls aren't atomic. A session that can't take the message
 // is found out before anything is uploaded; past that, an upload that worked
 // and a send that didn't is `unavailable` with its own sentence, and nothing
-// is deleted. Nothing here logs; the server logs the route's pattern and
-// status.
+// is deleted. A retry of the same photo under the same intent id reuses the
+// upload (kept ten minutes), so a send that didn't answer leaves one copy in
+// the project, not one a try. Nothing here logs; the server logs the route's
+// pattern and status.
+import CryptoKit
 import Foundation
 
 @MainActor
@@ -43,9 +46,23 @@ final class RemotePhotos {
         }
     }
 
+    /// How long an upload is remembered by its intent id.
+    static let uploadedLifetime: TimeInterval = 10 * 60
+    private static let uploadedLimit = 20
+
+    /// An upload that went, for a retry of the same photo (the same intent id
+    /// and the same bytes, to the same project).
+    private struct Uploaded {
+        let digest: SHA256Digest
+        let project: String
+        let attachment: PhotoAttachment
+        let at: Date
+    }
+
     let sessions: RemoteSessions
     let browser: RemoteBrowser
     private let dependencies: Dependencies
+    private var uploaded: [String: Uploaded] = [:]
 
     init(sessions: RemoteSessions, browser: RemoteBrowser, dependencies: Dependencies) {
         self.sessions = sessions
@@ -96,17 +113,21 @@ final class RemotePhotos {
         let project: String
         switch probe {
         case .answer(let result): return .ok(result)
-        case .write(.message(_, _, let named?, _, _)): project = named
+        case .write(.message(_, _, let named?, _, _, _)): project = named
         case .write: return .ok(.unavailable)
         }
-        guard let attachment = await upload(photo, to: project) else { return .ok(.notAttached) }
+        guard let (attachment, retried) = await attach(photo, request: request, to: project) else { return .ok(.notAttached) }
         // Then the message route's own re-read, now the photo is up: the
         // status says send, queue or resume, and the agent is the one it names.
         let fresh = await sessions.photoDependencies.read(id, false)
         let text = PhotoText.request(text: request.text, attachment: attachment)
-        guard case .write(let write) = RemoteDecide.message(.message(text: text, intentID: request.intentID), session: id, fresh: fresh),
-              case .message(_, _, let sentTo?, _, _) = write, sentTo == project else { return .ok(.savedNotSent) }
-        let result = RemoteDecide.messaged(await sessions.photoDependencies.write(write), status: fresh?.status ?? "")
+        guard case .write(let write) = RemoteDecide.message(.message(text: text, intentID: request.intentID), session: id,
+                                                            fresh: fresh, attachment: true),
+              case .message(_, _, let sentTo?, _, _, _) = write, sentTo == project else { return .ok(.savedNotSent) }
+        let reply = await sessions.photoDependencies.write(write)
+        var result = RemoteDecide.messaged(reply, status: fresh?.status ?? "")
+        // A retry the daemon refuses as a repeat (409): the first try went.
+        if retried, reply?.status == 409 { result = RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.sent) }
         switch result.result {
         case .sent, .queued, .resumed: return .ok(result)
         default: return .ok(.savedNotSent)
@@ -135,9 +156,9 @@ final class RemotePhotos {
         case .failure(let refusal): return refusal.reply
         case .success(let made): photo = made
         }
-        guard let attachment = await upload(photo, to: project) else { return .ok(.notAttached) }
+        guard let (attachment, _) = await attach(photo, request: request, to: project) else { return .ok(.notAttached) }
         let started = NewSessionRequest(text: PhotoText.request(text: request.text, attachment: attachment),
-                                        intentID: request.intentID, planFirst: request.planFirst)
+                                        intentID: request.intentID, planFirst: request.planFirst, attachment: true)
         return await browser.start(project, request: started, title: PhotoText.title(text: request.text))
             ?? .ok(.savedNotSent)
     }
@@ -153,6 +174,26 @@ final class RemotePhotos {
     private func process(_ image: Data) async -> Result<PhotoFile, PhotoRefusal> {
         let now = sessions.photoDependencies.now()
         return await Task.detached(priority: .userInitiated) { PhotoImage.process(image, at: now) }.value
+    }
+
+    /// The photo's place in the project: what an earlier try of this intent
+    /// uploaded (the same bytes, the same project, within ten minutes, and
+    /// `retried`), else a new upload, which is remembered. Nil when there is
+    /// none.
+    private func attach(_ photo: PhotoFile, request: PhotoRequest, to project: String) async
+        -> (attachment: PhotoAttachment, retried: Bool)? {
+        let now = sessions.photoDependencies.now()
+        uploaded = uploaded.filter { $0.value.at <= now && now.timeIntervalSince($0.value.at) < Self.uploadedLifetime }
+        let digest = SHA256.hash(data: request.image)
+        if let earlier = uploaded[request.intentID], earlier.digest == digest, earlier.project == project {
+            return (earlier.attachment, true)
+        }
+        guard let made = await upload(photo, to: project) else { return nil }
+        uploaded[request.intentID] = Uploaded(digest: digest, project: project, attachment: made, at: now)
+        while uploaded.count > Self.uploadedLimit, let oldest = uploaded.min(by: { $0.value.at < $1.value.at }) {
+            uploaded[oldest.key] = nil
+        }
+        return (made, false)
     }
 
     /// The upload, and what the daemon says it stored; nil unless it passed

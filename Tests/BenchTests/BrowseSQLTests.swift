@@ -135,6 +135,31 @@ struct BrowseSQLTests {
         #expect(try fetchProjects(db: db.url).map(\.id) == ["proj_a", "proj_b"])
     }
 
+    @Test func anArchivedProjectsSessionsAreNotListedButStillOpenByTheirId() throws {
+        let db = try MadeUpDatabase()
+        defer { db.remove() }
+        try db.project("proj_a", "Made-up A")
+        try db.project("proj_old", "Made-up archived", archivedAt: 1_791_000_000_000)
+        try db.run(MadeUpDatabase.frameSQL(madeUpID(1), project: "proj_a", created: 1, updated: 1_791_000_000_000)
+                   + MadeUpDatabase.frameSQL(madeUpID(2), project: "proj_old", created: 1, updated: 1_791_000_000_000))
+        #expect(try fetchProjectSessions(db: db.url, project: "proj_a", after: nil, search: nil)?.map(\.id) == [madeUpID(1)])
+        #expect(try fetchProjectSessions(db: db.url, project: "proj_old", after: nil, search: nil) == [])
+        #expect(try fetchProjectSessions(db: db.url, project: "proj_old", after: nil, search: "Made") == [])
+        // The point lookup is as it was.
+        #expect(try fetchSession(db: db.url, id: madeUpID(2))?.projectID == "proj_old")
+        // A project the database has no row for lists what it has, as before.
+        try db.run(MadeUpDatabase.frameSQL(madeUpID(3), project: "proj_unlisted", created: 1, updated: 1_791_000_000_000))
+        #expect(try fetchProjectSessions(db: db.url, project: "proj_unlisted", after: nil, search: nil)?.map(\.id) == [madeUpID(3)])
+    }
+
+    @Test func aDatabaseWithoutArchivedAtListsEveryProjectsSessions() throws {
+        let db = try MadeUpDatabase(archived: false)
+        defer { db.remove() }
+        try db.project("proj_a", "Made-up A")
+        try db.run(MadeUpDatabase.frameSQL(madeUpID(1), created: 1, updated: 1_791_000_000_000))
+        #expect(try fetchProjectSessions(db: db.url, project: "proj_a", after: nil, search: nil)?.map(\.id) == [madeUpID(1)])
+    }
+
     @Test func pagesWalkEverySessionOnceNewestFirstThroughTies() throws {
         let db = try MadeUpDatabase()
         defer { db.remove() }

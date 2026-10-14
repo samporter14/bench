@@ -45,7 +45,7 @@ enum PhoneSetup {
     static let guide = URL(string: "https://github.com/samporter14/bench/blob/main/docs/phone.md")!
 
     /// How often the tab looks at Tailscale again while setup isn't done.
-    static let pollEvery: Duration = .seconds(5)
+    static let pollEvery: Duration = .seconds(10)
 
     // MARK: The phone
 

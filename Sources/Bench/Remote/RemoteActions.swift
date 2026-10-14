@@ -138,12 +138,20 @@ enum RemoteActionRequest: Equatable, Sendable {
             return .answer(toolID: toolID, answers: answers)
         case .message:
             guard let text = Pick.string(root["text"])?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty, text.unicodeScalars.count <= messageLimit,
+                  !text.isEmpty, text.unicodeScalars.count <= messageLimit, !PhotoText.hasReference(text),
                   let id = Pick.string(root["id"]), isUUIDv4(id) else { return nil }
             return .message(text: text, intentID: id)
         case .permission: // Phase 4 permissions
             return parsePermission(root)
         }
+    }
+
+    /// The answer to a body `parse` turned away: 400 `{"error":"reference"}`
+    /// when its text holds one of the UI's reference prefixes (the phone
+    /// explains that one), else the plain 400.
+    static func refusal(body: Data) -> RemoteActionReply {
+        let text = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any]).flatMap { Pick.string($0["text"]) }
+        return text.map(PhotoText.hasReference) == true ? PhotoRefusal.reference.reply : .badRequest
     }
 
     /// `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
@@ -223,9 +231,13 @@ enum RemoteCan {
         var mode = RemoteMessageMode(status: read.status)
         // Every message names the root's own agent; without one, none goes.
         if mode.word != nil, read.agentName == nil { mode = .blocked(Why.unreadable) }
+        // Phase 4 permissions: a helper's question waits on the person, and the composer says so.
+        if mode.word != nil, read.permission?.isHelperAsk == true { mode = .blocked(RemotePermission.Why.helperAsked) }
         if case .blocked(var why) = mode {
             // Phase 4 permissions: a parked request is not "its question".
-            if read.status == "awaiting_user_response", read.question == nil, read.permission != nil { why = Why.requestFirst }
+            if read.status == "awaiting_user_response", read.question == nil, let waiting = read.permission {
+                why = waiting.isHelperAsk ? RemotePermission.Why.helperAsked : Why.requestFirst
+            }
             return RemoteAPI.Can(approve: approve, answer: answer, message: nil, why: why)
         }
         return RemoteAPI.Can(approve: approve, answer: answer, message: mode.word, why: nil)
@@ -336,13 +348,17 @@ enum RemoteDecide {
     /// Only for `completed`/`success`, `processing`, `failed`/`cancelled`;
     /// to the agent and project the fresh read names, with `plan_mode`
     /// false. A read without a `project_id` sends nothing: `/api/request`
-    /// without one is how the daemon starts a new project.
-    static func message(_ request: RemoteActionRequest, session: String, fresh: SessionProjection?) -> Step {
+    /// without one is how the daemon starts a new project. `attachment` is for
+    /// the photo flow alone: its text ends in the attachment line, which the
+    /// writer accepts for no other message.
+    static func message(_ request: RemoteActionRequest, session: String, fresh: SessionProjection?,
+                        attachment: Bool = false) -> Step {
         guard case .message(let text, let intentID) = request, let fresh else { return .answer(.unavailable) }
         let mode = RemoteMessageMode(status: fresh.status)
         if case .blocked(let why) = mode { return .answer(RemoteActionResult(result: .blocked, sentence: why + ".")) }
         guard let agent = fresh.agentName, let project = fresh.projectID else { return .answer(.unavailable) }
-        return .write(.message(frame: session, agent: agent, projectID: project, text: text, intentID: intentID))
+        return .write(.message(frame: session, agent: agent, projectID: project, text: text, intentID: intentID,
+                               attachment: attachment))
     }
 
     /// `status` is the root's, as read just before sending.
@@ -469,9 +485,10 @@ final class RemoteSessions {
     /// Phase 4 live: what the live route keeps between asks.
     let live: RemoteLive
     private var cache: [String: Entry] = [:]
-    private var loading: [String: Task<Entry, Never>] = [:]
+    /// A read in flight, and the generation it started under.
+    private var loading: [String: (task: Task<Entry, Never>, started: Int)] = [:]
     /// Bumped when an action may have changed the session: a read started
-    /// before it isn't kept.
+    /// before it isn't kept, nor handed out after the action.
     private var generation: [String: Int] = [:]
     private var acting: [String: Task<RemoteActionReply, Never>] = [:]
     private var limiter = ActionLimiter()
@@ -558,7 +575,11 @@ final class RemoteSessions {
         // the asking pauses.
         dropExpired()
         if let cached = cache[id], cached.at <= now, now.timeIntervalSince(cached.at) < Self.cacheLifetime { return cached }
-        if let task = loading[id] { return await task.value }
+        if let reading = loading[id] {
+            let entry = await reading.task.value
+            // An action landed while it read: what it read is from before, so read again.
+            return generation[id, default: 0] == reading.started ? entry : await self.entry(for: id)
+        }
         let started = generation[id, default: 0]
         let task = Task { [weak self] () -> Entry in
             guard let self else { return Entry(at: .distantPast, read: nil, plan: nil) }
@@ -570,8 +591,9 @@ final class RemoteSessions {
             }
             return entry
         }
-        loading[id] = task
-        return await task.value
+        loading[id] = (task, started)
+        let entry = await task.value
+        return generation[id, default: 0] == started ? entry : await self.entry(for: id)
     }
 
     private func load(_ id: String) async -> Entry {
@@ -616,7 +638,9 @@ final class RemoteSessions {
         guard dependencies.actionsOn() else { return .actionsOff }
         guard limiter.allow(device, at: dependencies.now()) else { return .tooMany }
         guard await admitted(id) != nil else { return .notFound } // Phase 3 browse
-        guard let request = RemoteActionRequest.parse(action, body: body) else { return .badRequest }
+        guard let request = RemoteActionRequest.parse(action, body: body) else {
+            return action == .message ? RemoteActionRequest.refusal(body: body) : .badRequest
+        }
         let previous = acting[id]
         let task = Task { [weak self] () -> RemoteActionReply in
             _ = await previous?.value
@@ -685,7 +709,7 @@ final class RemoteSessions {
             readPlan: { _ in nil },
             write: { write in
                 switch write {
-                case .message(let frame, _, _, _, _) where (reads[frame] ?? more(frame))?.status == "processing":
+                case .message(let frame, _, _, _, _, _) where (reads[frame] ?? more(frame))?.status == "processing":
                     RemoteWriteResult(status: 200, bodyStatus: "message_queued")
                 case .answer, .cancel:
                     RemoteWriteResult(status: 200, bodyStatus: "accepted", remaining: 0)
