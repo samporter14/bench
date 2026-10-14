@@ -142,6 +142,25 @@ enum HistoryReaderScript {
             }
             return out;
         };
+        // A message's attachment lines (Claude Science's own upload format, one
+        // JSON object per line: `{"type":"attachment","id","version_id","filename",…}`)
+        // become files; the rest is the message's text.
+        const attached = raw => {
+            const kept = [], found = [];
+            for (const line of raw.split("\n")) {
+                const t = line.trim();
+                if (t.startsWith('{"type":"attachment"') && t.length <= 2000) {
+                    let o = null;
+                    try { o = JSON.parse(t); } catch (e) { o = null; }
+                    if (isObject(o) && o.type === "attachment") {
+                        const one = file(o.version_id, o.id, o.filename, o.content_type, o.size_bytes);
+                        if (one !== null) { found.push(one); continue; }
+                    }
+                }
+                kept.push(line);
+            }
+            return { rest: kept.join("\n").trim(), found: found.slice(0, 10) };
+        };
         // A tool result as JSON: its text, parsed, when it is an object of reasonable size.
         const resultJSON = content => {
             let text = null;
@@ -256,8 +275,10 @@ enum HistoryReaderScript {
                 for (const block of blocks) { if (block.type === "tool_result") { result(block); } }
                 const joined = blocks.filter(b => b.type === "text").map(b => b.text).join("\n\n").trim();
                 if (joined !== "" && !HIDDEN_STARTS.some(start => joined.startsWith(start))) {
+                    const { rest, found } = attached(joined);
                     turn += 1;
-                    text("you", i, at, joined);
+                    const item = text("you", i, at, rest);
+                    if (item !== null && found.length > 0) { item.files.push(...found); }
                 }
             } else {
                 let texts = [];
@@ -378,13 +399,19 @@ enum HistoryReaderScript {
         const joined = m.role === "assistant" ? texts.map(t => t.trim()).filter(Boolean).join("\n\n") : texts.join("\n\n").trim();
         if (joined === "") { return null; }
         if (m.role === "user" && HIDDEN_STARTS.some(start => joined.startsWith(start))) { return null; }
+        // Attachment lines (the upload format) are shown as files in the page, not as text.
+        const plain = joined.split("\n").filter(line => {
+            const t = line.trim();
+            if (!t.startsWith('{"type":"attachment"')) { return true; }
+            try { const o = JSON.parse(t); return !(isObject(o) && o.type === "attachment"); } catch (e) { return true; }
+        }).join("\n").trim();
         let at = null;
         if (typeof m._ts === "number" && isFinite(m._ts)) {
             const ms = m._ts < 1e11 ? m._ts * 1000 : m._ts;
             if (ms >= EARLIEST && ms <= LATEST) { at = Math.round(ms); }
         }
-        const all = Array.from(joined);
-        const text = all.length <= WHOLE ? joined : all.slice(0, WHOLE - 1).join("") + "…";
+        const all = Array.from(plain);
+        const text = all.length <= WHOLE ? plain : all.slice(0, WHOLE - 1).join("") + "…";
         return { i: index, role: m.role === "user" ? "you" : "claude", at: at, text: text };
     }
     """#
@@ -599,8 +626,10 @@ enum HistoryItem: Equatable, Sendable {
         }
         if let roleWord = Pick.string(item["role"]) {
             guard let role = Role(rawValue: roleWord), let at = Pick.optionalTime(item["at"]),
-                  let text = Pick.text(item["text"], limit: HistoryReaderScript.turnText),
                   let cut = Pick.bool(item["cut"]), let files = files() else { return nil }
+            // A message that was only an attachment (a photo) has files and no text.
+            let empty = Pick.string(item["text"]) == "" && !files.isEmpty
+            guard let text = empty ? "" : Pick.text(item["text"], limit: HistoryReaderScript.turnText) else { return nil }
             self = .turn(i: i, role: role, at: at, text: text, cut: cut, files: files)
             return
         }

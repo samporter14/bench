@@ -134,7 +134,21 @@ enum SessionReaderScript {
                 }
                 // Too big for the daemon to send: a placeholder.
                 if (!isAbsent(m._oversized_bytes)) { continue; }
-                const text = texts.join("\n\n").trim();
+                // Attachment lines (Claude Science's upload format) read as their file names.
+                let text = texts.join("\n\n").trim();
+                if (text.indexOf('{"type":"attachment"') >= 0) {
+                    const names = [];
+                    text = text.split("\n").filter(line => {
+                        const t = line.trim();
+                        if (!t.startsWith('{"type":"attachment"')) { return true; }
+                        let o = null;
+                        try { o = JSON.parse(t); } catch (e) { return true; }
+                        if (!isObject(o) || o.type !== "attachment") { return true; }
+                        if (typeof o.filename === "string" && o.filename.length <= 255) { names.push(o.filename); }
+                        return false;
+                    }).join("\n").trim();
+                    if (names.length > 0) { text = (text === "" ? "" : text + "\n\n") + "Attached: " + names.join(", "); }
+                }
                 if (m.role === "user") {
                     if (HIDDEN_FLAGS.some(flag => Boolean(m[flag]))) { continue; }
                     if (HIDDEN_STARTS.some(start => text.startsWith(start))) { continue; }

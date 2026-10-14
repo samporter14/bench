@@ -331,3 +331,41 @@ struct HistoryReaderPageTests {
         #expect(turn(3, answer: PageScript.Answer(status: 500, body: "")).outcome == .unreadable)
     }
 }
+
+/// A photo or file sent with a message comes as one attachment line in the
+/// message's text (Claude Science's upload format): history shows it as a
+/// file, never as the raw line.
+struct HistoryAttachmentTests {
+    private static let line = #"{\"type\":\"attachment\",\"id\":\"0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5\",\"version_id\":\"1c8d3a5f-2b3c-4d4e-9f00-b1c2d3e4f5a6\",\"filename\":\"phone-photo-20261014-120000.jpg\",\"artifact_ref\":\"{{artifact:1c8d3a5f-2b3c-4d4e-9f00-b1c2d3e4f5a6}}\",\"content_type\":\"image/jpeg\",\"size_bytes\":204800}"#
+
+    @Test func anAttachmentLineBecomesAFile() throws {
+        let rows = #"[{"role": "user", "_ts": 1791833000000, "content": "Here is the made-up gel\n\n\#(Self.line)"}]"#
+        let page = try #require(project(page(rows, total: 1)).page)
+        guard case .turn(_, .you, _, let text, _, let files) = try #require(page.items.first) else {
+            Issue.record("not a turn"); return
+        }
+        #expect(text == "Here is the made-up gel")
+        #expect(files.map(\.name) == ["phone-photo-20261014-120000.jpg"])
+        #expect(files.first?.kind == .image)
+    }
+
+    @Test func aPhotoAloneIsATurnWithAFileAndNoText() throws {
+        let rows = #"[{"role": "user", "_ts": 1791833000000, "content": "\#(Self.line)"}]"#
+        let page = try #require(project(page(rows, total: 1)).page)
+        guard case .turn(_, .you, _, let text, _, let files) = try #require(page.items.first) else {
+            Issue.record("not a turn"); return
+        }
+        #expect(text == "")
+        #expect(files.count == 1)
+    }
+
+    @Test func somethingThatOnlyLooksLikeOneStaysText() throws {
+        let rows = #"[{"role": "user", "_ts": 1791833000000, "content": "{\"type\":\"attachment\" is how it starts"}]"#
+        let page = try #require(project(page(rows, total: 1)).page)
+        guard case .turn(_, .you, _, let text, _, let files) = try #require(page.items.first) else {
+            Issue.record("not a turn"); return
+        }
+        #expect(text == #"{"type":"attachment" is how it starts"#)
+        #expect(files.isEmpty)
+    }
+}
