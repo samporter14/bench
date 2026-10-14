@@ -6,13 +6,15 @@ import SwiftUI
 
 private func BatchOMix(_ a: Double, _ b: Double, _ e: Double) -> Double { a + (b - a) * e }
 
-/// Targeted degrader: a small clay dumbbell floats inside the arch of an E3 ligase, a clamp hanging open
-/// side down, with a target protein waiting below. The dumbbell drops out of the arch and docks one head in a
-/// pocket on top of the target, then lifts the target up into the clamp and seats its other head in the
-/// clamp's own pocket, so the three sit together. Three ubiquitin dots pop onto the target one by one into a
-/// short chain. The
-/// dumbbell lets go, drifts back up into the arch, and the tagged target drops out of the clamp and slides
-/// off to the right while a fresh target slides in from the left to wait: the same picture as the start.
+/// Targeted degrader: a small clay dumbbell floats inside the arch of an E3
+/// ligase, a clamp hanging open side down, with a target protein waiting below.
+/// The dumbbell drops out of the arch and docks one head in a pocket on top of
+/// the target, then lifts the target up into the clamp and seats its other head
+/// in the clamp's own pocket, so the three sit together. Three ubiquitin dots
+/// pop onto the target one by one into a short chain. The dumbbell lets go,
+/// drifts back up into the arch, and the tagged target drops out of the clamp
+/// and slides off to the right while a fresh target slides in from the left to
+/// wait: the same picture as the start.
 enum TargetedDegrader {
     static let duration = 6.0
 
@@ -146,11 +148,13 @@ enum TargetedDegrader {
     }
 }
 
-/// Allosteric switch: one protein of two lobes on a hinge, a narrow slit between them at the top; a substrate
-/// dot waits above, too big for it. A clay effector docks in a notch on the far side of the right lobe, a
-/// ripple runs out through the protein from it, and the lobes swing apart about the hinge so the slit opens
-/// into a pocket. The substrate drops in. The effector leaves, the lobes relax shut, the substrate is
-/// squeezed out and flicked away down the left, and a new substrate drifts in from the right to wait above
+/// Allosteric switch: one protein of two lobes on a hinge, a narrow slit
+/// between them at the top; a substrate dot waits above, too big for it. A clay
+/// effector docks in a notch on the far side of the right lobe, a ripple runs
+/// out through the protein from it, and the lobes swing apart about the hinge
+/// so the slit opens into a pocket. The substrate drops in. The effector
+/// leaves, the lobes relax shut, the substrate is squeezed out and flicked away
+/// down the left, and a new substrate drifts in from the right to wait above
 /// the slit.
 enum AllostericSwitch {
     static let duration = 6.0
@@ -292,11 +296,12 @@ enum AllostericSwitch {
     }
 }
 
-/// Collagen braid: three strands, one clay and two tint, wound round each other into a triple helix that
-/// runs across the square. Each is a sine wave a third of a turn behind the last; the half of a strand
-/// that is nearer the viewer is drawn on top, with a gap cut in whatever it crosses. The helix is loose
-/// and wavy at the left and winds tighter toward the right, and the whole thing scrolls along its axis
-/// by exactly one turn a loop.
+/// Collagen braid: three strands, one clay and two tint, wound round each other
+/// into a triple helix that runs across the square. Each is a sine wave a third
+/// of a turn behind the last; the half of a strand that is nearer the viewer is
+/// drawn on top, with a gap cut in whatever it crosses. The helix is loose and
+/// wavy at the left and winds tighter toward the right, and the whole thing
+/// scrolls along its axis by exactly one turn a loop.
 enum CollagenBraid {
     static let duration = 5.0
 
