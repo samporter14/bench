@@ -13,7 +13,7 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 /// The live tab: Bench's controller, its devices and Tailscale. While setup
-/// isn't done and the tab shows, it looks at Tailscale again every 5 s and
+/// isn't done and the tab shows, it looks at Tailscale again every 10 s and
 /// whenever Bench comes to the front; never while the tab is hidden.
 struct PhoneSettingsView: View {
     @ObservedObject private var remote = RemoteController.shared

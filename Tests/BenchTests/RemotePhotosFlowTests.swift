@@ -317,33 +317,86 @@ struct PhotoWriterRoomTests {
     }
 
     private let line = PhotoLineTests.attachment.line
-    private func message(_ text: String) -> RemoteWrite {
-        .message(frame: root, agent: "made-up-agent", projectID: "proj-1", text: text, intentID: intent)
+    /// A photo's: the one flow that may end in the attachment line.
+    private func message(_ text: String, attachment: Bool = true) -> RemoteWrite {
+        .message(frame: root, agent: "made-up-agent", projectID: "proj-1", text: text, intentID: intent, attachment: attachment)
     }
-    private func newSession(_ text: String) -> RemoteWrite {
-        .newSession(project: "proj_a", text: text, planMode: false, intentID: intent)
+    private func newSession(_ text: String, attachment: Bool = true) -> RemoteWrite {
+        .newSession(project: "proj_a", text: text, planMode: false, intentID: intent, attachment: attachment)
     }
 
     @Test func aPhotosRequestIsTheTextABlankLineAndOneLine() {
         let text = String(repeating: "界", count: 4000)
         for make in [message, newSession] {
-            #expect(builds(make(line)))
-            #expect(builds(make("Look at this.\n\n" + line)))
-            #expect(builds(make(text + "\n\n" + line)))
+            #expect(builds(make(line, true)))
+            #expect(builds(make("Look at this.\n\n" + line, true)))
+            #expect(builds(make(text + "\n\n" + line, true)))
             // Plain text stays at 4,000, and the room is for that one line alone.
-            #expect(!builds(make(text + "界")))
-            #expect(!builds(make(text + "界\n\n" + line)))
-            #expect(!builds(make(text + " " + line)))
-            #expect(!builds(make(text + "\n" + line)))
-            #expect(!builds(make("a\n\n" + line + "\n\nb" + String(repeating: "c", count: 4000))))
+            #expect(!builds(make(text + "界", true)))
+            #expect(!builds(make(text + "界\n\n" + line, true)))
+            #expect(!builds(make(text + " " + line, true)))
+            #expect(!builds(make(text + "\n" + line, true)))
+            #expect(!builds(make("a\n\n" + line + "\n\nb" + String(repeating: "c", count: 4000), true)))
             // A line of any other shape gets no room.
             for odd in [line.replacingOccurrences(of: "phone-photo-20261012-193000.jpg", with: "a.jpg"),
                         line.replacingOccurrences(of: #""type":"attachment""#, with: #""type":"artifact""#),
                         line.replacingOccurrences(of: "image/jpeg", with: "image/png"),
                         line.replacingOccurrences(of: #""size_bytes":123456"#, with: #""size_bytes":-1"#),
                         line + " "] {
-                #expect(!builds(make(text + "\n\n" + odd)))
+                #expect(!builds(make(text + "\n\n" + odd, true)))
             }
+        }
+    }
+
+    @Test func aPlainMessageOrNewSessionGetsNoRoomForTheLine() {
+        for make in [message, newSession] {
+            // The very line a photo sends is refused anywhere else, alone or after text.
+            #expect(!builds(make(line, false)))
+            #expect(!builds(make("Look at this.\n\n" + line, false)))
+            #expect(!builds(make("Look at this." + line, false)))
+            // And ordinary text goes through, with or without the flag.
+            #expect(builds(make("Look at this.", false)))
+            #expect(builds(make("Look at this.", true)))
+        }
+    }
+
+    @Test func onlyTheBooleanTrueOpensTheRoom() throws {
+        for value: Any in ["true", 1, "yes", NSNull(), [true]] {
+            var arguments = message(line).arguments
+            arguments["attachment"] = value
+            let script = PageScript(SessionWriterScript.builder)
+            let json = String(decoding: PhotoFixture.json(arguments), as: UTF8.self)
+            #expect(script.callJSON("benchBuildWrite", [json]) == "null", "\(value)")
+        }
+        // Left out of the arguments, the same.
+        var left = message(line).arguments
+        left["attachment"] = nil
+        let script = PageScript(SessionWriterScript.builder)
+        #expect(script.callJSON("benchBuildWrite", [String(decoding: PhotoFixture.json(left), as: UTF8.self)]) == "null")
+        #expect(message(line).arguments["attachment"] as? Bool == true)
+        #expect(message("x", attachment: false).arguments["attachment"] as? Bool == false)
+    }
+
+    @Test(arguments: [
+        "{{artifact:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee}}", #"{"type":"artifact","id":"x"}"#, #"{"type":"attachment","id":"x"}"#,
+        #"{"type":"skill","name":"x"}"#, #"{"type":"session","id":"x"}"#, #"{"artifact_ref":"x"}"#, #"{"file_path":"/x"}"#,
+        #"{ "type" : "attachment", "id": "x"}"#, "{{ artifact: aaaa }}", "{\"type\":\n\"skill\"}",
+    ])
+    func aReferenceInTheTextIsRefusedEvenAfterThePhotosOwn(_ reference: String) {
+        for make in [message, newSession] {
+            #expect(!builds(make("look at " + reference, false)), "\(reference)")
+            #expect(!builds(make(reference, false)), "\(reference)")
+            // A photo's text is checked too, apart from the one line it ends in.
+            #expect(!builds(make("look at " + reference + "\n\n" + line, true)), "\(reference)")
+            #expect(!builds(make(reference, true)), "\(reference)")
+        }
+    }
+
+    @Test(arguments: ["{x}", "use {{ var }} here", #"{"type": "gel"}"#, "the artifact: a figure", "{}"])
+    func ordinaryBracesAreFine(_ text: String) {
+        for make in [message, newSession] {
+            #expect(builds(make(text, false)))
+            #expect(builds(make(text + "\n\n" + line, true)))
         }
     }
 
@@ -467,7 +520,7 @@ struct RemotePhotosSessionTests {
     private let rig = PhotoRig()
 
     private func sentText(_ write: RemoteWrite?) -> String? {
-        if case .message(_, _, _, let text, _)? = write { return text }
+        if case .message(_, _, _, let text, _, _)? = write { return text }
         return nil
     }
 
@@ -483,8 +536,9 @@ struct RemotePhotosSessionTests {
         #expect(upload.project == "proj-1")
         #expect(upload.photo.name == "phone-photo-20261012-193000.jpg")
         #expect(upload.photo.data.starts(with: [0xFF, 0xD8, 0xFF]))
+        // The one write that may end in an attachment line says so.
         #expect(rig.writes == [.message(frame: root, agent: "made-up-agent", projectID: "proj-1",
-                                        text: "Look at this gel.\n\n" + rig.line(of: upload.photo), intentID: intent)])
+                                        text: "Look at this gel.\n\n" + rig.line(of: upload.photo), intentID: intent, attachment: true)])
     }
 
     @Test func aPhotoAloneIsTheLineAlone() async throws {
@@ -512,7 +566,7 @@ struct RemotePhotosSessionTests {
     @Test func theAgentAndTheProjectComeFromTheFreshRead() async {
         rig.reads = [PhotoRig.session("completed", agent: "agent-before"), PhotoRig.session("completed", agent: "agent-after")]
         _ = await rig.session(PhotoFixture.body(text: "x"))
-        #expect(rig.writes.first.map { if case .message(_, let agent, _, _, _) = $0 { agent } else { "" } } == "agent-after")
+        #expect(rig.writes.first.map { if case .message(_, let agent, _, _, _, _) = $0 { agent } else { "" } } == "agent-after")
     }
 
     @Test func aSessionThatCantTakeAMessageGetsNothingUploaded() async {
@@ -585,6 +639,84 @@ struct RemotePhotosSessionTests {
         }
     }
 
+    // MARK: A retry
+
+    private let other = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+
+    @Test func aRetryOfThePhotoReusesTheUploadAndSendsTheSameLine() async throws {
+        // The daemon took the message but its answer was lost: saved, not sent.
+        rig.writeReply = nil
+        let first = await rig.session(PhotoFixture.body(text: "Look at this gel."))
+        #expect(decode(first.body).string("sentence") == RemotePhotos.Sentence.savedNotSent)
+        #expect(rig.uploads.count == 1)
+        // Send again: the same intent, the same picture.
+        rig.writeReply = RemoteWriteResult(status: 200, bodyStatus: "already_delivered")
+        let again = await rig.session(PhotoFixture.body(text: "Look at this gel."), device: "device-2")
+        #expect(decode(again.body).string("result") == "sent")
+        // One copy in the project, and both messages carry its line.
+        #expect(rig.uploads.count == 1)
+        #expect(rig.log == ["read", "upload", "read", "write", "read", "read", "write"])
+        let upload = try #require(rig.uploads.first)
+        #expect(sentText(rig.writes[1]) == "Look at this gel.\n\n" + rig.line(of: upload.photo))
+        #expect(rig.writes.count == 2 && rig.writes[0] == rig.writes[1])
+    }
+
+    @Test func aRetryOnlyReusesTheUploadOfTheSameIntentThePhotoAndTheProject() async {
+        rig.writeReply = nil
+        _ = await rig.session(PhotoFixture.body(text: "x"), device: "a")
+        #expect(rig.uploads.count == 1)
+        // Another intent, the same picture: its own upload.
+        _ = await rig.session(PhotoFixture.body(text: "x", id: other), device: "b")
+        #expect(rig.uploads.count == 2)
+        // The same intent as that one, another picture: uploaded, and remembered over the first.
+        let another = PhotoFixture.encode(PhotoFixture.picture(48, 36), as: .png)!
+        _ = await rig.session(PhotoFixture.body(image: another, text: "x", id: other), device: "c")
+        #expect(rig.uploads.count == 3)
+        _ = await rig.session(PhotoFixture.body(image: another, text: "x", id: other), device: "d")
+        #expect(rig.uploads.count == 3)
+        // The same intent and picture once the session reads as in another project.
+        rig.reads = [PhotoRig.session("completed", project: "proj-2")]
+        _ = await rig.session(PhotoFixture.body(image: another, text: "x", id: other), device: "e")
+        #expect(rig.uploads.count == 4)
+        #expect(rig.uploads.last?.project == "proj-2")
+    }
+
+    @Test func theUploadIsRememberedTenMinutesAndNoLonger() async {
+        #expect(RemotePhotos.uploadedLifetime == 600)
+        rig.writeReply = nil
+        _ = await rig.session(PhotoFixture.body(text: "x"), device: "a")
+        rig.now = rig.now.addingTimeInterval(599)
+        _ = await rig.session(PhotoFixture.body(text: "x"), device: "b")
+        #expect(rig.uploads.count == 1)
+        rig.now = rig.now.addingTimeInterval(2)
+        _ = await rig.session(PhotoFixture.body(text: "x"), device: "c")
+        #expect(rig.uploads.count == 2)
+        // The new one is remembered from now.
+        _ = await rig.session(PhotoFixture.body(text: "x"), device: "d")
+        #expect(rig.uploads.count == 2)
+    }
+
+    @Test func aRetryThatNeverGotItsUploadMakesOne() async {
+        rig.upload = .none
+        _ = await rig.session(PhotoFixture.body(text: "x"), device: "a")
+        rig.upload = .echo
+        let retried = await rig.session(PhotoFixture.body(text: "x"), device: "b")
+        #expect(decode(retried.body).string("result") == "sent")
+        #expect(rig.uploads.count == 2)
+    }
+
+    @Test func a409OnARetriedIntentReadsAsSent() async {
+        rig.writeReply = nil
+        _ = await rig.session(PhotoFixture.body(text: "x"), device: "a")
+        rig.writeReply = RemoteWriteResult(status: 409, code: "intent_conflict")
+        let retried = await rig.session(PhotoFixture.body(text: "x"), device: "b")
+        #expect(decode(retried.body).string("result") == "sent")
+        #expect(decode(retried.body).string("sentence") == "Sent.")
+        // A first try the daemon refuses with a 409 isn't a repeat of anything Bench did.
+        let fresh = await rig.session(PhotoFixture.body(text: "y", id: other), device: "c")
+        #expect(decode(fresh.body).string("sentence") == RemotePhotos.Sentence.savedNotSent)
+    }
+
     @Test func theRoutesOwnChecksComeFirst() async {
         rig.actionsOn = false
         let off = await rig.session(PhotoFixture.body(text: "x"))
@@ -632,7 +764,7 @@ struct RemotePhotosProjectTests {
     private let rig = PhotoRig()
 
     private func newSession(_ write: RemoteWrite?) -> (project: String, text: String, planMode: Bool, intent: String)? {
-        if case .newSession(let project, let text, let planMode, let intent)? = write { return (project, text, planMode, intent) }
+        if case .newSession(let project, let text, let planMode, let intent, _)? = write { return (project, text, planMode, intent) }
         return nil
     }
 
@@ -650,6 +782,30 @@ struct RemotePhotosProjectTests {
         #expect(made.intent == intent)
         // The phone may open it straight away, under the text's own title.
         #expect(rig.sessions.heldSession(newID)?.title == "Look at this gel.")
+    }
+
+    @Test func aRetriedNewSessionReusesTheUploadToo() async throws {
+        rig.createReply = nil
+        rig.intents = []
+        let first = await rig.project(PhotoFixture.body(text: "x"))
+        #expect(decode(first.body).string("sentence") == RemotePhotos.Sentence.savedNotSent)
+        #expect(rig.uploads.count == 1)
+        rig.createReply = RemoteWriteResult(status: 200, bodyStatus: "accepted", rootFrameID: newID)
+        let again = await rig.project(PhotoFixture.body(text: "x"), device: "device-2")
+        #expect(decode(again.body).string("result") == "started")
+        #expect(rig.uploads.count == 1)
+        let upload = try #require(rig.uploads.first)
+        #expect(rig.writes.count == 2)
+        for write in rig.writes { #expect(newSession(write)?.text == "x\n\n" + rig.line(of: upload.photo)) }
+        // Another picture under that intent is a new upload.
+        let another = PhotoFixture.encode(PhotoFixture.picture(48, 36), as: .png)!
+        _ = await rig.project(PhotoFixture.body(image: another, text: "x"), device: "device-3")
+        #expect(rig.uploads.count == 2)
+    }
+
+    @Test func thePhotosWriteIsTheOneThatMayEndInTheLine() async {
+        _ = await rig.project(PhotoFixture.body(text: "x"))
+        if case .newSession(_, _, _, _, let attachment)? = rig.writes.first { #expect(attachment) } else { Issue.record("no new session") }
     }
 
     @Test func planFirstIsPlanModeAndAPhotoAloneIsTheLineAndNamedPhoto() async throws {
@@ -723,7 +879,9 @@ struct RemotePhotosProjectTests {
         let lost = await rig.project(PhotoFixture.body(text: "x"), device: "device-2")
         #expect(decode(lost.body).string("result") == "unavailable")
         #expect(decode(lost.body).string("sentence") == "The photo was saved to the project, but the message didn't send. Open it on your Mac.")
-        #expect(rig.log.suffix(5) == ["upload", "create", "intent", "pause", "intent"])
+        // The same photo under the same intent: a retry, so its upload is reused, not made again.
+        #expect(rig.log.suffix(4) == ["create", "intent", "pause", "intent"])
+        #expect(rig.uploads.count == 1)
         rig.createReply = RemoteWriteResult(status: 500)
         let failed = await rig.project(PhotoFixture.body(text: "x"), device: "device-3")
         #expect(decode(failed.body).string("sentence") == RemotePhotos.Sentence.savedNotSent)

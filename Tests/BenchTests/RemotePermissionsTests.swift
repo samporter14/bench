@@ -225,12 +225,17 @@ struct PermissionKindTests {
     }
 
     @Test func theCodeIsShownWholeAndNeverCut() throws {
-        let code = "import pandas as pd\n\n\tcounts = pd.read_csv('c.csv')\r\nprint(counts)  \n"
+        // Tabs, blank lines and trailing spaces are the code's own: all kept.
+        let code = "import pandas as pd\n\n\tcounts = pd.read_csv('c.csv')\nprint(counts)  \n"
         let permission = try #require(described(request("local_exec", ["tool": "python", "code": code])))
         #expect(permission.code == code)
-        let exactly = String(repeating: "界", count: 4000)
+        #expect(permission.canAllow)
+        // 4,000 characters in lines the phone can show: whole. One more is too long.
+        let exactly = String(repeating: String(repeating: "界", count: 159) + "\n", count: 25)
+        #expect(exactly.unicodeScalars.count == 4000)
         #expect(try #require(described(request("local_exec", ["tool": "python", "code": exactly]))).code == exactly)
-        #expect(try #require(described(request("local_exec", ["tool": "python", "code": exactly + "界"]))).canAllow == false)
+        let over = try #require(described(request("local_exec", ["tool": "python", "code": exactly + "界"])))
+        #expect(!over.canAllow && over.code == nil)
     }
 
     @Test func aCodeCellsOtherFieldsAreNotPassedOn() throws {
@@ -360,9 +365,71 @@ struct PermissionHeadTests {
         let ask: [String: Any] = ["kind": "ask", "tool_id": "toolu_1", "createdAt": early, "questions": [["question": "Q?"]]]
         let permission = request("network", ["target": "genomes.example.org"], at: mid)
         #expect(head(rootFrame([permission, ask]), trace()).json == "null")
-        // A helper's question ahead of the root's request: also nothing.
-        let tree = trace([node(helperA, requests: [ask])])
-        #expect(head(rootFrame([permission]), tree).json == "null")
+    }
+
+    @Test func aHelpersQuestionAheadOfARequestIsShownAsAnAskToAnswerOnTheMac() throws {
+        let ask: [String: Any] = ["kind": "ask", "tool_id": "toolu_1", "createdAt": early,
+                                  "questions": [["question": "SECRET-QUESTION?", "options": [["label": "SECRET-OPTION"]]]]]
+        let permission = request("network", ["target": "genomes.example.org"], at: mid)
+        let (text, parsed) = head(rootFrame([permission]), trace([node(helperA, requests: [ask])]))
+        // Only that there is one: never what it asks.
+        #expect(!text.contains("SECRET"))
+        let read = try #require(parsed)
+        #expect(read.kind == "ask" && read.helper && read.frame == helperA && read.chain == [helperA, root])
+        #expect(read.id == "toolu_1")
+        for actionsOn in [true, false] {
+            let described = RemotePermission.describe(read, actionsOn: actionsOn)
+            #expect(described.kind == "ask" && described.helper)
+            #expect(described.title == "Has a question for you" && described.detail == "")
+            #expect(!described.canAllow && !described.canDeny)
+            #expect(described.why == "A helper agent asked a question. Answer it on your Mac.")
+            #expect(described.code == nil)
+        }
+        // A sub-agent's question deeper down is the same.
+        let deep = head(rootFrame([]), trace([node(helperA, children: [node(deeper, parent: helperA, requests: [ask])])])).request
+        #expect(deep?.kind == "ask" && deep?.chain == [deeper, helperA, root])
+    }
+
+    @Test func aHelpersQuestionBehindARequestLeavesTheRequestAsTheHead() {
+        let ask: [String: Any] = ["kind": "ask", "tool_id": "toolu_1", "createdAt": late, "questions": [["question": "Q?"]]]
+        let permission = request("network", ["target": "genomes.example.org"], at: early)
+        #expect(head(rootFrame([permission]), trace([node(helperA, requests: [ask])])).request?.kind == "network")
+    }
+
+    @Test func aHelpersQuestionCannotBeAnswered() throws {
+        let ask: [String: Any] = ["kind": "ask", "tool_id": "toolu_1", "createdAt": early, "questions": [["question": "Q?"]]]
+        let read = try #require(head(rootFrame([]), trace([node(helperA, requests: [ask])])).request)
+        for decision in ["allow", "deny"] {
+            let step = PermissionDecide.decide(RemoteActionRequest.parse(.permission, body: Data(#"{"id":"toolu_1","decision":"\#(decision)"}"#.utf8))!,
+                                               session: root, fresh: SessionProjection(status: "processing", agentName: "a", projectID: "p", permission: read))
+            guard case .answer(let result) = step else {
+                Issue.record("wrote \(step)")
+                continue
+            }
+            #expect(result.result == .unavailable)
+            #expect(result.sentence == "A helper agent asked a question. Answer it on your Mac.")
+        }
+    }
+
+    @MainActor @Test func theComposerSaysWhyWhileAHelperIsAsking() throws {
+        let ask: [String: Any] = ["kind": "ask", "tool_id": "toolu_1", "createdAt": early, "questions": [["question": "Q?"]]]
+        let asking = try #require(head(rootFrame([]), trace([node(helperA, requests: [ask])])).request)
+        let session = SessionProjection(status: "processing", agentName: "a", projectID: "p", permission: asking)
+        #expect(RemoteCan.make(read: session, plan: nil, actionsOn: true)
+                == RemoteAPI.Can(approve: false, answer: false, message: nil, why: "A helper agent asked a question. Answer it on your Mac."))
+        // Without it, a working session queues a message; and a request that isn't a question changes nothing.
+        let working = SessionProjection(status: "processing", agentName: "a", projectID: "p")
+        #expect(RemoteCan.make(read: working, plan: nil, actionsOn: true).message == "queue")
+        let net = PermissionRequest(requestID: "r", toolID: "t", kind: "network", frame: helperA, chain: [helperA, root], target: "h")
+        #expect(RemoteCan.make(read: SessionProjection(status: "processing", agentName: "a", projectID: "p", permission: net),
+                               plan: nil, actionsOn: true).message == "queue")
+        // Actions off still comes first.
+        #expect(RemoteCan.make(read: session, plan: nil, actionsOn: false).why == "Actions are off in Bench's Settings")
+        // The session the phone gets carries the card.
+        let candidates = [Fixture.session(root, .running, title: "Made-up session")]
+        let made = try #require(RemoteAPI.session(id: root, candidates: candidates, plan: nil, read: session))
+        #expect(made.permission?.kind == "ask" && made.permission?.helper == true && made.permission?.canDeny == false)
+        #expect(made.can.message == nil && made.can.why == "A helper agent asked a question. Answer it on your Mac.")
     }
 
     @Test func aQuestionBehindARequestLeavesTheRequestAsTheHead() {
@@ -477,7 +544,7 @@ struct PermissionChainTests {
 struct PermissionRequestChecksTests {
     private static func valid() -> [String: Any] {
         ["requestId": "req-1", "toolId": "tool-1", "mode": "live", "kind": "network", "frame": root, "chain": [root],
-         "shape": true, "target": "genomes.example.org", "access": NSNull(), "count": NSNull(), "tool": NSNull(),
+         "toolIdShared": false, "shape": true, "target": "genomes.example.org", "access": NSNull(), "count": NSNull(), "tool": NSNull(),
          "server": NSNull(), "source": NSNull(), "provider": NSNull(), "name": NSNull(), "readOnly": false,
          "sharedEnv": false, "code": NSNull(), "codeProblem": NSNull()]
     }
@@ -497,7 +564,7 @@ struct PermissionRequestChecksTests {
             ("frame", "0b7c2f4e"), ("frame", NSNull()),
             ("chain", [Any]()), ("chain", [root, root]), ("chain", ["0b7c2f4e"]), ("chain", [helperA]), ("chain", "x"),
             ("chain", Array(repeating: helperA, count: 18)),
-            ("shape", 1), ("shape", NSNull()),
+            ("shape", 1), ("shape", NSNull()), ("toolIdShared", "yes"), ("toolIdShared", NSNull()), ("toolIdShared", 0),
             ("target", String(repeating: "a", count: 401)), ("target", ""), ("target", 4),
             ("access", "rwx"), ("count", -1), ("count", 100_001), ("count", 1.5), ("count", true),
             ("tool", String(repeating: "a", count: 201)), ("source", String(repeating: "a", count: 41)),
@@ -508,10 +575,10 @@ struct PermissionRequestChecksTests {
         ]
     }
 
-    @Test(arguments: 0..<41)
+    @Test(arguments: 0..<44)
     func anythingOutOfShapeIsLeftOut(_ index: Int) throws {
         let cases = Self.outOfShape()
-        #expect(cases.count == 41)
+        #expect(cases.count == 44)
         let (key, value) = try #require(index < cases.count ? cases[index] : nil)
         var object = Self.valid()
         object[key] = value
@@ -797,5 +864,248 @@ struct PermissionDecideTests {
         #expect(PermissionDecide.answered(RemoteWriteResult(status: 200), allow: true) == .unavailable)
         #expect(PermissionDecide.answered(RemoteWriteResult(status: 403, code: "csrf_stale"), allow: true) == .unavailable)
         #expect(PermissionDecide.answered(nil, allow: true) == .unavailable)
+    }
+}
+
+// MARK: The code the person is asked to allow
+
+struct PermissionCodeRuleTests {
+    /// Each of these, in the middle of otherwise ordinary code, can make the code on the
+    /// screen differ from the code that runs: the carriage return a Python statement
+    /// ends at, the characters nobody sees, the joiners, the separators, the direction
+    /// overrides, and the controls that were always refused.
+    private static let odd: [UInt32] = [
+        0x0D, 0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD, 0x2028, 0x2029, 0x180E, 0x3164,
+        0xFE00, 0xFE08, 0xFE0F, 0xE0100, 0xE0150, 0xE01EF,
+        0x00, 0x08, 0x0B, 0x0C, 0x0E, 0x1B, 0x1F, 0x7F, 0x85, 0x9F,
+        0x200E, 0x200F, 0x202A, 0x202D, 0x202E, 0x2066, 0x2069,
+    ]
+
+    /// Next to the ones above, and fine: a tab, letters from other scripts, spaces of
+    /// other widths, and the characters just outside each range.
+    private static let fine: [UInt32] = [
+        0x09, 0x20, 0x00A0, 0x00AC, 0x00AE, 0x00E9, 0x180D, 0x200A, 0x2027, 0x202F, 0x205F, 0x3163, 0x3165,
+        0x754C, 0xFE10, 0xFEFE, 0xE00FF, 0xE01F0, 0x1F600,
+    ]
+
+    private func exec(_ code: String, extra: [String: Any] = [:]) -> [String: Any] {
+        request("local_exec", ["tool": "python", "code": code].merging(extra) { $1 })
+    }
+
+    @Test(arguments: odd)
+    func aCodeWithTheCharacterIsWithheldAndNeverAllowed(_ value: UInt32) throws {
+        let character = String(Unicode.Scalar(value)!)
+        let code = "total = 1\(character)\nprint(total)"
+        let (text, parsed) = head(rootFrame([exec(code)]), trace())
+        let read = try #require(parsed, "U+\(String(value, radix: 16, uppercase: true))")
+        // The page leaves the code out and says why.
+        #expect(read.code == nil && read.codeProblem == .odd)
+        #expect(text.contains(#""codeProblem":"odd""#) && text.contains(#""code":null"#) && !text.contains("total = 1"))
+        let permission = RemotePermission.describe(read, actionsOn: true)
+        #expect(!permission.canAllow && permission.canDeny)
+        #expect(permission.code == nil)
+        #expect(permission.why == "The code has characters Bench can't show safely. Open it on your Mac.")
+    }
+
+    @Test(arguments: odd)
+    func swiftHoldsTheSameRuleWhateverThePageSaid(_ value: UInt32) throws {
+        let character = String(Unicode.Scalar(value)!)
+        let sent = Self.projection(code: "total = 1\(character)\nprint(total)")
+        let read = try #require(PermissionRequest(object: sent))
+        #expect(read.code == nil && read.codeProblem == .odd)
+        let decision = RemotePermission.decide(read, actionsOn: true)
+        #expect(!decision.canAllow && decision.canDeny)
+        #expect(decision.why == RemotePermission.Why.codeOdd)
+    }
+
+    @Test(arguments: fine)
+    func aCharacterOutsideTheRuleIsShownAsItIs(_ value: UInt32) throws {
+        let character = String(Unicode.Scalar(value)!)
+        let code = "total = 1\(character)\nprint(total)"
+        let permission = try #require(described(exec(code)), "U+\(String(value, radix: 16, uppercase: true))")
+        #expect(permission.code == code)
+        #expect(permission.canAllow && permission.why == nil)
+        #expect(PermissionRequest(object: Self.projection(code: code))?.code == code)
+    }
+
+    @Test func aLoneCarriageReturnIsNotASpaceOnOneLine() throws {
+        // WebKit draws `print('a')\rimport os` as one line; Python runs it as two statements.
+        let permission = try #require(described(exec("print('a')\rimport os")))
+        #expect(!permission.canAllow && permission.code == nil)
+        // A Windows line ending is the same character, and is withheld too.
+        #expect(try #require(described(exec("a = 1\r\nb = 2\r\n"))).canAllow == false)
+    }
+
+    // MARK: Lines
+
+    private let tooLong = "Too long to read on your phone. Open it on your Mac."
+
+    @Test func sixtyLinesAreShownAndSixtyOneAreNot() throws {
+        let sixty = (1...60).map { "x\($0) = \($0)" }.joined(separator: "\n")
+        // The line feed that ends the last line starts no new one.
+        for code in [sixty, sixty + "\n"] {
+            let ok = try #require(described(exec(code)))
+            #expect(ok.canAllow && ok.code == code, "\(code.suffix(12))")
+        }
+        // A 61st line, and a blank one is a line of its own.
+        for code in [sixty + "\nx61 = 61", sixty + "\n\n"] {
+            let more = try #require(described(exec(code)))
+            #expect(!more.canAllow && more.canDeny && more.code == nil)
+            #expect(more.why == tooLong)
+        }
+        let blanks = String(repeating: "x = 1\n\n", count: 31)
+        #expect(try #require(described(exec(blanks))).why == tooLong)
+    }
+
+    @Test func aLineOfOneHundredAndSixtyCharactersIsShownAndOneMoreIsNot() throws {
+        for unit in ["a", "界", "\u{1F600}", "\t"] {
+            let fits = "print(1)\n" + String(repeating: unit, count: 160) + "\nprint(2)"
+            let ok = try #require(described(exec(fits)))
+            #expect(ok.canAllow && ok.code == fits, "\(unit)")
+            let over = "print(1)\n" + String(repeating: unit, count: 161) + "\nprint(2)"
+            let refused = try #require(described(exec(over)))
+            #expect(!refused.canAllow && refused.canDeny && refused.code == nil, "\(unit)")
+            #expect(refused.why == tooLong, "\(unit)")
+        }
+        // Spaces count too: a line of 300 of them runs the statement off the screen.
+        let wide = "print('summary')" + String(repeating: " ", count: 300) + "; import os"
+        #expect(try #require(described(exec(wide))).canAllow == false)
+    }
+
+    @Test func thePageHoldsTheLineRules() {
+        let many = (1...61).map { "x\($0) = 1" }.joined(separator: "\n")
+        let wide = "a = '" + String(repeating: "x", count: 160) + "'"
+        for code in [many, wide] {
+            let (text, _) = head(rootFrame([exec(code)]), trace())
+            #expect(text.contains(#""codeProblem":"lines""#) && text.contains(#""code":null"#))
+        }
+        let (fits, _) = head(rootFrame([exec("x = 1\n")]), trace())
+        #expect(fits.contains(#""codeProblem":null"#) && fits.contains(#""code":"x = 1\n""#))
+    }
+
+    @Test func swiftHoldsTheLineRulesToo() throws {
+        let many = (1...61).map { "x\($0) = 1" }.joined(separator: "\n")
+        let wide = "a = '" + String(repeating: "x", count: 160) + "'"
+        for code in [many, wide] {
+            let read = try #require(PermissionRequest(object: Self.projection(code: code)))
+            #expect(read.code == nil && read.codeProblem == .lines)
+            #expect(RemotePermission.decide(read, actionsOn: true).why == tooLong)
+        }
+        #expect(PermissionRequest.problem(withCode: "x = 1\n") == nil)
+        #expect(PermissionRequest.problem(withCode: String(repeating: "a", count: 160)) == nil)
+        #expect(PermissionRequest.problem(withCode: String(repeating: "a", count: 161)) == .lines)
+        #expect(PermissionRequest.problem(withCode: String(repeating: "x\n", count: 60)) == nil)
+        #expect(PermissionRequest.problem(withCode: String(repeating: "x\n", count: 61)) == .lines)
+        // The page's own word for it is taken, with or without the code.
+        for problem in ["long", "odd", "lines"] {
+            var sent = Self.projection(code: nil)
+            sent["codeProblem"] = problem
+            #expect(PermissionRequest(object: sent)?.codeProblem?.rawValue == problem)
+        }
+    }
+
+    @Test func tabsAreFineAndTheOrderOfTheWhysIsLongThenOddThenLines() throws {
+        let tabbed = "if x:\n\tprint(1)\n\t\tprint(2)\n"
+        #expect(try #require(described(exec(tabbed))).canAllow)
+        // 4,001 characters of odd ones: too long first.
+        let both = String(repeating: "\u{200B}", count: 4001)
+        #expect(try #require(described(exec(both))).why == "The code is too long to read on your phone. Open it on your Mac.")
+        // Odd and wide: odd.
+        let oddAndWide = "\u{200B}" + String(repeating: "a", count: 200)
+        #expect(try #require(described(exec(oddAndWide))).why == "The code has characters Bench can't show safely. Open it on your Mac.")
+    }
+
+    private static func projection(code: String?) -> [String: Any] {
+        ["requestId": "req-1", "toolId": "tool-1", "mode": "live", "kind": "local_exec", "frame": root, "chain": [root],
+         "toolIdShared": false, "shape": true, "target": NSNull(), "access": NSNull(), "count": NSNull(), "tool": "python",
+         "server": NSNull(), "source": NSNull(), "provider": NSNull(), "name": NSNull(), "readOnly": false,
+         "sharedEnv": false, "code": code ?? NSNull(), "codeProblem": NSNull()]
+    }
+}
+
+// MARK: One answer for several requests
+
+struct PermissionSharedToolIDTests {
+    private let early = "2026-10-12T19:00:00Z", mid = "2026-10-12T19:10:00Z"
+
+    private func exec(_ code: String, id: String, tool: String, at: String) -> [String: Any] {
+        request("local_exec", ["tool": "python", "code": code], at: at, id: id, tool: tool)
+    }
+
+    @Test func aToolIDAnotherRequestHasIsNotAllowedButMayBeDenied() throws {
+        // One code cell, two live approvals: the phone shows the first; an answer naming
+        // `cell-7` might resolve the second too, which the person never saw.
+        let first = exec("print(1)", id: "req-A", tool: "cell-7", at: early)
+        let second = exec("print(2)", id: "req-B", tool: "cell-7", at: mid)
+        let read = try #require(head(rootFrame([first, second]), trace()).request)
+        #expect(read.requestID == "req-A" && read.toolIdShared)
+        let permission = RemotePermission.describe(read, actionsOn: true)
+        #expect(!permission.canAllow && permission.canDeny)
+        #expect(permission.why == "This needs more than one approval. Open it on your Mac.")
+        #expect(permission.code == "print(1)")
+    }
+
+    @Test func itDoesNotMatterWhereInTheQueueTheOtherIs() throws {
+        let first = exec("print(1)", id: "req-A", tool: "cell-7", at: early)
+        let other = exec("print(2)", id: "req-B", tool: "cell-7", at: mid)
+        // In a helper's frame, a deeper one, behind a question, and of another kind.
+        let ask: [String: Any] = ["kind": "ask", "tool_id": "cell-7", "createdAt": mid, "questions": [["question": "Q?"]]]
+        let network = request("network", ["target": "genomes.example.org"], at: mid, id: "req-C", tool: "cell-7")
+        let trees: [(String, String)] = [
+            (rootFrame([first]), trace([node(helperA, requests: [other])])),
+            (rootFrame([first]), trace([node(helperA, children: [node(deeper, parent: helperA, requests: [other])])])),
+            (rootFrame([first, ask]), trace()),
+            (rootFrame([first, network]), trace()),
+        ]
+        for (frame, tree) in trees {
+            let read = try #require(head(frame, tree).request)
+            #expect(read.requestID == "req-A" && read.toolIdShared)
+            #expect(!RemotePermission.decide(read, actionsOn: true).canAllow)
+        }
+        // A helper's own head, with the other in the root.
+        let early = exec("print(1)", id: "req-A", tool: "cell-7", at: self.early)
+        let later = exec("print(2)", id: "req-B", tool: "cell-7", at: mid)
+        let helper = try #require(head(rootFrame([later]), trace([node(helperA, requests: [early])])).request)
+        #expect(helper.helper && helper.toolIdShared)
+    }
+
+    @Test func aToolIDNobodyElseHasIsAllowedAsBefore() throws {
+        let first = exec("print(1)", id: "req-A", tool: "cell-7", at: early)
+        let second = exec("print(2)", id: "req-B", tool: "cell-8", at: mid)
+        let read = try #require(head(rootFrame([first, second]), trace()).request)
+        #expect(!read.toolIdShared)
+        #expect(RemotePermission.decide(read, actionsOn: true).canAllow)
+        // The same request twice under two frames' pending lists is still the one request here:
+        // a finished helper's stale copy isn't in the queue at all.
+        let stale = trace([node(helperA, status: "completed", requests: [second])])
+        let alone = try #require(head(rootFrame([first]), stale).request)
+        #expect(!alone.toolIdShared)
+    }
+
+    @Test func aReadOnlyToolIsHeldBackTheSameWay() throws {
+        let fields: [String: Any] = ["server_id": "s1", "server_name": "Paper search", "tool_name": "search_papers",
+                                     "server_source": "directory", "read_only": true]
+        let tool = request("mcp_tool", fields, at: early, id: "req-A", tool: "cell-7")
+        let other = request("network", ["target": "genomes.example.org"], at: mid, id: "req-B", tool: "cell-7")
+        let read = try #require(head(rootFrame([tool, other]), trace()).request)
+        let decision = RemotePermission.decide(read, actionsOn: true)
+        #expect(!decision.canAllow && decision.canDeny)
+        #expect(decision.why == "This needs more than one approval. Open it on your Mac.")
+        // Alone, the same tool is allowed.
+        #expect(RemotePermission.decide(try #require(head(rootFrame([tool]), trace()).request), actionsOn: true).canAllow)
+    }
+
+    @Test func anAllowWritesNothingAndADenyStillGoes() throws {
+        let first = exec("print(1)", id: "req-A", tool: "cell-7", at: early)
+        let second = exec("print(2)", id: "req-B", tool: "cell-7", at: mid)
+        let read = try #require(head(rootFrame([first, second]), trace()).request)
+        let fresh = SessionProjection(status: "processing", agentName: "a", projectID: "p", permission: read)
+        func decide(_ decision: String) -> RemoteDecide.Step {
+            PermissionDecide.decide(RemoteActionRequest.parse(.permission, body: Data(#"{"id":"req-A","decision":"\#(decision)"}"#.utf8))!,
+                                    session: root, fresh: fresh)
+        }
+        #expect(decide("allow") == .answer(RemoteActionResult(result: .unavailable,
+                                                              sentence: "This needs more than one approval. Open it on your Mac.")))
+        #expect(decide("deny") == .write(.permission(frame: root, requestID: "req-A", toolID: "cell-7", allow: false)))
     }
 }

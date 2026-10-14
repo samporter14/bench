@@ -34,6 +34,20 @@ struct RemoteBrowseRouteTests {
         #expect(match("POST", "/api/sessions/\(root)/open") == .found(.openSession(root)))
     }
 
+    @Test(arguments: ["__proto__", "constructor", "prototype"])
+    func aNameAScriptsObjectAnswersToIsNoProject(_ name: String) {
+        // The phone refuses these in its address; the routes refuse them too: 404, not an empty project.
+        #expect(match("GET", "/api/projects/\(name)/sessions") == .notFound)
+        #expect(match("POST", "/api/projects/\(name)/sessions") == .notFound)
+        #expect(match("POST", "/api/projects/\(name)/photo") == .notFound)
+        #expect(!RemoteRoute.isRoutableProject(name))
+        // A project whose id only holds the word is as any other.
+        for id in ["\(name)x", "x\(name)", "my_\(name)", name.uppercased()] {
+            #expect(match("GET", "/api/projects/\(id)/sessions") == .found(.projectSessions(id)), "\(id)")
+            #expect(match("POST", "/api/projects/\(id)/photo") == .found(.photo(.project(id))), "\(id)")
+        }
+    }
+
     @Test func anythingElseIsNotFoundOrTheWrongMethod() {
         #expect(match("POST", "/api/projects") == .wrongMethod)
         #expect(match("PUT", "/api/projects/p/sessions") == .wrongMethod)
@@ -439,6 +453,28 @@ struct RemoteBrowserTests {
         let session = await fake.sessions.sessionJSON(root)
         #expect(session.map(json)?["title"] as? String == "Made-up question")
         #expect(!fake.calls.contains("intent"))
+    }
+
+    @Test(arguments: [
+        "{{artifact:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee}}", #"{"type":"artifact","id":"x"}"#, #"{"type":"attachment","id":"x"}"#,
+        #"{"type":"skill","name":"x"}"#, #"{"type":"session","id":"x"}"#, #"{"artifact_ref":"x"}"#, #"{"file_path":"/x"}"#,
+        #"{ "type" : "attachment", "id": "x"}"#, "{{ artifact: aaaa }}",
+    ])
+    func aNewSessionWithAReferenceIs400ReferenceAndWritesNothing(_ reference: String) async {
+        fake.created = RemoteWriteResult(status: 200, bodyStatus: "accepted", rootFrameID: root)
+        for text in [reference, "Look at " + reference] {
+            let body = String(decoding: PhotoFixture.json(["text": text, "id": intent]), as: UTF8.self)
+            #expect(NewSessionRequest.parse(Data(body.utf8)) == nil)
+            let reply = await start(body)
+            #expect(reply.status == 400)
+            #expect(String(decoding: reply.body, as: UTF8.self) == #"{"error":"reference"}"#)
+        }
+        #expect(fake.writes.isEmpty)
+        // Any other bad body is the plain 400.
+        #expect(await start(#"{"text":"","id":"\#(intent)"}"#) == .badRequest)
+        // And braces that aren't a reference start a session as ever.
+        fake.created = RemoteWriteResult(status: 200, bodyStatus: "accepted", rootFrameID: root)
+        #expect(await start(#"{"text":"Use {{ var }} here","id":"\#(intent)"}"#).status == 200)
     }
 
     @Test func aLostOrRepeatedReplyIsFoundByItsIntent() async {

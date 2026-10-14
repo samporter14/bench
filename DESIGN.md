@@ -1512,7 +1512,7 @@ below are a scroll away.
    and Paired devices: name, paired, last seen, Remove, Remove All Devices…,
    and the footnote "Expires if unused for 60 days."
 6. **Looking again.** While the tab shows and setup isn't done, it looks at
-   Tailscale every 5 s and whenever Bench comes to the front
+   Tailscale every 10 s and whenever Bench comes to the front
    (`RemoteController.poll`), so ticks appear by themselves as the user works
    in Tailscale's own app. A look is `status --json` only; `serve` runs only
    when it could now work (Tailscale has come up, or HTTPS was just turned
@@ -1710,7 +1710,7 @@ declared-length check takes the route's own limit.
 |---|---|---|
 | `POST /api/sessions/<id>/approve` | `{"version":"…"}` | `PlanApprover` as on the card: re-GET, require `awaiting_plan_approval`, not approved, same plan version; then `approve-plan` `{}`. |
 | `POST /api/sessions/<id>/answer` | `{"toolId":"…","answers":{"<question>":"<text>"}}` or `{"toolId":"…","action":"chooseForMe"\|"cancel"}` | Re-GET; require `awaiting_user_response`, the same `tool_id` pending on the root, the same question texts; every question answered (≤ 1,000 chars each). Then `resolve-input` `{responses:[{tool_id, action:"answer", answers}]}`; chooseForMe sends `action:"answer"` with every question answered "Use your best judgment for this question"; cancel sends `{tool_id, action:"cancel", answers:{}}`. |
-| `POST /api/sessions/<id>/message` | `{"text":"…","id":"<uuid v4>"}` | Text trimmed, 1…4,000 chars. Re-GET; allowed only for `completed`/`success`, `processing`, `failed`/`cancelled`. Then `POST /api/request` `{target_agent: <agent_name from the re-GET>, root_frame_id, project_id, input_data:{request:text}, intent_id: id, plan_mode:false}`. A re-GET without a `project_id` sends nothing (`unavailable`): `/api/request` without one is how the daemon makes a project. The phone's `id` is the intent id, so a retry dedupes. |
+| `POST /api/sessions/<id>/message` | `{"text":"…","id":"<uuid v4>"}` | Text trimmed, 1…4,000 chars, with none of the UI's reference prefixes (400 `{"error":"reference"}`, as the photo routes). Re-GET; allowed only for `completed`/`success`, `processing`, `failed`/`cancelled`. Then `POST /api/request` `{target_agent: <agent_name from the re-GET>, root_frame_id, project_id, input_data:{request:text}, intent_id: id, plan_mode:false}`. A re-GET without a `project_id` sends nothing (`unavailable`): `/api/request` without one is how the daemon makes a project. The phone's `id` is the intent id, so a retry dedupes. |
 
 Each answers `{"result": …, "sentence": "…"}`: approve → `approved` |
 `changed` | `unavailable`; answer → `sent` | `changed` | `unavailable`;
@@ -1942,7 +1942,8 @@ only, behind its own switch.
   conversations and artifacts" (`remoteBrowse`, on). Off: these routes answer
   403 `{"error":"browseOff"}`, `/api/me` says `"browse": false`, and the phone
   hides Projects and the History/Artifacts parts.
-- **Ids**: session ids `^[0-9a-f-]{36}$`; project ids `^[A-Za-z0-9_-]{1,64}$`;
+- **Ids**: session ids `^[0-9a-f-]{36}$`; project ids `^[A-Za-z0-9_-]{1,64}$`
+  (but not `__proto__`, `constructor` or `prototype`: 404 at the route);
   version ids `^[A-Za-z0-9_-]{1,128}$`. Never decoded, matched exactly.
 
 #### Browse (from Bench's own database, metadata only)
@@ -1953,7 +1954,7 @@ New read-only SQLite queries beside the existing ones, never touching
 projects (id, name, root-session count, latest activity; no
 `proj_concierge_sys_%`; archived hidden when an `archived_at` column exists),
 a project's root sessions (keyset `(updated_at, id)` desc, 50 a page, the
-existing session filter), and a point lookup by id that **replaces the
+existing session filter; none for an archived project), and a point lookup by id that **replaces the
 known-sessions gate** for `/api/sessions/<id>`, so any root session can open.
 
 | Route | Answer |
@@ -2118,7 +2119,9 @@ shared files gained lines marked `// Phase 3 browse`.
 - **SQL**: sqlite3 takes no bound parameters, so every value is checked by
   its shape before it goes in (ids, the cursor's number) and `q` is escaped
   (`'` doubled; `\`, `%` and `_` with `ESCAPE '\'`). `archived_at` is probed
-  with `pragma_table_info` (remembered five minutes). A project's count is of
+  with `pragma_table_info` (remembered five minutes), for the projects list and
+  for a project's sessions (an archived project lists none; the point lookup by
+  id is unchanged). A project's count is of
   the roots its list shows. Each read runs off the main thread; 503
   `{"error":"unreadable"}` when the database can't be read.
 - **States in a list** come from `status` alone (no output is read), so a
@@ -2233,7 +2236,7 @@ from the phone, because only their allow is truly once:
 
 | Kind | Allow once from the phone | Shown as |
 |---|---|---|
-| `local_exec` (python, r, bash, powershell; not a shared environment) | yes | "Run Python code" (etc.) and the code, ≤ 4 KB, monospace |
+| `local_exec` (python, r, bash, powershell; not a shared environment; no other pending request has its `tool_id`) | yes | "Run Python code" (etc.) and the code, ≤ 4 KB, ≤ 60 lines of ≤ 160 characters, monospace |
 | `mcp_tool` with `read_only: true` and source `directory`, `bundled` or `antmcp` | yes | "Use <tool> from <server>" |
 | every other known kind (`network`, `host`, `host_delete`, `skill_license`, credential kinds, `byoc_*`, `infer_submit`, `remote_*`, `usage_checkpoint`, `customize_mutation`, `managed_endpoint_register`, `artifact_delete`, …) | no, Deny or Open on Mac | a plain line from its own fields ("Wants to reach <host>", "Wants to read <path>"…) |
 | unknown kinds | nothing but Open on Mac | "Wants your permission" |
@@ -2307,8 +2310,12 @@ The shared files only gained hooks marked `// Phase 4 permissions` and
   queue, ordered by `createdAt` (ISO text, seconds or milliseconds), then
   `requestId` (else `tool_id`), then frame id, as the UI orders them. A
   request with no readable time sorts first, so nothing behind it is offered.
-  When the head is an `ask` there is no `permission` (the root's question has
-  its own field; a helper's isn't offered).
+  When the head is the root's own `ask` there is no `permission` (the root's
+  question has its own field). A helper's `ask` as the head is projected as
+  `{kind: "ask", helper: true, canAllow: false, canDeny: false, why: "A helper
+  agent asked a question. Answer it on your Mac."}`, with no question text, so
+  the phone shows its card with Open on Mac, and `can.message` is null with the
+  same `why` while it waits.
 - **What leaves the page**, one request: `requestId`, `tool_id`, `mode`,
   `kind`, the holder's frame id, `chain` (the ids from the holder up to the
   root, built from the tree), whether the daemon's own shape for the kind
@@ -2317,8 +2324,14 @@ The shared files only gained hooks marked `// Phase 4 permissions` and
   `server_source`; a known `mode`; a readable time; an id), and a few plain
   lines: a host or path (the first of `host_delete`'s, and a count), a
   language or tool and server name, a source, a provider, a name. For
-  `local_exec` the code whole, or not at all: over 4,000 characters, or with a
-  control or direction-override character in it, it isn't passed on. Lines
+  `local_exec` the code whole, or not at all: over 4,000 characters, with a
+  control character (a lone CR included), a direction override, a zero-width or
+  joining character (U+200B–U+200D, U+2060, U+FEFF), a soft hyphen, a line or
+  paragraph separator, U+180E, U+3164 or a variation selector (U+FE00–U+FE0F,
+  U+E0100–U+E01EF) in it, a line over 160 characters or more than 60 lines, it
+  isn't passed on (a tab and a line feed are fine). Swift holds the code to the
+  same rule again. `toolIdShared` says another pending request anywhere in the
+  queue has the head's `tool_id`. Lines
   lose control characters and are cut. Never `input`, `reason`, `warning`,
   `command`, `preview`, `credentials`, `environment`, `working_dir`, another
   request behind the head, nor any other field of a frame; the tests hold
@@ -2327,7 +2340,9 @@ The shared files only gained hooks marked `// Phase 4 permissions` and
   that didn't hold is Open on Mac only. Allow: `local_exec` in python, r, bash
   or powershell, with no shared environment (`shared_env` absent or false) and
   its code shown whole; `mcp_tool` with `read_only` exactly `true` from
-  `directory`, `bundled` or `antmcp`. Deny: those two and `network`, `host`,
+  `directory`, `bundled` or `antmcp`; either only when no other pending request
+  has the same `tool_id` (an answer naming it may resolve that one too: "This
+  needs more than one approval. Open it on your Mac."; Deny stays). Deny: those two and `network`, `host`,
   `host_delete`, `artifact_delete`, `remote_exec`, `remote_read`,
   `byoc_submit`, `byoc_kernel`, `infer_submit`, `customize_mutation`,
   `managed_endpoint_register`, `credential_access`. Open on Mac only:
@@ -2336,7 +2351,8 @@ The shared files only gained hooks marked `// Phase 4 permissions` and
   ids (`requestId` and `tool_id`) must be there for either. Actions off:
   neither, and `why` says so. `why` for a kind that gives lasting access is
   the spec's sentence; for the others (a shared environment, code too long to
-  show, a tool that isn't read-only, an Open kind) its own.
+  show, a tool that isn't read-only, an Open kind) its own (code that is odd, or
+  "Too long to read on your phone. Open it on your Mac." for the line rules).
 - **Answering**: the setting (403), the device's limit (429, shared with the
   other actions), a known session (404), the body (400), then one at a time
   per session: a full fresh read, the same request still the head (by `id`,
@@ -2397,7 +2413,9 @@ The shared files only gained hooks marked `// Phase 4 permissions` and
   Name it `phone-photo-YYYYMMDD-HHMMSS.jpg`. Text containing any of the UI's
   reference prefixes (`{{artifact:`, `{"type":"artifact"`,
   `{"type":"attachment"`, `{"type":"skill"`, `{"type":"session"`,
-  `{"artifact_ref":`, `{"file_path":`) is refused (400).
+  `{"artifact_ref":`, `{"file_path":`) is refused (400), in a message's or a
+  new session's text just the same (400 `{"error":"reference"}`): only a
+  photo's own request may end in an attachment line.
 - **Upload** in the page: `POST /api/projects/<pid>/attachments`, multipart,
   one `file` part (pid from the session's fresh read, or the route's). Gate:
   200, UUID `id` and `version_id`, the same filename and content type,
@@ -2435,15 +2453,17 @@ same code.
 - **The picture**: the magic bytes decide (JPEG `FF D8 FF`, PNG, or HEIC with
   `ftyp` `heic`, `heix` or `mif1`), not the claimed type; anything else, or
   what ImageIO can't read, is 415 `{"error":"notAnImage"}`. The header's
-  size is read first: over 64 megapixels is 413 `{"error":"tooBig"}`. Then
+  size is read first: over 24 megapixels is 413 `{"error":"tooBig"}`. Then
   `CGImageSourceCreateThumbnailAtIndex` with the transform flag and
-  `FromImageAlways`, at 3,072 px at most and never enlarged, a picture with
-  alpha drawn on white (and one that isn't RGB or grey drawn as sRGB), JPEG at 0.85 and then 0.05 lower at a time to 0.4
-  until it is 3 MiB or less (below that the picture is drawn a quarter
-  smaller, up to four times, else 413). No properties are written, and the JPEG's
-  markers are then walked and every one but JFIF and an ICC profile dropped:
-  ImageIO still writes an Exif segment (colour space, pixel size) and a
-  Photoshop one on its own. It is read back once to check it is one image of
+  `FromImageAlways`, once, at 3,072 px at most and never enlarged, and drawn
+  again as 8-bit sRGB whatever it was (alpha on white, CMYK or grey to RGB, and
+  no profile of the source's, Display P3 or any other, written back), JPEG at
+  0.85 and then 0.05 lower at a time to 0.4 until it is 3 MiB or less (below
+  that the picture already drawn is drawn a quarter smaller, up to four times,
+  never decoded again, else 413). No properties are written, and the JPEG's
+  markers are then walked and every one but JFIF and an ICC profile (ImageIO's
+  own sRGB one) dropped: ImageIO still writes an Exif segment (colour space,
+  pixel size) and a Photoshop one on its own. It is read back once to check it is one image of
   the size it was drawn. The name is `phone-photo-YYYYMMDD-HHMMSS.jpg`, in
   UTC. Decoding runs off the main thread.
 - **The upload** (`PhotoUploadScript`): its own in-page script, not a kind of
@@ -2467,7 +2487,10 @@ same code.
   key (`type`, `id`, `version_id`, `filename`, `artifact_ref`,
   `content_type`, `size_bytes`; never a dictionary); a photo alone is the line
   alone. The in-page writer allows that one strictly shaped line after 4,000
-  characters of text, and nothing longer for plain text. Answers as the
+  characters of text only when the write says it is a photo's
+  (`attachment: true`, passed by the photo flow alone), and nothing longer for
+  plain text; every other message or new session refuses an attachment line and
+  the seven reference prefixes there too. Answers as the
   message route: `sent`, `queued`, `resumed`, `blocked`.
 - **A project**: the new-session route's list, `plan_mode` from `planFirst`
   and look for an intent whose answer was lost, with the upload between. 200
@@ -2478,8 +2501,11 @@ same code.
   Mac." and no message. An upload that went and a message that didn't (the
   session changed, the daemon refused or didn't answer, no session was
   found) is `unavailable` with "The photo was saved to the project, but the
-  message didn't send. Open it on your Mac." Nothing is deleted, and a retry
-  uploads again.
+  message didn't send. Open it on your Mac." Nothing is deleted. Bench keeps
+  `{intent id: the upload}` ten minutes (with a hash of the picture's bytes and
+  its project): a retry of the same photo under the same intent id reuses it
+  instead of saving another copy, and a 409 on that retried intent reads as
+  `sent` (the first try went).
 - **`--demo remote`**: the picture is still decoded and drawn again, so
   garbage is refused (415) there too; the upload's answer is made up (no web
   view), and the message or the new session answers as the demo's other

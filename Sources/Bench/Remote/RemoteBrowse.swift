@@ -52,6 +52,13 @@ struct RemoteBrowseToggle: View {
 // MARK: The routes
 
 extension RemoteRoute {
+    /// A project id a route takes: `BrowseSQL.isProjectID`, and not one of the
+    /// three names a script's plain object answers to (the phone refuses them
+    /// in its address too). Those are 404.
+    static func isRoutableProject(_ id: some StringProtocol) -> Bool {
+        BrowseSQL.isProjectID(id) && !["__proto__", "constructor", "prototype"].contains(String(id))
+    }
+
     /// Phase 3's paths, matched exactly and never decoded:
     /// `/api/projects`, `/api/projects/<pid>/sessions` (`^[A-Za-z0-9_-]{1,64}$`),
     /// `/api/sessions/<36>/history` and `/api/sessions/<36>/turn/<0…9999999>`.
@@ -61,7 +68,7 @@ extension RemoteRoute {
         guard parts.count >= 5, parts[0].isEmpty, parts[1] == "api" else { return nil }
         switch parts[2] {
         case "projects":
-            guard parts.count == 5, BrowseSQL.isProjectID(parts[3]), parts[4] == "sessions" else { return nil }
+            guard parts.count == 5, isRoutableProject(parts[3]), parts[4] == "sessions" else { return nil }
             return .projectSessions(String(parts[3]))
         case "sessions":
             let id = String(parts[3])
@@ -149,13 +156,17 @@ struct NewSessionRequest: Equatable, Sendable {
     let text: String
     let intentID: String
     let planFirst: Bool
+    /// The text ends in a photo's attachment line: the photo flow's alone.
+    var attachment = false
 
-    /// Text trimmed, 1…4,000 characters; the phone's uuid v4; `planFirst` a
-    /// boolean, false when left out. Nil (400) for anything else.
+    /// Text trimmed, 1…4,000 characters, with none of the UI's reference
+    /// prefixes (400 `reference`, `RemoteActionRequest.refusal`); the phone's
+    /// uuid v4; `planFirst` a boolean, false when left out. Nil (400) for
+    /// anything else.
     static func parse(_ body: Data) -> NewSessionRequest? {
         guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
               let text = Pick.string(root["text"])?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty, text.unicodeScalars.count <= RemoteActionRequest.messageLimit,
+              !text.isEmpty, text.unicodeScalars.count <= RemoteActionRequest.messageLimit, !PhotoText.hasReference(text),
               let id = Pick.string(root["id"]), RemoteActionRequest.isUUIDv4(id) else { return nil }
         var planFirst = false
         if root["planFirst"] != nil {
@@ -567,7 +578,8 @@ final class RemoteBrowser {
     private func newSession(_ project: String, device: String, body: Data) async -> RemoteActionReply {
         guard dependencies.actionsOn() else { return .actionsOff }
         guard sessions.allowAction(device: device) else { return .tooMany }
-        guard BrowseSQL.isProjectID(project), let request = NewSessionRequest.parse(body) else { return .badRequest }
+        guard BrowseSQL.isProjectID(project) else { return .badRequest }
+        guard let request = NewSessionRequest.parse(body) else { return RemoteActionRequest.refusal(body: body) }
         guard let projects = await listedProjects() else { return Self.unreadable }
         guard projects.contains(project) else { return .notFound }
         return await start(project, request: request) ?? .ok(.unavailable)
@@ -577,8 +589,8 @@ final class RemoteBrowser {
     /// session was made. Phase 4's photo route comes here too, with the
     /// attachment line in the request and its own `title`.
     func start(_ project: String, request: NewSessionRequest, title: String? = nil) async -> RemoteActionReply? {
-        let reply = await dependencies.create(.newSession(project: project, text: request.text,
-                                                          planMode: request.planFirst, intentID: request.intentID))
+        let reply = await dependencies.create(.newSession(project: project, text: request.text, planMode: request.planFirst,
+                                                          intentID: request.intentID, attachment: request.attachment))
         if let reply, reply.status == 200, reply.isJSON, reply.bodyStatus == "accepted", let id = reply.rootFrameID {
             return started(id, project: project, request: request, title: title)
         }

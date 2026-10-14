@@ -5,12 +5,13 @@
 // `RemotePhotoUpload.swift` is the in-page upload and `RemotePhotos.swift` the
 // flow around it.
 //
-// The picture is never forwarded as it came. Bench decodes it with ImageIO
-// and draws it again through the thumbnail API with the transform flag (the
-// orientation is baked in), as a JPEG of at most 3,072 px and 3 MB, then
-// drops every marker but JFIF and an ICC profile: GPS, EXIF, XMP and the
-// rest never leave the phone's picture for Claude Science. The phone's own
-// file name is never used either.
+// The picture is never forwarded as it came. Bench decodes it with ImageIO,
+// once, and draws it again through the thumbnail API with the transform flag
+// (the orientation is baked in) as 8-bit sRGB, as a JPEG of at most 3,072 px
+// and 3 MB, then drops every marker but JFIF and an ICC profile (which is then
+// ImageIO's own sRGB one, never the source's): GPS, EXIF, XMP and the rest
+// never leave the phone's picture for Claude Science. The phone's own file
+// name is never used either.
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -33,7 +34,7 @@ enum RemotePhotoRoute: Equatable, Sendable {
             guard PlanCheck.isFrameID(String(parts[3])) else { return nil }
             self = .session(String(parts[3]))
         case "projects":
-            guard BrowseSQL.isProjectID(parts[3]) else { return nil }
+            guard RemoteRoute.isRoutableProject(parts[3]) else { return nil }
             self = .project(String(parts[3]))
         default:
             return nil
@@ -288,9 +289,10 @@ enum PhotoImage {
     static let contentType = "image/jpeg"
     static let maxLongSide = 3_072
     static let maxBytes = 3 * 1024 * 1024
-    /// 64 megapixels, the daemon's own limit: read from the header, before
-    /// anything is decoded.
-    static let maxPixels = 64_000_000
+    /// 24 megapixels, read from the header before anything is decoded. The
+    /// phone sends at most 3,072 px on a side (9.4); the daemon's own limit
+    /// is 64.
+    static let maxPixels = 24_000_000
     static let startQuality = 0.85
     static let qualityStep = 0.05
     static let lowestQuality = 0.4
@@ -337,12 +339,13 @@ enum PhotoImage {
               width > 0, height > 0 else { return .failure(.notAnImage) }
         guard width <= maxPixels, height <= maxPixels, width * height <= maxPixels else { return .failure(.tooBig) }
 
-        // JPEG at 0.85 and lower, then smaller, until it fits.
-        var side = min(maxLongSide, max(width, height))
+        // The source is decoded once, at the size the header allows (3,072 px
+        // at most, never enlarged). JPEG at 0.85 and lower until it fits; if
+        // even the lowest is too big, the picture already drawn is drawn
+        // smaller, never decoded again.
+        guard let thumbnail = thumbnail(source, index: index, side: min(maxLongSide, max(width, height))),
+              var drawn = flattened(thumbnail) else { return .failure(.notAnImage) }
         for _ in 0..<5 {
-            guard let thumbnail = thumbnail(source, index: index, side: side), let drawn = flattened(thumbnail) else {
-                return .failure(.notAnImage)
-            }
             var quality = startQuality
             while quality >= lowestQuality - 0.001 {
                 guard let jpeg = encode(drawn, quality: quality), let clean = stripMetadata(jpeg) else {
@@ -354,7 +357,9 @@ enum PhotoImage {
                 }
                 quality -= qualityStep
             }
-            side = max(64, Int(Double(side) * 0.75))
+            let side = max(64, Int(Double(max(drawn.width, drawn.height)) * 0.75))
+            guard let smaller = flattened(drawn, side: side) else { return .failure(.notAnImage) }
+            drawn = smaller
         }
         return .failure(.tooBig)
     }
@@ -371,24 +376,23 @@ enum PhotoImage {
         ] as CFDictionary)
     }
 
-    /// A JPEG has no alpha: a picture that has some is drawn on white first
-    /// (as the daemon does), not left to turn black. One that is neither RGB
-    /// nor grey (CMYK, Lab) is drawn as sRGB: a CMYK JPEG needs the Adobe
-    /// marker `stripMetadata` drops, and the daemon's own decoder wants RGB.
-    private static func flattened(_ image: CGImage) -> CGImage? {
-        let model = image.colorSpace?.model
-        let plain = model == .rgb || model == .monochrome
-        switch image.alphaInfo {
-        case .none, .noneSkipFirst, .noneSkipLast: if plain { return image }
-        default: break
-        }
-        let space = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)
-        guard let space, let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
-                                                 bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
-        else { return nil }
-        let rect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    /// The picture drawn as 8-bit sRGB, whatever it was: a JPEG has no alpha,
+    /// so a picture that has some is drawn on white first (as the daemon does),
+    /// not left to turn black; CMYK or Lab is brought to RGB (a CMYK JPEG needs
+    /// the Adobe marker `stripMetadata` drops, and the daemon's own decoder
+    /// wants RGB); and the source's colour profile (Display P3, a camera's, or
+    /// any bytes a file calls one) isn't written back: the one in the JPEG is
+    /// ImageIO's own sRGB. `side` shrinks it to at most that long side.
+    private static func flattened(_ image: CGImage, side: Int? = nil) -> CGImage? {
+        let scale = side.map { min(1, Double($0) / Double(max(image.width, image.height))) } ?? 1
+        let width = max(1, Int((Double(image.width) * scale).rounded())), height = max(1, Int((Double(image.height) * scale).rounded()))
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
         context.setFillColor(CGColor(gray: 1, alpha: 1))
         context.fill(rect)
+        context.interpolationQuality = .high
         context.draw(image, in: rect)
         return context.makeImage()
     }

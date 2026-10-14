@@ -355,7 +355,7 @@ yet checked live: a real failed session, and a real notification close.
   iPadOS and android, offline still counts, tagged and other users' don't;
   every step's transition, Skip, a step that comes undone, Pair Another
   Device, the code only while "Pair your phone" is open, across every
-  combination; the demo's steps) and the tab's 5 s look (status only, one
+  combination; the demo's steps) and the tab's 10 s look (status only, one
   at a time, nothing in a demo). The real CLI's key names (`Peer`, `OS`,
   `UserID`, `Online`, `User`) were checked against its output's structure
   only.

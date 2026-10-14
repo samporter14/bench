@@ -204,8 +204,9 @@ enum PermissionScript {
 
     /// `benchProjectPermission(shallow, trace, rootId)`: the head of the
     /// queue of pending requests across the root and its children, projected,
-    /// or null (nothing waiting, the head is a question, or a shape doesn't
-    /// match). Pure: no fetch, no DOM, no globals.
+    /// or null (nothing waiting, the head is the root's own question, or a
+    /// shape doesn't match). A helper's question is projected as kind `ask`,
+    /// to be shown and never answered. Pure: no fetch, no DOM, no globals.
     static let projection = #"""
     function benchProjectPermission(shallow, trace, rootId) {
         "use strict";
@@ -215,6 +216,13 @@ enum PermissionScript {
                        "credential_request", "ssh_password", "usage_checkpoint", "set_goal", "grant_scan",
                        "provider_discovery"];
         const CODE_LIMIT = 4000;
+        // What the phone can show whole: a line of at most 160 characters, and 60 lines.
+        const LINE_LIMIT = 160, LINES_LIMIT = 60;
+        // A control character (a lone CR included), a zero-width or joining
+        // character, a soft hyphen, a line or paragraph separator, a variation
+        // selector or a direction override: the code on the screen could differ
+        // from the code that runs. A tab and a line feed are fine.
+        const ODD = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060\u2066-\u2069\u3164\ufe00-\ufe0f\ufeff]|[\u{e0100}-\u{e01ef}]/u;
         // An id sent back as it is: printable ASCII, no spaces, at most 200.
         const ident = v => typeof v === "string" && /^[\x21-\x7e]{1,200}$/.test(v) ? v : null;
         // A short lower-case word: a kind, a language, a source.
@@ -224,8 +232,8 @@ enum PermissionScript {
         const queue = benchPendingQueue(shallow, trace, rootId);
         if (queue === null || queue.length === 0) { return null; }
         const head = queue[0], request = head.request;
-        // A question is the root question's business (and a helper's isn't offered).
-        if (request.kind === "ask") { return null; }
+        // The root's own question is the root question's business; a helper's is shown, not answered.
+        if (request.kind === "ask" && head.frame.chain.length < 2) { return null; }
 
         const kind = word(request.kind) || "unknown";
         const requestId = ident(request.requestId), toolId = ident(request.tool_id);
@@ -272,10 +280,13 @@ enum PermissionScript {
             sharedEnv = !(benchIsAbsent(request.shared_env) || request.shared_env === false);
             if (request.code.trim() === "") { break; }
             if (benchPoints(request.code) > CODE_LIMIT) { codeProblem = "long"; }
-            // A NUL, another control character or a direction override could make
-            // the code on the screen differ from the code that runs.
-            else if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(request.code)) { codeProblem = "odd"; }
-            else { code = request.code; }
+            else if (ODD.test(request.code)) { codeProblem = "odd"; }
+            else {
+                const rows = request.code.split("\n");
+                if (rows[rows.length - 1] === "") { rows.pop(); }
+                if (rows.length > LINES_LIMIT || rows.some(row => benchPoints(row) > LINE_LIMIT)) { codeProblem = "lines"; }
+                else { code = request.code; }
+            }
             break;
         case "remote_exec":
         case "byoc_submit":
@@ -306,11 +317,15 @@ enum PermissionScript {
         default:
             break;
         }
+        // Another request anywhere in the queue with this `tool_id`: an answer
+        // naming it may resolve that one too, which the person didn't see.
+        const toolIdShared = typeof request.tool_id === "string"
+            && queue.some(other => other !== head && other.request.tool_id === request.tool_id);
         return {
             requestId: requestId, toolId: toolId, mode: mode, kind: kind, frame: head.frame.id, chain: head.frame.chain,
-            shape: shape, target: out.target, access: out.access, count: out.count, tool: out.tool, server: out.server,
-            source: out.source, provider: out.provider, name: out.name, readOnly: readOnly, sharedEnv: sharedEnv,
-            code: code, codeProblem: codeProblem,
+            toolIdShared: toolIdShared, shape: shape, target: out.target, access: out.access, count: out.count,
+            tool: out.tool, server: out.server, source: out.source, provider: out.provider, name: out.name,
+            readOnly: readOnly, sharedEnv: sharedEnv, code: code, codeProblem: codeProblem,
         };
     }
     """#
@@ -383,8 +398,40 @@ struct PermissionRequest: Equatable, Sendable {
     enum CodeProblem: String, Sendable {
         /// Over 4,000 characters: not shown whole, so not allowed.
         case long
-        /// A control character or direction override in it.
+        /// A control character (a lone CR too), a zero-width or joining
+        /// character, a soft hyphen, a line separator, a variation selector or
+        /// a direction override in it.
         case odd
+        /// A line over 160 characters or more than 60 lines: more than the
+        /// phone can show to be read.
+        case lines
+    }
+
+    enum CodeLimit {
+        static let line = 160
+        static let lines = 60
+    }
+
+    /// What the page's own check holds to, again: whether `code` is fit to be
+    /// shown whole, and if not, why. Only a tab and a line feed are white space
+    /// that moves nothing; every other character that is invisible, joins or
+    /// breaks a line differently is "odd".
+    static func problem(withCode code: String) -> CodeProblem? {
+        if code.unicodeScalars.count > Limit.code { return .long }
+        if code.unicodeScalars.contains(where: isOdd) { return .odd }
+        var rows = code.split(separator: "\n", omittingEmptySubsequences: false)
+        if rows.last?.isEmpty == true { rows.removeLast() }
+        return rows.count > CodeLimit.lines || rows.contains { $0.unicodeScalars.count > CodeLimit.line } ? .lines : nil
+    }
+
+    private static func isOdd(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x00...0x08, 0x0B...0x1F, 0x7F...0x9F, 0xAD, 0x180E, 0x200B...0x200F, 0x2028, 0x2029, 0x202A...0x202E,
+             0x2060, 0x2066...0x2069, 0x3164, 0xFE00...0xFE0F, 0xFEFF, 0xE0100...0xE01EF:
+            true
+        default:
+            false
+        }
     }
 
     enum Limit {
@@ -408,6 +455,9 @@ struct PermissionRequest: Equatable, Sendable {
     let frame: String
     /// The ids from `frame` up to the session's root: `[root]` for the root's own.
     let chain: [String]
+    /// Another pending request in the queue has the same `tool_id`: an answer
+    /// naming it may resolve that one too.
+    let toolIdShared: Bool
     /// The daemon's own shape for this kind held (the research's gate).
     let shape: Bool
     let target: String?
@@ -426,8 +476,8 @@ struct PermissionRequest: Equatable, Sendable {
     let codeProblem: CodeProblem?
 
     init(requestID: String?, toolID: String?, mode: String? = "live", kind: String, frame: String, chain: [String]? = nil,
-         shape: Bool = true, target: String? = nil, access: String? = nil, count: Int? = nil, tool: String? = nil,
-         server: String? = nil, source: String? = nil, provider: String? = nil, name: String? = nil,
+         toolIdShared: Bool = false, shape: Bool = true, target: String? = nil, access: String? = nil, count: Int? = nil,
+         tool: String? = nil, server: String? = nil, source: String? = nil, provider: String? = nil, name: String? = nil,
          readOnly: Bool = false, sharedEnv: Bool = false, code: String? = nil, codeProblem: CodeProblem? = nil) {
         self.requestID = requestID
         self.toolID = toolID
@@ -435,6 +485,7 @@ struct PermissionRequest: Equatable, Sendable {
         self.kind = kind
         self.frame = frame
         self.chain = chain ?? [frame]
+        self.toolIdShared = toolIdShared
         self.shape = shape
         self.target = target
         self.access = access
@@ -453,6 +504,10 @@ struct PermissionRequest: Equatable, Sendable {
     /// A sub-agent holds it.
     var helper: Bool { chain.count > 1 }
 
+    /// A helper's question, which the page projects when it is the head of the
+    /// queue: shown, never answered from the phone.
+    var isHelperAsk: Bool { kind == "ask" && helper }
+
     /// The id the phone shows and sends back.
     var id: String { requestID ?? toolID ?? "unidentified" }
 
@@ -468,7 +523,7 @@ struct PermissionRequest: Equatable, Sendable {
               let kind = Pick.string(root["kind"]), Self.isWord(kind),
               let frame = Pick.string(root["frame"]), PlanCheck.isFrameID(frame),
               let rawChain = root["chain"] as? [Any], (1...Limit.chain).contains(rawChain.count),
-              let shape = Pick.bool(root["shape"]),
+              let toolIdShared = Pick.bool(root["toolIdShared"]), let shape = Pick.bool(root["shape"]),
               let target = Pick.optionalText(root["target"], limit: Limit.path),
               let access = Pick.optionalText(root["access"], limit: 2), access.value == nil || ["ro", "rw"].contains(access.value),
               let count = Self.optionalCount(root["count"]),
@@ -486,10 +541,17 @@ struct PermissionRequest: Equatable, Sendable {
             chain.append(id)
         }
         guard chain.first == frame else { return nil }
+        // The page withholds a code that isn't fit to be shown whole; Swift holds
+        // it to the same rule, whatever the page said.
+        var shownCode = code.value, shownProblem = problem.value
+        if let text = shownCode, let found = Self.problem(withCode: text) {
+            shownCode = nil
+            shownProblem = shownProblem ?? found
+        }
         self.init(requestID: requestID.value, toolID: toolID.value, mode: mode.value, kind: kind, frame: frame, chain: chain,
-                  shape: shape, target: target.value, access: access.value, count: count.value, tool: tool.value,
-                  server: server.value, source: source.value, provider: provider.value, name: name.value,
-                  readOnly: readOnly, sharedEnv: sharedEnv, code: code.value, codeProblem: problem.value)
+                  toolIdShared: toolIdShared, shape: shape, target: target.value, access: access.value, count: count.value,
+                  tool: tool.value, server: server.value, source: source.value, provider: provider.value, name: name.value,
+                  readOnly: readOnly, sharedEnv: sharedEnv, code: shownCode, codeProblem: shownProblem)
     }
 
     /// An id sent back whole: printable ASCII without spaces, 1…200, or null.
@@ -572,6 +634,10 @@ enum RemotePermission {
         static let shared = "This code would run in a shared environment. Open it on your Mac."
         static let codeLong = "The code is too long to read on your phone. Open it on your Mac."
         static let codeOdd = "The code has characters Bench can't show safely. Open it on your Mac."
+        static let codeLines = "Too long to read on your phone. Open it on your Mac."
+        static let toolIdShared = "This needs more than one approval. Open it on your Mac."
+        /// A helper's question: shown so the phone says what waits, never answered from it.
+        static let helperAsked = "A helper agent asked a question. Answer it on your Mac."
         static let noCode = "Bench can't see the code to run. Open it on your Mac."
         static let notReadOnly = "This tool isn't marked as read-only. Open it on your Mac."
         static let source = "Allowing this from your phone would give lasting access. Open it on your Mac."
@@ -601,6 +667,7 @@ enum RemotePermission {
     /// those are truly once. A deny only for kinds whose "no" is a plain no.
     /// Either needs a request the daemon's own shape holds for, with both ids.
     static func decide(_ request: PermissionRequest, actionsOn: Bool) -> Decision {
+        if request.isHelperAsk { return Decision(canAllow: false, canDeny: false, why: Why.helperAsked) }
         guard actionsOn else { return Decision(canAllow: false, canDeny: false, why: RemoteCan.Why.actionsOff) }
         guard let kind = request.known else { return Decision(canAllow: false, canDeny: false, why: Why.unknown) }
         guard request.shape, request.requestID != nil, request.toolID != nil, request.mode != nil else {
@@ -613,8 +680,14 @@ enum RemotePermission {
                 Why.language
             } else if request.sharedEnv {
                 Why.shared
+            } else if request.toolIdShared {
+                Why.toolIdShared
             } else if let problem = request.codeProblem {
-                problem == .long ? Why.codeLong : Why.codeOdd
+                switch problem {
+                case .long: Why.codeLong
+                case .odd: Why.codeOdd
+                case .lines: Why.codeLines
+                }
             } else if request.code == nil {
                 Why.noCode
             } else {
@@ -626,6 +699,8 @@ enum RemotePermission {
                 Why.notReadOnly
             } else if !PermissionKind.readOnlySources.contains(request.source ?? "") {
                 Why.source
+            } else if request.toolIdShared {
+                Why.toolIdShared
             } else {
                 nil
             }
@@ -638,6 +713,7 @@ enum RemotePermission {
     /// The title and the detail, each a plain line from the request's own
     /// fields. Nothing the agent wrote itself is passed on.
     static func words(for request: PermissionRequest) -> (title: String, detail: String) {
+        if request.isHelperAsk { return ("Has a question for you", "") } // the card says a helper asks, and `why` where to answer
         guard let kind = request.known, request.shape else {
             return ("Wants your permission", "Bench can't show this request. Open it on your Mac.")
         }
