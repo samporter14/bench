@@ -152,10 +152,20 @@ enum SessionWriterScript {
         const isObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
         const points = text => Array.from(text).length;
         const text = (v, min, max) => typeof v === "string" && v.trim() !== "" && points(v) >= min && points(v) <= max;
+        // Phase 4 photos: a photo's request is the text (4,000 at most), a blank line and one attachment line
+        // of exactly the shape Bench writes, or the line alone. Plain text stays at 4,000.
+        const LINE = /\{"type":"attachment","id":"[0-9A-Fa-f-]{36}","version_id":"[0-9A-Fa-f-]{36}","filename":"phone-photo-[0-9]{8}-[0-9]{6}\.jpg","artifact_ref":"\{\{artifact:[0-9A-Fa-f-]{36}\}\}","content_type":"image\/jpeg","size_bytes":[0-9]{1,8}\}$/;
+        const request = v => {
+            if (typeof v !== "string") { return false; }
+            const found = LINE.exec(v);
+            if (found === null) { return text(v, 1, 4000); }
+            const head = v.slice(0, found.index);
+            return head === "" || (head.endsWith("\n\n") && text(head.slice(0, -2), 1, 4000));
+        };
         // Phase 3 browse: a new session in a project, to the server's default agent.
         if (isObject(a) && a.kind === "newSession") {
             if (typeof a.projectId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(a.projectId)) { return null; }
-            if (!text(a.text, 1, 4000) || typeof a.planMode !== "boolean") { return null; }
+            if (!request(a.text) || typeof a.planMode !== "boolean") { return null; }
             if (typeof a.intentId !== "string"
                 || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a.intentId)) { return null; }
             return { path: "/api/projects/" + a.projectId + "/request",
@@ -185,7 +195,7 @@ enum SessionWriterScript {
                      body: { responses: [{ tool_id: a.toolId, action: "answer", answers: Object.fromEntries(entries) }] } };
         }
         if (a.kind === "message") {
-            if (!text(a.agent, 1, 200) || !text(a.text, 1, 4000)) { return null; }
+            if (!text(a.agent, 1, 200) || !request(a.text)) { return null; }
             if (typeof a.intentId !== "string"
                 || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a.intentId)) { return null; }
             if (a.projectId !== null && a.projectId !== undefined && !text(a.projectId, 1, 200)) { return null; }

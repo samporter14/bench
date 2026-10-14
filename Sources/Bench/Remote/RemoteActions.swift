@@ -73,6 +73,7 @@ extension RemoteRoute {
     var bodyLimit: Int {
         switch self {
         case .action(.message, _), .newSession: Self.messageBodyLimit // Phase 3 browse: a new session's text too
+        case .photo: RemotePhotoRoute.bodyLimit // Phase 4 photos
         default: RemoteHTTP.maxBody
         }
     }
@@ -688,5 +689,31 @@ struct RemoteActionsToggle: View {
             Text("Let paired devices answer, approve and send messages")
             Text("Off, paired devices can still read your sessions, but only Open on Mac acts on them.")
         }
+    }
+}
+
+// MARK: Photos (Phase 4)
+
+// Phase 4 photos: what RemotePhotos.swift needs of the actions' own machinery,
+// and no more.
+extension RemoteSessions {
+    /// The reads, the write and the clock the actions use.
+    var photoDependencies: Dependencies { dependencies }
+
+    /// Runs `work` as one of this session's actions: after the ones before
+    /// it on the same queue `act` uses, and with what was held of the session
+    /// dropped once it is done.
+    func actSerially(on id: String, _ work: @escaping @MainActor () async -> RemoteActionReply) async -> RemoteActionReply {
+        let previous = acting[id]
+        let task = Task { [weak self] () -> RemoteActionReply in
+            _ = await previous?.value
+            let reply = await work()
+            self?.forget(id)
+            return reply
+        }
+        acting[id] = task
+        let reply = await task.value
+        if acting[id] == task { acting[id] = nil }
+        return reply
     }
 }

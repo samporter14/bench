@@ -1416,6 +1416,8 @@ message, and push notifications.
 | POST | `/api/projects/<pid>/sessions` | token | Start a session: `{"text","id","planFirst"}`; body up to 16 KB (Phase 3, New session). |
 | GET | `/api/sessions/<id>/history[?before=<i>]` | token | A page of the whole conversation, oldest first (Phase 3, History). |
 | GET | `/api/sessions/<id>/turn/<i>` | token | One cut turn whole (Phase 3, History). |
+| POST | `/api/sessions/<id>/photo` | token | Send it a photo and a message: `{"image","text","id"}`; body up to 6 MB (Phase 4, Photos). |
+| POST | `/api/projects/<pid>/photo` | token | Start a session with a photo: `{"image","text","id","planFirst"}`; body up to 6 MB (Phase 4, Photos). |
 
 ### `/api/state` (version 1)
 
@@ -2300,3 +2302,81 @@ it isn't working. Costs 1 in the budget. Allowlisted GET:
   in exactly that key order. Same send / queue / resume rules and results.
 - The upload lands in the project's "User Uploads", which every session in the
   project can see; the phone says so once, under the button.
+
+#### How the server does it (Phase 4 photos)
+
+Files: `Remote/RemotePhoto.swift` (the routes, the body, the text check, the
+picture, the attachment line), `Remote/RemotePhotoUpload.swift` (the in-page
+upload and Swift's checks of it) and `Remote/RemotePhotos.swift` (the two
+flows and the demo's). The shared files gained lines marked
+`// Phase 4 photos`; `RemoteBrowser.start` is the new-session route's write
+and intent recovery, taken out of `newSession` so the photo route runs the
+same code.
+
+- **The routes**: `POST /api/sessions/<id>/photo` and
+  `POST /api/projects/<pid>/photo`, matched exactly like the others. 6 MiB of
+  body on these two only (every other route keeps its 8 or 16 KB). Their
+  body timer is re-armed as data arrives: 10 s of quiet and 120 s in all,
+  instead of the flat 3 s. A photo costs 10 in the budget bucket, counts
+  toward the six actions a minute and needs `remoteActions`. The project
+  route is the new-session route's order: browse on (403 `browseOff`), then
+  actions, the limit, the body, a project the list shows.
+- **The body**: `{"image":"<base64>","text":"…0–4,000","id":"<uuid v4>"}`,
+  and `"planFirst"` for a project. The base64 is the strict kind (padded, no
+  whitespace); anything out of shape is 400. Text holding one of the seven
+  reference prefixes, as it is or with its whitespace taken out, is 400
+  `{"error":"reference"}`.
+- **The picture**: the magic bytes decide (JPEG `FF D8 FF`, PNG, or HEIC with
+  `ftyp` `heic`, `heix` or `mif1`), not the claimed type; anything else, or
+  what ImageIO can't read, is 415 `{"error":"notAnImage"}`. The header's
+  size is read first: over 64 megapixels is 413 `{"error":"tooBig"}`. Then
+  `CGImageSourceCreateThumbnailAtIndex` with the transform flag and
+  `FromImageAlways`, at 3,072 px at most and never enlarged, a picture with
+  alpha drawn on white (and one that isn't RGB or grey drawn as sRGB), JPEG at 0.85 and then 0.05 lower at a time to 0.4
+  until it is 3 MiB or less (below that the picture is drawn a quarter
+  smaller, up to four times, else 413). No properties are written, and the JPEG's
+  markers are then walked and every one but JFIF and an ICC profile dropped:
+  ImageIO still writes an Exif segment (colour space, pixel size) and a
+  Photoshop one on its own. It is read back once to check it is one image of
+  the size it was drawn. The name is `phone-photo-YYYYMMDD-HHMMSS.jpg`, in
+  UTC. Decoding runs off the main thread.
+- **The upload** (`PhotoUploadScript`): its own in-page script, not a kind of
+  `benchBuildWrite`, but the same cookie, `x-operon-csrf` and one retry after
+  `csrf_stale`. It builds the one path
+  `/api/projects/<pid>/attachments` from a project id
+  (`^[A-Za-z0-9_-]{1,64}$`), the photo's name, `image/jpeg` and base64 whose
+  length agrees with its size (3 MiB at most), makes a `Blob` and a
+  `FormData` with one `file` part (a new one for the retry) and leaves
+  `Content-Type` to `fetch`. 60 s. The reply passes the gate or is no upload:
+  200, JSON, UUID `id` and `version_id`, the same file name and content type,
+  `size_bytes` equal to what was sent. Only those five fields come back;
+  `file_path` and `root_frame_id` never leave the page. Swift checks them
+  again against the photo.
+- **A session**: the session gate and the body as the message route has
+  them; then, one at a time with its other actions, a read (nothing is
+  uploaded for a session that is blocked, unreadable or has no agent or
+  project), the upload to that read's project, and the message route's own
+  re-read with its mode rules, agent and intent (the phone's `id`). The
+  request is the text, a blank line and the attachment line, written key by
+  key (`type`, `id`, `version_id`, `filename`, `artifact_ref`,
+  `content_type`, `size_bytes`; never a dictionary); a photo alone is the line
+  alone. The in-page writer allows that one strictly shaped line after 4,000
+  characters of text, and nothing longer for plain text. Answers as the
+  message route: `sent`, `queued`, `resumed`, `blocked`.
+- **A project**: the new-session route's list, `plan_mode` from `planFirst`
+  and look for an intent whose answer was lost, with the upload between. 200
+  `{"result":"started","id":…}`. Until the daemon names it, the session is
+  called the text's first 50 characters, or "Photo".
+- **Half done**: an upload that didn't go, or whose answer failed the gate, is
+  `unavailable` with "Couldn't attach the photo from here. Send it from your
+  Mac." and no message. An upload that went and a message that didn't (the
+  session changed, the daemon refused or didn't answer, no session was
+  found) is `unavailable` with "The photo was saved to the project, but the
+  message didn't send. Open it on your Mac." Nothing is deleted, and a retry
+  uploads again.
+- **`--demo remote`**: the picture is still decoded and drawn again, so
+  garbage is refused (415) there too; the upload's answer is made up (no web
+  view), and the message or the new session answers as the demo's other
+  writes do.
+- **Not here**: the phone's history shows the attachment line as text until
+  Phase 3's history projection learns to strip it (a "Photo" chip).

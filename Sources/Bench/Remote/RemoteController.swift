@@ -390,7 +390,8 @@ final class RemoteController: ObservableObject {
             version: RemoteAPI.benchVersion,
             act: { await RemoteSessions.shared.act($0, session: $1, device: $2, body: $3) }, // Phase 2 actions
             files: { await RemoteArtifacts.shared.respond($0, target: $1, device: $2).response }, // Phase 3 files
-            browse: { await RemoteBrowser.shared.respond($0, target: $1, device: $2, body: $3) })) // Phase 3 browse
+            browse: { await RemoteBrowser.shared.respond($0, target: $1, device: $2, body: $3) }, // Phase 3 browse
+            photo: { await RemotePhotos.shared.respond($0, device: $1, body: $2) })) // Phase 4 photos
     }
 
     private static func state(now: Date = Date()) -> RemoteAPI.State {
@@ -429,6 +430,7 @@ final class RemoteController: ObservableObject {
         let sessions = RemoteSessions.demo(reads: reads, lookup: { store.lookup($0) }, more: { store.read($0) }) // Phase 2 actions
         let browser = RemoteBrowser.demo(sessions: sessions, store: store) // Phase 3 browse
         let artifacts = RemoteArtifacts.demo(listed: .shared, info: .shared) // Phase 3 files
+        let photos = RemotePhotos.demo(sessions: sessions, browser: browser) // Phase 4 photos
         let server = RemoteServer(policy: .closed, auth: auth, backend: RemoteBackend(
             state: { Self.stateJSON() },
             session: { await sessions.sessionJSON($0) }, // Phase 2 actions
@@ -437,7 +439,8 @@ final class RemoteController: ObservableObject {
             version: RemoteAPI.benchVersion,
             act: { await sessions.act($0, session: $1, device: $2, body: $3) }, // Phase 2 actions
             files: { await artifacts.respond($0, target: $1, device: $2).response }, // Phase 3 files
-            browse: { await browser.respond($0, target: $1, device: $2, body: $3) })) // Phase 3 browse
+            browse: { await browser.respond($0, target: $1, device: $2, body: $3) }, // Phase 3 browse
+            photo: { await photos.respond($0, device: $1, body: $2) })) // Phase 4 photos
         demoServer = server
         server.push = PushCenter.demo(auth: auth) // Phase 2 push
         Task {

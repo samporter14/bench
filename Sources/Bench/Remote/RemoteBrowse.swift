@@ -570,10 +570,17 @@ final class RemoteBrowser {
         guard BrowseSQL.isProjectID(project), let request = NewSessionRequest.parse(body) else { return .badRequest }
         guard let projects = await listedProjects() else { return Self.unreadable }
         guard projects.contains(project) else { return .notFound }
+        return await start(project, request: request) ?? .ok(.unavailable)
+    }
+
+    /// The write itself, and what follows it: `started`, or nil when no
+    /// session was made. Phase 4's photo route comes here too, with the
+    /// attachment line in the request and its own `title`.
+    func start(_ project: String, request: NewSessionRequest, title: String? = nil) async -> RemoteActionReply? {
         let reply = await dependencies.create(.newSession(project: project, text: request.text,
                                                           planMode: request.planFirst, intentID: request.intentID))
         if let reply, reply.status == 200, reply.isJSON, reply.bodyStatus == "accepted", let id = reply.rootFrameID {
-            return started(id, project: project, request: request)
+            return started(id, project: project, request: request, title: title)
         }
         // A timeout, a 409 (that intent made a session already: an earlier
         // try whose answer was lost), or a 200 Bench can't read: look.
@@ -583,9 +590,9 @@ final class RemoteBrowser {
                 await dependencies.pause()
                 found = await dependencies.findIntent(project, request.intentID)
             }
-            if let found, PlanCheck.isFrameID(found) { return started(found, project: project, request: request) }
+            if let found, PlanCheck.isFrameID(found) { return started(found, project: project, request: request, title: title) }
         }
-        return .ok(.unavailable)
+        return nil
     }
 
     /// The projects the list shows, read again when a minute old.
@@ -598,11 +605,11 @@ final class RemoteBrowser {
         return ids
     }
 
-    private func started(_ id: String, project: String, request: NewSessionRequest) -> RemoteActionReply {
+    private func started(_ id: String, project: String, request: NewSessionRequest, title: String? = nil) -> RemoteActionReply {
         let now = dependencies.now()
         // The daemon names a new session after its first 50 characters.
         sessions.admitStarted(SessionStatus(id: id, projectID: project, projectName: "",
-                                            title: String(request.text.prefix(50)), state: .running,
+                                            title: title ?? String(request.text.prefix(50)), state: .running,
                                             updatedAt: now, startedAt: now))
         return Self.json(RemoteAPI.encode(BrowseAPI.Started(id: id)))
     }
@@ -642,4 +649,14 @@ final class RemoteBrowser {
             now: { Date() },
             pause: {}))
     }
+}
+
+// Phase 4 photos: the checks the photo route shares with the new-session route.
+extension RemoteBrowser {
+    var browseIsOn: Bool { dependencies.browseOn() }
+    var actionsAreOn: Bool { dependencies.actionsOn() }
+
+    /// The projects a new session may start in (the list, held a minute); nil
+    /// when it can't be read.
+    func projectIDs() async -> Set<String>? { await listedProjects() }
 }

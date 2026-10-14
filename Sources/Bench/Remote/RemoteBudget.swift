@@ -46,12 +46,14 @@ extension RemoteRoute {
     /// What a request on this route spends from its device's bucket: the
     /// whole conversation's pages and one turn whole read the page with
     /// care (3), a file's thumbnail or text likewise (3), and a download up
-    /// to 8 MB more still (10). Everything else is 1.
+    /// to 8 MB more still (10), as does a photo (decoded, drawn again and
+    /// handed to the page: Phase 4). Everything else is 1.
     var cost: Int {
         switch self {
         case .history, .turn: 3
         case .files(.download): 10
         case .files(.thumb), .files(.text): 3
+        case .photo: RemotePhotoRoute.cost // Phase 4 photos
         default: 1
         }
     }
