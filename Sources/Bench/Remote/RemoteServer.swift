@@ -158,6 +158,8 @@ enum RemoteRoute: Equatable, Sendable {
     case history(String)
     /// `GET /api/sessions/<id>/turn/<i>`.
     case turn(String, Int)
+    /// `POST /api/sessions/<id>/photo` and `POST /api/projects/<pid>/photo` (RemotePhoto.swift). // Phase 4 photos
+    case photo(RemotePhotoRoute)
 
     enum Match: Equatable {
         case found(RemoteRoute)
@@ -192,6 +194,7 @@ enum RemoteRoute: Equatable, Sendable {
         if let push = RemotePushRoute(path: path) { return .push(push) } // Phase 2 push
         if let files = RemoteFilesRoute(path: path) { return .files(files) } // Phase 3 files
         if let browse = browseRoute(for: path) { return browse } // Phase 3 browse
+        if let photo = RemotePhotoRoute(path: path) { return .photo(photo) } // Phase 4 photos
         let prefix = "/api/sessions/"
         guard path.hasPrefix(prefix) else { return nil }
         let rest = path.dropFirst(prefix.count)
@@ -211,6 +214,7 @@ enum RemoteRoute: Equatable, Sendable {
         case .push(let push): push.method // Phase 2 push
         case .action: "POST" // Phase 2 actions
         case .newSession: "POST" // Phase 3 browse
+        case .photo(let photo): photo.method // Phase 4 photos
         default: "GET"
         }
     }
@@ -244,6 +248,7 @@ enum RemoteRoute: Equatable, Sendable {
         case .projectSessions, .newSession: "/api/projects/<pid>/sessions"
         case .history: "/api/sessions/<id>/history"
         case .turn: "/api/sessions/<id>/turn/<i>"
+        case .photo(let photo): photo.pattern // Phase 4 photos
         }
     }
 }
@@ -485,6 +490,8 @@ struct RemoteBackend {
     /// A Phase 3 browse route (the route, the request target with its query,
     /// device id, body). // Phase 3 browse
     var browse: @MainActor (RemoteRoute, String, String, Data) async -> RemoteActionReply = { _, _, _, _ in .notFound }
+    /// A photo route (the route, device id, body). // Phase 4 photos
+    var photo: @MainActor (RemotePhotoRoute, String, Data) async -> RemoteActionReply = { _, _, _ in .notFound }
 }
 
 enum RemoteServerError: Error, Equatable {
@@ -536,6 +543,8 @@ final class RemoteServer {
         var timer: Task<Void, Never>?
         /// A file transfer this connection counts as, until it goes.
         var transfer: Transfer?
+        /// When the head passed its checks, for a body that may take a while. // Phase 4 photos
+        var bodyStart: Date?
         /// Writes to an events stream, made and taken: one not taken within
         /// `sendTimeout` ends the stream.
         var writes = 0
@@ -719,10 +728,16 @@ final class RemoteServer {
             client.admitted = admitted
             if case .head = parsed {
                 client.timer?.cancel()
-                client.timer = timeout(id, after: Self.bodyTimeout)
+                client.bodyStart = now() // Phase 4 photos
+                client.timer = timeout(id, after: admitted.route.bodyWait(elapsed: 0)) // Phase 4 photos: Self.bodyTimeout for every other route
             }
         }
         guard case .request(let request) = parsed, let admitted = client.admitted else {
+            // Phase 4 photos: a photo's body keeps its timer alive as data arrives.
+            if data != nil, let admitted = client.admitted, admitted.route.rearmsBodyTimer, let start = client.bodyStart {
+                client.timer?.cancel()
+                client.timer = timeout(id, after: admitted.route.bodyWait(elapsed: now().timeIntervalSince(start)))
+            }
             if isComplete || failed { close(id) } else { receive(id) }
             return
         }
@@ -838,6 +853,14 @@ final class RemoteServer {
                 let response = await self.backend.files(filesRoute, target, deviceID)
                 self.release(transfer)
                 self.send(id, response, route: route, closing: true)
+            }
+        case .photo(let photoRoute): // Phase 4 photos
+            let deviceID = device?.id ?? "", body = request.body
+            Task { [weak self] in
+                guard let self else { return }
+                let reply = await self.backend.photo(photoRoute, deviceID, body)
+                self.send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.body),
+                          route: route, closing: true)
             }
         case .projects, .projectSessions, .newSession, .history, .turn: // Phase 3 browse
             let deviceID = device?.id ?? "", target = request.target, body = request.body
