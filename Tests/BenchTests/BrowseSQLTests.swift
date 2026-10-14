@@ -250,3 +250,27 @@ struct BrowseSQLTests {
         for bad in ["", "a b", "a/b", "a.b", "a'b", "a%41", "é"] { #expect(!BrowseSQL.isProjectID(bad)) }
     }
 }
+
+/// A session parked on a permission (network, files, a tool…) has the same
+/// `awaiting_user_response` status as one asking a question: the request's
+/// own kind says which, so cards read "Wants to reach the web", not "Asked
+/// you a question".
+struct WaitingSignalTests {
+    @Test func aParkedPermissionIsReadByItsKindAndAQuestionByItsStatus() throws {
+        let db = try MadeUpDatabase()
+        defer { db.remove() }
+        try db.frame("00000000-0000-4000-8000-0000000000a1", status: "awaiting_user_response", updated: 1_791_800_000_002)
+        try db.frame("00000000-0000-4000-8000-0000000000a2", status: "awaiting_user_response", updated: 1_791_800_000_001)
+        try db.run("""
+            UPDATE frames SET output_data = '{"pending_input_requests":[{"kind":"network","mode":"parked"}]}'
+                WHERE id = '00000000-0000-4000-8000-0000000000a1';
+            UPDATE frames SET output_data = '{"pending_input_requests":[{"kind":"ask","mode":"parked"}]}'
+                WHERE id = '00000000-0000-4000-8000-0000000000a2';
+            """)
+        let rows = try fetchRecentFrames(db: db.url)
+        let signal = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0.waitingSignal) })
+        #expect(signal["00000000-0000-4000-8000-0000000000a1"] == "network")
+        #expect(signal["00000000-0000-4000-8000-0000000000a2"] == "awaiting_user_response")
+        #expect(WaitingReason(signal: "network").sentence == "Wants to reach the web")
+    }
+}

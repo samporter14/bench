@@ -193,9 +193,12 @@ func fetchRecentFrames(db: URL, limit: Int = 25) throws -> [FrameRow] {
                )) THEN 1 ELSE 0 END,
                (SELECT COALESCE(SUM(COALESCE(c.input_tokens, 0) + COALESCE(c.output_tokens, 0)), 0)
                 FROM frames c WHERE c.root_frame_id = f.id),
-               CASE WHEN f.status IN (\(awaiting)) THEN f.status
+               CASE WHEN f.status = 'awaiting_user_response' THEN COALESCE(NULLIF(\(pendingKindSQL("f")), 'ask'), f.status)
+                    WHEN f.status IN (\(awaiting)) THEN f.status
                     WHEN f.status = 'processing' THEN COALESCE(\(pendingKindSQL("f")), (
-                        SELECT CASE WHEN c.status IN (\(awaiting)) THEN c.status ELSE \(pendingKindSQL("c")) END
+                        SELECT CASE WHEN c.status = 'awaiting_user_response'
+                                    THEN COALESCE(NULLIF(\(pendingKindSQL("c")), 'ask'), c.status)
+                                    WHEN c.status IN (\(awaiting)) THEN c.status ELSE \(pendingKindSQL("c")) END
                         FROM frames c
                         WHERE c.root_frame_id = f.id AND c.parent_frame_id IS NOT NULL
                           AND c.is_hidden IS NOT 1
