@@ -638,6 +638,9 @@ enum LabScenes {
         LabScene(name: "Strand displacement", theme: .molecular, duration: StrandDisplacement.duration) { context, size, t, tint in
             StrandDisplacement.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "ATAC accessibility", theme: .molecular, duration: ATACAccessibility.duration) { context, size, t, tint in
+            ATACAccessibility.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Cell
         LabScene(name: "Spike raster", theme: .cell, duration: SpikeRaster.duration) { context, size, t, tint in
             SpikeRaster.draw(in: &context, size: size, time: t, tint: tint)
@@ -797,6 +800,12 @@ enum LabScenes {
         },
         LabScene(name: "SNARE zipper", theme: .cell, duration: SNAREZipper.duration) { context, size, t, tint in
             SNAREZipper.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "FRAP recovery", theme: .cell, duration: FRAPRecovery.duration) { context, size, t, tint in
+            FRAPRecovery.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Integrin activation", theme: .cell, duration: IntegrinActivation.duration) { context, size, t, tint in
+            IntegrinActivation.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Organisms
         LabScene(name: "Mouse sniff", theme: .organisms, duration: MouseSniff.duration) { context, size, t, tint in
@@ -1004,6 +1013,9 @@ enum LabScenes {
         LabScene(name: "Capillary fill", theme: .physics, duration: CapillaryFill.duration) { context, size, t, tint in
             CapillaryFill.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Acoustic levitation", theme: .physics, duration: AcousticLevitation.duration) { context, size, t, tint in
+            AcousticLevitation.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Chemistry
         LabScene(name: "Caffeine", theme: .chemistry, duration: Caffeine.duration) { context, size, t, tint in
             Caffeine.draw(in: &context, size: size, time: t, tint: tint)
@@ -1127,6 +1139,12 @@ enum LabScenes {
         },
         LabScene(name: "pH rainbow", theme: .chemistry, duration: PHRainbow.duration) { context, size, t, tint in
             PHRainbow.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "NMR spectrum", theme: .chemistry, duration: NMRSpectrum.duration) { context, size, t, tint in
+            NMRSpectrum.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Azobenzene switch", theme: .chemistry, duration: AzobenzeneSwitch.duration) { context, size, t, tint in
+            AzobenzeneSwitch.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Plants
         LabScene(name: "Seedling", theme: .plants, duration: Seedling.duration) { context, size, t, tint in
@@ -1307,6 +1325,12 @@ enum LabScenes {
         LabScene(name: "Sequence logo", theme: .data, duration: SequenceLogo.duration) { context, size, t, tint in
             SequenceLogo.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Gene-set enrichment", theme: .data, duration: GeneSetEnrichment.duration) { context, size, t, tint in
+            GeneSetEnrichment.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Bootstrap resampling", theme: .data, duration: BootstrapResampling.duration) { context, size, t, tint in
+            BootstrapResampling.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Protein
         LabScene(name: "Lollipop plot", theme: .protein, duration: LollipopPlot.duration) { context, size, t, tint in
             LollipopPlot.draw(in: &context, size: size, time: t, tint: tint)
@@ -1355,6 +1379,15 @@ enum LabScenes {
         },
         LabScene(name: "Detergent solubilization", theme: .protein, duration: DetergentSolubilization.duration) { context, size, t, tint in
             DetergentSolubilization.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Targeted degrader", theme: .protein, duration: TargetedDegrader.duration) { context, size, t, tint in
+            TargetedDegrader.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Allosteric switch", theme: .protein, duration: AllostericSwitch.duration) { context, size, t, tint in
+            AllostericSwitch.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Collagen braid", theme: .protein, duration: CollagenBraid.duration) { context, size, t, tint in
+            CollagenBraid.draw(in: &context, size: size, time: t, tint: tint)
         },
         // RNA
         LabScene(name: "Circular genome plot", theme: .rna, duration: CircularGenomePlot.duration) { context, size, t, tint in
@@ -1422,6 +1455,9 @@ enum LabScenes {
         },
         LabScene(name: "Pseudoknot", theme: .rna, duration: Pseudoknot.duration) { context, size, t, tint in
             Pseudoknot.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "RNase P", theme: .rna, duration: RNasePCleavage.duration) { context, size, t, tint in
+            RNasePCleavage.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Medicine
         LabScene(name: "Lentivirus", theme: .medicine, duration: Lentivirus.duration) { context, size, t, tint in

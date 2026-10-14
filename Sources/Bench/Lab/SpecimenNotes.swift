@@ -919,6 +919,11 @@ enum SpecimenNotes {
             note: "In toehold-mediated strand displacement, an invading strand binds a short single-stranded toehold and replaces the incumbent strand.",
             topics: ["chemistry", "reactions"],
             also: ["toehold", "DNA nanotechnology", "DNA computing", "branch migration"]),
+        "ATAC accessibility": SpecimenNote(
+            caption: "Tn5 tagging open stretches of DNA",
+            note: "ATAC-seq uses hyperactive Tn5 transposase, which preferentially cuts and tags nucleosome-free DNA; the read pile-ups mark open chromatin.",
+            topics: ["genomics", "sequencing"],
+            also: ["ATAC-seq", "Tn5", "open chromatin", "tagmentation"]),
         "Spike raster": SpecimenNote(
             caption: "Neuron spikes plotted over time",
             note: "A spike raster plots when each neuron fires, one row per cell; the histogram below counts spikes per time bin to reveal synchrony.",
@@ -1184,6 +1189,16 @@ enum SpecimenNotes {
             note: "SNARE proteins zip together between a vesicle and its target membrane, pulling them close to drive membrane fusion and cargo release.",
             topics: ["membranes", "transport"],
             also: ["v-SNARE", "t-SNARE", "membrane fusion", "exocytosis"]),
+        "FRAP recovery": SpecimenNote(
+            caption: "A bleached spot filling back in",
+            note: "In FRAP a laser bleaches a spot; unbleached molecules diffusing in set the recovery rate, and the plateau gives the mobile fraction.",
+            topics: ["microscopy", "imaging", "cell biology"],
+            also: ["photobleaching", "diffusion", "mobile fraction", "fluorescence recovery"]),
+        "Integrin activation": SpecimenNote(
+            caption: "Talin opening an integrin to grip",
+            note: "Inside-out signaling: talin binds the integrin's beta tail, the bent receptor extends, and its head grips matrix with high affinity.",
+            topics: ["signaling", "cell biology", "membranes"],
+            also: ["talin", "adhesion", "extracellular matrix", "fibronectin"]),
         "Mouse sniff": SpecimenNote(
             caption: "Mouse sniffing, whiskers twitching",
             note: "Mice sample odors by sniffing in quick bursts while moving their whiskers, behaviors used to study olfaction and sensory processing.",
@@ -1494,6 +1509,16 @@ enum SpecimenNotes {
             note: "A pH indicator shifts color with acidity, so a row of solutions reads as a graded scale from acidic through neutral to basic.",
             topics: ["chemistry", "measurement"],
             also: ["pH indicator", "universal indicator", "acid", "base"]),
+        "NMR spectrum": SpecimenNote(
+            caption: "A decaying signal becomes a spectrum",
+            note: "In pulsed NMR, a Fourier transform turns the free induction decay into a spectrum; neighboring hydrogens split peaks into multiplets.",
+            topics: ["spectroscopy", "chemistry"],
+            also: ["FID", "Fourier transform", "multiplet", "J-coupling"]),
+        "Azobenzene switch": SpecimenNote(
+            caption: "Light flips a molecule's shape",
+            note: "Azobenzene switches from the extended trans form to the bent cis form under UV light, then back with visible light or heat.",
+            topics: ["chemistry", "reactions"],
+            also: ["photoswitch", "isomerization", "cis-trans", "photopharmacology"]),
         "Lollipop plot": SpecimenNote(
             caption: "Mutations plotted along a protein",
             note: "A lollipop plot marks mutation positions along a protein's domains, with stem height showing how often each occurs, to reveal hotspots.",
@@ -1574,6 +1599,21 @@ enum SpecimenNotes {
             note: "Detergents dissolve a lipid bilayer into micelles and coat a membrane protein, keeping it soluble so it can be purified and studied.",
             topics: ["membranes", "protein structure", "sample prep"],
             also: ["micelle", "membrane protein", "purification", "reconstitution"]),
+        "Targeted degrader": SpecimenNote(
+            caption: "Drug joins a target to a ligase",
+            note: "A two-headed drug links a target to an E3 ligase, which tags it with ubiquitin for the proteasome; the drug is then reused.",
+            topics: ["drug discovery", "protein structure", "cell biology"],
+            also: ["PROTAC", "E3 ligase", "ubiquitin", "proteasome"]),
+        "Allosteric switch": SpecimenNote(
+            caption: "Distant binding opens the pocket",
+            note: "Binding at an allosteric site shifts a protein's shape, changing the activity of its distant active site.",
+            topics: ["enzymes", "protein structure", "signaling"],
+            also: ["allostery", "conformational change", "effector", "regulation"]),
+        "Collagen braid": SpecimenNote(
+            caption: "Three chains winding into one helix",
+            note: "Collagen is three left-handed chains, glycine at every third residue, coiled into a right-handed triple helix of high tensile strength.",
+            topics: ["protein structure", "cell biology"],
+            also: ["triple helix", "glycine", "connective tissue", "fibril"]),
         "Circular genome plot": SpecimenNote(
             caption: "Chromosomes in a ring with links",
             note: "A circular genome plot (Circos plot) arranges chromosomes around a ring and links related loci, such as translocations, with chords.",
@@ -1684,6 +1724,11 @@ enum SpecimenNotes {
             note: "A pseudoknot forms when bases in a hairpin loop pair with a stretch outside it, making two interleaved stems, as in ribozymes and viruses.",
             topics: ["RNA"],
             also: ["RNA structure", "hairpin", "stem-loop", "base pairing"]),
+        "RNase P": SpecimenNote(
+            caption: "An RNA enzyme trims a tRNA's 5′ end",
+            note: "RNase P, an RNA-protein enzyme whose RNA does the catalysis, trims the 5′ leader off precursor tRNAs to give their mature 5′ ends.",
+            topics: ["RNA", "enzymes"],
+            also: ["ribozyme", "tRNA processing", "ribonuclease P", "5′ leader"]),
         "Lentivirus": SpecimenNote(
             caption: "Packaging a gene into lentivirus",
             note: "Lentiviral vectors are made by transfecting packaging cells with several plasmids; the particles carry a transfer gene into target cells.",
@@ -2189,6 +2234,11 @@ enum SpecimenNotes {
             note: "Capillary action draws liquid up narrow tubes by surface tension, and the thinner the tube, the higher it rises, as Jurin's law describes.",
             topics: ["physics"],
             also: ["capillary action", "surface tension", "meniscus", "Jurin's law"]),
+        "Acoustic levitation": SpecimenNote(
+            caption: "Sound holding droplets in mid-air",
+            note: "In an acoustic levitator, a standing ultrasonic wave traps small objects at its pressure nodes; shifting its phase moves them.",
+            topics: ["waves", "physics"],
+            also: ["ultrasound", "standing wave", "acoustic radiation force", "node"]),
         "Seedling": SpecimenNote(
             caption: "A seed sprouting into leaves",
             note: "A germinating seed sends a shoot up through the soil and unfolds its first leaves, starting life as a photosynthesizing seedling.",
@@ -2484,6 +2534,16 @@ enum SpecimenNotes {
             note: "A sequence logo shows each position of aligned sequences as stacked letters, with height showing information content and conservation.",
             topics: ["bioinformatics", "genomics"],
             also: ["motif", "information content", "WebLogo", "binding site"]),
+        "Gene-set enrichment": SpecimenNote(
+            caption: "A running sum walking a ranked list",
+            note: "Gene-set enrichment analysis walks a ranked gene list, stepping up at set members and down otherwise; the peak deviation is the score.",
+            topics: ["genomics", "bioinformatics", "statistics"],
+            also: ["GSEA", "enrichment score", "ranked list", "gene set"]),
+        "Bootstrap resampling": SpecimenNote(
+            caption: "Redrawing a sample with replacement",
+            note: "The bootstrap redraws a sample with replacement many times; the spread of the statistic across resamples estimates its uncertainty.",
+            topics: ["statistics", "data", "math"],
+            also: ["confidence interval", "with replacement", "resampling", "Efron"]),
         "Transit": SpecimenNote(
             caption: "A planet dimming its star",
             note: "In the transit method, a planet crossing its star briefly dims the starlight, revealing the planet's size and orbit.",
