@@ -163,3 +163,14 @@ struct LatestTests {
         #expect(!ActivityMenu.shared.make().items.isEmpty)
     }
 }
+
+/// The fallback read: quick only while something works and nothing reports
+/// the daemon's writes; with the watcher up, a slow safety net.
+struct FallbackTimerTests {
+    @Test func theTimerIsQuickOnlyWhileSomethingWorksWithoutTheWatcher() {
+        #expect(LabModel.fallbackInterval(busy: true, watching: false) == .seconds(3))
+        #expect(LabModel.fallbackInterval(busy: false, watching: false) == .seconds(30))
+        #expect(LabModel.fallbackInterval(busy: true, watching: true) == .seconds(30))
+        #expect(LabModel.fallbackInterval(busy: false, watching: true) == .seconds(30))
+    }
+}

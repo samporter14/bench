@@ -531,18 +531,27 @@ final class LabModel: ObservableObject {
         log.info("Watching the Science database")
     }
 
-    /// The timer only backs up the watcher: quick while something works, so
-    /// the clock and states stay true even if a write is missed, and slow when
-    /// idle. Nothing else runs while nothing happens.
+    /// The timer only backs up the watcher. Nothing else runs while nothing
+    /// happens.
     private func scheduleFallback() {
         let busy = !working.isEmpty || !waiting.isEmpty
-        let wait: Duration = busy ? .seconds(3) : .seconds(30)
+        let wait = Self.fallbackInterval(busy: busy, watching: watcher?.isWatching == true)
         fallback?.cancel()
         fallback = Task { [weak self] in
-            try? await Task.sleep(for: wait, tolerance: busy ? .milliseconds(500) : .seconds(5))
+            try? await Task.sleep(for: wait, tolerance: wait < .seconds(30) ? .milliseconds(500) : .seconds(5))
             guard !Task.isCancelled else { return }
             self?.read()
         }
+    }
+
+    /// How long the fallback timer waits. While the watcher has the write-ahead
+    /// log open, every write is reported within a second, so the timer only
+    /// covers what no write tells: a daemon that stopped without a word,
+    /// another org's database taking over. Without the watcher (no database
+    /// yet, the log gone), it is quick while something works, so the states
+    /// stay true, and slow when idle.
+    nonisolated static func fallbackInterval(busy: Bool, watching: Bool) -> Duration {
+        busy && !watching ? .seconds(3) : .seconds(30)
     }
 
     // MARK: Turning a snapshot into state and cards
