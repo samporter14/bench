@@ -252,6 +252,8 @@ final class LabModel: ObservableObject {
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
     private var watcher: DatabaseWatcher?
     private var watched: URL?
+    /// The daemon's process, watched for its exit (ProcessExitWatcher.swift).
+    private var daemonExit: ProcessExitWatcher?
     private var fallback: Task<Void, Never>?
     private var expiries: [LabCard.ID: Task<Void, Never>] = [:]
     /// Needs-input cards put off with Later, by session id. Kept apart from
@@ -311,6 +313,8 @@ final class LabModel: ObservableObject {
         watcher?.stop()
         watcher = nil
         watched = nil
+        daemonExit?.stop()
+        daemonExit = nil
         fallback?.cancel()
         fallback = nil
         expiries.values.forEach { $0.cancel() }
@@ -524,6 +528,7 @@ final class LabModel: ObservableObject {
     private func apply(_ readout: Readout) {
         reading = false
         watch(readout.database)
+        watchDaemon(ScienceDaemonProcess.current)
         let snapshot = readout.snapshot
         // A read that failed outright says nothing about the sessions: keep
         // what was known, as the engine does. The exception is a daemon that
@@ -566,6 +571,19 @@ final class LabModel: ObservableObject {
             }
         }
         log.info("Watching the Science database")
+    }
+
+    /// Hears the daemon's exit the moment it happens, and reads: the read finds
+    /// its process gone and says Claude Science isn't running. A new process
+    /// (a restart, as the next status says) is watched in its place.
+    private func watchDaemon(_ pid: Int32?) {
+        guard started, let pid, pid != daemonExit?.pid else { return }
+        daemonExit?.stop()
+        let epoch = generation
+        daemonExit = ProcessExitWatcher(pid: pid) { [weak self] in
+            guard let self, self.generation == epoch else { return }
+            self.readSoon()
+        }
     }
 
     /// The timer only backs up the watcher. Nothing else runs while nothing

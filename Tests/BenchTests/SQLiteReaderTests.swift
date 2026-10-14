@@ -355,3 +355,77 @@ struct SessionsPollTests {
         #expect(try fetchRecentFrames(db: db.url, limit: 2).map(\.id) == [madeUpID(1), madeUpID(6)])
     }
 }
+
+// MARK: Letting go, and hearing the daemon go
+
+@Suite(.serialized)
+struct LettingGoTests {
+    @Test func theConnectionIsLetGoWhenNoReadComes() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bench-idle-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let db = dir.appendingPathComponent("made-up.db")
+        try tinyDatabase("one", at: db)
+        let reader = SQLiteReader(idleClose: 0.3)
+        // Reads that keep coming keep it.
+        for _ in 0..<4 {
+            #expect(try reader.rows(db: db, sql: "SELECT v FROM t;") == [["one"]])
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(reader.openCount == 1)
+        // A pause longer than the idle time lets it go; the next read opens it again.
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(try reader.rows(db: db, sql: "SELECT v FROM t;") == [["one"]])
+        #expect(reader.openCount == 2)
+    }
+}
+
+@MainActor
+struct ProcessExitWatcherTests {
+    private func until(_ condition: () -> Bool) async throws {
+        for _ in 0..<300 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    @Test func anExitIsHeardOnce() async throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        child.arguments = ["30"]
+        try child.run()
+        var heard = 0
+        let watcher = ProcessExitWatcher(pid: child.processIdentifier) { heard += 1 }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(heard == 0)
+        child.terminate()
+        try await until { heard > 0 }
+        #expect(heard == 1)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(heard == 1)
+        _ = watcher
+    }
+
+    @Test func aProcessAlreadyGoneIsHeardAtOnce() async throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try child.run()
+        child.waitUntilExit()
+        var heard = 0
+        let watcher = ProcessExitWatcher(pid: child.processIdentifier) { heard += 1 }
+        try await until { heard > 0 }
+        #expect(heard == 1)
+        _ = watcher
+    }
+
+    @Test func aStoppedWatcherHearsNothing() async throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        child.arguments = ["30"]
+        try child.run()
+        var heard = 0
+        let watcher = ProcessExitWatcher(pid: child.processIdentifier) { heard += 1 }
+        watcher.stop()
+        child.terminate()
+        child.waitUntilExit()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(heard == 0)
+    }
+}

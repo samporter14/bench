@@ -2,8 +2,8 @@
 // ScienceStatus — DroppyKit-free core. No DroppyKit import in this file.
 //
 // Reads the daemon's SQLite database through the system SQLite library, on
-// one read-only connection kept open between reads (`SQLiteReader`; until
-// Bench 0.5.0 every query ran `/usr/bin/sqlite3` afresh). Metadata only: ids,
+// one read-only connection kept open while reads keep coming (`SQLiteReader`;
+// until Bench 0.5.0 every query ran `/usr/bin/sqlite3` afresh). Metadata only: ids,
 // names, statuses, timestamps. Never input_data / output_data / task_summary /
 // payload bodies; the one look at an output is a count of its pending input
 // requests and the first one's kind, taken inside SQLite (see
@@ -83,11 +83,16 @@ func runReadOnlyQuery(db: URL, sql: String, arguments: [SQLArgument] = [], timeo
     try SQLiteReader.shared.rows(db: db, sql: sql, arguments: arguments, timeout: timeout)
 }
 
-/// Claude Science's database, read through one connection that stays open,
-/// with the system SQLite library. Until Bench 0.5.0 every query started
-/// `/usr/bin/sqlite3` (5–10 ms a spawn, about once a second while a session
-/// works).
+/// Claude Science's database, read through one connection with the system
+/// SQLite library, kept open while reads keep coming and let go after 10 s
+/// without one. Until Bench 0.5.0 every query started `/usr/bin/sqlite3`
+/// (5–10 ms a spawn, about once a second while a session works).
 ///
+/// - Let go when idle because an open connection, read-only or not, keeps
+///   the daemon's own close from being the last: it then leaves its
+///   write-ahead log in place, and `DatabaseWatcher` doesn't see the log go
+///   when Claude Science quits. (A quit while a session works, with the
+///   connection open, is seen through the daemon's process: `LabModel`.)
 /// - Read-only twice over: `SQLITE_OPEN_READONLY` and a `file:…?mode=ro`
 ///   URI. A write fails with SQLITE_READONLY.
 /// - Every statement runs on one serial queue, so the connection needs no
@@ -114,12 +119,17 @@ final class SQLiteReader: @unchecked Sendable {
     static var libraryVersion: String { String(cString: sqlite3_libversion()) }
 
     private let queue = DispatchQueue(label: "local.sam.bench.sqlite", qos: .utility)
+    /// How long the connection stays open after a read.
+    private let idleClose: TimeInterval
     // Touched only on `queue`.
     private var connection: Connection?
     private var opens = 0
+    private var letGo: DispatchWorkItem?
 
     /// Tests make their own; the app uses `shared`.
-    init() {}
+    init(idleClose: TimeInterval = 10) {
+        self.idleClose = idleClose
+    }
 
     /// How many connections have been opened: for tests.
     var openCount: Int { queue.sync { opens } }
@@ -127,7 +137,18 @@ final class SQLiteReader: @unchecked Sendable {
     /// The rows of one read; see `runReadOnlyQuery`.
     func rows(db: URL, sql: String, arguments: [SQLArgument] = [], timeout: TimeInterval = 8) throws -> [[String]] {
         dispatchPrecondition(condition: .notOnQueue(queue))
-        return try queue.sync { try read(path: db.path, sql: sql, arguments: arguments, timeout: timeout) }
+        return try queue.sync {
+            defer { letGoLater() }
+            return try read(path: db.path, sql: sql, arguments: arguments, timeout: timeout)
+        }
+    }
+
+    /// After `idleClose` without another read, the connection goes. On the queue.
+    private func letGoLater() {
+        letGo?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.connection = nil }
+        letGo = item
+        queue.asyncAfter(deadline: .now() + idleClose, execute: item)
     }
 
     /// Lets the connection go; the next read opens it again.
