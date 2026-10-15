@@ -35,9 +35,9 @@ struct RemoteIconTests {
         // No alpha channel in the file itself: PNG colour type 2 (RGB), not 6 (RGBA).
         #expect(png[25] == 2)
         #expect([.none, .noneSkipFirst, .noneSkipLast].contains(image.alphaInfo))
-        // Full-bleed: all four corners are the Fig fill, fully opaque.
+        // Full-bleed: all four corners are the Clay fill, fully opaque.
         for (x, y) in [(0, 0), (size - 1, 0), (0, size - 1), (size - 1, size - 1)] {
-            #expect(pixel(image, x, y) == [196, 102, 134, 255])
+            #expect(pixel(image, x, y) == [217, 119, 87, 255])
         }
     }
 

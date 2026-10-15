@@ -1,5 +1,5 @@
 // RemoteLive.swift — a working session's text as it is written (DESIGN.md,
-// Bench on your phone → Phase 4: Live text). `GET /api/sessions/<id>/live`
+// Capsid on your phone → Phase 4: Live text). `GET /api/sessions/<id>/live`
 // answers `{"working", "text", "activity"}`.
 //
 // As the session reader does, the page makes the GETs itself and hands Swift

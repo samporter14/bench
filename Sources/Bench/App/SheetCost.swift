@@ -1,4 +1,4 @@
-// SheetCost.swift — `Bench --measure-sheets 48,64,72,88` prints, for each
+// SheetCost.swift — `Capsid --measure-sheets 48,64,72,88` prints, for each
 // size, how long the dearest scenes take to draw one second of frames (what
 // PlayedGlyph renders ahead of playback), then exits. A development tool.
 import SwiftUI

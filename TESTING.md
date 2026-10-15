@@ -1,4 +1,6 @@
-# Bench — live test log
+# Capsid — live test log
+
+Capsid was called Bench until 0.6.0, so the entries before it say Bench.
 
 The checklist from DESIGN.md. ✅ is seen working live, ⏳ is not tried yet
 (listed with why), and ❌ is broken.
@@ -320,6 +322,72 @@ yet checked live: a real failed session, and a real notification close.
 - Each Dock menu request logs its item count (`/usr/bin/log show --predicate
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
+
+## 2026-10-15, Capsid 0.6.0 (Bench is renamed Capsid)
+
+Bench is now Capsid (DESIGN.md, Naming). Every name a person reads changed,
+and so did the binary and the app bundle. The bundle id, the data folder, the
+phone's cookie, header, routes and storage keys, the code's own names, the
+GitHub repository, `install.sh`'s address and the release file `Bench.zip`
+kept the old name, so settings, paired phones and the update from Bench carry
+over.
+
+- `Package.swift` gains a product, `Capsid`, built from the unchanged `Bench`
+  target, and `Scripts/build-app.sh` builds it into `build/Capsid.app`.
+  Info.plist: CFBundleName, CFBundleDisplayName and CFBundleExecutable are
+  Capsid; version 0.6.0 (32).
+- The menus, window titles, Settings, the welcome, alerts, the update card and
+  sentences, notifications, accessibility labels, help text, the diagnostics
+  report, the demo's output and the phone app (its title, Home Screen name and
+  every sentence) say Capsid. `RemoteWebApp.swift` was regenerated.
+- `install.sh` installs /Applications/Capsid.app. It quits a running Bench or
+  Capsid there, and removes /Applications/Bench.app once Capsid is in place.
+  A zip that still holds Bench.app (every release before 0.6.0) installs as
+  before. `UpdateRules.installDirectory` is /Applications/Capsid.app, and the
+  update check's User-Agent is `Capsid/<version>`.
+- A new icon, in Solanum's one-colour colourway (DESIGN.md, Resources):
+  - **Design:** a Clay tile with, in Slate, the Solanum ring and escaped dot,
+    kept pixel for pixel from Bench's glyph, round an icosahedral capsid.
+  - **Phone:** its Home Screen icon is drawn from the same glyph on the same
+    Clay (`RemoteIcon.clay`).
+  - **README:** `docs/icon.png` is the new icon.
+  - **Previewed** at 512, 128, 64 and 32 px; the capsid stays readable at
+    32.
+
+Automated, with made-up fixtures only:
+
+- ✅ `swift build`, and `swift build --product Capsid`, whose binary is named
+  Capsid.
+- ✅ `swift test`: 1,094 tests in 145 suites, all passing, `LettingGoTests`'
+  timing test included. Expected strings that mirror renamed ones were
+  updated: the update card, the install sentence, the User-Agent and the
+  `canInstall` paths (`UpdateCheckTests`); "Actions are off in Capsid's
+  Settings", "Capsid can't read this session" and "The code has characters
+  Capsid can't show safely" (`RemoteActionsTests`, `RemotePermissionsTests`,
+  `RemotePermissionsFlowTests`, `RemotePhotosFlowTests`, `RemotePhase2Tests`,
+  and the served session in `PhonePauseTests`); and Settings → Phone's
+  sentences when the switch can't serve (`PhoneSetupTests`).
+- ✅ `node --check RemoteWeb/app.js` and `RemoteWeb/sw.js`.
+  `Scripts/embed-remote-web.py` regenerated `RemoteWebApp.swift`, with its own
+  node check of the stripped JS, and `--check` passes.
+- ✅ `Scripts/build-app.sh`: `build/Capsid.app` has CFBundleName Capsid, the
+  executable `Contents/MacOS/Capsid`, bundle id `local.sam.bench`, 0.6.0 (32),
+  and is signed with Solanum Code Signing; `codesign --verify --strict`
+  passes.
+- ✅ `zsh -n install.sh`, and its process match run on made-up `ps` lines: only
+  /Applications/Bench.app/Contents/MacOS/Bench and
+  /Applications/Capsid.app/Contents/MacOS/Capsid are picked, never a copy
+  elsewhere. The script itself wasn't run.
+
+Not checked live (nothing was installed or launched):
+
+- a Bench 0.5.3 in /Applications updating to a 0.6.0 release. That needs the
+  new `install.sh` on `main` first, then the release, with a `Bench.zip` whose
+  top level is Capsid.app;
+- macOS keeping its permissions (microphone, notifications) across the
+  rename, and a Dock icon pinned to Bench.app;
+- a phone paired as Bench after the update: still paired, its Home Screen icon
+  still named Bench.
 
 ## 2026-10-15, Bench 0.5.3 (the usage pause, per session; review fixes)
 

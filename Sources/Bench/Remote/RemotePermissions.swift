@@ -1,5 +1,5 @@
 // RemotePermissions.swift — answering a session's permission requests from the
-// phone (DESIGN.md, Bench on your phone → Phase 4: Permission requests).
+// phone (DESIGN.md, Capsid on your phone → Phase 4: Permission requests).
 //
 // Three parts, as the rest of the phone's reading and writing is built:
 //
@@ -629,17 +629,17 @@ enum RemotePermission {
     enum Why {
         static let lasting = "Allowing this from your phone would give lasting access. Open it on your Mac."
         static let onMac = "This one has to be answered on your Mac."
-        static let unknown = "Bench doesn't know this kind of request. Open it on your Mac."
-        static let unreadable = "Bench can't read this request well enough. Open it on your Mac."
-        static let language = "Bench only offers Python, R, Bash and PowerShell code from your phone. Open it on your Mac."
+        static let unknown = "Capsid doesn't know this kind of request. Open it on your Mac."
+        static let unreadable = "Capsid can't read this request well enough. Open it on your Mac."
+        static let language = "Capsid only offers Python, R, Bash and PowerShell code from your phone. Open it on your Mac."
         static let shared = "This code would run in a shared environment. Open it on your Mac."
         static let codeLong = "The code is too long to read on your phone. Open it on your Mac."
-        static let codeOdd = "The code has characters Bench can't show safely. Open it on your Mac."
+        static let codeOdd = "The code has characters Capsid can't show safely. Open it on your Mac."
         static let codeLines = "Too long to read on your phone. Open it on your Mac."
         static let toolIdShared = "This needs more than one approval. Open it on your Mac."
         /// A helper's question: shown so the phone says what waits, never answered from it.
         static let helperAsked = "A helper agent asked a question. Answer it on your Mac."
-        static let noCode = "Bench can't see the code to run. Open it on your Mac."
+        static let noCode = "Capsid can't see the code to run. Open it on your Mac."
         static let notReadOnly = "This tool isn't marked as read-only. Open it on your Mac."
         static let source = "Allowing this from your phone would give lasting access. Open it on your Mac."
     }
@@ -716,7 +716,7 @@ enum RemotePermission {
     static func words(for request: PermissionRequest) -> (title: String, detail: String) {
         if request.isHelperAsk { return ("Has a question for you", "") } // the card says a helper asks, and `why` where to answer
         guard let kind = request.known, request.shape else {
-            return ("Wants your permission", "Bench can't show this request. Open it on your Mac.")
+            return ("Wants your permission", "Capsid can't show this request. Open it on your Mac.")
         }
         func some(_ text: String?, _ fallback: String) -> String { text ?? fallback }
         switch kind {

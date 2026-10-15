@@ -100,7 +100,7 @@ final class UsageModel: ObservableObject {
         case .databaseMissing?:
             "Can't find Claude Science's data on this Mac."
         case .unknownSchema?:
-            "Claude Science changed how it keeps its data, so Bench can't read your activity yet."
+            "Claude Science changed how it keeps its data, so Capsid can't read your activity yet."
         default:
             "Can't read your Claude Science activity right now."
         }

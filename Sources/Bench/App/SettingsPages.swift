@@ -2,7 +2,7 @@
 // (DESIGN.md, Settings): General (who Bench is, the theme, help), Panel (the
 // specimen and where it sits), Alerts (what reaches you when a session needs
 // you), Usage (heads-up about your plan), Specimens (what plays) and Phone
-// (Bench on your phone, Remote/PhoneSettings.swift). Each page is a grouped
+// (Capsid on your phone, Remote/PhoneSettings.swift). Each page is a grouped
 // form, as System Settings is.
 import SwiftUI
 
@@ -53,7 +53,7 @@ struct GeneralSettingsView: View {
                         .frame(width: 52, height: 52)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Bench")
+                        Text("Capsid")
                             .font(.title2.weight(.semibold))
                         Text("A Solanum product. Unofficial, and not affiliated with Anthropic.")
                             .foregroundStyle(.secondary)
@@ -71,7 +71,7 @@ struct GeneralSettingsView: View {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Can't see your sessions: \(problem.label)")
-                            Text("\(problem.hint) For details, open Help → Bench Diagnostics.")
+                            Text("\(problem.hint) For details, open Help → Capsid Diagnostics.")
                                 .foregroundStyle(.secondary)
                         }
                     } icon: {
@@ -99,7 +99,7 @@ struct GeneralSettingsView: View {
                     Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
                 } label: {
                     Text("If specimens or cards don't show up")
-                    Text("Checks each step Bench takes to see your sessions. Names no projects.")
+                    Text("Checks each step Capsid takes to see your sessions. Names no projects.")
                 }
             }
         }
@@ -165,7 +165,7 @@ struct PanelSettingsView: View {
                     screens = NSScreen.screens.map(\.localizedName)
                 }
                 Toggle(isOn: $panelWhileFront) {
-                    Text("Keep showing the panel while Bench is in front")
+                    Text("Keep showing the panel while Capsid is in front")
                     Text("Off, the panel waits until you switch to another app.")
                 }
             }
@@ -202,7 +202,7 @@ struct AlertSettingsView: View {
                 }
                 Toggle(isOn: $plansOnCard) {
                     Text("Show plans on the card, with Approve")
-                    Text("When a session asks you to approve its plan, the card shows the plan's summary and an Approve button. Bench checks it's still the same plan before approving; anything else opens the session.")
+                    Text("When a session asks you to approve its plan, the card shows the plan's summary and an Approve button. Capsid checks it's still the same plan before approving; anything else opens the session.")
                 }
                 .disabled(!showCards)
                 Toggle(isOn: $sound) {

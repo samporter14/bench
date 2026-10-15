@@ -1,6 +1,6 @@
-# Bench — design
+# Capsid — design
 
-Bench is a small native Mac app for Claude Science. It shows Claude Science's
+Capsid is a small native Mac app for Claude Science. It shows Claude Science's
 web UI in one native window, so there is never a Safari tab, and it plays the
 Science Status lab scenes in a floating Liquid Glass panel in the bottom-right
 corner while a session works. That panel is also where "needs your input"
@@ -19,7 +19,7 @@ third-party dependencies.
    its UI. The one exception is the notification bridge (below), which adds
    an API WebKit lacks.
 4. **One Claude Science document, ever.** Claude Science works in one tab at a
-   time. Bench holds exactly one web view on the daemon's address, created
+   time. Capsid holds exactly one web view on the daemon's address, created
    once and never recreated.
 
 ## Look
@@ -46,7 +46,7 @@ third-party dependencies.
   rotation and `PlayedLoop(glyph:tint:)` for a waiting reason. They draw in
   `.primary` ink with clay accents built in. The panel shows them at 88pt,
   about five times the Droppy pill. Measured cost is under 6 ms per second of
-  frames at 96pt (`Bench --measure-sheets 48,72,96`).
+  frames at 96pt (`Capsid --measure-sheets 48,72,96`).
 
 ## Where the glass goes
 
@@ -108,7 +108,7 @@ you", and the graph's steps. No other hues, no gradients.
   - The title is hidden, because the page has its own header.
 - The web view sits below the toolbar, not under it.
 - Closing the window hides it (the web view and its state survive). Clicking
-  the Dock icon brings it back. ⌘Q quits Bench but never stops the daemon.
+  the Dock icon brings it back. ⌘Q quits Capsid but never stops the daemon.
 - Menus:
   - File: Open Session… ⌘⇧O (Quick Open, below).
   - View: Reload ⌘R, Zoom In ⌘+, Zoom Out ⌘−, Actual Size ⌘0, Find ⌘F,
@@ -132,7 +132,7 @@ you", and the graph's steps. No other hues, no gradients.
 - The Dock badge is the number of sessions waiting for input, or no badge.
 - URL scheme `bench://open?url=<percent-encoded daemon URL>`, and
   `bench://session?project=<id>&frame=<id>`. Both show the window and
-  navigate the one web view. This is for the droplet to hand Open to Bench
+  navigate the one web view. This is for the droplet to hand Open to Capsid
   later.
 
 ## Daemon and sign-in (Web/DaemonController.swift)
@@ -147,7 +147,7 @@ you", and the graph's steps. No other hues, no gradients.
   refreshes the plan readout. With no button it falls back to the fresh code.
   At most once every ten minutes.
 - **SIGTERM quits like ⌘Q** (a DispatchSource in AppDelegate), so the web
-  view saves its session. The installer quits Bench with that signal.
+  view saves its session. The installer quits Capsid with that signal.
 
 - Run `claude-science status` (shared `fetchCLIStatus`) off the main thread.
   If the daemon isn't running, run `claude-science serve --no-browser
@@ -203,15 +203,15 @@ Every link goes through one function. The rules:
     sheet on the main window: "Couldn't download "name"" and the reason.
     Before 0.3.1 it was only logged.
 - **Calls to Claude Science's API** (Web/WebAPI.swift) are made from inside
-  the page with `callAsyncJavaScript`, in Bench's `.defaultClient` script
-  world, so the page's cookie session carries them and Bench never holds it:
+  the page with `callAsyncJavaScript`, in Capsid's `.defaultClient` script
+  world, so the page's cookie session carries them and Capsid never holds it:
   - `apiGET` reads, and only under `/api/usage`, (since 0.3.4, for a plan's
     card) `/api/artifacts/versions/`, and a frame exactly as
     `/api/frames/<36>?shallow=true` (the card) or
     `/api/frames/<id>/token-series` (the context ring); never a path with
     `..`, and never `/frames/<id>/messages` (since 0.4.0
     `WebContainer.isReadablePath`). A session's messages are read only by the
-    phone's session reader, which projects them in the page (Bench on your
+    phone's session reader, which projects them in the page (Capsid on your
     phone → Reading a session).
   - `apiPOST` is the **one write** (since 0.3.4). It accepts exactly one
     route, `^/frames/[0-9a-f-]{36}/approve-plan$` (`WebContainer.isWritablePath`),
@@ -223,7 +223,7 @@ Every link goes through one function. The rules:
     and the JSON `code` (and whether the body says "No plan awaiting"), never
     the body itself. A 401 calls `sessionLost()`, as `apiGET` does. See
     Approving a plan from its card. Since 0.4.0 the phone's writes go through
-    their own writer (Bench on your phone → Actions); `apiPOST` is unchanged.
+    their own writer (Capsid on your phone → Actions); `apiPOST` is unchanged.
 - `isInspectable = true` (internal build).
 - `isElementFullscreenEnabled = true`.
 - Find (⌘F): a small find bar under the toolbar that uses
@@ -389,7 +389,7 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     title (15pt semibold, 2 lines); a meta line with the project name, "·"
     and the turn clock `m:ss` (monospaced digits); and "+N more ⌄" when
     several work, a button (since 0.3.3) that pops up the Dock's activity
-    menu (`ActivityMenu`) under the pointer, without bringing Bench to the
+    menu (`ActivityMenu`) under the pointer, without bringing Capsid to the
     front.
   - Optionally, up to two more quiet lines (11pt, secondary) under the meta
     line: the specimen that's playing, its name in medium weight then its
@@ -439,7 +439,7 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     card for good (or hides the working panel until the next change).
 - **Sound.** When a needs-input card arrives, play `NSSound(named: "Glass")`
   (a setting, on by default).
-- **Open.** Activate Bench, show the window and navigate the web view to the
+- **Open.** Activate Capsid, show the window and navigate the web view to the
   session's `deepLink`, through the Router.
 
 ### Lab status capsule (toolbar)
@@ -484,8 +484,8 @@ start) it lists **Latest**, the five sessions active most recently that
 neither work nor wait, from the last read. The popover lists Latest the same
 way since 0.3.1.
 
-Recent is kept in memory only, so Bench still writes nothing about sessions to
-disk; it lasts until Bench quits. An event is the kind, the session and its
+Recent is kept in memory only, so Capsid still writes nothing about sessions to
+disk; it lasts until Capsid quits. An event is the kind, the session and its
 turn (`startedAt`), so one turn's finish is one entry however often it is
 read. Dismissing a card leaves its event in Recent.
 
@@ -514,7 +514,7 @@ if it is closed or hidden. It is off in a demo, which has no main window.
 - **Which sessions.** Those of the latest read (the ~25 most recently
   active), as `LabModel.sessions`. It holds every state, where `working`,
   `waiting` and `latest` split them up, and like Recent it is in memory
-  only: Bench still writes nothing about sessions to disk, and nothing typed
+  only: Capsid still writes nothing about sessions to disk, and nothing typed
   is kept.
 - **Ranking (`QuickOpen.rank`, pure).** With nothing typed: the sessions that
   need you, then those that work, then the rest, each by most recent
@@ -537,7 +537,7 @@ due is `NoticeRules`, pure and tested on made-up data.
 - **Plan:** one card per window when the 5-hour or the all-models weekly
   limit has 10% or less left ("9% of your 5-hour limit left · Resets in 47
   minutes"), keyed by the window's reset time to the minute; and "has reset"
-  only when Bench saw an announced window end in the last 10 minutes.
+  only when Capsid saw an announced window end in the last 10 minutes.
 - **Plan forecast:** one card per window, "At this pace your 5-hour limit
   runs out around 3:40 PM" (the weekly limit likewise), when the forecast
   (see Title-bar readouts) puts the limit under 45 minutes away and it is
@@ -551,14 +551,14 @@ due is `NoticeRules`, pure and tested on made-up data.
 - **While you focused:** see Nidus below.
 
 What has been announced (plan windows, context sessions, the reviewed week)
-is kept in Bench's settings so an update doesn't repeat it; demos keep
+is kept in Capsid's settings so an update doesn't repeat it; demos keep
 nothing. Settings → Usage → Heads-up turns each off.
 
 ### Nidus (Lab/NidusFocus.swift, since 0.3.0)
 
 Nidus, the Solanum focus app, writes `~/Library/Application Support/Nidus/
 focus.json` (`version`, `focusing`, `until`; never its goal) and posts
-`local.sam.nidus.focus` on this Mac when that changes. Bench counts a focus
+`local.sam.nidus.focus` on this Mac when that changes. Capsid counts a focus
 session as on only while the file says so, Nidus is running and `until`
 hasn't passed, so a file a crash left behind means nothing. While it is on,
 "Finished" cards wait (they still go to Recent, and Claude Science's own
@@ -570,7 +570,7 @@ their sessions still wait.
 - **Locked or asleep (since 0.3.6):** Nidus pauses a session's clock while the
   Mac is locked or asleep but keeps blocking, and from Nidus 0.3.1 says so with
   `"away": true` in `focus.json` (`focusing` is false then, with no `until`).
-  Bench treats `away` as still focusing, so held finishes and after-focus
+  Capsid treats `away` as still focusing, so held finishes and after-focus
   reminders don't come out behind the lock screen. An older Nidus leaves the
   key out, and its pause ends the hold as before.
 
@@ -579,7 +579,7 @@ their sessions still wait.
 Off by default. While a session works, the specimen plays in the menu bar;
 while any waits, the waiting glyph and a count. Clicking it opens the
 activity list in a popover. Its ink follows the menu bar's appearance (the
-wallpaper's), not Bench's Ivory or Slate. Hidden, not removed, while nothing
+wallpaper's), not Capsid's Ivory or Slate. Hidden, not removed, while nothing
 works, so it keeps its place. Measured at about 0–2% CPU while playing.
 
 ### Mac notifications (since 0.3.3)
@@ -605,19 +605,19 @@ needs you" (`MacNotificationsSection`, in Lab/MacNotifications.swift):
   nothing of the session's or project's in any field.
 - Both switches are disabled while the first is off.
 - **Permission**, read from `UNUserNotificationCenter` when the section
-  appears and whenever Bench becomes active, so a change made in System
+  appears and whenever Capsid becomes active, so a change made in System
   Settings shows without reopening: "Allowed"; "Not allowed: turned off in
   System Settings", with **Open Notification Settings…**
   (`x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=local.sam.bench`);
   "macOS will ask when you turn this on", or "Waiting for your answer to
   macOS's question" if it is on and macOS hasn't been answered.
 - **Send a Test Notification**, enabled only when notifications are on and
-  allowed. Made-up words ("This is how Bench tells you a session needs
-  you."), nothing of the user's. It banners even with Bench in front, which
+  allowed. Made-up words ("This is how Capsid tells you a session needs
+  you."), nothing of the user's. It banners even with Capsid in front, which
   it always is when sent from Settings.
 - A footer says it all again in one place: names are shown unless turned
   off, and notifications stop by switching the first one off or by turning
-  Bench off in System Settings → Notifications.
+  Capsid off in System Settings → Notifications.
 
 **What goes out.** `NotificationRules.content(for:settings:)` is pure and
 decides everything: nothing unless the setting is on and macOS allows it.
@@ -642,7 +642,7 @@ The poster, `MacNotifications`, is thin and tests never use it.
   session when there is one, else the window. No other notice is sent.
 - **Never with Approve.** A notification only opens its session; approving
   a plan is on the panel's card alone (Approving a plan from its card).
-- **Sound.** Bench's own "Play a sound" on: the notification is silent, as
+- **Sound.** Capsid's own "Play a sound" on: the notification is silent, as
   the panel chimes. Off: the default sound.
 - **Identifier.** The card's id, so a question that becomes a plan to
   approve replaces its notification (and is sent again) rather than
@@ -655,18 +655,18 @@ The poster, `MacNotifications`, is thin and tests never use it.
   out (a finish after 6 s) leaves its notification where it is, so it is
   there to see later; opening it or clearing it in Notification Center
   removes it.
-- **Clicking** one activates Bench and opens that session by id
+- **Clicking** one activates Capsid and opens that session by id
   (`LabModel.open(sessionID:)`: its card, the lists or Recent, else the
   deep link kept in the notification, else just the window). A notification
-  from before a relaunch still opens its session. Bench is the
+  from before a relaunch still opens its session. Capsid is the
   `UNUserNotificationCenterDelegate` from launch for this.
-- **With Bench in front** (`willPresent`) a notification goes to the list
+- **With Capsid in front** (`willPresent`) a notification goes to the list
   only: no banner and no sound, since the user is already here.
 - **Safety.** `UNUserNotificationCenter.current()` crashes outside an app
   bundle, so it is touched only when the bundle identifier is
   `local.sam.bench` and no demo is running. `LabModel`'s two hooks do
   nothing until `MacNotifications.start()` sets them at launch.
-- **What stays on the Mac.** Bench saves nothing about sessions, but
+- **What stays on the Mac.** Capsid saves nothing about sessions, but
   macOS keeps a delivered notification in Notification Center until it is
   cleared. That is what "Show session and project names" is for; turning
   names, or notifications, off clears the ones already delivered (since
@@ -679,9 +679,9 @@ The poster, `MacNotifications`, is thin and tests never use it.
 
 ### Approving a plan from its card (since 0.3.4)
 
-Bench's first write to Claude Science (Lab/PlanApproval.swift).
+Capsid's first write to Claude Science (Lab/PlanApproval.swift).
 Until 0.3.4 it only read. (Since 0.4.0 a paired device can also approve,
-answer and send a message: Bench on your phone → Actions.) Plan approval only; every other kind of waiting
+answer and send a message: Capsid on your phone → Actions.) Plan approval only; every other kind of waiting
 keeps Open and Later.
 
 **The flow.** `PlanApprover` follows `LabModel.cards`:
@@ -696,7 +696,7 @@ keeps Open and Later.
 3. **Approve** goes to "approving" at once and shows a spinner, so a second
    press finds nothing to do and nothing is posted twice. `LabModel` holds
    the card up from here, even once the session runs on.
-4. Bench reads the root frame again, and posts only if it still waits for
+4. Capsid reads the root frame again, and posts only if it still waits for
    the very plan shown.
 5. Approved: "Approved ✓" for about 1.5 s, then the card goes through
    `LabModel`, as Open would take it (its reminder too), without opening the
@@ -724,7 +724,7 @@ that comes back reads its plan afresh.
   still not approved, the same version id, and the same artifact id when
   both are known. Otherwise `.changed`, and nothing is posted. The approve
   call carries no version, and the server approves whatever plan is pending,
-  so this check is Bench's to make, immediately before the POST. The window
+  so this check is Capsid's to make, immediately before the POST. The window
   left between the check and the POST is small: a new plan only appears
   after the frame passes through `processing`.
 - **The answer:** 200 with JSON `status: "accepted"`, or 400
@@ -778,7 +778,7 @@ label reads "feasibility" rather than "Claude's feasibility estimate"
 because the longer wording is wider than the text column (226 pt at any
 size of the scene well); the tooltip says whose estimate it is.
 
-**Privacy.** This widens Bench's "never read content" rule by exactly the
+**Privacy.** This widens Capsid's "never read content" rule by exactly the
 plan's summary, its step count, its steps' titles and its confidence word,
 for the card. Only those fields are picked from the responses (the frame's
 `name`, `task_summary` and `input_data` are not, nor a step's description),
@@ -802,7 +802,7 @@ sub-agent waiting, a changed plan: each leaves the card as it was before
 on the card, with Approve** (`showPlansOnCard`), on by default. Off, a plan's
 card is Open and Later, and no plan is read.
 
-**Demo.** `Bench --demo plan`: a made-up session whose made-up plan is
+**Demo.** `Capsid --demo plan`: a made-up session whose made-up plan is
 ready ("Screen 24 buffer conditions", "10 steps · feasibility: high", with
 10 made-up step titles, so the list shows "and 2 more…", one of them long
 enough to be cut). Its Approve shows the Approved state and calls nothing.
@@ -951,9 +951,9 @@ When a plan limit runs out mid-turn, Claude Science keeps the session
 working indicator. It learns this only over its own page's socket
 (`frame_activity` with phase `usage_limit_paused`, `since`, `resets_at` and
 `pause_source`; the last one per session replays when the socket connects).
-There is no HTTP route for it, and Bench opens no socket: the socket carries
-every session's text and thinking (Bench on your phone, Phase 4, Live text), so
-using it would be a new integration, not a reuse. Bench infers the pause, one
+There is no HTTP route for it, and Capsid opens no socket: the socket carries
+every session's text and thinking (Capsid on your phone, Phase 4, Live text), so
+using it would be a new integration, not a reuse. Capsid infers the pause, one
 running session at a time, from what it already reads:
 
 - **Quiet**: the session's whole tree, sub-agents included, has written nothing
@@ -969,14 +969,14 @@ running session at a time, from what it already reads:
   `PlanUsageModel.limitReached`; with several, the one that resets last).
   Claude Science's page, once it shows a pause, takes it as over when a read
   (75 s or more after) shows none of `five_hour`, `seven_day` and
-  `seven_day_oauth_apps` used up; Bench doesn't read the last. The Opus and
-  Sonnet weeks hold only sessions on that model, and Bench
+  `seven_day_oauth_apps` used up; Capsid doesn't read the last. The Opus and
+  Sonnet weeks hold only sessions on that model, and Capsid
   can't tell a session's model (it is chosen per message, in the request body,
-  which Bench never reads), so a used-up model week pauses no session in Bench:
+  which Capsid never reads), so a used-up model week pauses no session in Capsid:
   such a session shows as working.
 - **Evidence**: the read that says so was taken after the session's last write,
   and is no more than 150 s old. While a session is quiet and a holding limit
-  is at 85 % or more (or unknown), or while anything is held, Bench reads the
+  is at 85 % or more (or unknown), or while anything is held, Capsid reads the
   plan again, bypassing Claude Science's cache, at once if the last try is
   older than the session's last write, else at most once a minute. After two
   failed reads in a row it stops saying paused rather than go on from a read
@@ -995,7 +995,7 @@ running session at a time, from what it already reads:
   a time it can read, "Resumes when your limit resets". `sentence` is the Mac's,
   in the Mac's zone, kept for a phone app from before 0.5.3.
 - **Over**: a session's next write anywhere in its tree ends its pause; the limit
-  starting over ends them all at once (Bench looks again just after `until`),
+  starting over ends them all at once (Capsid looks again just after `until`),
   as does a read saying there is room, extra usage switched on included, once
   taken 75 s or more after the pause began (the page waits as long before it
   believes one).
@@ -1011,8 +1011,8 @@ running session at a time, from what it already reads:
 Like Claude Code's desktop context indicator. Both read Claude Science's own
 API through `WebContainer.apiGET` (Web/WebAPI.swift): a GET made inside the
 page, in an isolated script world, so the page's cookie session carries it
-and Bench never holds the session. Only the listed read paths are allowed;
-the one write Bench makes is a plan's Approve (Web routing policy, and
+and Capsid never holds the session. Only the listed read paths are allowed;
+the one write Capsid makes is a plan's Approve (Web routing policy, and
 Approving a plan from its card).
 
 **Context ring (toolbar).**
@@ -1041,7 +1041,7 @@ Approving a plan from its card).
 - Source: `GET /api/usage` (`?fresh=1` on a manual refresh). It returns
   `five_hour`, `seven_day`, `seven_day_opus` and `seven_day_sonnet`, each
   `{ utilization (percent used), resets_at }`, plus `extra_usage`.
-- Read it at launch, every 5 min while Bench is running, after each finished
+- Read it at launch, every 5 min while Capsid is running, after each finished
   turn, just after a limit resets, and when the popover opens (if over 60 s
   old).
 - Label: a 22×5 pt clay meter (what's left, draining like a battery), then
@@ -1107,7 +1107,7 @@ Settings was drawn in Solanum (https://claude.ai/artifact/BjQZQTY4NYmLcz39pHWmQE
 0.1.12: ivory and slate grounds, mono overlines, hairline cards, a serif heading. Sam then asked for the
 menus and Settings to look like the Mac's own, even where that bends the brand, so since 0.1.13:
 
-- General is a grouped `Form`, as System Settings is: Bench's icon, name, version and the "Unofficial,
+- General is a grouped `Form`, as System Settings is: Capsid's icon, name, version and the "Unofficial,
   and not affiliated with Anthropic" line at the top, native switches, a segmented Theme picker, and
   Diagnostics as a plain button. Its frame is fixed (600 × 640): a grouped form has no height of its
   own, and the Settings window sizes to each tab.
@@ -1126,27 +1126,64 @@ specimens' badges and the flask in the toolbar), and in the theme names Match Ma
 
 The animations are called **specimens** everywhere a user reads them (the Specimens tab, "Choose specimens…", the Specimens toolbar button). The code keeps its `Scene` names (LabScene, SceneSettings, the droplet's files).
 
+**Capsid, once Bench (0.6.0).** The app was called Bench until 0.6.0, when it
+was renamed Capsid. Solanum's brand is a spooky fictional bio-lab: a capsid is
+the protein shell a virus lives in, and Capsid is the shell Claude Science
+lives in on the Mac. Every name a person reads says Capsid: the app, its menus
+and windows, the binary and `/Applications/Capsid.app`, Settings, the welcome,
+alerts and notifications, the phone app ("Capsid on your phone", its title and
+Home Screen name) and the docs. What deliberately kept the old name:
+
+- **The bundle id `local.sam.bench`**, and with it the UserDefaults domain,
+  every `Logger` subsystem and the URL type's `CFBundleURLName`. A new id
+  would make macOS treat Capsid as another app: every setting, permission and
+  notification choice would be lost.
+- **The `bench://` URL scheme**, which other apps (the droplet, later) use to
+  hand a session to the app (Main window).
+- **`~/Library/Application Support/Bench`**, which holds the paired devices and
+  the push keys. Moving it would unpair every phone.
+- **The phone's wire names**: the `bench_device` cookie, the `X-Bench: 1`
+  header, the API routes and their `bench` version field, and the page's
+  storage keys (`bench-badge`, `bench-photo-note`). The service worker caches
+  nothing, so it has no cache names. A device paired as Bench stays paired.
+  Its Home Screen icon keeps the name Bench, since iOS names it when it is
+  added.
+- **`BenchMain`**, the main window's frame name: the welcome's existing-user
+  check (`WelcomeGate`) looks for its saved frame.
+- **The code's own names**: the package, the `Bench` target and module
+  (`@testable import Bench`), `BenchTests`, `Sources/Bench` and its folders,
+  files and types (`BenchApp`, `BenchVersion`, `BenchShapes`…). Only the
+  product is named Capsid, so the binary and the bundle are. Comments in the
+  code still call the app Bench, and so do the `OSLog` messages.
+- **What an installed Bench updates through**: the GitHub repository
+  `samporter14/bench`, the raw `install.sh` address the install line names,
+  the release file `Bench.zip`, and the script's `BENCH_INSTALL_DIR` switch,
+  which Bench's updater clears (Update check, "From Bench to Capsid").
+- **`Sources/Bench/Shared`** (the droplet's copies) and
+  **`Resources/AppIcon.icon`** with its `bench-glyph.png`: the icon is being
+  redesigned separately.
+
 ## Update check (App/UpdateCheck.swift, App/UpdatePrompts.swift, since 0.3.6)
 
-Bench can ask GitHub whether a newer Bench is out, and install it. **Off by
-default**: it is the one request Bench makes beyond this Mac that no click
+Capsid can ask GitHub whether a newer Capsid is out, and install it. **Off by
+default**: it is the one request Capsid makes beyond this Mac that no click
 asked for, so it needs the switch (Settings → General → Updates → **Check for
 updates once a day**, `checkForUpdates`), which the welcome window can also
-turn on. README's promise reads: Bench talks to nothing beyond your Mac
+turn on. README's promise reads: Capsid talks to nothing beyond your Mac
 except links you click, a once-a-day update check if you turn it on, and, if
-you turn on Bench on your phone, your own paired devices over your Tailscale
+you turn on Capsid on your phone, your own paired devices over your Tailscale
 network, with notifications, if you turn them on, carried by Apple's push
 service and encrypted so only your device can read them.
 
 **What is sent.** One `GET https://api.github.com/repos/samporter14/bench/releases/latest`
 through an ephemeral `URLSession` (no cookies, no cache, no credentials,
 `httpShouldHandleCookies` off), with exactly three headers: `Accept:
-application/vnd.github+json`, `User-Agent: Bench/<version>` and a fixed
+application/vnd.github+json`, `User-Agent: Capsid/<version>` and a fixed
 `Accept-Language: en`, so the system's language preferences aren't sent. No
 identifier, no account, nothing about sessions, projects or the machine.
 GitHub does see the connection's IP address, as any site does. It is
 `UpdateRules.request`, and a test pins the headers. It is the only
-`URLSession` in Bench.
+`URLSession` in Capsid.
 
 **What is read.** `tag_name`, `html_url` and whether `assets` has a
 `Bench.zip`; `draft` and `prerelease`. Nothing else is decoded.
@@ -1180,7 +1217,7 @@ GitHub does see the connection's IP address, as any site does. It is
   Turning it on (here or in the welcome window) is noticed through
   `UserDefaults.didChangeNotification` and starts the schedule, with a first
   look after 3 seconds; turning it off cancels it.
-- When asked: **Check Now** in Settings and **Bench → Check for Updates…**
+- When asked: **Check Now** in Settings and **Capsid → Check for Updates…**
   (after About) ask at once, switch or not. A check already under way answers
   for both, so there is never a second request. Neither works in a demo
   (the menu item and the button are dimmed).
@@ -1194,8 +1231,8 @@ shows an update seen last time while it is still newer than the running one,
 and "up to date" after a check that found none, without asking.
 
 **When there is a newer one.**
-- *Card, once per version* (`UpdateRules.shouldAnnounce`): "Bench 0.3.6 is
-  available", "Choose Bench → Check for Updates… to install it". Only from an
+- *Card, once per version* (`UpdateRules.shouldAnnounce`): "Capsid 0.3.6 is
+  available", "Choose Capsid → Check for Updates… to install it". Only from an
   automatic check; one you asked for shows its answer itself and counts as
   telling you. A newer version gets its own card. **The card has no buttons**:
   a notice's action can only be Open on a session (`LabNotice.Action`,
@@ -1203,12 +1240,12 @@ and "up to date" after a check that found none, without asking.
   Release Notes live in Settings and the menu's alert. Giving the card two
   actions means a new `Action` case and changes in `LabModel.swift` and
   `LabPanelView.swift`.
-- *Settings → General → Updates:* the status line ("Asking GitHub…", "Bench
-  is up to date (0.3.5)", "Bench 0.3.6 is available" or why a check failed)
+- *Settings → General → Updates:* the status line ("Asking GitHub…", "Capsid
+  is up to date (0.3.5)", "Capsid 0.3.6 is available" or why a check failed)
   with **Check Now**, which reads "Checking…" and is dimmed while it runs,
   and under the status, in small secondary text, when the last answer came. When one is out, a row beneath says what Install will do, with
   **Release Notes** and **Install Update**.
-- *The menu's alert:* up to date; or "Bench 0.3.6 is available" with
+- *The menu's alert:* up to date; or "Capsid 0.3.6 is available" with
   **Install**, **Release Notes** and **Later** (Esc); or why the check
   failed. Its text is the install sentence, so Install needs no second
   question. Settings' **Install Update** asks first, with the same words.
@@ -1221,19 +1258,34 @@ and "up to date" after a check that found none, without asking.
 | zsh"`. The line is a constant (`UpdateRules.installLine`, with a test that
 README.md contains it) and nothing the network says ever becomes part of it.
 It is started with its input and output on /dev/null and not waited for;
-`install.sh` takes it from there: SIGTERM quits this Bench the way ⌘Q does
+`install.sh` takes it from there: SIGTERM quits this Capsid the way ⌘Q does
 (`AppDelegate`), the new one is moved into /Applications and opened. The
-confirmation says: "Bench will quit, download 0.3.6 from GitHub and reopen."
-- It is offered only to the copy that is /Applications/Bench.app
+confirmation says: "Capsid will quit, download 0.3.6 from GitHub and reopen."
+- It is offered only to the copy that is /Applications/Capsid.app
   (`canInstall`). The script replaces that path and quits only that copy, so
-  from a build folder or Downloads it would open a second Bench beside the
-  first. Those copies get Release Notes and the sentence "This copy of Bench
+  from a build folder or Downloads it would open a second Capsid beside the
+  first. Those copies get Release Notes and the sentence "This copy of Capsid
   isn't in Applications, so it can't replace itself."
 - `BENCH_INSTALL_DIR` (the script's testing switch) is removed from the
   environment it gets.
-- If the installer ends while Bench is still running, nothing was replaced (a
-  success quits Bench before the script ends), and an alert says so and points
-  to the README's line. The script can't tell Bench about a failed download
+- **From Bench to Capsid (0.6.0).** A Bench 0.5.x asks the same
+  `releases/latest`, wants the same `Bench.zip` and runs the same install line,
+  which fetches `install.sh` from `main` as it is at that moment. That script
+  takes Capsid.app out of the zip, quits a running Bench or Capsid in
+  /Applications (each matched by its exact executable path, as before), puts
+  Capsid at /Applications/Capsid.app and only then removes
+  /Applications/Bench.app: the two share a bundle id and must never sit side
+  by side. Capsid's `installDirectory` is /Applications/Capsid.app, so the
+  next update finds it there. A zip from before 0.6.0, holding Bench.app, is
+  still installed as Bench.app, so `main` can carry the new script before the
+  0.6.0 release exists. The order matters: `install.sh` reaches `main` first,
+  then 0.6.0 is published with a `Bench.zip` whose top level is Capsid.app.
+  The other way round, a Bench offered 0.6.0 runs the old script, which finds
+  no Bench.app in the zip, stops before quitting anything, and Bench says the
+  update didn't install.
+- If the installer ends while Capsid is still running, nothing was replaced (a
+  success quits Capsid before the script ends), and an alert says so and points
+  to the README's line. The script can't tell Capsid about a failed download
   (`curl | zsh` ends 0), so this is the only failure it shows.
 
 **Tests** (`UpdateCheckTests`): version compare, the JSON from made-up
@@ -1248,19 +1300,19 @@ state in a scratch `UserDefaults` suite.
 Six tabs since 0.4.0 (`App/SettingsPages.swift`), each a grouped form at its
 own height (the window follows the tab):
 
-- **General** (`general`): Bench's name and version, a banner when it can't see
+- **General** (`general`): Capsid's name and version, a banner when it can't see
   your sessions, Appearance, Updates (since 0.3.6) and Help → Diagnostics.
 - **Panel** (`panel`): the specimen while a session works (show it, name it,
-  the menu bar), where the panel sits (corner, screen, while Bench is in
+  the menu bar), where the panel sits (corner, screen, while Capsid is in
   front), and a way to the Specimens tab.
 - **Alerts** (`alerts`): on the panel (cards, plans with Approve, sound), Mac
   notifications, and what waits while Nidus is focusing.
 - **Usage** (`usage`): heads-up cards (plan and context, week in review).
 - **Specimens** (`scenes`): what plays (above).
-- **Phone** (`phone`, since 0.4.0): Bench on your phone (below).
+- **Phone** (`phone`, since 0.4.0): Capsid on your phone (below).
 
 `--demo general|panel-settings|alerts|usage-settings|specimens|phone-settings`
-shows each in a plain window that doesn't activate Bench (`phone-settings`
+shows each in a plain window that doesn't activate Capsid (`phone-settings`
 takes `--step 1…7`).
 
 | Setting | Default |
@@ -1272,28 +1324,28 @@ takes `--step 1…7`).
 | Also send a Mac notification (Mac notifications) | off |
 | When a session finishes too (Mac notifications) | off |
 | Show session and project names (Mac notifications) | on |
-| Show the Lab panel while Bench is in front | on |
+| Show the Lab panel while Capsid is in front | on |
 | Name the specimen that's playing, in the panel (`showSpecimenCaption`) | off |
 | Check for updates once a day (`checkForUpdates`, since 0.3.6; see Update check) | off |
-| Use Bench from your phone (`remoteEnabled`, since 0.4.0; see Bench on your phone) | off |
+| Use Capsid from your phone (`remoteEnabled`, since 0.4.0; see Capsid on your phone) | off |
 | Skip "Put Tailscale on your phone" (`remotePhoneSkipped`; see Settings → Phone) | off |
 
 ## Welcome window (since 0.3.6)
 
-A short welcome for someone who has just installed Bench (`App/Welcome.swift`),
-so the panel, the cards and the update check (the one request Bench can make
-without a click) are explained once, in Bench's own words. It is a plain titled, closable window,
+A short welcome for someone who has just installed Capsid (`App/Welcome.swift`),
+so the panel, the cards and the update check (the one request Capsid can make
+without a click) are explained once, in Capsid's own words. It is a plain titled, closable window,
 560 × 460 and fixed in size, centred, hosting SwiftUI. No tabs, no toolbar. The
 main Claude Science window opens behind it as usual.
 
 - **When it shows.** On the first launch only: `hasSeenWelcome` is false and
-  this isn't someone who used Bench before the welcome existed. That is
+  this isn't someone who used Capsid before the welcome existed. That is
   someone with any of `sceneGroups`, `settingsTab`, `appearance` or
-  `showLabPanel` stored: Bench writes those only when a setting is changed, so
-  one being there means this Mac has run and used Bench. Such a user has
+  `showLabPanel` stored: Capsid writes those only when a setting is changed, so
+  one being there means this Mac has run and used Capsid. Such a user has
   `hasSeenWelcome` set at launch and never sees the window.
   - The check reads what is *stored* (`persistentDomain(forName:)`), not
-    `object(forKey:)`: Bench registers defaults for `appearance` and
+    `object(forKey:)`: Capsid registers defaults for `appearance` and
     `showLabPanel` at launch, so `object(forKey:)` would find them on every
     install and the welcome would never show.
   - `WelcomeGate` is pure apart from one thin wrapper over a `UserDefaults`
@@ -1303,10 +1355,10 @@ main Claude Science window opens behind it as usual.
 - **Marked as seen** when the window closes, by Get Started, Esc or the close
   button alike (`windowWillClose`), not when it opens. Quit with it still open
   and it shows again next launch.
-- **Help → Welcome to Bench** shows it again at any time, from the first page.
+- **Help → Welcome to Capsid** shows it again at any time, from the first page.
   Already open, it only comes forward. The item is dimmed in a demo.
 - **Pages**, with Back, Next and page dots (`WelcomeFlow`: both ends stop):
-  1. *Welcome.* The app icon, "Bench keeps Claude Science in one window, and
+  1. *Welcome.* The app icon, "Capsid keeps Claude Science in one window, and
      lets you know when a session needs you.", and the small line "A Solanum
      product. Unofficial, and not affiliated with Anthropic."
   2. *The panel.* A specimen playing at 88 pt (`Theme.sceneSize`) in a glass
@@ -1316,7 +1368,7 @@ main Claude Science window opens behind it as usual.
   3. *Getting around.* Four rows with SF Symbols: Quick Open ⌘⇧O (type to jump
      to a session), the toolbar's activity list, favorites in Settings →
      Specimens, and Mac notifications in Settings → Alerts (off unless turned on).
-  4. *Updates and privacy.* Bench reads your sessions on this Mac and changes
+  4. *Updates and privacy.* Capsid reads your sessions on this Mac and changes
      nothing in Claude Science, except when you press Approve on a plan. One
      switch, "Check for updates once a day" (`checkForUpdates`, the same
      setting as Settings' update check), off by default and left off unless
@@ -1329,7 +1381,7 @@ main Claude Science window opens behind it as usual.
   dots are neutral. Nothing animates but the specimen.
 - **Demo.** `--demo welcome` shows the real window, with `--page N` (1 to 4)
   to start on a page. As with the other plain-window demos, `--quiet` keeps
-  it from activating Bench, and closing it records nothing: it never writes
+  it from activating Capsid, and closing it records nothing: it never writes
   `hasSeenWelcome`. Its switch is the real setting, so don't click it.
 
 ## Files and ownership
@@ -1341,14 +1393,19 @@ Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview wi
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule   (lab agent)
 Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and ScienceCore. Don't edit here:
                           change them in the droplet, then run Scripts/sync-shared.sh. Except
-                          Core/CLIStatus.swift and Core/SQLiteSource.swift, which are Bench's own
+                          Core/CLIStatus.swift and Core/SQLiteSource.swift, which are Capsid's own
                           since 0.1.2 (the database is found through the daemon's `data_dir` and
                           the live org), Core/ScienceEngine.swift (0.1.15), and
                           Core/ScienceSource.swift and Core/SessionStatus.swift since 0.5.3
                           (`activeAt`, the usage pause); the sync script keeps them.
-Resources/AppIcon.icon    Bench's own icon in Solanum's product family: the fig tile (#C46686), the
-                          Solanum ring exactly, a flask at 9 units, one bubble escaped at the mark's
-                          escaped node (152, 9.93). Drawn by code, not synced from the droplet.
+Resources/AppIcon.icon    Capsid's own icon, in Solanum's one-colour colourway (0.6.0): a Clay tile
+                          (#D97757) with everything in Slate (#141413). The Solanum ring and its
+                          escaped dot are kept pixel for pixel from Bench's glyph (the escaped node
+                          at (152, 9.93)); inside, an icosahedral capsid seen down a three-fold axis:
+                          a hexagon (radius 164 of 1024, 26 px) round a facing triangle (radius 67,
+                          21 px). Drawn by code (PIL, 4x supersampled), not synced from the droplet.
+                          The file keeps its name, bench-glyph.png, which embed-remote-web.py reads
+                          for the phone's icon (RemoteIcon, the same Clay).
 ```
 
 ## Testing checklist ("every feature")
@@ -1375,14 +1432,14 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] with Settings in front, Reload, Zoom, Find and Back/Forward are dimmed
 - [ ] the window closes and reopens without losing state
 - [ ] on-screen CPU with the panel playing
-- [ ] update check: with the switch off nothing asks GitHub (no request in Little Snitch or `nettop` for a day); Check Now and Bench → Check for Updates… do; with it on, a first check comes within a minute and the next a day later, not at the next launch
-- [ ] update check against a real newer release: the card comes once, Settings shows "Bench 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Bench in /Applications) quits Bench, installs it and reopens it. Bench started from a build folder offers no Install
+- [ ] update check: with the switch off nothing asks GitHub (no request in Little Snitch or `nettop` for a day); Check Now and Capsid → Check for Updates… do; with it on, a first check comes within a minute and the next a day later, not at the next launch
+- [ ] update check against a real newer release: the card comes once, Settings shows "Capsid 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Capsid in /Applications) quits Capsid, installs it and reopens it. Capsid started from a build folder offers no Install
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption lines (Panel, "Name the specimen that's playing")
-- [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Bench settings already stored; Help → Welcome to Bench shows it again; Return and Esc work; the updates switch stays off until turned on
+- [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Capsid settings already stored; Help → Welcome to Capsid shows it again; Return and Esc work; the updates switch stays off until turned on
 
-## Bench on your phone (Remote, since 0.4.0)
+## Capsid on your phone (Remote, since 0.4.0)
 
-A private mobile web app that Bench serves to the user's own devices over
+A private mobile web app that Capsid serves to the user's own devices over
 their Tailscale network. Off by default. Phase 1: see what needs you, what
 works and what happened, read a session's status and plan, Open on Mac.
 Phase 2 (below, same release): read replies, answer, approve, send a
@@ -1390,17 +1447,17 @@ message, and push notifications.
 
 ### Transport and trust
 
-- Bench's `RemoteServer` listens on **127.0.0.1:47280 only** (falls back to
+- Capsid's `RemoteServer` listens on **127.0.0.1:47280 only** (falls back to
   the next free port up to 47290 and remembers it). Never on other
   interfaces.
 - **Tailscale Serve** publishes it to the tailnet with a real certificate:
   `tailscale serve --bg --https=8443 http://127.0.0.1:<port>`. A dedicated
   HTTPS port (8443) so it never collides with the user's own serve mappings
   on 443. Never Funnel. Never `tailscale serve reset`: read
-  `tailscale serve status --json` first and add or remove only Bench's own
+  `tailscale serve status --json` first and add or remove only Capsid's own
   mapping. The CLI is `/Applications/Tailscale.app/Contents/MacOS/Tailscale`
   (not on PATH); a Mac App Store install has the same binary in its bundle.
-  Bench runs it only from an app bundle Tailscale signed: before a run,
+  Capsid runs it only from an app bundle Tailscale signed: before a run,
   `SecStaticCodeCheckValidity` checks the bundle against
   `anchor apple generic and certificate leaf[subject.OU] = "W5364U7YZB"`
   (Tailscale Inc's Developer ID), or, for the Mac App Store app, whose leaf
@@ -1409,7 +1466,7 @@ message, and push notifications.
   `identifier "io.tailscale.ipn.macos"`. The answer is remembered per bundle
   path and modification date. A bundle that fails is passed over as if it
   weren't there; none left is "not installed". Launch Services is asked only
-  when `/Applications` has none, and the CLI is looked for only when Bench
+  when `/Applications` has none, and the CLI is looked for only when Capsid
   first needs it, never for someone who never opens Settings → Phone or
   turns Remote on.
 - The URL is `https://<node>.<tailnet>.ts.net:8443/` from
@@ -1423,7 +1480,7 @@ message, and push notifications.
     (HttpOnly, Secure, SameSite=Strict, Path=/). 401 without it. The token is
     the real gate: any local process can reach loopback and forge headers.
   - `Tailscale-User-Login` (set by Serve) must equal the login recorded when
-    Remote was turned on; checked as an extra, not relied on. Bench keeps
+    Remote was turned on; checked as an extra, not relied on. Capsid keeps
     that login only as the SHA-256 (hex) of its lowercased form
     (`remoteLogin`), hashes Serve's the same way and compares the hashes; an
     address an earlier build stored is hashed and written back at launch.
@@ -1434,7 +1491,7 @@ message, and push notifications.
     `/sw.js` and every `/api/*`), `X-Content-Type-Options: nosniff`,
     `Referrer-Policy: no-referrer`, and for HTML a strict CSP:
     `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`.
-    All assets inline-free files served by Bench itself (no CDNs).
+    All assets inline-free files served by Capsid itself (no CDNs).
   - POSTs need `Content-Type: application/json`, an `Origin` equal to the
     served origin, and `X-Bench: 1`. Bodies ≤ 8 KB (16 KB for a Phase 2
     `/message`).
@@ -1443,12 +1500,12 @@ message, and push notifications.
   the URL and a one-time 6-digit code (expires after 10 minutes; 5 wrong tries wear it out, and
   Settings then shows "Too many wrong codes." with New Code rather than a new
   code by itself).
-  `POST /pair {"code","name"}` → sets the cookie; Bench stores only a SHA-256
+  `POST /pair {"code","name"}` → sets the cookie; Capsid stores only a SHA-256
   hash of each token, with the device name and when it was paired / last
   seen, in `~/Library/Application Support/Bench/remote-devices.json` (folder
   0700, file 0600, written to a temporary file and renamed). Not the Keychain:
-  Bench is signed without a Team ID, so macOS ties a Keychain item to one
-  build and asks for the login password after every update, with Bench
+  Capsid is signed without a Team ID, so macOS ties a Keychain item to one
+  build and asks for the login password after every update, with Capsid
   frozen waiting (seen 2026-10-13). Settings lists paired
   phones with Remove. iOS keeps a Home Screen app's storage apart from
   Safari's, so the flow is: scan → Add to Home Screen → open it → enter the
@@ -1511,7 +1568,7 @@ message, and push notifications.
 }
 ```
 
-`snooze` is null when not put off; `problem` is a short sentence when Bench
+`snooze` is null when not put off; `problem` is a short sentence when Capsid
 can't see sessions ("Claude Science isn't running"); `usage` is null when
 unknown. A working row's `paused` is true while a used-up limit holds it, and
 `pause` then says which limit and until when (null while none is held; Usage
@@ -1531,7 +1588,7 @@ shown only to their paired devices.
 }
 ```
 
-`plan` only when Bench already holds the plan card's preview; `messages`
+`plan` only when Capsid already holds the plan card's preview; `messages`
 stays empty in Phase 1 (session text needs its own research and Sam's
 say-so).
 
@@ -1544,7 +1601,7 @@ steps 1, 2, 3 or 5 open, or ready, everything fits; with step 4 or 6 open, or
 Pair Another Device, the whole checklist shows and the switches and devices
 below are a scroll away.
 
-1. **Header.** "Bench on your phone", then "Use Claude Science from your
+1. **Header.** "Capsid on your phone", then "Use Claude Science from your
    iPhone or iPad: see what needs you, answer, approve and send messages,
    over your own private Tailscale network." and a "Setup guide" link to
    `docs/phone.md` on GitHub.
@@ -1561,7 +1618,7 @@ below are a scroll away.
    | 2 | Sign in to Tailscale | Use the same account you'll use on your phone. (Signed in but disconnected: "Tailscale is off. Open it and connect, with the same account you'll use on your phone.") | Open Tailscale (the app whose signature was checked) | running with a login (the login) |
    | 3 | Turn on HTTPS for your network | One switch on Tailscale's DNS page, so your phone gets a secure address. | Open DNS Settings… (login.tailscale.com/admin/dns, or the page `serve` printed) | `CertDomains` isn't empty ("On") |
    | 4 | Put Tailscale on your phone | Install Tailscale from the App Store and sign in with the same account. | a 96 pt QR code of Tailscale's App Store page, "Scan for the App Store"; "Don't see it? Make sure Tailscale is on and signed in with the same account on your phone (Apple, Google and GitHub sign-ins are separate accounts)."; a quiet Skip link | a `Peer` with `OS` iOS, iPadOS or android (any case) and the same user, online or not ("Found: <HostName>"); or Skip ("Skipped", `remotePhoneSkipped`) |
-   | 5 | Turn on Bench on your phone | A private page for your devices on Tailscale. Never on the internet. (Switched on but not served yet: what it waits for, and Try Again when blocked or failed.) | the switch (`remoteEnabled`) at the end of the title's line | serving (the `https://…:8443` address) |
+   | 5 | Turn on Capsid on your phone | A private page for your devices on Tailscale. Never on the internet. (Switched on but not served yet: what it waits for, and Try Again when blocked or failed.) | the switch (`remoteEnabled`) at the end of the title's line | serving (the `https://…:8443` address) |
    | 6 | Pair your phone | Once per device, with a one-time code. | the pairing block: the QR code of the address, the 6-digit code with its countdown (or "Too many wrong codes." and New Code), and the three steps (scan, Add to Home Screen, open it and enter the code) | a device is paired ("1 device") |
 
    The same user: the peer's `UserID` is `Self.UserID`, or its `User` entry
@@ -1574,17 +1631,17 @@ below are a scroll away.
    withdraws the code) until one more device pairs.
 4. **The code** is issued only while "Pair your phone" is the step open
    (first time, or after Pair Another Device), not whenever the tab shows.
-5. **Below**, as before: anything Bench needs to say, each with a warning
-   sign (Tailscale signed in as someone else now; "Bench couldn't remove its
+5. **Below**, as before: anything Capsid needs to say, each with a warning
+   sign (Tailscale signed in as someone else now; "Capsid couldn't remove its
    Tailscale mapping" with Try Again; while serving, "Other Tailscale Serve
-   sites on this Mac share its address, and can see your devices' Bench
+   sites on this Mac share its address, and can see your devices' Capsid
    sign-in. Serve only things you trust here."); one section of switches
-   ("Use Bench from your phone" whenever it is on and step 5 isn't the step
+   ("Use Capsid from your phone" whenever it is on and step 5 isn't the step
    open, so it can always be turned off; the actions and browse switches);
    and Paired devices: name, paired, last seen, Remove, Remove All Devices…,
    and the footnote "Expires if unused for 60 days."
 6. **Looking again.** While the tab shows and setup isn't done, it looks at
-   Tailscale every 10 s and whenever Bench comes to the front
+   Tailscale every 10 s and whenever Capsid comes to the front
    (`RemoteController.poll`), so ticks appear by themselves as the user works
    in Tailscale's own app. A look is `status --json` only; `serve` runs only
    when it could now work (Tailscale has come up, or HTTPS was just turned
@@ -1595,12 +1652,12 @@ below are a scroll away.
    system's.
 
 The cookie keeps its name (`bench_device`), so paired phones stay paired.
-Turning the switch off stops the listener, removes Bench's serve mapping
+Turning the switch off stops the listener, removes Capsid's serve mapping
 only, and keeps paired devices (so turning it back on needs no re-pairing);
 "Remove all devices" is separate.
 
 `--demo phone-settings --step N` shows the page in a plain window that
-doesn't activate Bench (with `--quiet` and `open -g -n`): 1 to 6 opens that
+doesn't activate Capsid (with `--quiet` and `open -g -n`): 1 to 6 opens that
 step with every one before it done, 7 is ready with one device. All made up
 (`you@example.com`, `https://your-mac.your-tailnet.ts.net:8443`, code 123 456,
 a phone and a device both "iPhone"); no Tailscale, no files, no Keychain, and
@@ -1617,8 +1674,8 @@ its buttons do nothing.
 - Live: `EventSource('/api/events')`; on `visibilitychange` to visible, refetch
   `/api/state` and reconnect. If nothing new for 60 s while visible, show
   "Not updating since …". On 401 show pairing; on a network error or 502
-  show "Bench isn't running on your Mac, or your Mac is asleep".
-- No third-party code, no CDNs, everything served by Bench.
+  show "Capsid isn't running on your Mac, or your Mac is asleep".
+- No third-party code, no CDNs, everything served by Capsid.
 
 ### `--demo remote`
 
@@ -1672,40 +1729,40 @@ store (in memory in tests and the demo).
   with a log line that says how many, never which. Unpair clears it and ends the
   device's event streams, as Remove in Settings does. `lastSeen` changes at
   most once a minute and reaches the file at most every 5 minutes.
-  Bench reads the file only once the Phone tab shows or the switch is on.
+  Capsid reads the file only once the Phone tab shows or the switch is on.
 - **State**: `recent` leaves out saved files (no session, and the file name
   stays on the Mac). Limit names are `5-hour`, `Weekly`, `Weekly Opus`,
   `Weekly Sonnet`; `pace` is the popover's forecast line or null. The
   stream sends the state only when something it shows changed.
-- **Serve**: Bench's mapping is 8443 with one handler, `/` proxied to
+- **Serve**: Capsid's mapping is 8443 with one handler, `/` proxied to
   `http://127.0.0.1:<p>` for a `p` in 47280…47290 (an earlier run's port is
   replaced: `off`, then add). 8443 with anything else (another target, more
   mounts, TCP forwarding, a foreground serve, Funnel) is someone else's:
-  Settings says so and Bench neither adds nor removes. When `serve` prints a
-  `login.tailscale.com` page to turn HTTPS on, Bench stops it there and
+  Settings says so and Capsid neither adds nor removes. When `serve` prints a
+  `login.tailscale.com` page to turn HTTPS on, Capsid stops it there and
   offers the page as a button. With the switch on and Tailscale not up yet,
-  Bench looks again 15 s, 1 min and 5 min later, and whenever it comes to
+  Capsid looks again 15 s, 1 min and 5 min later, and whenever it comes to
   the front.
-- **The mapping lasts only while Bench answers behind it.** Otherwise
-  whatever binds the loopback port while Bench is away (another user's
+- **The mapping lasts only while Capsid answers behind it.** Otherwise
+  whatever binds the loopback port while Capsid is away (another user's
   process, another app) would get what the phone sends, its `bench_device`
   cookie included, and could serve its own page on the trusted origin. So:
-  - **Quitting** (`applicationWillTerminate`) removes Bench's mapping,
+  - **Quitting** (`applicationWillTerminate`) removes Capsid's mapping,
     synchronously and best effort: `serve status`, then `serve --https=8443
-    off` only when 8443 is Bench's alone, waiting at most 2 s in all. Never in
+    off` only when 8443 is Capsid's alone, waiting at most 2 s in all. Never in
     a demo; never for someone who never served (no switch on, no remembered
     port). It runs whether the switch is on or off; on, the next launch adds
-    the mapping again. The phone then sees no Bench until then.
-  - **Launching with the switch off** removes a mapping Bench left behind,
+    the mapping again. The phone then sees no Capsid until then.
+  - **Launching with the switch off** removes a mapping Capsid left behind,
     the same way.
   - **Turning the switch off** when the mapping can't be removed (Tailscale
-    not running, or `off` failing) leaves "Bench couldn't remove its
-    Tailscale mapping" in Settings with Try Again, and Bench tries again on
+    not running, or `off` failing) leaves "Capsid couldn't remove its
+    Tailscale mapping" in Settings with Try Again, and Capsid tries again on
     Check Again, when it comes to the front, and 15 s, 1 min and 5 min later.
-  - The mapping is still `--bg`: Bench doesn't keep a foreground `serve` as
+  - The mapping is still `--bg`: Capsid doesn't keep a foreground `serve` as
     a child process.
   - What remains: a crash, or a quit that Tailscale doesn't answer within
-    2 s, leaves the mapping until Bench next launches.
+    2 s, leaves the mapping until Capsid next launches.
 
 ### Phase 2: read, act, notify (0.4.0)
 
@@ -1716,7 +1773,7 @@ notifications. Research: `Bench-phone-research.md` (outside the repo).
 
 #### Reading a session (in-page, projected)
 
-Bench reads through its own web view, as `apiGET` does, but with a dedicated
+Capsid reads through its own web view, as `apiGET` does, but with a dedicated
 **session reader** whose JavaScript runs the two GETs *and projects them inside
 the page*, so Swift only ever receives the fields below. Allowed GETs, exactly:
 `/api/frames/<36>?shallow=true` and `/api/frames/<36>/messages?from=-12&limit=12`.
@@ -1765,8 +1822,8 @@ Adds to version 1 (all optional-null when unreadable; `version` becomes 2):
 `turns` oldest first, at most 12. `can.message` is `"send"` (completed),
 `"queue"` (processing: it waits for a safe point), `"resume"` (failed or
 cancelled: the session picks up again) or null with `why` ("Answer its question
-first", "Approve or revise the plan on your Mac", "Actions are off in Bench's
-Settings", "Bench can't read this session"). `can.approve` only when the root
+first", "Approve or revise the plan on your Mac", "Actions are off in Capsid's
+Settings", "Capsid can't read this session"). `can.approve` only when the root
 itself awaits plan approval and Approve's shape checks pass; `can.answer` only
 for a root `ask`. The phone renders `reply` and `turns` as plain text with a
 small safe markdown subset (paragraphs, lists, bold, italic, inline and fenced
@@ -1778,7 +1835,7 @@ Bodies ≤ 8 KB, except `/message`, whose body may be up to 16 KB (4,000
 characters of non-Latin text is more than 8 KB of JSON); the parser's
 declared-length check takes the route's own limit.
 
-| Route | Body | Bench does |
+| Route | Body | Capsid does |
 |---|---|---|
 | `POST /api/sessions/<id>/approve` | `{"version":"…"}` | `PlanApprover` as on the card: re-GET, require `awaiting_plan_approval`, not approved, same plan version; then `approve-plan` `{}`. |
 | `POST /api/sessions/<id>/answer` | `{"toolId":"…","answers":{"<question>":"<text>"}}` or `{"toolId":"…","action":"chooseForMe"\|"cancel"}` | Re-GET; require `awaiting_user_response`, the same `tool_id` pending on the root, the same question texts; every question answered (≤ 1,000 chars each). Then `resolve-input` `{responses:[{tool_id, action:"answer", answers}]}`; chooseForMe sends `action:"answer"` with every question answered "Use your best judgment for this question"; cancel sends `{tool_id, action:"cancel", answers:{}}`. |
@@ -1800,7 +1857,7 @@ unexpected status, 404/405, unknown 4xx `code` or non-JSON reply is
   device's budget for every route (Budgets, below). Settings →
   Phone has "Let paired devices answer, approve and send messages"
   (`remoteActions`, on); off, the routes answer 403 and `can` is all off with
-  `why` "Actions are off in Bench's Settings".
+  `why` "Actions are off in Capsid's Settings".
 - **Never logged**: route pattern and status only, as for every request.
 
 #### How the server does it (Phase 2 actions)
@@ -1828,10 +1885,10 @@ files only gained hooks marked `// Phase 2 actions`.
 - **The plan's text** isn't in the shallow frame: the card's preview when
   it is the same version, else `apiGET /artifacts/versions/<v>` and
   `PlanCheck.preview`, as the card does. `plan.version` is the plan version
-  id; Approve sends it back and Bench approves only while
+  id; Approve sends it back and Capsid approves only while
   `PlanCheck.versionToRead` of a fresh read equals it.
 - **Reading** happens only when the phone asks for `/api/sessions/<id>`,
-  and only for a session Bench knows (else 404, nothing read). What was read
+  and only for a session Capsid knows (else 404, nothing read). What was read
   is held 5 s per session (a burst reads the page once; concurrent asks
   share one read) and dropped after any action on that session.
 - **Order of an action's checks**: the setting (403
@@ -1849,7 +1906,7 @@ files only gained hooks marked `// Phase 2 actions`.
 - **`can.why`**, in this order: actions off, unreadable, then the status
   (`replaced`, which the research's table leaves out, says "This session
   can't take a message from here"; a root without an `agent_name` takes no
-  message: "Bench can't read this session").
+  message: "Capsid can't read this session").
 - **`--demo remote`** reads made-up projections (a question with three
   options, a plan at version `demo`, a failed session, a queued message, a
   finished reply, one unreadable session) and its writes answer as the
@@ -1857,7 +1914,7 @@ files only gained hooks marked `// Phase 2 actions`.
 
 #### Notifications (Web Push, opt-in per device)
 
-iOS delivers Web Push to a Home Screen web app (16.4+). Bench sends them
+iOS delivers Web Push to a Home Screen web app (16.4+). Capsid sends them
 itself: encrypted per RFC 8291 (`aes128gcm`) so only the device can read
 them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
 
@@ -1873,7 +1930,7 @@ them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
   `*.notify.windows.com`. The subscription is stored with the device's
   record and goes when the device is removed or unpaired.
 - **Prefs** (per device): `needsYou` (on), `errors` (on), `finishes` (off),
-  `names` (off), `onlyAway` (on), `badge` (on: the count on the Bench icon,
+  `names` (off), `onlyAway` (on), `badge` (on: the count on the Capsid icon,
   below). A record from before reads `badge` as on.
 - **When**: from the same moments that raise a card (LabModel's announce hook),
   once per device per event (session + kind + since). Finishes held during a
@@ -1895,7 +1952,7 @@ them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
   `icon:/icon-180.png` and `tag`, and on tap focuses the app or opens `url`.
   Settings on the phone: "Notifications" with a Turn On button (needs a tap,
   and only works from the Home Screen app; in Safari it says so), the six
-  prefs (the last is "Show a count on the Bench icon"), Send a test. Taps
+  prefs (the last is "Show a count on the Capsid icon"), Send a test. Taps
   work off the tailnet too (the push comes through Apple), but opening the
   session needs Tailscale on.
 - **The icon's count** (Home Screen badge, like Mail's unread count): the
@@ -1912,24 +1969,24 @@ them, signed with VAPID (RFC 8292, ES256), all with CryptoKit.
     It never asks for permission: iOS shows a Home Screen app's badge only
     when it has notification permission, so the count rides on the
     Notifications permission the user already gave.
-  - *In a push*: Bench puts `"badge": <count>` in the payload, and `sw.js`
+  - *In a push*: Capsid puts `"badge": <count>` in the payload, and `sw.js`
     calls `self.navigator.setAppBadge(badge)` (or `clearAppBadge()` for 0,
     in try/catch) next to `showNotification`. A payload without a numeric
     `badge` leaves the icon alone.
   - *No silent pushes*: iOS doesn't deliver a push that shows nothing, so
-    Bench can't refresh the icon on its own. It changes when a push arrives
+    Capsid can't refresh the icon on its own. It changes when a push arrives
     (any push carries the count as it is then) or when the app is opened. A
     count that only goes down (answering a question on the Mac sends nothing),
     or goes up with no push (you were at your Mac, or turned that kind off),
     stays as it was until one of those.
-  - *The switch*: "Show a count on the Bench icon" in the phone's Settings →
+  - *The switch*: "Show a count on the Capsid icon" in the phone's Settings →
     Notifications (on by default; also shown when notifications are off but
     allowed, since the app's count still works then). The app keeps it in
     `localStorage` (`bench-badge`: per device, and there before Settings has
     loaded; the phone app used no storage before this), and sends it as the
     `badge` pref with `POST /api/push/prefs`, because the service worker
     can't read `localStorage`. Off: the app clears the icon and doesn't set
-    it, and Bench leaves `badge` out of that device's pushes. When Settings
+    it, and Capsid leaves `badge` out of that device's pushes. When Settings
     loads, the Mac's value is written back to `localStorage` (so a
     re-paired phone follows what its pushes do).
 - **Test**: `POST /api/push/test` ignores `onlyAway` (Sam is at the Mac when
@@ -1968,7 +2025,7 @@ lines marked `// Phase 2 push`.
   `{"error":"body"|"endpoint"|"keys"|"prefs"|"notSubscribed"}`, 500
   `"key"|"store"`. A change of prefs holds in memory at once and reaches the
   file at most once a second (the first at once, the rest a second after the
-  last write, or with the next write of the file, or when Bench quits), so
+  last write, or with the next write of the file, or when Capsid quits), so
   `/prefs` never answers `"store"`.
 - **When**: `LabModel.pushRaised`, called with `cardRaised`, and only while
   the Phone switch is on. The cards are `NotificationRules`' (needs you,
@@ -2018,7 +2075,7 @@ only, behind its own switch.
   (but not `__proto__`, `constructor` or `prototype`: 404 at the route);
   version ids `^[A-Za-z0-9_-]{1,128}$`. Never decoded, matched exactly.
 
-#### Browse (from Bench's own database, metadata only)
+#### Browse (from Capsid's own database, metadata only)
 
 New read-only SQLite queries beside the existing ones, never touching
 `input_data`, `output_data` or any text column (a `task_summary IS NOT NULL`
@@ -2077,14 +2134,14 @@ results' `artifacts[]`, `send_user_message` attachments), keeping only
 | `GET /api/files/<v>/text` | `{"kind":"markdown"\|"text","text":"…","truncated":bool}` from a 256 KB range read (UTF-8, no NUL in the first 8 KB), or `{"kind":"table","columns":[…],"rows":[[…]],"truncated":bool}` (≤ 200 rows × 30 columns, cells ≤ 200 chars) |
 | `GET /api/files/<v>/download` | The bytes, ≤ 8 MB (bigger: 413 `{"error":"tooBig"}`; the phone says "Too big for the phone. Open it on your Mac."), with `Content-Type` sniffed for raster images else `application/octet-stream`, `Content-Disposition: attachment; filename="<ASCII-safe>"; filename*=UTF-8''…`, `Content-Security-Policy: default-src 'none'; sandbox`, `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`, `no-store` |
 
-- **Only what was listed**: Bench serves `/api/files/<v>/…` only for version
+- **Only what was listed**: Capsid serves `/api/files/<v>/…` only for version
   ids it listed to *that device* (an artifacts list or a history page's
   `files`) in the last hour.
-- **Never as a page**: HTML, SVG and notebooks are never rendered on Bench's
+- **Never as a page**: HTML, SVG and notebooks are never rendered on Capsid's
   origin; SVG shows only as the download (a phone can still view it from
   Files). Markdown images resolve only to this session's listed images, via
   `thumb`. Links stay text.
-- **Bytes** move in-page (fetch, base64, `callAsyncJavaScript`) in v1; Bench
+- **Bytes** move in-page (fetch, base64, `callAsyncJavaScript`) in v1; Capsid
   never holds the daemon's cookies.
 
 #### How the server does it (Phase 3 files)
@@ -2122,7 +2179,7 @@ demo's files). The shared files only gained hooks marked `// Phase 3 files`.
   the range cut in two is dropped). Base64 and the UTF-8 decoder are written
   out in the script: JavaScriptCore has neither `btoa` nor `TextDecoder`.
 - **Order of the checks**: the browse switch (403 `browseOff`); for the
-  list, a session Bench knows (404; Phase 3 browse's point lookup takes this
+  list, a session Capsid knows (404; Phase 3 browse's point lookup takes this
   place); for a file, listed to this device within the hour with its listing
   at hand (404), `?w=` exactly `120` or `800` (400 `width`), a kind the route
   serves (415 `kind`: `thumb` only images, `text` only markdown, text and
@@ -2153,7 +2210,7 @@ demo's files). The shared files only gained hooks marked `// Phase 3 files`.
   the phone has 60 s to take it (then the connection goes), and a device has
   at most two files under way at once (Budgets, below).
 - **`--demo remote`**: "Primer design" has one file of every kind (a chart
-  drawn with CoreGraphics as a PNG, its WebP thumbnails written by Bench as
+  drawn with CoreGraphics as a PNG, its WebP thumbnails written by Capsid as
   two-colour lossless VP8L since ImageIO can't write WebP, markdown, a CSV
   with quotes and a line break, a log, HTML and SVG that carry a script, a
   PDF, a notebook, an 8 MB file at the cap and a 120 MB one listed only);
@@ -2168,7 +2225,7 @@ demo's files). The shared files only gained hooks marked `// Phase 3 files`.
 `target_agent`: the server's default agent). Never `/api/request` (it creates
 projects). Answer `{"result":"started","id":"<root_frame_id>","sentence":"Started"}`
 or `unavailable`. Not retry-safe on the daemon (a reused intent gets 409 with no
-ids), so on a timeout or 409 Bench looks up, in SQLite, a root in that project
+ids), so on a timeout or 409 Capsid looks up, in SQLite, a root in that project
 from the last 10 minutes whose `input_data` `_intent_id` equals `id` (the test
 runs in SQLite; nothing else is read) and answers `started` with its id. It
 counts toward the 6-a-minute action limit and needs `remoteActions` too. It
@@ -2181,14 +2238,14 @@ Files: `Remote/RemoteBrowse.swift` (the switch, the routes, the query and the
 cursor, the answers, and `RemoteBrowser` over injected reads and writes),
 `Remote/HistoryReader.swift` (the in-page projection and Swift's checks of
 it), `Remote/RemoteBrowseDemo.swift` (the demo's made-up store), and the
-reads at the end of `Shared/Core/SQLiteSource.swift` (Bench's own copy). The
+reads at the end of `Shared/Core/SQLiteSource.swift` (Capsid's own copy). The
 shared files gained lines marked `// Phase 3 browse`.
 
 - **The switch**: `RemoteBrowse.isOn` is the first check of every Phase 3
   route, the artifact routes included; off, 403 `{"error":"browseOff"}`
   before anything is read. Off, `/api/sessions/<id>` and the actions open
-  only the sessions Bench knows, as in Phase 2.
-- **SQL**: since 0.5.1 Bench reads through one read-only SQLite connection
+  only the sessions Capsid knows, as in Phase 2.
+- **SQL**: since 0.5.1 Capsid reads through one read-only SQLite connection
   (the system library, not the `sqlite3` tool), so values are bound
   parameters; ids and the cursor are still checked by shape first, and `q`'s
   `\`, `%` and `_` are escaped for `LIKE … ESCAPE '\'`. `archived_at` is probed
@@ -2199,9 +2256,9 @@ shared files gained lines marked `// Phase 3 browse`.
   `{"error":"unreadable"}` when the database can't be read.
 - **States in a list** come from `status` alone (no output is read), so a
   root still `processing` while a sub-agent waits lists as Working, unless
-  Bench knows the session: then its own state shows. A row's `startedAt` is
+  Capsid knows the session: then its own state shows. A row's `startedAt` is
   when the session was created; `updatedAt` is its `updated_at`, the order.
-- **The gate**: Bench's own sessions first (nothing read), then, browse on,
+- **The gate**: Capsid's own sessions first (nothing read), then, browse on,
   the point lookup. A session found is held an hour, so Open on Mac works
   for it; one the phone just started opens for two minutes before the
   database has it.
@@ -2213,7 +2270,7 @@ shared files gained lines marked `// Phase 3 browse`.
   whole and moving `from` up; Swift checks again on its own JSON. Tool calls
   fold until something is said (a turn, a plan, an ask, a message to you, a
   helper), so a row's text and its calls can share an `i`. The plurals are
-  Bench's ("ran 3 commands"), groups go by count then first use, and "+N
+  Capsid's ("ran 3 commands"), groups go by count then first use, and "+N
   more" counts the groups not shown. A turn's files (`_artifact_refs`, and
   the save and run tools' `artifacts[]`) go under its last reply on the page,
   else on its last `steps` line, which then carries `files`; a message to
@@ -2254,19 +2311,19 @@ table with a sticky header, everything else a Download button (size shown;
 over 8 MB, "Open it on your Mac"). New session: a sheet with the project's
 name, a text field, "Plan first" (off), Start → navigates to the new session.
 
-Thumbnails, texts and downloads take turns, two at a time (Bench's limit), an
-image loading once it is near the screen. A read Bench asks to wait (429) is
+Thumbnails, texts and downloads take turns, two at a time (Capsid's limit), an
+image loading once it is near the screen. A read Capsid asks to wait (429) is
 tried again quietly after the `Retry-After` it gives, twice; a thumbnail that
 still fails shows its icon. Downloads are fetched first and then saved from
 the bytes, so a refusal is a sentence under the button ("Another file is
-still coming. Try again in a moment.") and never a saved file holding Bench's
+still coming. Try again in a moment.") and never a saved file holding Capsid's
 answer. Every map the page keys by an id has no prototype, and an address
 naming a project or file `__proto__`, `constructor` or `prototype` opens Now.
 
 ### Budgets (since the 0.4.0 security review)
 
 What a paired device may ask, so that a lost, stolen or buggy one can't hold
-Bench's memory, the page's main thread or the push key every device shares.
+Capsid's memory, the page's main thread or the push key every device shares.
 Pure (`Remote/RemoteBudget.swift`) and tested; the server asks once a
 request's head has passed its checks and its device is known, before
 anything is read. Over budget is 429 `{"error":"slowDown"}`, too many files
@@ -2314,7 +2371,7 @@ from the phone, because only their allow is truly once:
 | every other known kind (`network`, `host`, `host_delete`, `skill_license`, credential kinds, `byoc_*`, `infer_submit`, `remote_*`, `usage_checkpoint`, `customize_mutation`, `managed_endpoint_register`, `artifact_delete`, …) | no, Deny or Open on Mac | a plain line from its own fields ("Wants to reach <host>", "Wants to read <path>"…) |
 | unknown kinds | nothing but Open on Mac | "Wants your permission" |
 
-- **Reading**: Bench's session read adds, in the page, the pending requests of
+- **Reading**: Capsid's session read adds, in the page, the pending requests of
   the root and of its children (the children's come from `trace-shallow`,
   which keeps `output_data.pending_input_requests`). Projected fields only:
   `requestId`, `tool_id`, `mode`, `kind`, the holder frame id, and the plain
@@ -2327,7 +2384,7 @@ from the phone, because only their allow is truly once:
   asking. `why` when `canAllow` is false: "Allowing this from your phone would
   give lasting access. Open it on your Mac."
 - **Answering**: `POST /api/sessions/<id>/permission`
-  `{"id": "<requestId>", "decision": "allow" | "deny"}`. Bench re-reads; the
+  `{"id": "<requestId>", "decision": "allow" | "deny"}`. Capsid re-reads; the
   same request must still be the head, of the same kind, its holder's parent
   chain must reach this session's root, and an allow must be allowed. Then
   `POST /api/frames/<holder>/resolve-input`
@@ -2375,7 +2432,7 @@ The shared files only gained hooks marked `// Phase 4 permissions` and
   status, at most 2,000 frames and 16 levels, a holding frame's
   `output_data` an object (or a string holding one). A tree that doesn't
   match offers nothing, the root's own request included: an earlier request
-  under a frame Bench can't read might be the head. A failed trace, the same.
+  under a frame Capsid can't read might be the head. A failed trace, the same.
   An action's check of a plan, a question or a message still reads the frame
   alone.
 - **Which frames hold requests.** Those `processing` (a live request leaves
@@ -2462,7 +2519,7 @@ The shared files only gained hooks marked `// Phase 4 permissions` and
   are read and never leave the page. While there is text only a pending
   request keeps its label, as in the UI. Askers at the same moment share one
   read; between activity reads only the shallow frame and the text are read. A
-  read that fails answers `working` from what Bench knows of the session.
+  read that fails answers `working` from what Capsid knows of the session.
 - **`--demo remote`** has "Peak calling script" (a Python cell waits: allow
   or deny), "Reference genome download" (a network request: deny only),
   "Citation check" (a helper asks to use a read-only tool), and a live
@@ -2481,7 +2538,7 @@ The shared files only gained hooks marked `// Phase 4 permissions` and
   and `POST /api/projects/<pid>/photo` `{"image", "text", "id", "planFirst"}`.
   Body ≤ 6 MB on these two routes only, with the body timeout re-armed as
   data arrives (not a flat 3 s).
-- **Bench**: magic bytes must say JPEG, PNG or HEIC; decode with ImageIO and
+- **Capsid**: magic bytes must say JPEG, PNG or HEIC; decode with ImageIO and
   re-encode through the thumbnail API with the transform flag (orientation
   baked in, all metadata, GPS and EXIF dropped) as JPEG ≤ 3,072 px and ≤ 3 MB.
   Name it `phone-photo-YYYYMMDD-HHMMSS.jpg`. Text containing any of the UI's
@@ -2575,7 +2632,7 @@ same code.
   Mac." and no message. An upload that went and a message that didn't (the
   session changed, the daemon refused or didn't answer, no session was
   found) is `unavailable` with "The photo was saved to the project, but the
-  message didn't send. Open it on your Mac." Nothing is deleted. Bench keeps
+  message didn't send. Open it on your Mac." Nothing is deleted. Capsid keeps
   `{intent id: the upload}` ten minutes (with a hash of the picture's bytes and
   its project): a retry of the same photo under the same intent id reuses it
   instead of saving another copy, and a 409 on that retried intent reads as

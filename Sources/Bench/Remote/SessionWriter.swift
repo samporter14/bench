@@ -1,5 +1,5 @@
 // SessionWriter.swift — the phone's three writes to Claude Science (DESIGN.md,
-// Bench on your phone → Actions): approve a plan, answer (or cancel) a root
+// Capsid on your phone → Actions): approve a plan, answer (or cancel) a root
 // question, and send a message. `apiPOST` stays as it is for the card; this is
 // a separate writer, made from inside the page the same way, so the page's
 // cookie session and CSRF secret carry it and Bench never holds either.

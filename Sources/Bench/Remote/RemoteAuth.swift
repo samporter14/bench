@@ -1,5 +1,5 @@
 // RemoteAuth.swift — pairing a phone with Bench, and the devices paired
-// (DESIGN.md, Bench on your phone → Transport and trust). A device proves
+// (DESIGN.md, Capsid on your phone → Transport and trust). A device proves
 // itself with a token Bench gave it once, in a cookie; Bench keeps only the
 // token's SHA-256 hash, with the device's name and when it was paired and
 // last seen, as one file of JSON only this user can read.

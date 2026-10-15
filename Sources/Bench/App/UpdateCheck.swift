@@ -77,12 +77,12 @@ enum CheckFailure: Error, Equatable, Sendable {
 
     var message: String {
         switch self {
-        case .noVersion: "This copy of Bench has no version number."
-        case .unreachable: "Bench couldn’t reach GitHub."
-        case .http(404): "GitHub has no Bench release yet."
+        case .noVersion: "This copy of Capsid has no version number."
+        case .unreachable: "Capsid couldn’t reach GitHub."
+        case .http(404): "GitHub has no Capsid release yet."
         case .http(403), .http(429): "GitHub is limiting requests from this network. Try again later."
         case .http(let status): "GitHub answered with status \(status)."
-        case .unreadable: "GitHub’s answer wasn’t a Bench release."
+        case .unreadable: "GitHub’s answer wasn’t a Capsid release."
         }
     }
 }
@@ -94,7 +94,7 @@ enum UpdateRules {
     /// The README's install line, run as it stands. It is a constant, never
     /// read from the network.
     static let installLine = "curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh"
-    static let installDirectory = "/Applications/Bench.app"
+    static let installDirectory = "/Applications/Capsid.app"
     static let zipName = "Bench.zip"
 
     /// One automatic check a day.
@@ -116,7 +116,7 @@ enum UpdateRules {
         request.httpMethod = "GET"
         request.httpShouldHandleCookies = false
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("Bench/\(appVersion)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Capsid/\(appVersion)", forHTTPHeaderField: "User-Agent")
         request.setValue("en", forHTTPHeaderField: "Accept-Language")
         return request
     }
@@ -221,20 +221,20 @@ enum UpdateRules {
     static func notice(for update: AvailableUpdate) -> LabNotice {
         LabNotice(
             id: "update-\(update.version)", symbol: "arrow.down.app", caption: "Update",
-            title: "Bench \(update.version) is available",
-            detail: "Choose Bench \u{2192} Check for Updates\u{2026} to install it", lifetime: .seconds(15))
+            title: "Capsid \(update.version) is available",
+            detail: "Choose Capsid \u{2192} Check for Updates\u{2026} to install it", lifetime: .seconds(15))
     }
 
     /// What Install does, said before it does it.
     static func installSentence(_ version: BenchVersion) -> String {
-        "Bench will quit, download \(version) from GitHub and reopen."
+        "Capsid will quit, download \(version) from GitHub and reopen."
     }
 
     static let cannotInstallHere =
-        "This copy of Bench isn\u{2019}t in Applications, so it can\u{2019}t replace itself. Run the install line from the README in Terminal."
+        "This copy of Capsid isn\u{2019}t in Applications, so it can\u{2019}t replace itself. Run the install line from the README in Terminal."
 
-    /// The installer replaces /Applications/Bench.app and quits only that
-    /// copy. Run from anywhere else it would open a second Bench beside the
+    /// The installer replaces /Applications/Capsid.app and quits only that
+    /// copy. Run from anywhere else it would open a second Capsid beside the
     /// one running.
     static func canInstall(from bundleURL: URL) -> Bool {
         bundleURL.standardizedFileURL.path == installDirectory

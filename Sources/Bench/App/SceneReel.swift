@@ -1,6 +1,6 @@
-// SceneReel.swift — `Bench --render-scenes reel.gif` lays lab scenes out in a
+// SceneReel.swift — `Capsid --render-scenes reel.gif` lays lab scenes out in a
 // grid of tiles and encodes them as one looping GIF for the README, then
-// exits. `Bench --list-scenes` prints every scene's name. A development tool,
+// exits. `Capsid --list-scenes` prints every scene's name. A development tool,
 // like SheetCost: it draws with the same code the panel does, so the README
 // never shows a scene the app does not have.
 import AppKit
@@ -38,7 +38,7 @@ enum SceneReel {
         }
         guard let flag = args.firstIndex(of: "--render-scenes") else { return }
         guard flag + 1 < args.count, !args[flag + 1].hasPrefix("--") else {
-            fail("usage: Bench --render-scenes <out.gif> [--names \"A,B,…\"] [--columns 4] [--rows 2] [--size 128] [--seconds 4] [--fps 20]")
+            fail("usage: Capsid --render-scenes <out.gif> [--names \"A,B,…\"] [--columns 4] [--rows 2] [--size 128] [--seconds 4] [--fps 20]")
         }
 
         func option(_ name: String, default fallback: Double) -> Double {

@@ -65,13 +65,13 @@ enum SettingsKey {
     /// on, in Settings or the welcome window: it's the one request Bench makes
     /// beyond this Mac that a click didn't ask for.
     static let checkForUpdates = "checkForUpdates"
-    /// Bench on your phone (since 0.4.0): the loopback listener and Bench's
+    /// Capsid on your phone (since 0.4.0): the loopback listener and its
     /// Tailscale Serve mapping. Off unless the user turns it on in Settings
     /// → Phone: it is what lets the user's own devices reach Bench.
     static let remoteEnabled = "remoteEnabled"
     /// The listener's port, from 47280 to 47290, tried first next time.
     static let remotePort = "remotePort"
-    /// The tailnet login Bench on your phone was turned on with: Serve's
+    /// The tailnet login Capsid on your phone was turned on with: Serve's
     /// `Tailscale-User-Login` must match it.
     static let remoteLogin = "remoteLogin"
     /// The welcome window has been shown (or was skipped for someone who used
@@ -83,12 +83,12 @@ enum SettingsKey {
     static let appearance = "appearance"
     // Phase 2 actions
     /// Paired devices may answer a question, approve a plan and send a
-    /// message (Bench on your phone, since 0.4.0). On by default; off, the
+    /// message (Capsid on your phone, since 0.4.0). On by default; off, the
     /// action routes answer 403 and the phone offers Open on Mac only.
     static let remoteActions = "remoteActions"
     // Phase 3 browse
     /// Paired devices may browse every project, read whole conversations and
-    /// see artifacts, and start a session (Bench on your phone, since 0.4.0).
+    /// see artifacts, and start a session (Capsid on your phone, since 0.4.0).
     /// On by default; off, those routes answer 403 and the phone shows Now only.
     static let remoteBrowse = "remoteBrowse"
     /// "Skip" on Settings → Phone's "Put Tailscale on your phone", for

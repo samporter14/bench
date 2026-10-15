@@ -67,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UsagePauseModel.shared.start()
         // The opt-in daily look for a newer Bench (App/UpdateCheck.swift).
         UpdateChecker.shared.start()
-        // Bench on your phone, if it was on (Remote/RemoteController.swift).
+        // Capsid on your phone, if it was on (Remote/RemoteController.swift).
         RemoteController.shared.start()
         MenuBarSpecimen.shared.start()
         // ⌘⇧O reaches Quick Open before the page: a web view offers key
@@ -103,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         LabModel.shared.stop()
-        // Bench on your phone: Bench's Serve mapping goes with it, waiting
+        // Capsid on your phone: its Serve mapping goes with it, waiting
         // at most 2 s (Remote/RemoteController.swift). Never in a demo.
         if Demo.mode == nil { RemoteController.shared.removeMappingAtQuit() }
     }
@@ -253,9 +253,9 @@ struct BenchCommands: Commands {
         }
         CommandGroup(after: .help) {
             // A demo has its own welcome (`--demo welcome`), which records nothing.
-            Button("Welcome to Bench") { WelcomeWindowController.shared.show() }
+            Button("Welcome to Capsid") { WelcomeWindowController.shared.show() }
                 .disabled(Demo.mode != nil)
-            Button("Bench Diagnostics…") { DiagnosticsWindowController.shared.show() }
+            Button("Capsid Diagnostics…") { DiagnosticsWindowController.shared.show() }
         }
         CommandMenu("History") {
             Group {

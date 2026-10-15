@@ -126,10 +126,10 @@ struct RemoteCanTests {
 
     @Test func actionsOffComesFirstThenUnreadable() {
         let off = RemoteCan.make(read: read("completed"), plan: nil, actionsOn: false)
-        #expect(off == RemoteAPI.Can(approve: false, answer: false, message: nil, why: "Actions are off in Bench's Settings"))
-        #expect(RemoteCan.make(read: nil, plan: plan, actionsOn: false).why == "Actions are off in Bench's Settings")
+        #expect(off == RemoteAPI.Can(approve: false, answer: false, message: nil, why: "Actions are off in Capsid's Settings"))
+        #expect(RemoteCan.make(read: nil, plan: plan, actionsOn: false).why == "Actions are off in Capsid's Settings")
         #expect(RemoteCan.make(read: nil, plan: plan, actionsOn: true)
-                == RemoteAPI.Can(approve: false, answer: false, message: nil, why: "Bench can't read this session"))
+                == RemoteAPI.Can(approve: false, answer: false, message: nil, why: "Capsid can't read this session"))
     }
 
     @Test func eachStatusOffersItsOwn() {
@@ -159,7 +159,7 @@ struct RemoteCanTests {
 
     @Test func noAgentNoMessage() {
         #expect(RemoteCan.make(read: read("completed", agent: nil), plan: nil, actionsOn: true)
-                == RemoteAPI.Can(approve: false, answer: false, message: nil, why: "Bench can't read this session"))
+                == RemoteAPI.Can(approve: false, answer: false, message: nil, why: "Capsid can't read this session"))
     }
 }
 
@@ -423,7 +423,7 @@ struct RemoteSessionsTests {
         page.reads[root] = read("awaiting_plan_approval", version: "ver-1")
         let reply = await page.sessions().act(.approve, session: root, device: "d", body: body(#"{"version":"ver-1"}"#))
         #expect(reply.status == 403)
-        #expect(decode(reply)["sentence"] as? String == "Actions are off in Bench's Settings")
+        #expect(decode(reply)["sentence"] as? String == "Actions are off in Capsid's Settings")
         #expect(page.readLog.isEmpty)
         #expect(page.writes.isEmpty)
     }
@@ -613,7 +613,7 @@ struct RemoteSessionsTests {
         #expect(session["readable"] as? Bool == false)
         #expect((session["plan"] as? [String: Any])?["summary"] as? String == "From the card")
         #expect(session["turns"] is NSNull)
-        #expect((session["can"] as? [String: Any])?["why"] as? String == "Bench can't read this session")
+        #expect((session["can"] as? [String: Any])?["why"] as? String == "Capsid can't read this session")
     }
 }
 
@@ -649,7 +649,7 @@ struct RemoteDemoActionsTests {
         #expect(await can(sessions, list[2].id)["message"] as? String == "resume")
         #expect(await can(sessions, list[3].id)["message"] as? String == "queue")
         #expect(await can(sessions, list[4].id)["message"] as? String == "send")
-        #expect(await can(sessions, list[5].id)["why"] as? String == "Bench can't read this session")
+        #expect(await can(sessions, list[5].id)["why"] as? String == "Capsid can't read this session")
     }
 
     @Test func theDemosActionsSucceedWithMadeUpResults() async {

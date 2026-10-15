@@ -276,7 +276,7 @@ struct PermissionRouteTests {
         let permission = try #require(decode(await page.sessions().sessionJSON(root))["permission"] as? [String: Any])
         #expect(permission["canAllow"] as? Bool == false)
         #expect(permission["canDeny"] as? Bool == false)
-        #expect(permission["why"] as? String == "Actions are off in Bench's Settings")
+        #expect(permission["why"] as? String == "Actions are off in Capsid's Settings")
         #expect(permission["title"] as? String == "Run Python code")
     }
 
@@ -369,7 +369,7 @@ struct PermissionRouteTests {
         page.reads[root] = read(exec)
         let reply = await act(#"{"id":"req-1","decision":"allow"}"#)
         #expect(reply.status == 403)
-        #expect(decode(reply.body)["sentence"] as? String == "Actions are off in Bench's Settings")
+        #expect(decode(reply.body)["sentence"] as? String == "Actions are off in Capsid's Settings")
         #expect(page.readLog.isEmpty)
         #expect(page.writes.isEmpty)
     }

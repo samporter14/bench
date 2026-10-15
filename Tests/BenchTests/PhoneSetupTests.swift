@@ -280,8 +280,8 @@ struct PhoneSetupTests {
         #expect(PhoneSetup.turnOnDetail(.serving, port: 47280) == nil)
         #expect(PhoneSetup.turnOnDetail(.waitingForTailscale, port: 47280) == "Waiting for Tailscale to connect.")
         #expect(PhoneSetup.turnOnDetail(.blocked, port: 47280)?.hasPrefix("Port 8443") == true)
-        #expect(PhoneSetup.turnOnDetail(.failed, port: nil) == "Bench couldn't listen on a port from 47280 to 47290.")
-        #expect(PhoneSetup.turnOnDetail(.failed, port: 47280) == "Tailscale couldn't serve Bench.")
+        #expect(PhoneSetup.turnOnDetail(.failed, port: nil) == "Capsid couldn't listen on a port from 47280 to 47290.")
+        #expect(PhoneSetup.turnOnDetail(.failed, port: 47280) == "Tailscale couldn't serve Capsid.")
     }
 
     @Test func aLongOrOddHostNameIsMadeFitToShow() {

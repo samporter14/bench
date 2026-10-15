@@ -17,7 +17,7 @@ enum PhoneSetup {
             case .signIn: "Sign in to Tailscale"
             case .https: "Turn on HTTPS for your network"
             case .phone: "Put Tailscale on your phone"
-            case .turnOn: "Turn on Bench on your phone"
+            case .turnOn: "Turn on Capsid on your phone"
             case .pair: "Pair your phone"
             }
         }
@@ -146,7 +146,7 @@ enum PhoneSetup {
         return text.hasSuffix("/") ? String(text.dropLast()) : text
     }
 
-    /// The line under "Turn on Bench on your phone" once its switch is on,
+    /// The line under "Turn on Capsid on your phone" once its switch is on,
     /// while Bench isn't served yet; nil for the usual help.
     static func turnOnDetail(_ serve: RemoteController.Status.Serve, port: UInt16?) -> String? {
         switch serve {
@@ -154,8 +154,8 @@ enum PhoneSetup {
         case .starting: "Turning on…"
         case .waitingForTailscale: "Waiting for Tailscale to connect."
         case .httpsOff: "Waiting for HTTPS on your network."
-        case .blocked: "Port 8443 already serves something else with Tailscale Serve. Bench leaves it alone."
-        case .failed: port == nil ? "Bench couldn't listen on a port from 47280 to 47290." : "Tailscale couldn't serve Bench."
+        case .blocked: "Port 8443 already serves something else with Tailscale Serve. Capsid leaves it alone."
+        case .failed: port == nil ? "Capsid couldn't listen on a port from 47280 to 47290." : "Tailscale couldn't serve Capsid."
         }
     }
 }

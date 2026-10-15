@@ -1,5 +1,5 @@
 // ArtifactReader.swift — reading a session's artifacts for the phone (DESIGN.md,
-// Bench on your phone → Phase 3: Artifacts), the in-page part. As the session
+// Capsid on your phone → Phase 3: Artifacts), the in-page part. As the session
 // reader does, the page makes the GET itself and hands Swift only what the
 // route needs: the list projected to `{v, a, name, mime, size, at}`, a
 // thumbnail's or a download's bytes as base64, or a text's first 256 KB

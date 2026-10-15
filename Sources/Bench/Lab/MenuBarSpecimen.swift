@@ -47,7 +47,7 @@ final class MenuBarSpecimen: NSObject {
         if let button = item.button {
             button.target = self
             button.action = #selector(toggle)
-            button.setAccessibilityLabel("Bench sessions")
+            button.setAccessibilityLabel("Capsid sessions")
             let hosting = NSHostingView(rootView: MenuBarSpecimenView(dark: Self.isDark(button)))
             hosting.frame = NSRect(x: 0, y: 0, width: 24, height: NSStatusBar.system.thickness)
             button.addSubview(hosting)

@@ -1,5 +1,5 @@
 // PushCenter.swift — push notifications to paired devices that ask for them
-// (DESIGN.md, Bench on your phone → Notifications). Bench sends them itself,
+// (DESIGN.md, Capsid on your phone → Notifications). The app sends them itself,
 // through the device's push service (Apple's, for an iPhone), encrypted so
 // only that device can read them (WebPush.swift).
 //

@@ -1,5 +1,5 @@
-// RemoteServer.swift — the small HTTP/1.1 server behind Bench on your phone
-// (DESIGN.md, Bench on your phone). It listens on 127.0.0.1 only; Tailscale
+// RemoteServer.swift — the small HTTP/1.1 server behind Capsid on your phone
+// (DESIGN.md, Capsid on your phone). It listens on 127.0.0.1 only; Tailscale
 // Serve publishes it to the user's tailnet with a real certificate.
 //
 // Everything that decides is pure and tested: reading a request

@@ -256,7 +256,7 @@ final class MacNotifications: NSObject, ObservableObject {
         // The panel's chime would come with a real one.
         if benchSounds { NSSound(named: "Glass")?.play() }
         add(NotificationRules.Content(id: Self.testID, title: "Test notification",
-                                      body: "This is how Bench tells you a session needs you.",
+                                      body: "This is how Capsid tells you a session needs you.",
                                       sound: !benchSounds, sessionID: nil, link: nil))
     }
 
@@ -378,7 +378,7 @@ struct MacNotificationsSection: View {
         } header: {
             Text("Mac notifications")
         } footer: {
-            Text("Notifications name the session and its project unless you turn names off. To stop them, turn off \u{201C}Also send a Mac notification\u{201D}, or turn Bench off in System Settings \u{2192} Notifications.")
+            Text("Notifications name the session and its project unless you turn names off. To stop them, turn off \u{201C}Also send a Mac notification\u{201D}, or turn Capsid off in System Settings \u{2192} Notifications.")
         }
         .onChange(of: enabled) { _, on in
             if on { notifications.requestAuthorization() }

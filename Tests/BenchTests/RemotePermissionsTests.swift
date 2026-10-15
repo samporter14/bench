@@ -206,7 +206,7 @@ struct PermissionKindTests {
     @Test func actionsOffOffersNothingAndSaysWhy() throws {
         let permission = try #require(described(request("local_exec", ["tool": "python", "code": "print(1)"]), actionsOn: false))
         #expect(!permission.canAllow && !permission.canDeny)
-        #expect(permission.why == "Actions are off in Bench's Settings")
+        #expect(permission.why == "Actions are off in Capsid's Settings")
         // The words stay: the phone still says what is waiting.
         #expect(permission.title == "Run Python code")
     }
@@ -424,7 +424,7 @@ struct PermissionHeadTests {
         #expect(RemoteCan.make(read: SessionProjection(status: "processing", agentName: "a", projectID: "p", permission: net),
                                plan: nil, actionsOn: true).message == "queue")
         // Actions off still comes first.
-        #expect(RemoteCan.make(read: session, plan: nil, actionsOn: false).why == "Actions are off in Bench's Settings")
+        #expect(RemoteCan.make(read: session, plan: nil, actionsOn: false).why == "Actions are off in Capsid's Settings")
         // The session the phone gets carries the card.
         let candidates = [Fixture.session(root, .running, title: "Made-up session")]
         let made = try #require(RemoteAPI.session(id: root, candidates: candidates, plan: nil, read: session))
@@ -906,7 +906,7 @@ struct PermissionCodeRuleTests {
         let permission = RemotePermission.describe(read, actionsOn: true)
         #expect(!permission.canAllow && permission.canDeny)
         #expect(permission.code == nil)
-        #expect(permission.why == "The code has characters Bench can't show safely. Open it on your Mac.")
+        #expect(permission.why == "The code has characters Capsid can't show safely. Open it on your Mac.")
     }
 
     @Test(arguments: odd)
@@ -1014,7 +1014,7 @@ struct PermissionCodeRuleTests {
         #expect(try #require(described(exec(both))).why == "The code is too long to read on your phone. Open it on your Mac.")
         // Odd and wide: odd.
         let oddAndWide = "\u{200B}" + String(repeating: "a", count: 200)
-        #expect(try #require(described(exec(oddAndWide))).why == "The code has characters Bench can't show safely. Open it on your Mac.")
+        #expect(try #require(described(exec(oddAndWide))).why == "The code has characters Capsid can't show safely. Open it on your Mac.")
     }
 
     private static func projection(code: String?) -> [String: Any] {

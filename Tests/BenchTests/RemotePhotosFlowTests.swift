@@ -721,7 +721,7 @@ struct RemotePhotosSessionTests {
         rig.actionsOn = false
         let off = await rig.session(PhotoFixture.body(text: "x"))
         #expect(off.status == 403)
-        #expect(decode(off.body).string("sentence") == "Actions are off in Bench's Settings")
+        #expect(decode(off.body).string("sentence") == "Actions are off in Capsid's Settings")
         rig.actionsOn = true
         let other = await rig.session(PhotoFixture.body(text: "x"), id: newID)
         #expect(other.status == 404)

@@ -1,4 +1,4 @@
-// Bench on your phone: the service worker. It does one job: show a push and open the app on a tap.
+// Capsid on your phone: the service worker. It does one job: show a push and open the app on a tap.
 // A push may also carry the count for the Home Screen icon. It caches nothing and has no fetch handler, so the app stays network-only.
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -15,7 +15,7 @@ function safePath(u) {
   }
 }
 
-// The count on the Bench icon (Settings can turn it off: then Bench leaves `badge` out). iOS has no silent
+// The count on the Capsid icon (Settings can turn it off: then Capsid leaves `badge` out). iOS has no silent
 // pushes, so it changes when a push arrives, and the app corrects it when it opens.
 function setBadge(count) {
   if (!Number.isInteger(count) || count < 0 || !('setAppBadge' in self.navigator)) return Promise.resolve();

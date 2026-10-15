@@ -26,7 +26,7 @@ struct PhonePauseTests {
         return #"{"version":1,"bench":"0.5.3","updatedAt":"2026-10-14T14:00:00Z","problem":null,"needsYou":[],"failed":[],"working":[\#(working.joined(separator: ","))],"recent":[],"usage":null,"pause":\#(block)}"#
     }
 
-    private static let session = #"{"can":{"answer":false,"approve":false,"message":null,"why":"Bench can't read this session"},"id":"\#(id)","messages":[],"permission":null,"plan":null,"project":"Example project","question":null,"queued":null,"readable":false,"reason":null,"reply":null,"sentence":"Working","startedAt":"2026-10-14T13:50:00Z","state":"running","statusLine":null,"title":"Made-up screen","toYou":null,"turns":null,"updatedAt":"2026-10-14T13:59:00Z","version":2}"#
+    private static let session = #"{"can":{"answer":false,"approve":false,"message":null,"why":"Capsid can't read this session"},"id":"\#(id)","messages":[],"permission":null,"plan":null,"project":"Example project","question":null,"queued":null,"readable":false,"reason":null,"reply":null,"sentence":"Working","startedAt":"2026-10-14T13:50:00Z","state":"running","statusLine":null,"title":"Made-up screen","toYou":null,"turns":null,"updatedAt":"2026-10-14T13:59:00Z","version":2}"#
 
     private static var livePath: String { "/api/sessions/\(id)/live" }
     private static let liveID = "LIVE.id"

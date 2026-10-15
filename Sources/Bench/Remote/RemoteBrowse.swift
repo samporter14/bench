@@ -1,4 +1,4 @@
-// RemoteBrowse.swift — Bench on your phone, Phase 3 (DESIGN.md, Phase 3:
+// RemoteBrowse.swift — Capsid on your phone, Phase 3 (DESIGN.md, Phase 3:
 // browse, history, artifacts, new sessions): every project and its sessions
 // from Bench's own database reads, a session's whole conversation a page at a
 // time through the page (HistoryReader.swift), and starting a session.

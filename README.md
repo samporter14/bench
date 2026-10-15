@@ -1,10 +1,10 @@
-<img src="docs/icon.png" width="96" alt="Bench's icon: a flask inside a broken ring, one bubble escaped through the gap">
+<img src="docs/icon.png" width="96" alt="Capsid's icon: a virus's twenty-sided shell inside a broken ring on a clay tile, one dot escaped through the gap">
 
-# Bench
+# Capsid
 
 **Claude Science as a real Mac app.** A Solanum product.
 
-<img src="docs/scenes.gif" width="580" alt="Eight of Bench's animated lab specimens playing: a pipette aliquoting, a cell dividing, distillation, a kinesin motor, CRISPR, a curve fit, a centrifuge and planaria">
+<img src="docs/scenes.gif" width="580" alt="Eight of Capsid's animated lab specimens playing: a pipette aliquoting, a cell dividing, distillation, a kinesin motor, CRISPR, a curve fit, a centrifuge and planaria">
 
 **Install in one line**: paste into Terminal (Apple silicon, macOS 27):
 
@@ -14,21 +14,21 @@ curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh |
 
 Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/download/Bench.zip) (3 MB); see [Install](#install).
 
-## Why Bench
+## Why Capsid
 
 - **Tiny and light.** A 3 MB download, with no Electron and no bundled
-  browser. It uses the WebKit already built into macOS. Bench itself idles at
+  browser. It uses the WebKit already built into macOS. Capsid itself idles at
   0% CPU and about 50 MB of memory, and the page runs in WebKit like a Safari
   tab.
 - **Truly Mac native.** Written in Swift with SwiftUI and AppKit: Liquid
   Glass, a real toolbar, menus, keyboard shortcuts, Settings (⌘,) and Find
   (⌘F).
-- **Nothing collected.** No Bench account, no analytics, no telemetry. Bench
+- **Nothing collected.** No Capsid account, no analytics, no telemetry. Capsid
   talks to nothing beyond your Mac except links you click, a once-a-day
-  update check if you turn it on, and, if you turn on Bench on your phone,
+  update check if you turn it on, and, if you turn on Capsid on your phone,
   your own paired devices over your Tailscale network, with notifications,
   if you turn them on, carried by Apple's push service and encrypted so only
-  your device can read them. Bench reads Claude Science and changes nothing
+  your device can read them. Capsid reads Claude Science and changes nothing
   in it, except when you press Approve on a plan's card, or answer, approve,
   send a message or start a session from a paired device. It saves nothing
   but its own settings.
@@ -43,7 +43,7 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 - **Approve a plan from its card.** When a session asks you to approve its
   plan, the card shows the plan's summary, how many steps it has (their
   titles one click away) and Claude's own feasibility estimate, with an
-  **Approve** button. Bench checks it's still the
+  **Approve** button. Capsid checks it's still the
   same plan just before approving; if anything is off, Open takes you to the
   session instead. Never from a Mac notification. Turn it off in Settings →
   General.
@@ -55,10 +55,10 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   macOS asks your permission once, and you can hide the session and project
   names.
 - **Every session in one list.** Click the status in the toolbar, or
-  right-click Bench in the Dock, for what needs you, what's working and what
+  right-click Capsid in the Dock, for what needs you, what's working and what
   happened lately, each one click from its session. Press ⌘⇧O to jump to any
   recent session by typing part of its name. Nothing about your sessions is
-  saved to disk: Recent lasts until Bench quits.
+  saved to disk: Recent lasts until Capsid quits.
 
   <img src="docs/activity.png" width="390" alt="The activity list under the toolbar's 2 need you: two sessions waiting, one stopped with an error, two working with their clocks, and Recent below">
 - **A heads-up before you hit a wall.** A card when your plan is nearly
@@ -94,13 +94,13 @@ Screen.
 
 <img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, a checkbox per category (Lab 130 of 131, Biology 211 of 214), a search field with an All, On and Off filter, and a grid of specimens under a Lab heading, each with a clay check when on">
 
-## Bench on your phone
+## Capsid on your phone
 
 Use Claude Science from your iPhone, iPad or another computer while you're
-away from your Mac: a private web app that Bench serves to your own devices
+away from your Mac: a private web app that Capsid serves to your own devices
 over your [Tailscale](https://tailscale.com) network. **[The setup guide](docs/phone.md)**
 takes about five minutes. Nothing is on the
-public internet: Bench listens only on your Mac, and Tailscale Serve passes
+public internet: Capsid listens only on your Mac, and Tailscale Serve passes
 on what your devices ask, with a certificate for your tailnet.
 
 - **Now**: what needs you, what stopped with an error, what's working (with
@@ -111,7 +111,7 @@ on what your devices ask, with a certificate for your tailnet.
 - **Act on it**: answer its question, approve its plan, send it a message
   (it waits for the next pause if Claude is busy) or a photo, and answer its
   permission requests: running code and read-only tools can be allowed once;
-  anything that would grant lasting access is Deny or Open on Mac. Bench
+  anything that would grant lasting access is Deny or Open on Mac. Capsid
   checks the session hasn't changed on your Mac just before it acts.
 - **Watch it work**: while a session works, its reply appears as it's
   written, with what it's doing ("Executing code").
@@ -121,7 +121,7 @@ on what your devices ask, with a certificate for your tailnet.
   needs you, stops with an error or (if you like) finishes; by default only
   while you're away from your Mac and without session names. They travel
   through Apple's push service, encrypted so only your device can read them.
-- **A count on the Bench icon** of sessions that need you.
+- **A count on the Capsid icon** of sessions that need you.
 - On iPad, a sidebar and the session side by side.
 
 It's **off** until you turn it on in **Settings → Phone**, which walks you
@@ -131,17 +131,22 @@ the QR code, add the page to your Home Screen, open it from there and enter
 the one-time code). Settings lists paired devices, each
 with Remove (a device unused for 60 days has to pair again), and has two
 switches: one for answering, approving and sending messages, one for
-browsing projects, full conversations and files. Turning Bench on your phone
-off, or quitting Bench, stops serving and leaves your other Tailscale Serve
+browsing projects, full conversations and files. Turning Capsid on your phone
+off, or quitting Capsid, stops serving and leaves your other Tailscale Serve
 settings as they are.
 
 ## Install
 
 You need a Mac with Apple silicon (M1 or later) on macOS 27, with
 Claude Science installed. Close any Claude Science browser tab first, because
-Claude Science runs in one tab at a time. Bench starts Claude Science if it
+Claude Science runs in one tab at a time. Capsid starts Claude Science if it
 isn't running and signs you in. The first time, a short welcome shows you
-around; Help → Welcome to Bench shows it again.
+around; Help → Welcome to Capsid shows it again.
+
+**Coming from Bench?** Capsid was called Bench until 0.6.0. Installing or
+updating it the usual way replaces Bench in Applications with Capsid, and
+your settings and paired devices carry over. The download is still called
+Bench.zip, and this repository is still `bench`.
 
 ### Easiest: one line in Terminal
 
@@ -149,7 +154,7 @@ around; Help → Welcome to Bench shows it again.
 curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh
 ```
 
-It downloads the latest Bench from this page's releases, puts it in
+It downloads the latest Capsid from this page's releases, puts it in
 Applications (quitting and replacing an older one), and opens it. **Run the
 same line again to update.** macOS doesn't show its "can't verify" warning
 for apps installed this way, because it only flags apps downloaded through a
@@ -157,13 +162,13 @@ web browser. You're trusting this page instead, so [install.sh](install.sh)
 is short enough to read first.
 
 **Updates.** Off until you turn on **Settings → General → Updates → Check for
-updates once a day**: then Bench asks GitHub for its latest release about once
+updates once a day**: then Capsid asks GitHub for its latest release about once
 a day, and a card and Settings say when a newer one is out. The request
-carries only the name `Bench` and its version, nothing about you or your
+carries only the name `Capsid` and its version, nothing about you or your
 sessions, though GitHub sees your IP address as any site you visit does.
-**Bench → Check for Updates…** and **Check Now** ask at once, with
+**Capsid → Check for Updates…** and **Check Now** ask at once, with
 the switch off too. **Install Update** runs the line above for you, after
-telling you that Bench will quit, download the new version from GitHub and
+telling you that Capsid will quit, download the new version from GitHub and
 reopen. A copy that isn't in Applications can't replace itself, so it offers
 only the release notes.
 
@@ -171,30 +176,31 @@ only the release notes.
 
 1. [Download Bench.zip](https://github.com/samporter14/bench/releases/latest/download/Bench.zip)
    and open it.
-2. Drag **Bench** into your **Applications** folder, and open it from there
-   rather than from Downloads.
-3. Open Bench. The first time, macOS blocks it because it isn't from the App
+2. Drag **Capsid** into your **Applications** folder, and open it from there
+   rather than from Downloads. If Bench is there from before, quit it and
+   move it to the Trash: Capsid replaces it.
+3. Open Capsid. The first time, macOS blocks it because it isn't from the App
    Store or a registered developer. Click **Done**, then go to **System
    Settings → Privacy & Security**, scroll down, and click **Open Anyway**
-   next to Bench.
+   next to Capsid.
 
-To update a downloaded copy, quit Bench first with **⌘Q**. Closing its window
-isn't enough, because Bench keeps running in the background to watch your
+To update a downloaded copy, quit Capsid first with **⌘Q**. Closing its window
+isn't enough, because Capsid keeps running in the background to watch your
 sessions. Then replace it in Applications, open it, and click **Open Anyway**
-once more. **Bench → About Bench** shows which version is running.
+once more. **Capsid → About Capsid** shows which version is running.
 
 ### If something's off
 
-If Bench ever opens on a "Sign in" screen, click **Sign in**.
+If Capsid ever opens on a "Sign in" screen, click **Sign in**.
 
-If the specimens or the "needs you" cards never show up, open **Help → Bench
-Diagnostics**. It checks each step Bench takes to see your sessions and has a
+If the specimens or the "needs you" cards never show up, open **Help → Capsid
+Diagnostics**. It checks each step Capsid takes to see your sessions and has a
 **Copy** button; nothing in it names your projects or sessions. The same
 report prints in Terminal with the command below, once macOS has let that
-version of Bench open:
+version of Capsid open:
 
 ```sh
-/Applications/Bench.app/Contents/MacOS/Bench --diagnose
+/Applications/Capsid.app/Contents/MacOS/Capsid --diagnose
 ```
 
 ## Build it yourself
@@ -205,22 +211,22 @@ With Xcode 27 installed, run this from the repo's folder:
 Scripts/build-app.sh --open
 ```
 
-It builds `build/Bench.app` and opens it.
+It builds `build/Capsid.app` and opens it.
 
 ## Notes
 
-- Bench is a personal project, unofficial, and not affiliated with or
+- Capsid is a personal project, unofficial, and not affiliated with or
   endorsed by Anthropic. It's a work in progress: `TESTING.md` says what has
   been checked live so far.
 - `DESIGN.md` is the spec: the look, where the glass goes, and how links are
   routed.
-- The screenshots use made-up sessions: `Bench --demo working|card|plan|toolbar|general|specimens`
+- The screenshots use made-up sessions: `Capsid --demo working|card|plan|toolbar|general|specimens`
   shows the real UI with invented names (add `--quiet`, and launch with
   `open -g -n`, to keep it from taking the keyboard),
-  `Bench --demo phone-settings --step 1…7` shows Settings → Phone at each
-  step of its setup checklist, `Bench --demo remote` serves the phone page with them on
+  `Capsid --demo phone-settings --step 1…7` shows Settings → Phone at each
+  step of its setup checklist, `Capsid --demo remote` serves the phone page with them on
   `http://127.0.0.1:47280` (pairing code `000000`), and
-  `Bench --render-scenes` records the scene GIF.
+  `Capsid --render-scenes` records the scene GIF.
 - `Sources/Bench/Shared` holds copies from the Science Status droplet, where
   the specimens are written; `Scripts/sync-shared.sh` refreshes them.
 - MIT licensed; see [LICENSE](LICENSE).

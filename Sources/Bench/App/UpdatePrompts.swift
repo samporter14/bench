@@ -10,7 +10,7 @@ enum UpdatePrompts {
     /// rather than stacking a second alert.
     private static var checking = false
 
-    /// Bench → Check for Updates…: asks now, then says what it found.
+    /// Capsid → Check for Updates…: asks now, then says what it found.
     static func checkFromMenu() {
         guard !checking else { return }
         checking = true
@@ -35,12 +35,12 @@ enum UpdatePrompts {
         var choices: [Choice] = []
         switch state {
         case .upToDate(let version):
-            alert.messageText = "Bench is up to date (\(version))"
+            alert.messageText = "Capsid is up to date (\(version))"
             alert.informativeText = "This is the latest release on GitHub."
             alert.addButton(withTitle: "OK")
             choices = [.dismiss]
         case .available(let update):
-            alert.messageText = "Bench \(update.version) is available"
+            alert.messageText = "Capsid \(update.version) is available"
             if UpdateRules.canInstall(from: Bundle.main.bundleURL) {
                 // The alert says what Install does, so it needs no second one.
                 alert.informativeText = UpdateRules.installSentence(update.version)
@@ -76,8 +76,8 @@ enum UpdatePrompts {
     static func installFailed(_ update: AvailableUpdate) {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Bench \(update.version) didn\u{2019}t install"
-        alert.informativeText = "Bench is still the version you had. Try again later, or run the install line from the README in Terminal."
+        alert.messageText = "Capsid \(update.version) didn\u{2019}t install"
+        alert.informativeText = "Capsid is still the version you had. Try again later, or run the install line from the README in Terminal."
         alert.addButton(withTitle: "OK")
         NSApp.activate()
         alert.runModal()
@@ -100,8 +100,8 @@ struct UpdatesSection: View {
         switch updates.state {
         case .idle: "Check for a newer version"
         case .checking: "Asking GitHub\u{2026}"
-        case .upToDate(let version): "Bench is up to date (\(version))"
-        case .available(let update): "Bench \(update.version) is available"
+        case .upToDate(let version): "Capsid is up to date (\(version))"
+        case .available(let update): "Capsid \(update.version) is available"
         case .failed: "Couldn\u{2019}t check for updates"
         }
     }
@@ -118,7 +118,7 @@ struct UpdatesSection: View {
         Section("Updates") {
             Toggle(isOn: $enabled) {
                 Text("Check for updates once a day")
-                Text("Asks GitHub for the latest Bench release. Nothing about you or your sessions is sent.")
+                Text("Asks GitHub for the latest Capsid release. Nothing about you or your sessions is sent.")
             }
             LabeledContent {
                 Button(updates.state == .checking ? "Checking\u{2026}" : "Check Now") {

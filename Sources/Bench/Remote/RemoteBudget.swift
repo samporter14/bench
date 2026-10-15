@@ -1,5 +1,5 @@
 // RemoteBudget.swift — how much each paired device may ask of Bench (DESIGN.md,
-// Bench on your phone → Budgets). A token bucket on every authenticated
+// Capsid on your phone → Budgets). A token bucket on every authenticated
 // `/api/*` route, at most two file transfers and two event streams at a time,
 // Open on Mac once every 3 s and the test push three times a minute. A
 // device may be lost or stolen, or simply buggy: none of this should let it

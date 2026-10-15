@@ -1,4 +1,4 @@
-// Bench on your phone. Plain JS, no dependencies, same-origin only.
+// Capsid on your phone. Plain JS, no dependencies, same-origin only.
 // Every piece of user text goes in through textContent (h() below), never innerHTML.
 
 const $ = (id) => document.getElementById(id);
@@ -15,7 +15,7 @@ const S = {
   me: null,
   sess: dict(),        // id -> { phase: loading|ok|missing|error, data }
   open: dict(),        // id -> { phase: busy|done|error, down, status }
-  lastOk: 0,           // when we last heard from Bench (stream or poll)
+  lastOk: 0,           // when we last heard from Capsid (stream or poll)
   lastTry: 0,
   refreshing: null,
   es: null,
@@ -156,14 +156,14 @@ class Down extends Error {
 }
 class Unauth extends Error {}
 
-// Bench answers 429 when this device asks a lot at once ({"error":"slowDown"}) or already has two
+// Capsid answers 429 when this device asks a lot at once ({"error":"slowDown"}) or already has two
 // files coming ({"error":"busy"}), with Retry-After in seconds.
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const retryWait = (res, n) => Math.min(10, Math.max(1, Number(res.headers.get('Retry-After')) || n)) * 1000 + Math.random() * 500;
 const isSlow = (e) => !!e && e.status === 429;
 const slowText = (d) => (d && d.error === 'busy' ? 'Another file is still coming. Try again in a moment.' : 'That’s a lot at once. Try again in a moment.');
 
-// Two file transfers at a time, as Bench allows: thumbnails, texts and downloads take turns here.
+// Two file transfers at a time, as Capsid allows: thumbnails, texts and downloads take turns here.
 const FQ = { n: 0, wait: [] };
 const takeSlot = () => (FQ.n < 2 ? (FQ.n++, Promise.resolve()) : new Promise((r) => FQ.wait.push(r)));
 function giveSlot() {
@@ -172,7 +172,7 @@ function giveSlot() {
 }
 const isFile = (path) => path.startsWith('/api/files/');
 
-// A read Bench asks to wait is tried again quietly, twice, after the wait it names.
+// A read Capsid asks to wait is tried again quietly, twice, after the wait it names.
 async function api(path, method = 'GET', body) {
   const post = method === 'POST';
   const file = isFile(path);
@@ -229,7 +229,7 @@ async function send(path, body) {
 // leave the "Not updating" note to appear.
 function fail(e, fg) {
   if (e instanceof Unauth) return showPair();
-  if (isSlow(e) && S.state) return; // Bench asked to wait: the next poll tries again
+  if (isSlow(e) && S.state) return; // Capsid asked to wait: the next poll tries again
   if (e instanceof Down) return fg || !S.state ? showOffline(e.status, false) : undefined;
   if (fg || !S.state) showOffline(e.status || -1, true);
 }
@@ -987,7 +987,7 @@ function md(src, ctx) {
 /* ---------- Live text: what Claude is writing now, while the open session works ---------- */
 
 // Asked every 1.5 s while the text is changing (less often once it stops), one request at a time, only while this session's screen is showing and it is
-// working. What comes back is the current model call's text, which Bench starts over now and then, so
+// working. What comes back is the current model call's text, which Capsid starts over now and then, so
 // the card REPLACES what it shows each time and never adds to it.
 const LIVE_EVERY = 1500;
 // While the text and activity stay the same it is asked for less often: after 3 polls alike every 3 s, after 6 every 5 s, and every
@@ -1010,7 +1010,7 @@ function liveWanted() {
   // This session paused for a used-up limit: there is nothing being written to watch.
   if (snap && snap.paused === true) return '';
   // Told it isn't working a moment ago: wait for the state to change before asking again, or 3 s, then
-  // twice as long (to a minute) each time the state still says working and Bench says not.
+  // twice as long (to a minute) each time the state still says working and Capsid says not.
   const q = LIVE.quiet;
   if (q && q.id === r.id && q.sig === snapSig(r.id) && Date.now() - q.at < q.wait) return '';
   return r.id;
@@ -1053,9 +1053,9 @@ async function liveTick(seq) {
   let wait = LIVE_EVERY;
   if (err || !d || typeof d.working !== 'boolean') {
     if (err instanceof Unauth) return showPair();
-    if (err && (err.status === 404 || err.status === 405 || err.status === 403)) { LIVE.off[id] = true; return stopLive(); } // an older Bench, or the session is gone
+    if (err && (err.status === 404 || err.status === 405 || err.status === 403)) { LIVE.off[id] = true; return stopLive(); } // an older version on the Mac, or the session is gone
     LIVE.fails++;
-    // Bench asked to wait (the api helper has already tried twice): do as it says, then go on.
+    // Capsid asked to wait (the api helper has already tried twice): do as it says, then go on.
     wait = err && isSlow(err) ? Math.min(10, Math.max(2, err.wait || 2)) * 1000 + Math.random() * 500 : Math.min(15000, LIVE_EVERY * 2 ** LIVE.fails);
   } else if (!d.working) {
     return liveDone(id);
@@ -1073,13 +1073,13 @@ async function liveTick(seq) {
   LIVE.timer = setTimeout(() => liveTick(seq), wait);
 }
 
-// It stopped working: the card goes, and the saved reply is read from Bench.
+// It stopped working: the card goes, and the saved reply is read from Capsid.
 function liveDone(id) {
   const sig = snapSig(id);
   const before = LIVE.quiet;
   LIVE.quiet = { id, sig, at: Date.now(), wait: before && before.id === id && before.sig === sig ? Math.min(60000, before.wait * 2) : 3000 };
   stopLive();
-  // Reads the history too. If Bench was too busy to answer, once more a moment later.
+  // Reads the history too. If Capsid was too busy to answer, once more a moment later.
   loadSession(id, true).then((ok) => { if (ok === false) setTimeout(() => loadSession(id, true), 4000); });
 }
 
@@ -1147,7 +1147,7 @@ function openMessage(id) {
   if (o.down) return 'Couldn’t reach your Mac. Try again.';
   if (o.status === 404) return 'That session isn’t available any more.';
   if (o.status === 429) return 'Wait a moment, then try again.';
-  return 'Bench couldn’t open it (error ' + (o.status || '?') + ').';
+  return 'Capsid couldn’t open it (error ' + (o.status || '?') + ').';
 }
 
 function paintOpen(id) {
@@ -1255,7 +1255,7 @@ function fillSession(sv, id) {
   set('open', gone || acts || permOpen ? 0 : 1, () => (gone || acts || permOpen ? [] : [openBlock(id)]));
   set('openlow', acts && !permOpen ? 1 : 0, () => (acts && !permOpen ? [openBlock(id, true)] : []));
   set('unread', d && d.version >= 2 && d.readable === false, () => (d && d.version >= 2 && d.readable === false
-    ? [h('p', { class: 'quiet', text: 'Bench can’t show this session’s messages. Open it on your Mac.' })] : []));
+    ? [h('p', { class: 'quiet', text: 'Capsid can’t show this session’s messages. Open it on your Mac.' })] : []));
   set('permission', perm ? [perm, u.busy.permission, u.permDecision] : 0, () => (perm ? [permissionCard(id, perm, u)] : []));
   set('question', d && q ? [q, u.picks, u.otherOn, u.busy.question] : 0, () => (d && q ? [questionCard(id, q, u)] : []));
   set('plan', d && d.plan ? [d.plan, d.can && d.can.approve, u.busy.plan] : 0, () => (d && d.plan ? [planCard(id, d, u)] : []));
@@ -1549,7 +1549,7 @@ function redrawSession(id) {
 /* ----- photos: made ready in the page, sent as one JPEG ----- */
 
 // The page draws the picture at 3,072 px on its long side (the browser applies the camera's rotation) and
-// sends a JPEG. Bench takes a body up to 6 MB; base64 adds a third, so the JPEG stays under 4.2 MB.
+// sends a JPEG. Capsid takes a body up to 6 MB; base64 adds a third, so the JPEG stays under 4.2 MB.
 // The page's CSP has no blob: images, so a picture is only ever read as a data: URL.
 const PHOTO_SIDE = 3072;
 const PHOTO_BYTES = 4200000;
@@ -1772,7 +1772,7 @@ function setNote(id, note, ms = 6000) {
 function photoTrouble(status, data) {
   const err = data && typeof data.error === 'string' ? data.error : '';
   if (status === 413) return 'That photo is too big to send from here. Try a smaller one.';
-  if (status === 415 || err === 'notAnImage') return 'That doesn’t look like a photo Bench can use. Try another.';
+  if (status === 415 || err === 'notAnImage') return 'That doesn’t look like a photo Capsid can use. Try another.';
   if (status === 400 && err === 'reference') return 'The message has something that looks like a file link in it. Take that out and try again.';
   return '';
 }
@@ -1789,7 +1789,7 @@ function describe(out) {
     return { ok: true, refetch: true, text: sentence || { approved: 'Approved', allowed: 'Allowed once', denied: 'Denied', sent: 'Sent', queued: 'Queued', resumed: 'Picked up again' }[result] };
   }
   if (result === 'blocked') return { ok: false, refetch: true, text: sentence || 'That isn’t possible right now.' };
-  if (status === 403 && !sentence) return { ok: false, refetch: true, text: 'Actions are off in Bench’s Settings.' };
+  if (status === 403 && !sentence) return { ok: false, refetch: true, text: 'Actions are off in Capsid’s Settings.' };
   return { ok: false, refetch: true, open: true, text: sentence || 'Couldn’t do that from here. Open it on your Mac.' };
 }
 
@@ -2077,8 +2077,8 @@ function newSessionSheet(pid) {
     const trouble = photoTrouble(out.status, d);
     if (trouble) say(trouble);
     else if (out.status === 429) say(d && d.error === 'tooMany' ? 'Too many actions just now. Try again in a minute.' : slowText(d));
-    else if (isBrowseOff(out)) { close(); setBrowseOff(); } else if (out.status === 403 && !(d && d.sentence)) say('Actions are off in Bench’s Settings.');
-    else say((d && typeof d.sentence === 'string' && d.sentence) || 'Couldn’t start it from here. Open Bench on your Mac.');
+    else if (isBrowseOff(out)) { close(); setBrowseOff(); } else if (out.status === 403 && !(d && d.sentence)) say('Actions are off in Capsid’s Settings.');
+    else say((d && typeof d.sentence === 'string' && d.sentence) || 'Couldn’t start it from here. Open Capsid on your Mac.');
   }
   document.addEventListener('keydown', key);
   document.body.append(scrim);
@@ -2107,8 +2107,8 @@ const fileName = (v) => dispName(S.files[v] && S.files[v].name) || 'File';
 const fileHref = (id, v) => (RE.vid.test(v) ? `#/session/${id}/file/${v}` : null);
 const safeName = (n) => dispName(n).replace(/[\\/]/g, '_').slice(0, 200) || 'file';
 
-// An image from Bench's files: loaded once it is near the screen, taking its turn with the other
-// transfers, and tried twice more a few seconds apart before `failed` runs (Bench may have asked
+// An image from Capsid's files: loaded once it is near the screen, taking its turn with the other
+// transfers, and tried twice more a few seconds apart before `failed` runs (Capsid may have asked
 // it to wait).
 const nearScreen = 'IntersectionObserver' in window
   ? new IntersectionObserver((es) => {
@@ -2140,7 +2140,7 @@ function fileImg(props, src, failed) {
   return img;
 }
 
-// A file's bytes for the person: its turn among the transfers, then one try. What Bench answered
+// A file's bytes for the person: its turn among the transfers, then one try. What Capsid answered
 // says what went wrong.
 async function getFile(f) {
   await takeSlot();
@@ -2272,7 +2272,7 @@ function downloadBlock(id, f, quietStyle) {
   }
   const note = h('p', { class: 'msg bad', role: 'status', hidden: true });
   const say = (t) => { note.textContent = t; note.hidden = !t; };
-  // Fetched first, so a busy Bench is a sentence here rather than a saved file holding its answer.
+  // Fetched first, so a busy Capsid is a sentence here rather than a saved file holding its answer.
   const link = h('a', {
     class: 'btn' + (quietStyle ? '' : ' primary'), href: '/api/files/' + f.v + '/download', download: safeName(f.name),
     onclick: async (e) => {
@@ -2329,7 +2329,7 @@ function tableViewer(d) {
 function textViewer(id, f) {
   const T = S.ftext[f.v];
   if (!T || T.phase === 'loading') return [quiet('Loading…')];
-  if (T.phase === 'err') return [h('p', { class: 'quiet', text: T.status === 413 ? 'This file is too big to show here.' : T.status === 429 ? 'Bench is busy. Open this file again in a moment.' : 'Couldn’t show this file here.' }), downloadBlock(id, f, false)];
+  if (T.phase === 'err') return [h('p', { class: 'quiet', text: T.status === 413 ? 'This file is too big to show here.' : T.status === 429 ? 'Capsid is busy. Open this file again in a moment.' : 'Couldn’t show this file here.' }), downloadBlock(id, f, false)];
   const d = T.data || {};
   if (f.kind === 'table' && d.kind === 'table') return [...tableViewer(d), downloadBlock(id, f, true)];
   const text = typeof d.text === 'string' ? d.text : '';
@@ -2565,7 +2565,7 @@ function settingsContent() {
       }),
       msg),
     h('p', { class: 'foot', text: 'Only people on your Tailscale network can reach this page, and only a paired device can see your sessions.' }),
-    h('p', { class: 'foot', text: 'Bench' + (version ? ' ' + version : '') + '. A Solanum product. Unofficial, and not affiliated with Anthropic.' }),
+    h('p', { class: 'foot', text: 'Capsid' + (version ? ' ' + version : '') + '. A Solanum product. Unofficial, and not affiliated with Anthropic.' }),
   ];
 }
 
@@ -2573,7 +2573,7 @@ function settingsContent() {
 
 const canPush = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const DEFAULT_PREFS = { needsYou: true, errors: true, finishes: false, names: false, onlyAway: true, badge: true };
-const BADGE_LABEL = ['badge', 'Show a count on the Bench icon'];
+const BADGE_LABEL = ['badge', 'Show a count on the Capsid icon'];
 const PREF_LABELS = [
   ['needsYou', 'When a session needs you'],
   ['errors', 'When a session stops with an error'],
@@ -2626,7 +2626,7 @@ async function loadPush() {
     p.unavailable = false;
   } catch (e) {
     if (e instanceof Unauth) return showPair();
-    if (e.status === 404 || e.status === 403) p.unavailable = true; // an older Bench
+    if (e.status === 404 || e.status === 403) p.unavailable = true; // an older version on the Mac
   }
   p.loaded = true;
   redrawSettings();
@@ -2747,16 +2747,16 @@ function notifSection() {
   const note = (t) => h('p', { class: 'n-note', text: t });
   let body;
   if (!standalone()) {
-    body = [h('div', { class: 'card pad' }, note('Open Bench from your Home Screen to turn on notifications.'))];
+    body = [h('div', { class: 'card pad' }, note('Open Capsid from your Home Screen to turn on notifications.'))];
   } else if (!canPush()) {
     body = [h('div', { class: 'card pad' }, note('This browser can’t receive notifications.'))];
   } else if (p.unavailable) {
-    body = [h('div', { class: 'card pad' }, note('This version of Bench can’t send notifications.'))];
+    body = [h('div', { class: 'card pad' }, note('This version of Capsid can’t send notifications.'))];
   } else if (Notification.permission === 'denied') {
-    body = [h('div', { class: 'card pad' }, note('Notifications are blocked for Bench. To allow them, open the Settings app on your iPhone, choose Notifications, then Bench, and turn on Allow Notifications. Then come back here.'))];
+    body = [h('div', { class: 'card pad' }, note('Notifications are blocked for Capsid. To allow them, open the Settings app on your iPhone, choose Notifications, then Capsid, and turn on Allow Notifications. Then come back here.'))];
   } else if (!p.on) {
     body = [
-      h('div', { class: 'card pad' }, note('Get a notification when a session needs you, even when Bench isn’t open. They are encrypted, so only this device can read them.')),
+      h('div', { class: 'card pad' }, note('Get a notification when a session needs you, even when Capsid isn’t open. They are encrypted, so only this device can read them.')),
       h('div', { class: 'act tight' }, h('button', {
         class: 'btn primary', type: 'button', text: p.busy ? 'Turning on…' : 'Turn On Notifications', disabled: p.busy, 'data-key': 'push-on', onclick: () => pushOn(),
       })),
@@ -2858,7 +2858,7 @@ function pairView() {
       } catch (e2) {
         go.textContent = 'Pair this device';
         go.disabled = code.value.length !== 6;
-        if (e2 instanceof Unauth) say('Paired, but this page didn’t keep the sign-in. Open Bench from your Home Screen and try again.');
+        if (e2 instanceof Unauth) say('Paired, but this page didn’t keep the sign-in. Open Capsid from your Home Screen and try again.');
         else fail(e2, true);
         return;
       }
@@ -2868,8 +2868,8 @@ function pairView() {
     }
     go.textContent = 'Pair this device';
     go.disabled = code.value.length !== 6;
-    if (!res || res.status >= 500) say('Couldn’t reach Bench on your Mac. Check that it’s running, then try again.');
-    else if (res.status === 429) say('Too many tries. Make a new code in Bench → Settings → Phone, then try again.');
+    if (!res || res.status >= 500) say('Couldn’t reach Capsid on your Mac. Check that it’s running, then try again.');
+    else if (res.status === 429) say('Too many tries. Make a new code in Capsid → Settings → Phone, then try again.');
     else say('That code didn’t work. Check the code on your Mac. It lasts 10 minutes.');
     code.select();
   }
@@ -2884,10 +2884,10 @@ function pairView() {
       h('ol', { class: 'group steps' },
         h('li', null,
           h('b', { text: inHome ? 'You’re on the Home Screen ✓' : 'Open this from your Home Screen' }),
-          inHome ? null : h('span', { class: 'warn', text: 'You’re in Safari. Tap Share → Add to Home Screen first, then open Bench from your Home Screen.' })),
+          inHome ? null : h('span', { class: 'warn', text: 'You’re in Safari. Tap Share → Add to Home Screen first, then open Capsid from your Home Screen.' })),
         h('li', null,
           h('label', { for: 'code', text: 'Enter the 6-digit code' }),
-          h('span', { text: 'It’s in Bench → Settings → Phone on your Mac.' }),
+          h('span', { text: 'It’s in Capsid → Settings → Phone on your Mac.' }),
           code),
         h('li', null,
           h('label', { for: 'dname', text: 'Name this device' }),
@@ -2902,8 +2902,8 @@ function offlineView() {
   const d = S.down;
   return h('main', { class: 'wrap center' },
     icon('moon', 'big'),
-    h('h1', { tabindex: '-1', text: d.err ? 'Something went wrong' : 'Bench isn’t running on your Mac, or your Mac is asleep' }),
-    h('p', { text: d.err ? 'Bench answered with an error (' + d.status + '). Try again in a moment.' : 'Wake your Mac or open Bench, then try again. This page keeps trying on its own.' }),
+    h('h1', { tabindex: '-1', text: d.err ? 'Something went wrong' : 'Capsid isn’t running on your Mac, or your Mac is asleep' }),
+    h('p', { text: d.err ? 'Capsid answered with an error (' + d.status + '). Try again in a moment.' : 'Wake your Mac or open Capsid, then try again. This page keeps trying on its own.' }),
     h('button', {
       class: 'btn primary',
       type: 'button',

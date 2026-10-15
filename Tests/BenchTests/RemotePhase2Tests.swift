@@ -112,7 +112,7 @@ struct RemoteSessionV2Tests {
     @Test func unreadableIsVersionOneWithNulls() {
         let built = RemoteAPI.session(id: id, candidates: [session(.running)], plan: nil)
         #expect(text(built) == #"""
-        {"can":{"answer":false,"approve":false,"message":null,"why":"Bench can't read this session"},"id":"0f8fad5b-d9cb-469f-a165-70867728950e","messages":[],"permission":null,"plan":null,"project":"Example project","question":null,"queued":null,"readable":false,"reason":null,"reply":null,"sentence":"Working","startedAt":"2026-10-12T19:20:00Z","state":"running","statusLine":null,"title":"Protein stability screen","toYou":null,"turns":null,"updatedAt":"2026-10-12T19:29:00Z","version":2}
+        {"can":{"answer":false,"approve":false,"message":null,"why":"Capsid can't read this session"},"id":"0f8fad5b-d9cb-469f-a165-70867728950e","messages":[],"permission":null,"plan":null,"project":"Example project","question":null,"queued":null,"readable":false,"reason":null,"reply":null,"sentence":"Working","startedAt":"2026-10-12T19:20:00Z","state":"running","statusLine":null,"title":"Protein stability screen","toYou":null,"turns":null,"updatedAt":"2026-10-12T19:29:00Z","version":2}
         """#)
     }
 
@@ -144,7 +144,7 @@ struct RemoteSessionV2Tests {
     @Test func actionsOffTurnsEveryCanOff() throws {
         let read = SessionProjection(status: "completed", agentName: "a", projectID: nil, turns: [])
         let built = try #require(RemoteAPI.session(id: id, candidates: [session(.finished)], plan: nil, read: read, actionsOn: false))
-        #expect(built.can == RemoteAPI.Can(approve: false, answer: false, message: nil, why: "Actions are off in Bench's Settings"))
+        #expect(built.can == RemoteAPI.Can(approve: false, answer: false, message: nil, why: "Actions are off in Capsid's Settings"))
         #expect(built.readable)
     }
 }

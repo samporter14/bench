@@ -1,4 +1,4 @@
-// Demo.swift — `Bench --demo <mode>`: Bench's real UI filled with made-up
+// Demo.swift — `Capsid --demo <mode>`: Capsid's real UI filled with made-up
 // data, so README screenshots show nothing from anyone's research. A demo
 // starts nothing real: no daemon, no `claude-science`, no web page, no read of
 // Claude Science's data. It also writes nothing to UserDefaults, which the
@@ -7,16 +7,16 @@
 // Run the binary itself: launched that way it is a second instance, even
 // while the real Bench is open. Quit it with ⌘Q.
 //
-//   build/Bench.app/Contents/MacOS/Bench --demo working  -showLabPanel YES -panelWhileFront YES
-//   build/Bench.app/Contents/MacOS/Bench --demo card     -showLabPanel YES -panelWhileFront YES
-//   build/Bench.app/Contents/MacOS/Bench --demo plan     -showLabPanel YES -panelWhileFront YES
-//   build/Bench.app/Contents/MacOS/Bench --demo toolbar
-//   build/Bench.app/Contents/MacOS/Bench --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
-//   build/Bench.app/Contents/MacOS/Bench --demo welcome --page 2
-//   build/Bench.app/Contents/MacOS/Bench --demo remote --quiet
-//   open -g -n build/Bench.app --args --demo phone-settings --step 3 --quiet -ApplePersistenceIgnoreState YES
+//   build/Capsid.app/Contents/MacOS/Capsid --demo working  -showLabPanel YES -panelWhileFront YES
+//   build/Capsid.app/Contents/MacOS/Capsid --demo card     -showLabPanel YES -panelWhileFront YES
+//   build/Capsid.app/Contents/MacOS/Capsid --demo plan     -showLabPanel YES -panelWhileFront YES
+//   build/Capsid.app/Contents/MacOS/Capsid --demo toolbar
+//   build/Capsid.app/Contents/MacOS/Capsid --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
+//   build/Capsid.app/Contents/MacOS/Capsid --demo welcome --page 2
+//   build/Capsid.app/Contents/MacOS/Capsid --demo remote --quiet
+//   open -g -n build/Capsid.app --args --demo phone-settings --step 3 --quiet -ApplePersistenceIgnoreState YES
 //
-// Add `--quiet` (and launch with `open -g -n build/Bench.app --args …`) to keep
+// Add `--quiet` (and launch with `open -g -n build/Capsid.app --args …`) to keep
 // the demo from taking the keyboard: its windows open without activating.
 //
 // The `-key value` pairs are command-line defaults: they read like settings
@@ -63,7 +63,7 @@ enum Demo {
         /// The first-run welcome in its plain window. Closing it doesn't mark
         /// it as seen. Its updates switch is the real setting, so leave it be.
         case welcome
-        /// Bench on your phone with the activity list's made-up sessions, on
+        /// Capsid on your phone with the activity list's made-up sessions, on
         /// http://127.0.0.1:<port> (printed), pairing code 000000. No window,
         /// no Tailscale, no Keychain, no setting saved.
         case remote
@@ -210,7 +210,7 @@ enum Demo {
             return mode
         }
         let valid = Mode.allCases.map(\.rawValue).joined(separator: ", ")
-        FileHandle.standardError.write(Data("Bench: --demo takes one of: \(valid)\n".utf8))
+        FileHandle.standardError.write(Data("Capsid: --demo takes one of: \(valid)\n".utf8))
         exit(1)
     }
 

@@ -1,5 +1,5 @@
 // RemoteFiles.swift — what the phone may know about a session's artifacts
-// (DESIGN.md, Bench on your phone → Phase 3: Artifacts). Two shared pieces:
+// (DESIGN.md, Capsid on your phone → Phase 3: Artifacts). Two shared pieces:
 // `ArtifactKind`, how a file is shown on the phone, decided from its name and
 // content type alone; and `ListedFiles`, the versions Bench has listed to each
 // device lately, the only ones `/api/files/<v>/…` will serve that device.

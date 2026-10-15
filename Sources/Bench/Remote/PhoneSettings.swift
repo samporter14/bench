@@ -145,12 +145,12 @@ struct PhoneSetupPage: View {
             notes
 
             Section {
-                // The switch is in "Turn on Bench on your phone" while that
+                // The switch is in "Turn on Capsid on your phone" while that
                 // step is open; here whenever it is on and that step isn't.
                 if model.enabled, state.expanded != .turnOn {
                     Toggle(isOn: enabledBinding) {
-                        Text("Use Bench from your phone")
-                        Text("Off, your devices can't reach Bench. They stay paired.")
+                        Text("Use Capsid from your phone")
+                        Text("Off, your devices can't reach Capsid. They stay paired.")
                     }
                 }
                 RemoteActionsToggle() // Phase 2 actions
@@ -167,7 +167,7 @@ struct PhoneSetupPage: View {
         .confirmationDialog("Remove all paired devices?", isPresented: $confirmingRemoveAll) {
             Button("Remove All Devices", role: .destructive) { actions.removeAll() }
         } message: {
-            Text("Each one will need the code again to use Bench.")
+            Text("Each one will need the code again to use Capsid.")
         }
     }
 
@@ -374,18 +374,18 @@ struct PhoneSetupPage: View {
         if status.otherLogin || status.mappingLeft || sharesAddress {
             Section {
                 if status.otherLogin {
-                    Note(text: "Tailscale is signed in as someone else now, so your devices can't reach Bench. To use this account, turn Bench on your phone off and on again.")
+                    Note(text: "Tailscale is signed in as someone else now, so your devices can't reach Capsid. To use this account, turn Capsid on your phone off and on again.")
                 }
                 if status.mappingLeft {
                     LabeledContent {
                         Button("Try Again") { actions.refresh() }
                             .disabled(status.checking)
                     } label: {
-                        Note(text: "Bench couldn't remove its Tailscale mapping. Tailscale still passes what your devices ask to a port Bench no longer listens on. Bench tries again when Tailscale is running.")
+                        Note(text: "Capsid couldn't remove its Tailscale mapping. Tailscale still passes what your devices ask to a port Capsid no longer listens on. Capsid tries again when Tailscale is running.")
                     }
                 }
                 if sharesAddress {
-                    Note(text: "Other Tailscale Serve sites on this Mac share its address, and can see your devices' Bench sign-in. Serve only things you trust here.")
+                    Note(text: "Other Tailscale Serve sites on this Mac share its address, and can see your devices' Capsid sign-in. Serve only things you trust here.")
                 }
             }
         }
@@ -396,7 +396,7 @@ struct PhoneSetupPage: View {
     private var devicesSection: some View {
         Section {
             if model.devices.isEmpty {
-                Text("No devices yet. Paired devices stay paired when Bench on your phone is off.")
+                Text("No devices yet. Paired devices stay paired when Capsid on your phone is off.")
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(model.devices) { device in
@@ -430,7 +430,7 @@ struct PhoneSetupPage: View {
 }
 
 extension PhoneSetup {
-    static let title = "Bench on your phone"
+    static let title = "Capsid on your phone"
     static let intro = "Use Claude Science from your iPhone or iPad: see what needs you, answer, approve and send messages, over your own private Tailscale network."
     /// Under the App Store's QR code.
     static let phoneMissing = "Don't see it? Make sure Tailscale is on and signed in with the same account on your phone (Apple, Google and GitHub sign-ins are separate accounts)."
@@ -542,7 +542,7 @@ private struct PairingBlock: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("1. Scan the QR code with your phone's camera, and open the page.")
                     Text("2. Tap Share, then Add to Home Screen.")
-                    Text("3. Open Bench from your Home Screen, and enter the code.")
+                    Text("3. Open Capsid from your Home Screen, and enter the code.")
                 }
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)

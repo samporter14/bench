@@ -235,14 +235,14 @@ private struct DemoFiles {
     static let html = """
     <!doctype html><html><head><title>Summary</title></head>
     <body><h1>Primer design summary</h1><p>Six made-up pairs.</p>
-    <script>document.body.append(" (this script never runs from Bench)")</script></body></html>
+    <script>document.body.append(" (this script never runs from Capsid)")</script></body></html>
     """
 
     static let svg = """
     <svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80">
     <rect width="120" height="80" fill="#F7F4EC"/><rect x="10" y="10" width="30" height="60" fill="#D97757"/>
     <rect x="45" y="30" width="30" height="40" fill="#D97757"/><rect x="80" y="20" width="30" height="50" fill="#D97757"/>
-    <script>/* never runs from Bench */</script></svg>
+    <script>/* never runs from Capsid */</script></svg>
     """
 
     static let notebook = """

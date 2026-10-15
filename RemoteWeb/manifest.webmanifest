@@ -1,6 +1,6 @@
 {
-  "name": "Bench",
-  "short_name": "Bench",
+  "name": "Capsid",
+  "short_name": "Capsid",
   "description": "Your Claude Science sessions, from your phone.",
   "start_url": "/",
   "scope": "/",

@@ -1,6 +1,6 @@
 // Welcome.swift — the first-run welcome (DESIGN.md, Welcome window): four
 // short pages in a plain window, shown once to someone who is new to Bench
-// and again from Help → Welcome to Bench.
+// and again from Help → Welcome to Capsid.
 import AppKit
 import SwiftUI
 
@@ -109,7 +109,7 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
     private lazy var window: NSWindow = {
         let hosting = NSHostingController(rootView: WelcomeView(model: model) { [weak self] in self?.window.close() })
         let window = WelcomeWindow(contentViewController: hosting)
-        window.title = "Welcome to Bench"
+        window.title = "Welcome to Capsid"
         window.styleMask = [.titled, .closable]
         window.setContentSize(NSSize(width: 560, height: 460))
         window.isReleasedWhenClosed = false
@@ -124,7 +124,7 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
         if WelcomeGate.shouldShowAtLaunch() { show() }
     }
 
-    /// Help → Welcome to Bench, from the first page. Already open, it only
+    /// Help → Welcome to Capsid, from the first page. Already open, it only
     /// comes forward.
     func show() { present(page: nil, records: true, quiet: false) }
 
@@ -266,10 +266,10 @@ private struct IntroPage: View {
                 .resizable()
                 .frame(width: 96, height: 96)
                 .accessibilityHidden(true)
-            Text("Welcome to Bench")
+            Text("Welcome to Capsid")
                 .font(.system(size: 26, weight: .semibold))
                 .accessibilityAddTraits(.isHeader)
-            BodyText("Bench keeps Claude Science in one window, and lets you know when a session needs you.")
+            BodyText("Capsid keeps Claude Science in one window, and lets you know when a session needs you.")
             Note("A Solanum product. Unofficial, and not affiliated with Anthropic.")
                 .padding(.top, 8)
         }
@@ -362,12 +362,12 @@ private struct UpdatesPage: View {
     var body: some View {
         VStack(spacing: 18) {
             Heading("Updates and privacy")
-            BodyText("Bench reads your sessions on this Mac and changes nothing in Claude Science, except when you press Approve on a plan, or act from a phone you’ve paired.")
+            BodyText("Capsid reads your sessions on this Mac and changes nothing in Claude Science, except when you press Approve on a plan, or act from a phone you’ve paired.")
             HStack(alignment: .center, spacing: 16) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Check for updates once a day")
                         .font(.system(size: 14, weight: .semibold))
-                    Text("Asks GitHub for the latest Bench release. Nothing about you or your sessions is sent.")
+                    Text("Asks GitHub for the latest Capsid release. Nothing about you or your sessions is sent.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -377,7 +377,7 @@ private struct UpdatesPage: View {
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .tint(Theme.clay)
-                    .accessibilityHint("Asks GitHub for the latest Bench release. Nothing about you or your sessions is sent.")
+                    .accessibilityHint("Asks GitHub for the latest Capsid release. Nothing about you or your sessions is sent.")
             }
             .padding(14)
             .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 12))

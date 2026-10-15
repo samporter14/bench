@@ -466,7 +466,7 @@ struct LabPanelView: View {
                 Button("Approve") { plans.approve(session.id) }
                     .buttonStyle(.glassProminent)
                     .tint(Theme.clay)
-                    .help("Approve this plan. Bench checks it's still the same plan first.")
+                    .help("Approve this plan. Capsid checks it's still the same plan first.")
                 Button("Open") { model.open(card) }
                     .buttonStyle(.glass)
                 later(card)

@@ -198,7 +198,7 @@ final class LabModel: ObservableObject {
     @Published private(set) var workingHidden = false
     /// Why the sessions can't be seen, while they can't. Without them there
     /// are no scenes and no needs-input cards, so the Scenes menu and Settings
-    /// say so rather than staying quiet (`Bench --diagnose` has the details).
+    /// say so rather than staying quiet (`Capsid --diagnose` has the details).
     @Published private(set) var problem: ScienceError?
     /// While `problem` stands, when the sessions were last read: the panel
     /// says it is not updating, rather than counting on as if it were.

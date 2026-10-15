@@ -1,5 +1,5 @@
 // WebPush.swift — the Web Push wire format Bench sends notifications in
-// (DESIGN.md, Bench on your phone → Notifications). Pure and tested:
+// (DESIGN.md, Capsid on your phone → Notifications). Pure and tested:
 //
 // - RFC 8291 message encryption (`aes128gcm`, RFC 8188), so only the device
 //   that subscribed can read a push: P-256 key agreement, HKDF-SHA-256 and

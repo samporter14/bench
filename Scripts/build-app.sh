@@ -1,6 +1,7 @@
 #!/bin/zsh
-# build-app.sh — build Bench.app into ./build (release, this Mac's
+# build-app.sh — build Capsid.app into ./build (release, this Mac's
 # architecture, ad-hoc signed). Usage: Scripts/build-app.sh [--open]
+# The Swift target is still named Bench; its product, Capsid, names the binary.
 set -euo pipefail
 ROOT="${0:A:h:h}"
 cd "$ROOT"
@@ -16,22 +17,22 @@ fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
-swift build -c release --product Bench
-BIN="$(swift build -c release --product Bench --show-bin-path)/Bench"
+swift build -c release --product Capsid
+BIN="$(swift build -c release --product Capsid --show-bin-path)/Capsid"
 
-APP="$ROOT/build/Bench.app"
+APP="$ROOT/build/Capsid.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/Bench"
+cp "$BIN" "$APP/Contents/MacOS/Capsid"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 
-# The icon: an Icon Composer document, Bench's own in Solanum's product
+# The icon: an Icon Composer document, Capsid's own in Solanum's product
 # family (fig tile, the broken ring, a flask, one bubble out of the gap),
 # compiled. actool is given absolute paths only (its helper
 # resolves relative ones against wherever another run started it).
 ICON="$ROOT/Resources/AppIcon.icon"
 if [ -d "$ICON" ]; then
-    WORK="$(mktemp -d "${TMPDIR:-/private/tmp}/bench-icon.XXXXXX")"
+    WORK="$(mktemp -d "${TMPDIR:-/private/tmp}/capsid-icon.XXXXXX")"
     cp -R "$ICON" "$WORK/AppIcon.icon"
     xcrun actool "$WORK/AppIcon.icon" --compile "$APP/Contents/Resources" \
         --app-icon AppIcon --output-partial-info-plist "$WORK/partial.plist" \

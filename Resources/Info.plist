@@ -5,9 +5,9 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Bench</string>
+	<string>Capsid</string>
 	<key>CFBundleExecutable</key>
-	<string>Bench</string>
+	<string>Capsid</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIconName</key>
@@ -15,11 +15,11 @@
 	<key>CFBundleIdentifier</key>
 	<string>local.sam.bench</string>
 	<key>CFBundleName</key>
-	<string>Bench</string>
+	<string>Capsid</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.5.3</string>
+	<string>0.6.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -32,7 +32,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>31</string>
+	<string>32</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>

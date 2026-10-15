@@ -1,5 +1,5 @@
 // RemoteActions.swift — what the phone may do, and reading a session for it
-// (DESIGN.md, Bench on your phone → Phase 2: `/api/sessions/<id>` version 2
+// (DESIGN.md, Capsid on your phone → Phase 2: `/api/sessions/<id>` version 2
 // and Actions). Three POST routes: approve a plan, answer a question, send a
 // message. Each one reads the root frame afresh, decides, and only then
 // writes; anything unexpected is "unavailable", and the phone offers Open on
@@ -210,8 +210,8 @@ enum RemoteMessageMode: Equatable, Sendable {
 /// The session's `can`: what the phone may offer.
 enum RemoteCan {
     enum Why {
-        static let actionsOff = "Actions are off in Bench's Settings"
-        static let unreadable = "Bench can't read this session"
+        static let actionsOff = "Actions are off in Capsid's Settings"
+        static let unreadable = "Capsid can't read this session"
         static let answerFirst = "Answer its question first"
         static let planFirst = "Approve or revise the plan on your Mac"
         /// A parked session whose wait is a permission request, not a question. // Phase 4 permissions

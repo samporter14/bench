@@ -1,13 +1,13 @@
 // Diagnose.swift — what Bench can and can't see of Claude Science on this
 // Mac, step by step. For when the scenes or the needs-input cards don't come:
 // they rest on reading Claude Science's session database, and this says which
-// step fails. Two ways in: `Bench --diagnose` prints it and exits, and
-// Help → Bench Diagnostics… shows it in a window with a Copy button.
+// step fails. Two ways in: `Capsid --diagnose` prints it and exits, and
+// Help → Capsid Diagnostics… shows it in a window with a Copy button.
 //
 // It names no projects, sessions or org IDs: only yes/no, versions, folders,
 // sizes, ages and counts, so it is safe to paste into a message.
 //
-//   /Applications/Bench.app/Contents/MacOS/Bench --diagnose
+//   /Applications/Capsid.app/Contents/MacOS/Capsid --diagnose
 import AppKit
 import SwiftUI
 
@@ -35,9 +35,9 @@ enum Diagnose {
         var out: [String] = []
         let info = Bundle.main.infoDictionary
         let bench = info?["CFBundleShortVersionString"] as? String ?? "(unbundled)"
-        out.append("Bench \(bench) diagnostics. Nothing below names your projects or sessions.")
+        out.append("Capsid \(bench) diagnostics. Nothing below names your projects or sessions.")
         out.append("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
-        out.append("This copy of Bench: \(tilde(Bundle.main.bundlePath))")
+        out.append("This copy of Capsid: \(tilde(Bundle.main.bundlePath))")
 
         // 1. The command-line tool, which starts and describes the daemon.
         guard let cli = resolveCLI() else {
@@ -172,7 +172,7 @@ enum Diagnose {
 
 // MARK: The window
 
-/// Help → Bench Diagnostics…: the same report, with Copy.
+/// Help → Capsid Diagnostics…: the same report, with Copy.
 @MainActor
 final class DiagnosticsWindowController {
     static let shared = DiagnosticsWindowController()
@@ -182,7 +182,7 @@ final class DiagnosticsWindowController {
         if window == nil {
             let hosting = NSHostingController(rootView: DiagnosticsView())
             let window = NSWindow(contentViewController: hosting)
-            window.title = "Bench Diagnostics"
+            window.title = "Capsid Diagnostics"
             window.styleMask = [.titled, .closable, .resizable]
             window.setContentSize(NSSize(width: 620, height: 520))
             window.isReleasedWhenClosed = false

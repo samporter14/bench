@@ -1,6 +1,6 @@
 {
   "fill": {
-    "solid": "srgb:0.76863,0.40000,0.52549,1.00000"
+    "solid": "srgb:0.85098,0.46667,0.34118,1.00000"
   },
   "groups": [
     {
@@ -8,10 +8,13 @@
         {
           "hidden": false,
           "image-name": "bench-glyph.png",
-          "name": "ring-flask-escapee",
+          "name": "ring-capsid-escapee",
           "position": {
             "scale": 1.0,
-            "translation-in-points": [0, 0]
+            "translation-in-points": [
+              0,
+              0
+            ]
           }
         }
       ],
@@ -27,7 +30,9 @@
     }
   ],
   "supported-platforms": {
-    "circles": ["watchOS"],
+    "circles": [
+      "watchOS"
+    ],
     "squares": "shared"
   }
 }

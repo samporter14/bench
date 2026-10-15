@@ -1,5 +1,5 @@
-// RemoteController.swift — Bench on your phone, put together (DESIGN.md,
-// Bench on your phone): the switch starts the loopback listener and adds
+// RemoteController.swift — Capsid on your phone, put together (DESIGN.md,
+// Capsid on your phone): the switch starts the loopback listener and adds
 // Bench's Serve mapping; off stops the listener and removes that mapping
 // only, keeping the paired devices. It publishes what Settings → Phone shows.
 //
@@ -447,7 +447,7 @@ final class RemoteController: ObservableObject {
         server.push = PushCenter.demo(auth: auth) // Phase 2 push
         Task {
             guard let port = try? await server.start(candidates: Array(RemoteServer.ports)) else {
-                FileHandle.standardError.write(Data("Bench: no free port from 47280 to 47290\n".utf8))
+                FileHandle.standardError.write(Data("Capsid: no free port from 47280 to 47290\n".utf8))
                 exit(1)
             }
             server.policy = .demo(port: port)
@@ -456,7 +456,7 @@ final class RemoteController: ObservableObject {
                 server.broadcast(RemoteAPI.encode(Self.state()))
             }
             demoFeed = feed
-            FileHandle.standardOutput.write(Data("Bench remote demo: http://127.0.0.1:\(port)/ (pairing code 000000)\n".utf8))
+            FileHandle.standardOutput.write(Data("Capsid remote demo: http://127.0.0.1:\(port)/ (pairing code 000000)\n".utf8))
         }
     }
 }

@@ -274,14 +274,14 @@ struct UpdateNoticeTests {
     @Test func theCardSaysWhatIsOutAndWhereToGetIt() throws {
         let update = AvailableUpdate(version: try version("0.3.6"), notesURL: UpdateRules.releasesPage)
         let notice = UpdateRules.notice(for: update)
-        #expect(notice.title == "Bench 0.3.6 is available")
+        #expect(notice.title == "Capsid 0.3.6 is available")
         #expect(notice.id == "update-0.3.6")
         #expect(notice.action == .none)
         #expect(notice.detail.contains("Check for Updates"))
     }
 
     @Test func whatInstallDoesIsSaidInWords() throws {
-        #expect(UpdateRules.installSentence(try version("0.3.6")) == "Bench will quit, download 0.3.6 from GitHub and reopen.")
+        #expect(UpdateRules.installSentence(try version("0.3.6")) == "Capsid will quit, download 0.3.6 from GitHub and reopen.")
     }
 }
 
@@ -413,7 +413,7 @@ struct UpdateCheckerTests {
         #expect(request.httpMethod == "GET")
         #expect(request.httpBody == nil)
         #expect(request.httpShouldHandleCookies == false)
-        #expect(request.allHTTPHeaderFields == ["Accept": "application/vnd.github+json", "User-Agent": "Bench/0.3.5",
+        #expect(request.allHTTPHeaderFields == ["Accept": "application/vnd.github+json", "User-Agent": "Capsid/0.3.5",
                                                 "Accept-Language": "en"])
     }
 
@@ -535,7 +535,7 @@ struct UpdateCheckerTests {
         }
         let updates = checker(scratch, network: network, clock: clock, posted: posted, enabled: true)
         await updates.checkIfDue()
-        #expect(posted.notices.map(\.title) == ["Bench 0.3.6 is available"])
+        #expect(posted.notices.map(\.title) == ["Capsid 0.3.6 is available"])
         // Two days on, and again: the same version, so no second card.
         clock.advance(hours: 25)
         await updates.checkIfDue()
@@ -547,7 +547,7 @@ struct UpdateCheckerTests {
         // The next release is news.
         clock.advance(hours: 25)
         await updates.checkIfDue()
-        #expect(posted.notices.map(\.title) == ["Bench 0.3.6 is available", "Bench 0.3.7 is available"])
+        #expect(posted.notices.map(\.title) == ["Capsid 0.3.6 is available", "Capsid 0.3.7 is available"])
     }
 
     @Test func aCheckYouAskedForShowsItselfAndPostsNoCard() async {
@@ -598,10 +598,10 @@ struct UpdateInstallTests {
     }
 
     @Test func onlyTheCopyInApplicationsCanReplaceItself() {
-        #expect(UpdateRules.canInstall(from: URL(fileURLWithPath: "/Applications/Bench.app")))
-        #expect(UpdateRules.canInstall(from: URL(fileURLWithPath: "/Applications/Bench.app/")))
-        #expect(!UpdateRules.canInstall(from: URL(fileURLWithPath: "/Users/someone/Downloads/Bench.app")))
-        #expect(!UpdateRules.canInstall(from: URL(fileURLWithPath: "/Applications/Utilities/Bench.app")))
-        #expect(!UpdateRules.canInstall(from: URL(fileURLWithPath: "/Users/someone/build/Bench.app")))
+        #expect(UpdateRules.canInstall(from: URL(fileURLWithPath: "/Applications/Capsid.app")))
+        #expect(UpdateRules.canInstall(from: URL(fileURLWithPath: "/Applications/Capsid.app/")))
+        #expect(!UpdateRules.canInstall(from: URL(fileURLWithPath: "/Users/someone/Downloads/Capsid.app")))
+        #expect(!UpdateRules.canInstall(from: URL(fileURLWithPath: "/Applications/Utilities/Capsid.app")))
+        #expect(!UpdateRules.canInstall(from: URL(fileURLWithPath: "/Users/someone/build/Capsid.app")))
     }
 }

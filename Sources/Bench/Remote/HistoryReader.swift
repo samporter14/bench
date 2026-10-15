@@ -1,5 +1,5 @@
 // HistoryReader.swift — a session's whole conversation for the phone, a page
-// at a time (DESIGN.md, Bench on your phone → Phase 3: History). Like the
+// at a time (DESIGN.md, Capsid on your phone → Phase 3: History). Like the
 // session reader, the page runs the GETs and *projects* them itself, so Swift
 // only ever receives the items below: the user's and Claude's text turns, one
 // line for each run of tool calls in the UI's own group phrases, a plan's step
