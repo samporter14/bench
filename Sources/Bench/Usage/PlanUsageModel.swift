@@ -32,6 +32,20 @@ struct PlanLimit: Identifiable, Equatable {
             case .weekSonnet: "Sonnet week"
             }
         }
+
+        /// Whether all of it used holds every session, whatever its model:
+        /// the limits Claude Science's own page counts while it shows a
+        /// session paused (`five_hour` and `seven_day`, with
+        /// `seven_day_oauth_apps`, which Bench doesn't read). The Opus and
+        /// Sonnet weeks hold only sessions on that model, and Bench can't
+        /// tell which model a session uses, so they never say a session is
+        /// paused (DESIGN.md, Usage pause).
+        var holdsEverySession: Bool {
+            switch self {
+            case .session, .week: true
+            case .weekOpus, .weekSonnet: false
+            }
+        }
     }
 
     let kind: Kind
@@ -52,7 +66,11 @@ struct PlanLimit: Identifiable, Equatable {
 /// Extra usage, when the plan has it switched on. Its percent is of the
 /// monthly limit; nil when Claude Science doesn't say.
 struct PlanExtraUsage: Equatable {
+    /// Rounded, for showing: 99.6 % shows as 100 but still has room.
     let usedPercent: Int?
+    /// All of it used, by the unrounded figure. False when the figure is
+    /// missing: extra usage that is on is taken to have room.
+    var reached = false
 }
 
 @MainActor
@@ -82,23 +100,27 @@ final class PlanUsageModel: ObservableObject {
         limits.min { $0.leftPercent < $1.leftPercent }
     }
 
-    /// A limit that is used up and hasn't started over, with no extra usage
-    /// to carry on past it: sending is paused until it resets. With several,
-    /// the one that resets last, since the pause lasts until it does.
+    /// A limit that holds every session (`Kind.holdsEverySession`), is used
+    /// up by its unrounded figure and hasn't started over, with no extra
+    /// usage left to carry on past it: sending is paused until it resets.
+    /// With several, the one that resets last, since the pause lasts until
+    /// it does.
     func limitReached(now: Date = Date()) -> PlanLimit? {
         Self.limitReached(limits, extra: extra, now: now)
     }
 
     nonisolated static func limitReached(_ limits: [PlanLimit], extra: PlanExtraUsage?, now: Date) -> PlanLimit? {
-        if let extra, (extra.usedPercent ?? 0) < 100 { return nil }
-        let used = limits.filter { $0.reached && ($0.resetsAt.map { $0 > now } ?? true) }
+        if let extra, !extra.reached { return nil }
+        let used = limits.filter {
+            $0.kind.holdsEverySession && $0.reached && ($0.resetsAt.map { $0 > now } ?? true)
+        }
         return used.max { ($0.resetsAt ?? .distantFuture) < ($1.resetsAt ?? .distantFuture) }
     }
 
-    /// Reads again, bypassing Claude Science's cache, unless the last read is
+    /// Reads again, bypassing Claude Science's cache, unless the last try is
     /// newer than `age`: the pause watcher's check while sessions are quiet.
-    func readIfOlder(than age: TimeInterval) {
-        if let lastAttempt, Date().timeIntervalSince(lastAttempt) < age { return }
+    func readIfOlder(than age: TimeInterval, now: Date = Date()) {
+        if let lastAttempt, now.timeIntervalSince(lastAttempt) < age { return }
         read(fresh: true)
     }
 
@@ -201,8 +223,8 @@ final class PlanUsageModel: ObservableObject {
         Task { [weak self] in
             do {
                 let data = try await WebContainer.shared.apiGET(fresh ? "/usage?fresh=1" : "/usage")
-                let payload = try Payload.decode(data)
-                self?.apply(payload)
+                let parsed = try Self.parse(data)
+                self?.apply(parsed)
             } catch WebAPIError.notReady {
                 // Still signing in is not a failure: the status watcher reads
                 // as soon as it is. Signing in having failed is one, or the
@@ -218,21 +240,33 @@ final class PlanUsageModel: ObservableObject {
         }
     }
 
-    private func apply(_ payload: Payload) {
-        loading = false
-        let read = Date()
-        let latest = [
+    /// What one read of `GET /api/usage` says: the limits in the order of
+    /// `PlanLimit.Kind`, and extra usage when it is on. Each keeps its
+    /// rounded percent for showing and its unrounded `reached` for the pause.
+    nonisolated static func parse(_ data: Data) throws -> (limits: [PlanLimit], extra: PlanExtraUsage?) {
+        let payload = try Payload.decode(data)
+        let limits = [
             limit(.session, payload.fiveHour),
             limit(.week, payload.sevenDay),
             limit(.weekOpus, payload.sevenDayOpus),
             limit(.weekSonnet, payload.sevenDaySonnet),
         ].compactMap { $0 }
+        let extra = payload.extraUsage.flatMap { extra in
+            extra.isEnabled == true
+                ? PlanExtraUsage(usedPercent: extra.utilization.map(percent), reached: (extra.utilization ?? 0) >= 100)
+                : nil
+        }
+        return (limits, extra)
+    }
+
+    private func apply(_ parsed: (limits: [PlanLimit], extra: PlanExtraUsage?)) {
+        loading = false
+        let read = Date()
+        let latest = parsed.limits
         // Before `limits`, so whoever hears of the new limits finds the forecasts too.
         forecast(latest, at: read)
         limits = latest
-        extra = payload.extraUsage?.isEnabled == true
-            ? PlanExtraUsage(usedPercent: payload.extraUsage?.utilization.map(Self.percent))
-            : nil
+        extra = parsed.extra
         lastRead = read
         failure = nil
         scheduleReadAtReset()
@@ -274,18 +308,18 @@ final class PlanUsageModel: ObservableObject {
         failure = "Couldn't read plan usage"
     }
 
-    private func limit(_ kind: PlanLimit.Kind, _ window: Payload.Window?) -> PlanLimit? {
+    private nonisolated static func limit(_ kind: PlanLimit.Kind, _ window: Payload.Window?) -> PlanLimit? {
         guard let utilization = window?.utilization else { return nil }
-        return PlanLimit(kind: kind, usedPercent: Self.percent(utilization), resetsAt: Self.date(window?.resetsAt),
+        return PlanLimit(kind: kind, usedPercent: percent(utilization), resetsAt: date(window?.resetsAt),
                          reached: utilization >= 100)
     }
 
-    private static func percent(_ utilization: Double) -> Int {
+    private nonisolated static func percent(_ utilization: Double) -> Int {
         Int(min(max(utilization, 0), 100).rounded())
     }
 
     /// With and without fractional seconds: the API has sent both.
-    private static func date(_ text: String?) -> Date? {
+    private nonisolated static func date(_ text: String?) -> Date? {
         guard let text else { return nil }
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

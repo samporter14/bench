@@ -943,34 +943,68 @@ Words for every specimen, kept apart from the drawings.
   - the legend.
 - It shows a spinner while the first read runs, and a sentence if a read fails.
 
-## Usage pause (Lab/UsagePause.swift, since 0.5.2)
+## Usage pause (Lab/UsagePause.swift, since 0.5.2; per session since 0.5.3)
 
 When a plan limit runs out mid-turn, Claude Science keeps the session
 `processing` but sends nothing until the limit starts over; its page shows
 "Sending messages is paused — resumes at 3:40 PM" in the composer and drops the
 working indicator. It learns this only over its own page's socket
-(`frame_activity` with phase `usage_limit_paused`, `since` and `resets_at`) and
-double-checks it against `/api/usage`. Bench has no socket, so it reads the
-same thing from what it has:
+(`frame_activity` with phase `usage_limit_paused`, `since`, `resets_at` and
+`pause_source`; the last one per session replays when the socket connects).
+There is no HTTP route for it, and Bench opens no socket: the socket carries
+every session's text and thinking (Bench on your phone, Phase 4, Live text), so
+using it would be a new integration, not a reuse. Bench infers the pause, one
+running session at a time, from what it already reads:
 
-- **Quiet**: the running sessions have written nothing for 20 s (their
-  `updatedAt` from the session reads).
-- **Used up**: a limit's unrounded utilization is 100 % or more, its window
-  hasn't started over, and extra usage isn't on with room left
-  (`PlanUsageModel.limitReached`; with several, the one that resets last).
-  While quiet and near a limit (85 % or more, or not known), Bench reads the
-  plan again, bypassing Claude Science's cache, at most once a minute, as the
-  page itself does while it shows the pause.
-- **Then** (`UsagePauseModel.pause`): the panel shows a pause symbol, "Paused ·
-  usage limit" and "Resumes at 3:40 PM" instead of the specimen and clock; the
-  menu bar and the toolbar capsule stop their animation and say "Paused"; the
-  activity list's Working section reads "Paused · usage limit"; `/api/state`
-  carries `"pause": {"limit": "5-hour", "until": "…", "sentence": "Resumes at
-  3:40 PM"}` (null otherwise, and only while something runs), and the phone
-  shows a banner, still rows, and stops polling live text.
-- **Over**: the first write from a session, the limit starting over (Bench
-  reads the plan just after `resets_at`), or extra usage switched on.
-- `--demo … -demoUsagePause YES` shows a made-up hour-long pause.
+- **Quiet**: the session's whole tree, sub-agents included, has written nothing
+  for 20 s: `SessionStatus.activeAt`, the poll's own order key (the latest
+  `updated_at` of the root and every frame under it), returned since 0.5.3. A
+  root waits quietly while its helpers work, so the root's `updatedAt` alone
+  would read a busy session as paused. `updatedAt` keeps its meaning for the
+  lists. A session without `activeAt` (made-up sources) is never quiet.
+- **Used up**: a limit that holds every session (`PlanLimit.Kind.holdsEverySession`:
+  the 5-hour and the weekly) is at 100 % or more by its unrounded figure, its
+  window hasn't started over, and extra usage isn't on with room left (its own
+  unrounded `reached`; on without a figure counts as room, as before;
+  `PlanUsageModel.limitReached`; with several, the one that resets last).
+  Claude Science's page, once it shows a pause, takes it as over when a read
+  (75 s or more after) shows none of `five_hour`, `seven_day` and
+  `seven_day_oauth_apps` used up; Bench doesn't read the last. The Opus and
+  Sonnet weeks hold only sessions on that model, and Bench
+  can't tell a session's model (it is chosen per message, in the request body,
+  which Bench never reads), so a used-up model week pauses no session in Bench:
+  such a session shows as working.
+- **Evidence**: the read that says so was taken after the session's last write,
+  and is no more than 150 s old. While a session is quiet and a holding limit
+  is at 85 % or more (or unknown), or while anything is held, Bench reads the
+  plan again, bypassing Claude Science's cache, at once if the last try is
+  older than the session's last write, else at most once a minute. After two
+  failed reads in a row it stops saying paused rather than go on from a read
+  it can no longer check.
+- **Then** (`UsagePauseModel.held`, by session): the panel puts a session still
+  working on top; a held one shows a pause symbol, "Paused · usage limit" and
+  "Resumes at 3:40 PM" instead of the specimen and clock. The activity list
+  marks each held row; its section reads "Paused · usage limit", and the menu
+  bar and toolbar capsule stop and say "Paused", only when every working session
+  is held. `/api/state` marks each held working row `"paused": true` and carries
+  `"pause": {"limit": "5-hour", "until": "…", "sentence": "…"}` while any is held
+  (null otherwise). The phone shows a banner, still rows for the held sessions,
+  and stops polling live text for a held session only. It says the resume time
+  from `until` in its own time zone and language ("Resumes tomorrow at 10:00
+  AM" in Tokyo when the Mac in Detroit would say "Resumes at 9:00 PM"); without
+  a time it can read, "Resumes when your limit resets". `sentence` is the Mac's,
+  in the Mac's zone, kept for a phone app from before 0.5.3.
+- **Over**: a session's next write anywhere in its tree ends its pause; the limit
+  starting over ends them all at once (Bench looks again just after `until`),
+  as does a read saying there is room, extra usage switched on included, once
+  taken 75 s or more after the pause began (the page waits as long before it
+  believes one).
+- **What it can't tell**: a session that keeps running a long tool after the
+  limit ran out writes nothing either, so it reads as paused until it writes
+  again (Claude Science pauses it at its next model call anyway). A session on
+  a used-up Opus or Sonnet week reads as working. Neither was seen against a
+  real used-up limit: TESTING.md says what is checked, and how.
+- `--demo … -demoUsagePause YES` holds every made-up working session for an hour.
 
 ## Title-bar readouts: context and usage remaining (Usage/)
 
@@ -1309,7 +1343,9 @@ Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and Scie
                           change them in the droplet, then run Scripts/sync-shared.sh. Except
                           Core/CLIStatus.swift and Core/SQLiteSource.swift, which are Bench's own
                           since 0.1.2 (the database is found through the daemon's `data_dir` and
-                          the live org); the sync script keeps them.
+                          the live org), Core/ScienceEngine.swift (0.1.15), and
+                          Core/ScienceSource.swift and Core/SessionStatus.swift since 0.5.3
+                          (`activeAt`, the usage pause); the sync script keeps them.
 Resources/AppIcon.icon    Bench's own icon in Solanum's product family: the fig tile (#C46686), the
                           Solanum ring exactly, a flask at 9 units, one bubble escaped at the mark's
                           escaped node (152, 9.93). Drawn by code, not synced from the droplet.
@@ -1468,7 +1504,7 @@ message, and push notifications.
      "since": "2026-10-12T19:31:00Z", "snooze": {"until": "2026-10-12T19:50:00Z", "afterFocus": false}}
   ],
   "failed": [{"id": "…", "title": "…", "project": "…", "since": "…"}],
-  "working": [{"id": "…", "title": "…", "project": "…", "startedAt": "…"}],
+  "working": [{"id": "…", "title": "…", "project": "…", "startedAt": "…", "paused": false}],
   "recent": [{"kind": "finished", "id": "…", "title": "…", "project": "…", "at": "…", "line": "Finished"}],
   "usage": {"limits": [{"name": "5-hour", "usedPercent": 54, "resetsAt": "…", "pace": "At this pace: limit around 3:40 PM"}]},
   "pause": null
@@ -1477,7 +1513,9 @@ message, and push notifications.
 
 `snooze` is null when not put off; `problem` is a short sentence when Bench
 can't see sessions ("Claude Science isn't running"); `usage` is null when
-unknown. Dates are ISO 8601 UTC. Titles and project names are the user's own,
+unknown. A working row's `paused` is true while a used-up limit holds it, and
+`pause` then says which limit and until when (null while none is held; Usage
+pause). Dates are ISO 8601 UTC. Titles and project names are the user's own,
 shown only to their paired devices.
 
 ### `/api/sessions/<id>` (version 1)

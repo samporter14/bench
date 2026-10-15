@@ -101,8 +101,8 @@ struct MenuBarSpecimenView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(ink)
-            } else if usagePause.pause != nil {
-                // Held by a used-up limit: still, not playing.
+            } else if usagePause.holdsAll(model.working) {
+                // Every working session held by a used-up limit: still, not playing.
                 Image(systemName: "pause.circle")
                     .font(.system(size: 14))
                     .foregroundStyle(ink)

@@ -1,5 +1,6 @@
 // ScienceSource.swift
 // ScienceStatus — DroppyKit-free core. No DroppyKit import in this file.
+// Bench's own version since 0.5.3 (`activeAt`): Scripts/sync-shared.sh keeps it.
 
 import Foundation
 
@@ -146,7 +147,10 @@ public final class CombinedScienceSource: ScienceSource, @unchecked Sendable {
                     startedAt: date(frame.turnStartedMs),
                     tokens: Int(frame.tokens),
                     deepLink: link,
-                    waitingReason: WaitingReason(signal: frame.waitingSignal)
+                    waitingReason: WaitingReason(signal: frame.waitingSignal),
+                    // The tree's latest write as read, not the turn's end:
+                    // what says whether anything in it still happens.
+                    activeAt: frame.activeMs.map { date(max($0, frame.updatedMs)) }
                 )
             }
             // Counted from the rows, not the CLI's `active_frames`, which

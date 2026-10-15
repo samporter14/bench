@@ -29,12 +29,14 @@ enum RemoteAPI {
         var recent: [LabEvent]
         var limits: [PlanLimit]
         var forecasts: [PlanLimit.Kind: Forecast]
-        /// Running sessions held by a used-up limit (Lab/UsagePause.swift).
-        var pause: UsagePause? = nil
+        /// The running sessions a used-up limit holds, by id (Lab/UsagePause.swift).
+        var held: [String: UsagePause] = [:]
     }
 
-    /// `pause` in `/api/state`: the running sessions wait for a limit to
-    /// start over.
+    /// `pause` in `/api/state`: some of the running sessions (those marked
+    /// `paused`) wait for a limit to start over. `until` is the time to show,
+    /// in the phone's own time zone; `sentence` says it in the Mac's, for an
+    /// older phone app.
     struct Pause: Encodable, Equatable {
         let limit: String
         let until: Date?
@@ -143,8 +145,10 @@ enum RemoteAPI {
         let title: String
         let project: String
         let startedAt: Date?
+        /// A used-up limit holds it (`pause` says until when).
+        var paused = false
 
-        private enum CodingKeys: String, CodingKey { case id, title, project, startedAt }
+        private enum CodingKeys: String, CodingKey { case id, title, project, startedAt, paused }
 
         func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -152,6 +156,7 @@ enum RemoteAPI {
             try c.encode(title, forKey: .title)
             try c.encode(project, forKey: .project)
             try c.encode(startedAt, forKey: .startedAt)
+            try c.encode(paused, forKey: .paused)
         }
     }
 
@@ -199,7 +204,8 @@ enum RemoteAPI {
             Failed(id: $0.id, title: $0.displayTitle, project: $0.projectName, since: $0.updatedAt)
         }
         let working = input.working.map {
-            Working(id: $0.id, title: $0.displayTitle, project: $0.projectName, startedAt: $0.startedAt)
+            Working(id: $0.id, title: $0.displayTitle, project: $0.projectName, startedAt: $0.startedAt,
+                    paused: input.held[$0.id] != nil)
         }
         // A download has no session, and its file name is no business of
         // the phone's: saved files stay on the Mac.
@@ -212,8 +218,9 @@ enum RemoteAPI {
             Limit(name: name(limit.kind), usedPercent: limit.usedPercent, resetsAt: limit.resetsAt,
                   pace: input.forecasts[limit.kind]?.line(now: input.now))
         }
-        // Only while something runs: a limit used up with nothing running holds nothing.
-        let pause = input.working.isEmpty ? nil : input.pause.map {
+        // Only while a working session is held: a limit used up with nothing
+        // running holds nothing. One limit holds them all.
+        let pause = input.working.lazy.compactMap { input.held[$0.id] }.first.map {
             Pause(limit: name($0.limit), until: $0.until, sentence: $0.sentence(now: input.now))
         }
         return State(version: version, bench: input.bench, updatedAt: input.now, problem: input.problem?.label,
@@ -508,7 +515,7 @@ enum RemoteAPI {
         Input(bench: bench, now: now, problem: lab.problem, waiting: lab.waiting, snoozed: lab.snoozed,
               failed: failedSessions(lab: lab),
               working: lab.working, recent: lab.recent, limits: usage.limits, forecasts: usage.forecasts,
-              pause: UsagePauseModel.shared.pause)
+              held: UsagePauseModel.shared.held)
     }
 
     /// The sessions of the failure cards: `failed` in `/api/state`.
@@ -558,7 +565,7 @@ final class RemoteFeed {
             usage.$limits.map { _ in () }.eraseToAnyPublisher(),
             usage.$forecasts.map { _ in () }.eraseToAnyPublisher(),
             approver.$states.map { _ in () }.eraseToAnyPublisher(),
-            UsagePauseModel.shared.$pause.map { _ in () }.eraseToAnyPublisher(),
+            UsagePauseModel.shared.$held.map { _ in () }.eraseToAnyPublisher(),
         ]
         // @Published publishes before the value changes; after the wait the
         // models hold the new values.

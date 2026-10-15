@@ -51,17 +51,18 @@ struct ActivityList: View {
                     }
                 }
                 if !model.working.isEmpty {
-                    // Held by a used-up limit: no specimen and no clock, but when it resumes.
-                    section(usagePause.pause == nil ? "Working" : "Paused · usage limit") {
+                    // A session a used-up limit holds: no specimen and no clock, but
+                    // when it resumes. The section says so when it holds them all.
+                    section(usagePause.holdsAll(model.working) ? "Paused · usage limit" : "Working") {
                         ForEach(model.working) { session in
                             row(session, line: nil, accent: false) {
-                                if usagePause.pause != nil {
+                                if usagePause.pause(for: session.id) != nil {
                                     Image(systemName: "pause.circle").foregroundStyle(.secondary)
                                 } else {
                                     WorkingGlyph(tint: colorScheme.sceneInk, rotation: SceneSettings.shared.rotation)
                                 }
                             } trailing: {
-                                if let pause = usagePause.pause {
+                                if let pause = usagePause.pause(for: session.id) {
                                     Text(pause.sentence())
                                         .foregroundStyle(.secondary)
                                 } else if let since = session.startedAt {

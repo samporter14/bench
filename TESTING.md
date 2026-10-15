@@ -321,6 +321,82 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-15, Bench 0.5.3 (the usage pause, per session; review fixes)
+
+A source review of 98f54a2 found four problems in the 0.5.2 pause. Each was
+checked against the code first, then fixed:
+
+1. A used-up Opus or Sonnet week paused every working session, whatever its
+   model. Bench has no model per session (it is chosen per message, in a body
+   Bench never reads). Claude Science's own page (its UI code in Bench's
+   WebKit cache, JS bodies only) takes a pause as over once a read shows none
+   of `five_hour`, `seven_day` and `seven_day_oauth_apps` used up, so it
+   ignores the model weeks too. Now only the 5-hour and weekly limits can
+   pause a session, and each session has its own pause.
+2. A quiet root with sub-agents still working read as paused: the pause
+   looked at the root's `updated_at`. The poll now also returns its own order
+   key, the tree's latest write (`activeAt`), and the pause uses that.
+3. Extra usage at 99.5–99.99 % rounded to 100 and counted as used up. It now
+   keeps its unrounded `reached`, as the limits already did.
+4. The phone showed the Mac's sentence, in the Mac's time zone. It now says
+   the time from `until`, in its own zone and on its own calendar day.
+
+The authoritative signal (`frame_activity` / `usage_limit_paused`) is still
+socket-only, with no HTTP route, so the pause is still inferred (DESIGN.md,
+Usage pause, "What it can't tell").
+
+Automated, with made-up fixtures only:
+
+- ✅ `swift test`: 1,094 tests, all passing in the last full run. In two
+  earlier full runs, `LettingGoTests`' idle-close timing test failed. It
+  sleeps for real against a 1.5 s window, and the Mac's load average was
+  17–20 on 10 cores; it passed 3 of 3 runs on its own. That code was not
+  touched here. New or rewritten:
+  - **`UsagePauseTests`.** Only the 5-hour and weekly limits hold; a used-up
+    model week holds no session. The plan's payload is parsed at 99.49, 99.5,
+    99.6, 99.99, 100 and 100.4 %, and extra usage at the same figures, off,
+    unsaid and without a figure. A session is held only once quiet across its
+    whole tree, on a read after its last write. A quiet root with a helper
+    still writing is not held, nor is a session without a measured tree. One
+    session can be held while another works. Room is believed only 75 s
+    after the pause began. The sentence is checked in two time zones.
+  - **The watcher, through its own observing and scheduling.** It runs with
+    an injected clock, schedule and inputs, and no sleeps. It enters a pause,
+    and a renewed write ends it. The limit starting over ends it without a
+    read, and extra usage switched on ends it. Failed reads keep it for two
+    minutes, then drop it. A second session stays working.
+  - **`SessionsPollTests`.** In a made-up database, a session's `activeMs` is
+    its whole tree's latest write: helpers, a helper's helper and a hidden
+    one, under all three ways of picking. The root's own `updatedMs` is
+    unchanged. The poll's equivalence checks ignore the new field.
+  - **`PhonePauseTests`.** These run the embedded `/app.js` in
+    JavaScriptCore with a small fake DOM, fake timers and a fake `fetch`
+    (`PhoneAppHarness`). They follow the open session from running to
+    paused, with no live-text requests for 30 s, "Paused · usage limit", its
+    resume time and no "Working for", then back to running, where live text
+    is asked for again. A session working beside a paused one keeps its live
+    text. The Now list's banner, still row and live row are checked. Resume
+    times are checked in Detroit, Tokyo and London, including Tokyo already
+    on the next day. Absent or bad times, and past ones, are covered, and
+    the Mac's own sentence never shows.
+  - **Mutation checks, each reverted afterwards.** Dropping the phone's
+    per-session live-text check fails `PhonePauseTests`. In one run together,
+    using the root's `updatedAt` instead of `activeAt` failed three
+    `UsagePauseTests`, and rounding extra usage before the used-up test
+    failed the extra-usage parsing test.
+- ✅ `node --check RemoteWeb/app.js`; `Scripts/embed-remote-web.py` regenerated
+  `RemoteWebApp.swift`, with its own node check of the stripped JS, and
+  `--check` passes.
+
+Not checked live (Bench wasn't launched, and nothing reached a real daemon,
+plan or phone):
+
+- a real used-up limit, on the Mac's panel, menu bar, capsule or activity
+  list, or on a phone;
+- the phone app on a real iPhone or iPad in another time zone;
+- `--demo remote -demoUsagePause YES`, which now holds every made-up working
+  session.
+
 ## 2026-10-14, Bench 0.5.2 (a usage-limit pause is not "working")
 
 - Sam's report: with a usage limit hit mid-session, Claude Science says

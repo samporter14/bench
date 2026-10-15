@@ -791,14 +791,40 @@ function failedRow(f) {
       icon('chev', 'sm chev')));
 }
 
-// While a used-up plan limit holds the running sessions (`pause` in the state), nothing is happening:
-// no pulsing dot and no clock, but "Paused".
-const paused = () => !!(S.state && S.state.pause);
+// A used-up plan limit holds this working session (`paused` on its row in the state; the state's `pause` says until
+// when): nothing is happening in it, so no pulsing dot, no clock and no live text, but "Paused". Each session has its
+// own: one still writing isn't paused because another waits.
+const heldBy = (id) => {
+  const snap = lookup(id);
+  return !!(snap && snap.bucket === 'working' && snap.paused === true);
+};
 // A session's own data says `running`; the state stream's lists say `working`.
 const runs = (state) => state === 'running' || state === 'working';
 
+// When a paused session resumes, in this phone's own time zone and language (`tz` and `locale` are for the tests):
+// "Resumes at 3:40 PM", "Resumes tomorrow at 9:00 AM", "Resumes Friday at 9:00 AM", "Resumes on Oct 22 at 9:00 AM".
+// Without a time it can read, "Resumes when your limit resets": never the Mac's `sentence`, which is in the Mac's zone.
+function resumeSentence(pause, now = Date.now(), tz, locale) {
+  const until = pause && typeof pause.until === 'string' ? Date.parse(pause.until) : NaN;
+  if (!Number.isFinite(until)) return 'Resumes when your limit resets';
+  if (until <= now) return 'Resumes shortly';
+  const opts = (o) => (tz ? { ...o, timeZone: tz } : o);
+  const time = new Intl.DateTimeFormat(locale, opts({ hour: 'numeric', minute: '2-digit' })).format(until);
+  // The calendar day of a moment where the phone is, as a number of days, to count the days between.
+  const day = (t) => {
+    const parts = new Intl.DateTimeFormat('en-US', opts({ year: 'numeric', month: 'numeric', day: 'numeric' })).formatToParts(t);
+    const part = (type) => Number((parts.find((x) => x.type === type) || {}).value);
+    return Date.UTC(part('year'), part('month') - 1, part('day')) / 86400000;
+  };
+  const days = Math.round(day(until) - day(now));
+  if (!Number.isFinite(days) || days <= 0) return 'Resumes at ' + time;
+  if (days === 1) return 'Resumes tomorrow at ' + time;
+  if (days < 7) return 'Resumes ' + new Intl.DateTimeFormat(locale, opts({ weekday: 'long' })).format(until) + ' at ' + time;
+  return 'Resumes on ' + new Intl.DateTimeFormat(locale, opts({ month: 'short', day: 'numeric' })).format(until) + ' at ' + time;
+}
+
 function workingRow(w) {
-  const held = paused();
+  const held = w.paused === true;
   return h('li', null,
     h('a', { class: 'row', href: sessionHref(w.id), 'data-key': 'w:' + w.id + (held ? ':p' : ''), 'aria-current': current(w.id) },
       h('span', { class: held ? 'dot idle' : 'dot live', 'aria-hidden': 'true' }),
@@ -844,7 +870,7 @@ function nowContent() {
     h('h1', { class: 'large', tabindex: '-1', text: 'Now' }),
     st.problem ? h('div', { class: 'banner', role: 'status' }, icon('alert'), h('span', { text: st.problem })) : null,
     st.pause ? h('div', { class: 'banner', role: 'status' }, icon('pause'),
-      h('span', { text: 'Your usage limit is used up, so sending is paused. ' + (st.pause.sentence || '') })) : null,
+      h('span', { text: 'Your usage limit is used up, so sending is paused. ' + resumeSentence(st.pause) })) : null,
     section('Needs you', needs.length, needs.length ? list(needs.map(needsRow)) : emptyCard('Nothing needs you')),
     failed.length ? section('Stopped with an error', failed.length, list(failed.map(failedRow))) : null,
     section('Working', 0, working.length ? list(working.map(workingRow)) : emptyCard('Nothing working right now')),
@@ -981,8 +1007,8 @@ function liveWanted() {
   const snap = lookup(r.id);
   const d = rec && rec.data;
   if (!(snap ? snap.bucket === 'working' : !!d && runs(d.state))) return '';
-  // Paused for a used-up limit: there is nothing being written to watch.
-  if (paused()) return '';
+  // This session paused for a used-up limit: there is nothing being written to watch.
+  if (snap && snap.paused === true) return '';
   // Told it isn't working a moment ago: wait for the state to change before asking again, or 3 s, then
   // twice as long (to a minute) each time the state still says working and Bench says not.
   const q = LIVE.quiet;
@@ -1167,10 +1193,10 @@ const sessionTitle = (id) => {
 };
 
 // A status is a shape and a label, never a colour alone.
-function statusMark(state) {
+function statusMark(state, held = false) {
   if (state === 'needsInput') return h('span', { class: 'dot', 'aria-hidden': 'true' });
   if (state === 'error' || state === 'failed') return icon('alert', 'sm mark-err');
-  if (runs(state) && paused()) return icon('pause', 'sm');
+  if (runs(state) && held) return icon('pause', 'sm');
   if (runs(state)) return h('span', { class: 'dot live', 'aria-hidden': 'true' });
   return h('span', { class: 'dot idle', 'aria-hidden': 'true' });
 }
@@ -1220,7 +1246,7 @@ function fillSession(sv, id) {
   const set = (name, sig, build) => setRegion(body, name, JSON.stringify(sig) ?? '', build);
   const none = () => [];
 
-  set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze], S.state && S.state.pause], () => headNodes(id, rec, d, snap));
+  set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze], heldBy(id) ? resumeSentence(S.state.pause) : null], () => headNodes(id, rec, d, snap));
   // When the phone can act, Open on Mac is a quiet button after the details; otherwise it is the main one.
   // A permission the phone can't allow carries its own Open on Mac, so there is only ever one.
   const acts = !!(d && d.can && (d.can.approve || d.can.answer || d.can.message)) || !!(perm && (perm.canAllow || perm.canDeny));
@@ -1255,7 +1281,7 @@ function fillSession(sv, id) {
   } else {
     set('convo', d && d.turns && d.turns.length ? [d.turns, u.shown, u.more] : 0, () => (d && d.turns && d.turns.length ? [convo(id, d.turns, u)] : []));
   }
-  set('times', d ? [d.state, d.startedAt, d.updatedAt, paused()] : 0, () => (d ? [timesCard(d)] : []));
+  set('times', d ? [d.state, d.startedAt, d.updatedAt, heldBy(id)] : 0, () => (d ? [timesCard(d, heldBy(id))] : []));
 
   let dock = sv.querySelector('.dock');
   if (d && d.can) {
@@ -1278,22 +1304,23 @@ function headNodes(id, rec, d, snap) {
     return [heading, snap ? h('p', { class: 'sub tight-sub', text: snap.project }) : null, h('p', { class: 'lede', text: note }), retry];
   }
   const snooze = snap && snap.snooze ? snoozeText(snap.snooze) : '';
+  const held = runs(d.state) && heldBy(id);
   return [
     heading,
     d.project ? h('p', { class: 'sub tight-sub', text: d.project }) : null,
     h('p', { class: 'status' + (d.state === 'needsInput' || d.state === 'error' || d.state === 'failed' ? '' : ' calm') },
-      statusMark(d.state), runs(d.state) && paused() ? 'Paused · usage limit' : (d.sentence || stateLabel(d.state))),
-    runs(d.state) && paused() ? h('p', { class: 'status-line', text: S.state.pause.sentence || '' })
+      statusMark(d.state, held), held ? 'Paused · usage limit' : (d.sentence || stateLabel(d.state))),
+    held ? h('p', { class: 'status-line', text: resumeSentence(S.state.pause) })
       : d.statusLine ? h('p', { class: 'status-line', text: d.statusLine }) : null,
     snooze ? h('p', { class: 'snooze lone', text: snooze }) : null,
     rec.gone ? h('p', { class: 'snooze lone', text: 'This session is no longer on your list.' }) : null,
   ];
 }
 
-function timesCard(d) {
+function timesCard(d, held = false) {
   const rows = [];
   const kv = (k, v) => h('div', { class: 'kv' }, h('dt', { text: k }), h('dd', null, v));
-  if (runs(d.state) && d.startedAt && !paused()) rows.push(kv('Working for', clockEl(d.startedAt)));
+  if (runs(d.state) && d.startedAt && !held) rows.push(kv('Working for', clockEl(d.startedAt)));
   if (d.startedAt) rows.push(kv('Started', [when(d.startedAt), ' ', h('span', { class: 'sub' }, '(', rel(d.startedAt), ')')]));
   if (d.updatedAt) rows.push(kv('Updated', rel(d.updatedAt)));
   return rows.length ? h('dl', { class: 'group sec' }, rows) : null;
@@ -1925,7 +1952,7 @@ function onSearch(pid, value) {
 
 function sessionRow(s) {
   return h('li', null, h('a', { class: 'row', href: sessionHref(s.id), 'data-key': 's:' + s.id, 'aria-current': current(s.id) },
-    h('span', { class: 'mk', 'aria-hidden': 'true' }, statusMark(s.state)),
+    h('span', { class: 'mk', 'aria-hidden': 'true' }, statusMark(s.state, heldBy(s.id))),
     h('span', { class: 'row-main' },
       h('span', { class: 'title', text: s.title || 'Untitled session' }),
       s.sentence ? h('span', { class: 'sub', text: s.sentence }) : null),

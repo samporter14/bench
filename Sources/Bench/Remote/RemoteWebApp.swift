@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "5de394939ab6",
+        "/app.js": "95b3bb9e1a87",
         "/app.css": "cb91b323c625",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Bench needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=5de394939ab6"></script>
+<script type="module" src="/app.js?v=95b3bb9e1a87"></script>
 </body>
 </html>
 """#
@@ -743,10 +743,30 @@ h('span', { class: 'title', text: f.title }),
 subLine(f.project, rel(f.since))),
 icon('chev', 'sm chev')));
 }
-const paused = () => !!(S.state && S.state.pause);
+const heldBy = (id) => {
+const snap = lookup(id);
+return !!(snap && snap.bucket === 'working' && snap.paused === true);
+};
 const runs = (state) => state === 'running' || state === 'working';
+function resumeSentence(pause, now = Date.now(), tz, locale) {
+const until = pause && typeof pause.until === 'string' ? Date.parse(pause.until) : NaN;
+if (!Number.isFinite(until)) return 'Resumes when your limit resets';
+if (until <= now) return 'Resumes shortly';
+const opts = (o) => (tz ? { ...o, timeZone: tz } : o);
+const time = new Intl.DateTimeFormat(locale, opts({ hour: 'numeric', minute: '2-digit' })).format(until);
+const day = (t) => {
+const parts = new Intl.DateTimeFormat('en-US', opts({ year: 'numeric', month: 'numeric', day: 'numeric' })).formatToParts(t);
+const part = (type) => Number((parts.find((x) => x.type === type) || {}).value);
+return Date.UTC(part('year'), part('month') - 1, part('day')) / 86400000;
+};
+const days = Math.round(day(until) - day(now));
+if (!Number.isFinite(days) || days <= 0) return 'Resumes at ' + time;
+if (days === 1) return 'Resumes tomorrow at ' + time;
+if (days < 7) return 'Resumes ' + new Intl.DateTimeFormat(locale, opts({ weekday: 'long' })).format(until) + ' at ' + time;
+return 'Resumes on ' + new Intl.DateTimeFormat(locale, opts({ month: 'short', day: 'numeric' })).format(until) + ' at ' + time;
+}
 function workingRow(w) {
-const held = paused();
+const held = w.paused === true;
 return h('li', null,
 h('a', { class: 'row', href: sessionHref(w.id), 'data-key': 'w:' + w.id + (held ? ':p' : ''), 'aria-current': current(w.id) },
 h('span', { class: held ? 'dot idle' : 'dot live', 'aria-hidden': 'true' }),
@@ -789,7 +809,7 @@ return [
 h('h1', { class: 'large', tabindex: '-1', text: 'Now' }),
 st.problem ? h('div', { class: 'banner', role: 'status' }, icon('alert'), h('span', { text: st.problem })) : null,
 st.pause ? h('div', { class: 'banner', role: 'status' }, icon('pause'),
-h('span', { text: 'Your usage limit is used up, so sending is paused. ' + (st.pause.sentence || '') })) : null,
+h('span', { text: 'Your usage limit is used up, so sending is paused. ' + resumeSentence(st.pause) })) : null,
 section('Needs you', needs.length, needs.length ? list(needs.map(needsRow)) : emptyCard('Nothing needs you')),
 failed.length ? section('Stopped with an error', failed.length, list(failed.map(failedRow))) : null,
 section('Working', 0, working.length ? list(working.map(workingRow)) : emptyCard('Nothing working right now')),
@@ -905,7 +925,7 @@ if (rec && rec.phase === 'missing') return '';
 const snap = lookup(r.id);
 const d = rec && rec.data;
 if (!(snap ? snap.bucket === 'working' : !!d && runs(d.state))) return '';
-if (paused()) return '';
+if (snap && snap.paused === true) return '';
 const q = LIVE.quiet;
 if (q && q.id === r.id && q.sig === snapSig(r.id) && Date.now() - q.at < q.wait) return '';
 return r.id;
@@ -1066,10 +1086,10 @@ const rec = S.sess[id];
 const snap = lookup(id);
 return (rec && rec.data && rec.data.title) || (snap && snap.title) || 'Session';
 };
-function statusMark(state) {
+function statusMark(state, held = false) {
 if (state === 'needsInput') return h('span', { class: 'dot', 'aria-hidden': 'true' });
 if (state === 'error' || state === 'failed') return icon('alert', 'sm mark-err');
-if (runs(state) && paused()) return icon('pause', 'sm');
+if (runs(state) && held) return icon('pause', 'sm');
 if (runs(state)) return h('span', { class: 'dot live', 'aria-hidden': 'true' });
 return h('span', { class: 'dot idle', 'aria-hidden': 'true' });
 }
@@ -1111,7 +1131,7 @@ const perm = validPermission(d && d.permission);
 if (perm && u.permId !== perm.id) Object.assign(u, { permId: perm.id, permDecision: '' });
 const set = (name, sig, build) => setRegion(body, name, JSON.stringify(sig) ?? '', build);
 const none = () => [];
-set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze], S.state && S.state.pause], () => headNodes(id, rec, d, snap));
+set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze], heldBy(id) ? resumeSentence(S.state.pause) : null], () => headNodes(id, rec, d, snap));
 const acts = !!(d && d.can && (d.can.approve || d.can.answer || d.can.message)) || !!(perm && (perm.canAllow || perm.canDeny));
 const gone = rec && rec.phase === 'missing';
 const permOpen = !!perm && !perm.canAllow;
@@ -1142,7 +1162,7 @@ set('convo', [H.rev, H.from, H.busy, H.err, u.more, Object.keys(H.full).length, 
 } else {
 set('convo', d && d.turns && d.turns.length ? [d.turns, u.shown, u.more] : 0, () => (d && d.turns && d.turns.length ? [convo(id, d.turns, u)] : []));
 }
-set('times', d ? [d.state, d.startedAt, d.updatedAt, paused()] : 0, () => (d ? [timesCard(d)] : []));
+set('times', d ? [d.state, d.startedAt, d.updatedAt, heldBy(id)] : 0, () => (d ? [timesCard(d, heldBy(id))] : []));
 let dock = sv.querySelector('.dock');
 if (d && d.can) {
 if (!dock) { dock = buildDock(id); sv.append(dock); }
@@ -1163,21 +1183,22 @@ const retry = rec && rec.phase === 'error'
 return [heading, snap ? h('p', { class: 'sub tight-sub', text: snap.project }) : null, h('p', { class: 'lede', text: note }), retry];
 }
 const snooze = snap && snap.snooze ? snoozeText(snap.snooze) : '';
+const held = runs(d.state) && heldBy(id);
 return [
 heading,
 d.project ? h('p', { class: 'sub tight-sub', text: d.project }) : null,
 h('p', { class: 'status' + (d.state === 'needsInput' || d.state === 'error' || d.state === 'failed' ? '' : ' calm') },
-statusMark(d.state), runs(d.state) && paused() ? 'Paused · usage limit' : (d.sentence || stateLabel(d.state))),
-runs(d.state) && paused() ? h('p', { class: 'status-line', text: S.state.pause.sentence || '' })
+statusMark(d.state, held), held ? 'Paused · usage limit' : (d.sentence || stateLabel(d.state))),
+held ? h('p', { class: 'status-line', text: resumeSentence(S.state.pause) })
 : d.statusLine ? h('p', { class: 'status-line', text: d.statusLine }) : null,
 snooze ? h('p', { class: 'snooze lone', text: snooze }) : null,
 rec.gone ? h('p', { class: 'snooze lone', text: 'This session is no longer on your list.' }) : null,
 ];
 }
-function timesCard(d) {
+function timesCard(d, held = false) {
 const rows = [];
 const kv = (k, v) => h('div', { class: 'kv' }, h('dt', { text: k }), h('dd', null, v));
-if (runs(d.state) && d.startedAt && !paused()) rows.push(kv('Working for', clockEl(d.startedAt)));
+if (runs(d.state) && d.startedAt && !held) rows.push(kv('Working for', clockEl(d.startedAt)));
 if (d.startedAt) rows.push(kv('Started', [when(d.startedAt), ' ', h('span', { class: 'sub' }, '(', rel(d.startedAt), ')')]));
 if (d.updatedAt) rows.push(kv('Updated', rel(d.updatedAt)));
 return rows.length ? h('dl', { class: 'group sec' }, rows) : null;
@@ -1725,7 +1746,7 @@ P.t = setTimeout(() => loadProject(pid, false), 300);
 }
 function sessionRow(s) {
 return h('li', null, h('a', { class: 'row', href: sessionHref(s.id), 'data-key': 's:' + s.id, 'aria-current': current(s.id) },
-h('span', { class: 'mk', 'aria-hidden': 'true' }, statusMark(s.state)),
+h('span', { class: 'mk', 'aria-hidden': 'true' }, statusMark(s.state, heldBy(s.id))),
 h('span', { class: 'row-main' },
 h('span', { class: 'title', text: s.title || 'Untitled session' }),
 s.sentence ? h('span', { class: 'sub', text: s.sentence }) : null),

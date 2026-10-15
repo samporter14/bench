@@ -1,5 +1,6 @@
 // SessionStatus.swift
 // ScienceStatus — DroppyKit-free core. No DroppyKit import in this file.
+// Bench's own version since 0.5.3 (`activeAt`): Scripts/sync-shared.sh keeps it.
 
 import Foundation
 
@@ -20,6 +21,11 @@ public struct SessionStatus: Sendable, Equatable, Identifiable {
     public let deepLink: URL?
     /// Why it waits, when it needs input.
     public let waitingReason: WaitingReason?
+    /// The latest write anywhere in the session's tree, its sub-agents'
+    /// included, when the read measured it; nil when it didn't. `updatedAt`
+    /// keeps its own meaning (the root's write, or the turn's end), which the
+    /// lists sort and date by.
+    public let activeAt: Date?
 
     public init(
         id: String,
@@ -31,7 +37,8 @@ public struct SessionStatus: Sendable, Equatable, Identifiable {
         startedAt: Date? = nil,
         tokens: Int? = nil,
         deepLink: URL? = nil,
-        waitingReason: WaitingReason? = nil
+        waitingReason: WaitingReason? = nil,
+        activeAt: Date? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -43,6 +50,7 @@ public struct SessionStatus: Sendable, Equatable, Identifiable {
         self.tokens = tokens
         self.deepLink = deepLink
         self.waitingReason = state == .needsInput ? (waitingReason ?? .other) : nil
+        self.activeAt = activeAt
     }
 
     /// Short display title. Falls back to project name when untitled.

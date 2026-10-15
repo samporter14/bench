@@ -46,12 +46,17 @@ struct LabStatusCapsule: View {
     private func scene(for waiting: SessionStatus?) -> some View {
         if let waiting {
             PlayedLoop(glyph: (waiting.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
-        } else if usagePause.pause != nil {
+        } else if usagePause.holdsAll(model.working) {
             Image(systemName: "pause.circle")
                 .foregroundStyle(.secondary)
         } else {
             WorkingGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)
         }
+    }
+
+    /// The working sessions no used-up limit holds: the ones still going.
+    private var working: [SessionStatus] {
+        model.working.filter { usagePause.pause(for: $0.id) == nil }
     }
 
     @ViewBuilder
@@ -60,13 +65,13 @@ struct LabStatusCapsule: View {
             let count = model.waiting.count
             Text(count == 1 ? "1 needs you" : "\(count) need you")
                 .foregroundStyle(Theme.clay)
-        } else if !model.working.isEmpty, usagePause.pause != nil {
+        } else if usagePause.holdsAll(model.working) {
             Text("Paused · usage limit")
                 .foregroundStyle(.secondary)
-        } else if model.working.count == 1, let session = model.working.first {
+        } else if working.count == 1, let session = working.first {
             TurnClockText(prefix: "Working", since: session.startedAt)
-        } else if model.working.count > 1 {
-            Text("\(model.working.count) working")
+        } else if working.count > 1 {
+            Text("\(working.count) working")
         } else {
             Text(model.recent.isEmpty ? "Activity" : "Recent")
                 .foregroundStyle(.secondary)

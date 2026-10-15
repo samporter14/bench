@@ -132,7 +132,8 @@ struct LabPanelView: View {
 
     private var current: Face? {
         if showCards, let card = model.cards.first { return .card(card, count: model.cards.count) }
-        if showWorking, !model.workingHidden, let session = model.working.first {
+        // A session still working goes on top of one a used-up limit holds.
+        if showWorking, !model.workingHidden, let session = usagePause.head(of: model.working) {
             return .working(session, others: model.working.count - 1)
         }
         return nil
@@ -247,9 +248,9 @@ struct LabPanelView: View {
                 detail(model.staleSince.map { "Last checked at \($0.formatted(date: .omitted, time: .shortened))" }
                        ?? "Can't check right now")
             }
-        } else if let pause = usagePause.pause {
-            // A used-up limit holds it: no specimen, since nothing is happening,
-            // and when it starts again.
+        } else if let pause = usagePause.pause(for: session.id) {
+            // A used-up limit holds it: no specimen, since nothing is happening
+            // in it, and when it starts again.
             Row(side: wellSide, well: symbol("pause.circle")) {
                 caption("Paused · usage limit", trailing: others > 0 ? "+\(others) more" : nil)
                 title(session.displayTitle)

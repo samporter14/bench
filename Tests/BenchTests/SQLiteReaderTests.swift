@@ -293,7 +293,12 @@ struct SessionsPollTests {
     private func check(_ db: MadeUpDatabase, limits: [Int] = [1, 2, 3, 5, 8, 25, 50], note: String) throws {
         for limit in limits {
             let before = try PollBefore.rows(db: db.url, limit: limit)
-            let now = try fetchRecentFrames(db: db.url, limit: limit)
+            // The reference predates `activeMs`; it is checked on its own below.
+            let now = try fetchRecentFrames(db: db.url, limit: limit).map { row -> FrameRow in
+                var row = row
+                row.activeMs = nil
+                return row
+            }
             #expect(now == before, "\(note), limit \(limit)")
             #expect(now.count == min(limit, before.count))
         }
@@ -353,6 +358,48 @@ struct SessionsPollTests {
         try db.frame(madeUpID(100), updated: 1_791_800_009_000, parent: madeUpID(1))
         try check(db, limits: [1, 2, 3, 6], note: "a late helper")
         #expect(try fetchRecentFrames(db: db.url, limit: 2).map(\.id) == [madeUpID(1), madeUpID(6)])
+    }
+
+    /// The usage pause asks whether anything in a session still happens: a
+    /// root waits quietly while its helpers work, so its own `updatedMs`
+    /// can't say. `activeMs` is the latest write in the whole tree.
+    @Test func aSessionsActivityIsItsWholeTreesLatestWrite() throws {
+        let db = try MadeUpDatabase()
+        defer { db.remove() }
+        let quietRoot: Int64 = 1_791_800_000_000
+        try db.frame(madeUpID(1), status: "processing", updated: quietRoot)
+        // A helper, its own helper (filed under the session's root) and a hidden one, all later.
+        try db.frame(madeUpID(10), status: "processing", updated: quietRoot + 60_000, parent: madeUpID(1))
+        try db.run("""
+            \(MadeUpDatabase.frameSQL(madeUpID(11), status: "processing", created: quietRoot, updated: quietRoot + 90_000, parent: madeUpID(10)))
+            UPDATE frames SET root_frame_id = '\(madeUpID(1))' WHERE id = '\(madeUpID(11))';
+            """)
+        try db.frame(madeUpID(12), status: "processing", updated: quietRoot + 120_000, parent: madeUpID(1), hidden: true)
+        // A session with no helpers, and one whose helper is older than itself.
+        try db.frame(madeUpID(2), status: "processing", updated: quietRoot + 5_000)
+        try db.frame(madeUpID(3), status: "completed", updated: quietRoot + 7_000)
+        try db.frame(madeUpID(30), status: "completed", updated: quietRoot + 1_000, parent: madeUpID(3))
+        // As the app reads it, parsed into `FrameRow`.
+        let rows = Dictionary(uniqueKeysWithValues: try fetchRecentFrames(db: db.url).map { ($0.id, $0) })
+        #expect(rows[madeUpID(1)]?.updatedMs == quietRoot, "the root's own write keeps its meaning")
+        #expect(rows[madeUpID(1)]?.activeMs == quietRoot + 120_000)
+        #expect(rows[madeUpID(2)]?.activeMs == quietRoot + 5_000)
+        #expect(rows[madeUpID(3)]?.activeMs == quietRoot + 7_000)
+        #expect(rows[madeUpID(10)] == nil, "a helper is never a session of its own")
+        // Each of the poll's three statements, run directly: `fetchRecentFrames`
+        // remembers which indexes a database has for five minutes.
+        try db.run("CREATE INDEX f_updated ON frames(updated_at); CREATE INDEX f_status ON frames(status);")
+        for (byTime, byStatus) in [(false, false), (true, false), (true, true)] {
+            let raw = try runReadOnlyQuery(db: db.url, sql: sessionsPollSQL(byTime: byTime, byStatus: byStatus),
+                                           arguments: [.integer(25)])
+            let byID = Dictionary(uniqueKeysWithValues: raw.map { ($0[0], $0) })
+            let note = "byTime \(byTime), byStatus \(byStatus)"
+            #expect(byID[madeUpID(1)]?[5] == String(quietRoot), Comment(rawValue: note))
+            #expect(byID[madeUpID(1)]?[11] == String(quietRoot + 120_000), Comment(rawValue: note))
+            #expect(byID[madeUpID(2)]?[11] == String(quietRoot + 5_000), Comment(rawValue: note))
+            #expect(byID[madeUpID(3)]?[11] == String(quietRoot + 7_000), Comment(rawValue: note))
+            #expect(byID[madeUpID(10)] == nil, Comment(rawValue: note))
+        }
     }
 }
 

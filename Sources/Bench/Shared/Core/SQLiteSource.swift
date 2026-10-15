@@ -319,6 +319,10 @@ struct FrameRow: Equatable {
     /// For a waiting session, why: an `awaiting_*` status or a pending
     /// request's kind, the session's own or a sub-agent's.
     var waitingSignal: String? = nil
+    /// The latest write anywhere in the session's tree, its sub-agents'
+    /// included (milliseconds): the poll's order key. A root waits quietly
+    /// while its helpers work, so `updatedMs` alone can look idle.
+    var activeMs: Int64? = nil
 }
 
 /// A text column as one line: line breaks and the field separator become
@@ -400,7 +404,8 @@ func fetchRecentFrames(db: URL, limit: Int = 25) throws -> [FrameRow] {
             turnStartedMs: Int64(cols[7]) ?? created,
             hasPendingInput: cols[8] == "1",
             tokens: Int64(cols[9]) ?? 0,
-            waitingSignal: cols.count > 10 && !cols[10].isEmpty ? cols[10] : nil
+            waitingSignal: cols.count > 10 && !cols[10].isEmpty ? cols[10] : nil,
+            activeMs: cols.count > 11 ? Int64(cols[11]) : nil
         )
     }
 }
@@ -421,7 +426,8 @@ func fetchRecentFrames(db: URL, limit: Int = 25) throws -> [FrameRow] {
 /// 2. Their trees, metadata only (`tree`), and the order key for those alone
 ///    (`picked`).
 /// 3. The tokens, the pending-input test and the waiting signal (the JSON
-///    reads) for the `?1` picked roots only, as before.
+///    reads) for the `?1` picked roots only, as before; and last, the order
+///    key itself, the tree's latest write (`FrameRow.activeMs`, Bench 0.5.3).
 ///
 /// With an index that starts with `updated_at` (`byTime`), SQLite walks it
 /// newest first and stops at `?1` roots, and finds the helpers' writes by
@@ -501,7 +507,8 @@ func sessionsPollSQL(byTime: Bool, byStatus: Bool) -> String {
                         FROM tree t CROSS JOIN frames y ON y.id = t.id
                         WHERE \(holding)
                         ORDER BY t.updated_at DESC LIMIT 1))
-               END
+               END,
+               p.recency
         FROM picked p CROSS JOIN frames f ON f.id = p.id
         ORDER BY p.active DESC, p.recency DESC;
         """
