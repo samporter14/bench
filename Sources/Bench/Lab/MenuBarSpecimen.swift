@@ -88,6 +88,7 @@ struct MenuBarSpecimenView: View {
     let dark: Bool
     @ObservedObject private var model = LabModel.shared
     @ObservedObject private var settings = SceneSettings.shared
+    @ObservedObject private var usagePause = UsagePauseModel.shared
 
     private var ink: Color { dark ? .white : .black }
 
@@ -99,6 +100,11 @@ struct MenuBarSpecimenView: View {
                 Text("\(model.waiting.count)")
                     .font(.system(size: 12, weight: .semibold))
                     .monospacedDigit()
+                    .foregroundStyle(ink)
+            } else if usagePause.pause != nil {
+                // Held by a used-up limit: still, not playing.
+                Image(systemName: "pause.circle")
+                    .font(.system(size: 14))
                     .foregroundStyle(ink)
             } else {
                 WorkingGlyph(tint: ink, rotation: settings.rotation)

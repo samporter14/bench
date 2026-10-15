@@ -71,6 +71,7 @@ const PATHS = {
   chev: '<polyline points="9 18 15 12 9 6"/>',
   alert: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+  pause: '<circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/>',
   up: '<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
   clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
@@ -790,14 +791,21 @@ function failedRow(f) {
       icon('chev', 'sm chev')));
 }
 
+// While a used-up plan limit holds the running sessions (`pause` in the state), nothing is happening:
+// no pulsing dot and no clock, but "Paused".
+const paused = () => !!(S.state && S.state.pause);
+// A session's own data says `running`; the state stream's lists say `working`.
+const runs = (state) => state === 'running' || state === 'working';
+
 function workingRow(w) {
+  const held = paused();
   return h('li', null,
-    h('a', { class: 'row', href: sessionHref(w.id), 'data-key': 'w:' + w.id, 'aria-current': current(w.id) },
-      h('span', { class: 'dot live', 'aria-hidden': 'true' }),
+    h('a', { class: 'row', href: sessionHref(w.id), 'data-key': 'w:' + w.id + (held ? ':p' : ''), 'aria-current': current(w.id) },
+      h('span', { class: held ? 'dot idle' : 'dot live', 'aria-hidden': 'true' }),
       h('span', { class: 'row-main' },
         h('span', { class: 'title', text: w.title }),
         subLine(w.project, null)),
-      h('span', { class: 'side' }, clockEl(w.startedAt)),
+      h('span', { class: 'side' }, held ? 'Paused' : clockEl(w.startedAt)),
       icon('chev', 'sm chev')));
 }
 
@@ -835,6 +843,8 @@ function nowContent() {
   return [
     h('h1', { class: 'large', tabindex: '-1', text: 'Now' }),
     st.problem ? h('div', { class: 'banner', role: 'status' }, icon('alert'), h('span', { text: st.problem })) : null,
+    st.pause ? h('div', { class: 'banner', role: 'status' }, icon('pause'),
+      h('span', { text: 'Your usage limit is used up, so sending is paused. ' + (st.pause.sentence || '') })) : null,
     section('Needs you', needs.length, needs.length ? list(needs.map(needsRow)) : emptyCard('Nothing needs you')),
     failed.length ? section('Stopped with an error', failed.length, list(failed.map(failedRow))) : null,
     section('Working', 0, working.length ? list(working.map(workingRow)) : emptyCard('Nothing working right now')),
@@ -970,7 +980,9 @@ function liveWanted() {
   if (rec && rec.phase === 'missing') return '';
   const snap = lookup(r.id);
   const d = rec && rec.data;
-  if (!(snap ? snap.bucket === 'working' : !!d && d.state === 'working')) return '';
+  if (!(snap ? snap.bucket === 'working' : !!d && runs(d.state))) return '';
+  // Paused for a used-up limit: there is nothing being written to watch.
+  if (paused()) return '';
   // Told it isn't working a moment ago: wait for the state to change before asking again, or 3 s, then
   // twice as long (to a minute) each time the state still says working and Bench says not.
   const q = LIVE.quiet;
@@ -1078,6 +1090,7 @@ function paintLive(sv = root.querySelector('.sessview')) {
 const STATE_LABELS = {
   needsInput: 'Needs you',
   working: 'Working',
+  running: 'Working',
   error: 'Stopped with an error',
   failed: 'Stopped with an error',
   finished: 'Finished',
@@ -1157,7 +1170,8 @@ const sessionTitle = (id) => {
 function statusMark(state) {
   if (state === 'needsInput') return h('span', { class: 'dot', 'aria-hidden': 'true' });
   if (state === 'error' || state === 'failed') return icon('alert', 'sm mark-err');
-  if (state === 'working') return h('span', { class: 'dot live', 'aria-hidden': 'true' });
+  if (runs(state) && paused()) return icon('pause', 'sm');
+  if (runs(state)) return h('span', { class: 'dot live', 'aria-hidden': 'true' });
   return h('span', { class: 'dot idle', 'aria-hidden': 'true' });
 }
 
@@ -1206,7 +1220,7 @@ function fillSession(sv, id) {
   const set = (name, sig, build) => setRegion(body, name, JSON.stringify(sig) ?? '', build);
   const none = () => [];
 
-  set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze]], () => headNodes(id, rec, d, snap));
+  set('head', [sessionTitle(id), rec && rec.phase, rec && rec.down, rec && rec.gone, d && [d.project, d.state, d.sentence, d.statusLine], snap && [snap.project, snap.snooze], S.state && S.state.pause], () => headNodes(id, rec, d, snap));
   // When the phone can act, Open on Mac is a quiet button after the details; otherwise it is the main one.
   // A permission the phone can't allow carries its own Open on Mac, so there is only ever one.
   const acts = !!(d && d.can && (d.can.approve || d.can.answer || d.can.message)) || !!(perm && (perm.canAllow || perm.canDeny));
@@ -1241,7 +1255,7 @@ function fillSession(sv, id) {
   } else {
     set('convo', d && d.turns && d.turns.length ? [d.turns, u.shown, u.more] : 0, () => (d && d.turns && d.turns.length ? [convo(id, d.turns, u)] : []));
   }
-  set('times', d ? [d.state, d.startedAt, d.updatedAt] : 0, () => (d ? [timesCard(d)] : []));
+  set('times', d ? [d.state, d.startedAt, d.updatedAt, paused()] : 0, () => (d ? [timesCard(d)] : []));
 
   let dock = sv.querySelector('.dock');
   if (d && d.can) {
@@ -1268,8 +1282,9 @@ function headNodes(id, rec, d, snap) {
     heading,
     d.project ? h('p', { class: 'sub tight-sub', text: d.project }) : null,
     h('p', { class: 'status' + (d.state === 'needsInput' || d.state === 'error' || d.state === 'failed' ? '' : ' calm') },
-      statusMark(d.state), d.sentence || stateLabel(d.state)),
-    d.statusLine ? h('p', { class: 'status-line', text: d.statusLine }) : null,
+      statusMark(d.state), runs(d.state) && paused() ? 'Paused · usage limit' : (d.sentence || stateLabel(d.state))),
+    runs(d.state) && paused() ? h('p', { class: 'status-line', text: S.state.pause.sentence || '' })
+      : d.statusLine ? h('p', { class: 'status-line', text: d.statusLine }) : null,
     snooze ? h('p', { class: 'snooze lone', text: snooze }) : null,
     rec.gone ? h('p', { class: 'snooze lone', text: 'This session is no longer on your list.' }) : null,
   ];
@@ -1278,7 +1293,7 @@ function headNodes(id, rec, d, snap) {
 function timesCard(d) {
   const rows = [];
   const kv = (k, v) => h('div', { class: 'kv' }, h('dt', { text: k }), h('dd', null, v));
-  if (d.state === 'working' && d.startedAt) rows.push(kv('Working for', clockEl(d.startedAt)));
+  if (runs(d.state) && d.startedAt && !paused()) rows.push(kv('Working for', clockEl(d.startedAt)));
   if (d.startedAt) rows.push(kv('Started', [when(d.startedAt), ' ', h('span', { class: 'sub' }, '(', rel(d.startedAt), ')')]));
   if (d.updatedAt) rows.push(kv('Updated', rel(d.updatedAt)));
   return rows.length ? h('dl', { class: 'group sec' }, rows) : null;

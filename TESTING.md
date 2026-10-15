@@ -321,6 +321,27 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-14, Bench 0.5.2 (a usage-limit pause is not "working")
+
+- Sam's report: with a usage limit hit mid-session, Claude Science says
+  "Sending messages is paused" but Bench's specimen kept playing.
+- ✅ Read from Claude Science's UI code (Bench's WebKit cache, JS bodies
+  only): the pause is a `frame_activity` phase, `usage_limit_paused`, sent only
+  over its page's socket and checked against `/api/usage`. Bench now reads it
+  as running sessions quiet for 20 s plus a used-up limit with no extra usage.
+- ✅ `swift test`: 1,064 tests, with `UsagePauseTests` (quiet versus writing,
+  rounded-to-100 versus used up, a window already started over, extra usage,
+  two limits, the sentence, and `/api/state`'s `pause` only while something
+  runs).
+- ✅ Phone, through `--demo remote -demoUsagePause YES` in headless Chrome:
+  the Now banner, still rows saying "Paused", and the session screen's "Paused
+  · usage limit" with when it resumes and no live card. It also caught two
+  phone bugs: a session's own screen never treated `running` as working (no
+  live dot or "Working for" clock), and the live card's padding rule also
+  padded the working dot (32 × 24 px instead of 10 × 10).
+- Not checked live: a real usage limit (the panel, menu bar and capsule on
+  the Mac, drawn from the same model). Seen next time a limit runs out.
+
 ## 2026-10-14, Bench 0.5.1 (a Fable review's fixes, faster reads, 519 specimens)
 
 - ✅ A read-only review by Claude Fable 5.1 (`Bench-review-0.5.0-fable.md`,

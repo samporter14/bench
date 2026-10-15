@@ -8,6 +8,7 @@ import SwiftUI
 struct ActivityList: View {
     let close: () -> Void
     @ObservedObject private var model = LabModel.shared
+    @ObservedObject private var usagePause = UsagePauseModel.shared
     @Environment(\.colorScheme) private var colorScheme
 
     private var failed: [SessionStatus] {
@@ -50,12 +51,20 @@ struct ActivityList: View {
                     }
                 }
                 if !model.working.isEmpty {
-                    section("Working") {
+                    // Held by a used-up limit: no specimen and no clock, but when it resumes.
+                    section(usagePause.pause == nil ? "Working" : "Paused · usage limit") {
                         ForEach(model.working) { session in
                             row(session, line: nil, accent: false) {
-                                WorkingGlyph(tint: colorScheme.sceneInk, rotation: SceneSettings.shared.rotation)
+                                if usagePause.pause != nil {
+                                    Image(systemName: "pause.circle").foregroundStyle(.secondary)
+                                } else {
+                                    WorkingGlyph(tint: colorScheme.sceneInk, rotation: SceneSettings.shared.rotation)
+                                }
                             } trailing: {
-                                if let since = session.startedAt {
+                                if let pause = usagePause.pause {
+                                    Text(pause.sentence())
+                                        .foregroundStyle(.secondary)
+                                } else if let since = session.startedAt {
                                     TimelineView(.periodic(from: since, by: 1)) { context in
                                         Text(ElapsedClock.format(context.date.timeIntervalSince(since)))
                                             .monospacedDigit()

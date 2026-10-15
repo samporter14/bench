@@ -943,6 +943,35 @@ Words for every specimen, kept apart from the drawings.
   - the legend.
 - It shows a spinner while the first read runs, and a sentence if a read fails.
 
+## Usage pause (Lab/UsagePause.swift, since 0.5.2)
+
+When a plan limit runs out mid-turn, Claude Science keeps the session
+`processing` but sends nothing until the limit starts over; its page shows
+"Sending messages is paused — resumes at 3:40 PM" in the composer and drops the
+working indicator. It learns this only over its own page's socket
+(`frame_activity` with phase `usage_limit_paused`, `since` and `resets_at`) and
+double-checks it against `/api/usage`. Bench has no socket, so it reads the
+same thing from what it has:
+
+- **Quiet**: the running sessions have written nothing for 20 s (their
+  `updatedAt` from the session reads).
+- **Used up**: a limit's unrounded utilization is 100 % or more, its window
+  hasn't started over, and extra usage isn't on with room left
+  (`PlanUsageModel.limitReached`; with several, the one that resets last).
+  While quiet and near a limit (85 % or more, or not known), Bench reads the
+  plan again, bypassing Claude Science's cache, at most once a minute, as the
+  page itself does while it shows the pause.
+- **Then** (`UsagePauseModel.pause`): the panel shows a pause symbol, "Paused ·
+  usage limit" and "Resumes at 3:40 PM" instead of the specimen and clock; the
+  menu bar and the toolbar capsule stop their animation and say "Paused"; the
+  activity list's Working section reads "Paused · usage limit"; `/api/state`
+  carries `"pause": {"limit": "5-hour", "until": "…", "sentence": "Resumes at
+  3:40 PM"}` (null otherwise, and only while something runs), and the phone
+  shows a banner, still rows, and stops polling live text.
+- **Over**: the first write from a session, the limit starting over (Bench
+  reads the plan just after `resets_at`), or extra usage switched on.
+- `--demo … -demoUsagePause YES` shows a made-up hour-long pause.
+
 ## Title-bar readouts: context and usage remaining (Usage/)
 
 Like Claude Code's desktop context indicator. Both read Claude Science's own
@@ -1441,7 +1470,8 @@ message, and push notifications.
   "failed": [{"id": "…", "title": "…", "project": "…", "since": "…"}],
   "working": [{"id": "…", "title": "…", "project": "…", "startedAt": "…"}],
   "recent": [{"kind": "finished", "id": "…", "title": "…", "project": "…", "at": "…", "line": "Finished"}],
-  "usage": {"limits": [{"name": "5-hour", "usedPercent": 54, "resetsAt": "…", "pace": "At this pace: limit around 3:40 PM"}]}
+  "usage": {"limits": [{"name": "5-hour", "usedPercent": 54, "resetsAt": "…", "pace": "At this pace: limit around 3:40 PM"}]},
+  "pause": null
 }
 ```
 

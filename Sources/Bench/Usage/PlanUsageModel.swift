@@ -39,6 +39,9 @@ struct PlanLimit: Identifiable, Equatable {
     /// this, so the two always add up to what the label says.
     let usedPercent: Int
     let resetsAt: Date?
+    /// All of it used, by the unrounded figure (99.6 % rounds to 100 but
+    /// still runs): Claude Science pauses sending until it starts over.
+    var reached = false
 
     var id: Kind { kind }
     var leftPercent: Int { 100 - usedPercent }
@@ -77,6 +80,26 @@ final class PlanUsageModel: ObservableObject {
     /// The limit with the least left, which is the one the toolbar shows.
     var tightest: PlanLimit? {
         limits.min { $0.leftPercent < $1.leftPercent }
+    }
+
+    /// A limit that is used up and hasn't started over, with no extra usage
+    /// to carry on past it: sending is paused until it resets. With several,
+    /// the one that resets last, since the pause lasts until it does.
+    func limitReached(now: Date = Date()) -> PlanLimit? {
+        Self.limitReached(limits, extra: extra, now: now)
+    }
+
+    nonisolated static func limitReached(_ limits: [PlanLimit], extra: PlanExtraUsage?, now: Date) -> PlanLimit? {
+        if let extra, (extra.usedPercent ?? 0) < 100 { return nil }
+        let used = limits.filter { $0.reached && ($0.resetsAt.map { $0 > now } ?? true) }
+        return used.max { ($0.resetsAt ?? .distantFuture) < ($1.resetsAt ?? .distantFuture) }
+    }
+
+    /// Reads again, bypassing Claude Science's cache, unless the last read is
+    /// newer than `age`: the pause watcher's check while sessions are quiet.
+    func readIfOlder(than age: TimeInterval) {
+        if let lastAttempt, Date().timeIntervalSince(lastAttempt) < age { return }
+        read(fresh: true)
     }
 
     private var tasks: [Task<Void, Never>] = []
@@ -253,7 +276,8 @@ final class PlanUsageModel: ObservableObject {
 
     private func limit(_ kind: PlanLimit.Kind, _ window: Payload.Window?) -> PlanLimit? {
         guard let utilization = window?.utilization else { return nil }
-        return PlanLimit(kind: kind, usedPercent: Self.percent(utilization), resetsAt: Self.date(window?.resetsAt))
+        return PlanLimit(kind: kind, usedPercent: Self.percent(utilization), resetsAt: Self.date(window?.resetsAt),
+                         reached: utilization >= 100)
     }
 
     private static func percent(_ utilization: Double) -> Int {

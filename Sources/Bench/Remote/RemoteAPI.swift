@@ -29,6 +29,25 @@ enum RemoteAPI {
         var recent: [LabEvent]
         var limits: [PlanLimit]
         var forecasts: [PlanLimit.Kind: Forecast]
+        /// Running sessions held by a used-up limit (Lab/UsagePause.swift).
+        var pause: UsagePause? = nil
+    }
+
+    /// `pause` in `/api/state`: the running sessions wait for a limit to
+    /// start over.
+    struct Pause: Encodable, Equatable {
+        let limit: String
+        let until: Date?
+        let sentence: String
+
+        private enum CodingKeys: String, CodingKey { case limit, until, sentence }
+
+        func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(limit, forKey: .limit)
+            try c.encode(until, forKey: .until)
+            try c.encode(sentence, forKey: .sentence)
+        }
     }
 
     struct State: Encodable, Equatable {
@@ -41,9 +60,10 @@ enum RemoteAPI {
         let working: [Working]
         let recent: [Recent]
         let usage: Usage?
+        var pause: Pause? = nil
 
         private enum CodingKeys: String, CodingKey {
-            case version, bench, updatedAt, problem, needsYou, failed, working, recent, usage
+            case version, bench, updatedAt, problem, needsYou, failed, working, recent, usage, pause
         }
 
         // Written out so a missing value is `null`, as the spec shows,
@@ -59,6 +79,7 @@ enum RemoteAPI {
             try c.encode(working, forKey: .working)
             try c.encode(recent, forKey: .recent)
             try c.encode(usage, forKey: .usage)
+            try c.encode(pause, forKey: .pause)
         }
 
         /// The count on the phone's Home Screen icon: what needs you plus what
@@ -69,7 +90,7 @@ enum RemoteAPI {
         /// a tick.
         func at(_ date: Date) -> State {
             State(version: version, bench: bench, updatedAt: date, problem: problem, needsYou: needsYou,
-                  failed: failed, working: working, recent: recent, usage: usage)
+                  failed: failed, working: working, recent: recent, usage: usage, pause: pause)
         }
     }
 
@@ -191,9 +212,13 @@ enum RemoteAPI {
             Limit(name: name(limit.kind), usedPercent: limit.usedPercent, resetsAt: limit.resetsAt,
                   pace: input.forecasts[limit.kind]?.line(now: input.now))
         }
+        // Only while something runs: a limit used up with nothing running holds nothing.
+        let pause = input.working.isEmpty ? nil : input.pause.map {
+            Pause(limit: name($0.limit), until: $0.until, sentence: $0.sentence(now: input.now))
+        }
         return State(version: version, bench: input.bench, updatedAt: input.now, problem: input.problem?.label,
                      needsYou: needsYou, failed: failed, working: working, recent: recent,
-                     usage: limits.isEmpty ? nil : Usage(limits: limits))
+                     usage: limits.isEmpty ? nil : Usage(limits: limits), pause: pause)
     }
 
     private static func kindName(_ kind: LabEvent.Kind) -> String? {
@@ -482,7 +507,8 @@ enum RemoteAPI {
     static func input(lab: LabModel, usage: PlanUsageModel, bench: String, now: Date = Date()) -> Input {
         Input(bench: bench, now: now, problem: lab.problem, waiting: lab.waiting, snoozed: lab.snoozed,
               failed: failedSessions(lab: lab),
-              working: lab.working, recent: lab.recent, limits: usage.limits, forecasts: usage.forecasts)
+              working: lab.working, recent: lab.recent, limits: usage.limits, forecasts: usage.forecasts,
+              pause: UsagePauseModel.shared.pause)
     }
 
     /// The sessions of the failure cards: `failed` in `/api/state`.
@@ -532,6 +558,7 @@ final class RemoteFeed {
             usage.$limits.map { _ in () }.eraseToAnyPublisher(),
             usage.$forecasts.map { _ in () }.eraseToAnyPublisher(),
             approver.$states.map { _ in () }.eraseToAnyPublisher(),
+            UsagePauseModel.shared.$pause.map { _ in () }.eraseToAnyPublisher(),
         ]
         // @Published publishes before the value changes; after the wait the
         // models hold the new values.

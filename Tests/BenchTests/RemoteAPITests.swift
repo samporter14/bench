@@ -29,7 +29,7 @@ struct RemoteAPITests {
 
     @Test func anEmptyStateHasItsNulls() {
         let text = String(decoding: RemoteAPI.encode(RemoteAPI.state(input())), as: UTF8.self)
-        #expect(text == #"{"bench":"0.4.0","failed":[],"needsYou":[],"problem":null,"recent":[],"updatedAt":"2026-10-12T19:30:00Z","usage":null,"version":1,"working":[]}"#)
+        #expect(text == #"{"bench":"0.4.0","failed":[],"needsYou":[],"pause":null,"problem":null,"recent":[],"updatedAt":"2026-10-12T19:30:00Z","usage":null,"version":1,"working":[]}"#)
     }
 
     @Test func whatNeedsYouSaysWhyAndWhetherItIsPutOff() {

@@ -8,6 +8,7 @@ import SwiftUI
 struct LabStatusCapsule: View {
     @ObservedObject private var model = LabModel.shared
     @ObservedObject private var settings = SceneSettings.shared
+    @ObservedObject private var usagePause = UsagePauseModel.shared
     @Environment(\.colorScheme) private var colorScheme
     @State private var showing = false
 
@@ -45,6 +46,9 @@ struct LabStatusCapsule: View {
     private func scene(for waiting: SessionStatus?) -> some View {
         if let waiting {
             PlayedLoop(glyph: (waiting.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
+        } else if usagePause.pause != nil {
+            Image(systemName: "pause.circle")
+                .foregroundStyle(.secondary)
         } else {
             WorkingGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)
         }
@@ -56,6 +60,9 @@ struct LabStatusCapsule: View {
             let count = model.waiting.count
             Text(count == 1 ? "1 needs you" : "\(count) need you")
                 .foregroundStyle(Theme.clay)
+        } else if !model.working.isEmpty, usagePause.pause != nil {
+            Text("Paused · usage limit")
+                .foregroundStyle(.secondary)
         } else if model.working.count == 1, let session = model.working.first {
             TurnClockText(prefix: "Working", since: session.startedAt)
         } else if model.working.count > 1 {

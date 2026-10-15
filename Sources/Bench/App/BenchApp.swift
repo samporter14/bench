@@ -43,6 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A demo shows made-up data and starts nothing real (Demo.swift).
         if Demo.mode != nil {
             Demo.start()
+            // A made-up pause, when the demo asks for one (`-demoUsagePause YES`).
+            UsagePauseModel.shared.start()
             if Demo.logsDockMenu { Demo.logDockMenu() }
             return
         }
@@ -61,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PlanApprover.shared.start()
         NidusFocus.shared.start()
         NoticeWatchers.shared.start()
+        // Running sessions held by a used-up plan limit (Lab/UsagePause.swift).
+        UsagePauseModel.shared.start()
         // The opt-in daily look for a newer Bench (App/UpdateCheck.swift).
         UpdateChecker.shared.start()
         // Bench on your phone, if it was on (Remote/RemoteController.swift).

@@ -86,6 +86,7 @@ struct LabPanelView: View {
     @ObservedObject private var focus = NidusFocus.shared
     /// A plan's card: its summary, and Approve (Lab/PlanApproval.swift).
     @ObservedObject private var plans = PlanApprover.shared
+    @ObservedObject private var usagePause = UsagePauseModel.shared
     /// Reports the window size the content wants, whenever it changes.
     let onFit: (CGSize) -> Void
 
@@ -245,6 +246,14 @@ struct LabPanelView: View {
                 title(session.displayTitle)
                 detail(model.staleSince.map { "Last checked at \($0.formatted(date: .omitted, time: .shortened))" }
                        ?? "Can't check right now")
+            }
+        } else if let pause = usagePause.pause {
+            // A used-up limit holds it: no specimen, since nothing is happening,
+            // and when it starts again.
+            Row(side: wellSide, well: symbol("pause.circle")) {
+                caption("Paused · usage limit", trailing: others > 0 ? "+\(others) more" : nil)
+                title(session.displayTitle)
+                detail(pause.sentence())
             }
         } else {
             Row(side: wellSide, well: WorkingGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)) {
