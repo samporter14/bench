@@ -379,15 +379,31 @@ Automated, with made-up fixtures only:
   /Applications/Capsid.app/Contents/MacOS/Capsid are picked, never a copy
   elsewhere. The script itself wasn't run.
 
-Not checked live (nothing was installed or launched):
+Released and installed, in this order:
 
-- a Bench 0.5.3 in /Applications updating to a 0.6.0 release. That needs the
-  new `install.sh` on `main` first, then the release, with a `Bench.zip` whose
-  top level is Capsid.app;
+- ✅ The new `install.sh` reached `main` (and raw.githubusercontent.com) before
+  the v0.6.0 release, whose `Bench.zip` holds Capsid.app at its top level.
+- ✅ `install.sh` from GitHub, run end to end into a scratch folder
+  (`BENCH_INSTALL_DIR`, so nothing in /Applications was touched or opened),
+  with a stand-in Bench.app there. It downloaded the live release, installed
+  Capsid 0.6.0, and removed the stand-in. The CDHash is the build's.
+- ✅ On Sam's Mac:
+  - Bench 0.5.3 was quit, Capsid.app was put in /Applications, Bench.app was
+    removed, and Capsid was opened in the background.
+  - It runs as `Capsid` with the same CDHash as the release.
+  - The phone switch carried over: "Remote listening on loopback port
+    47280", with the paired devices in the unchanged data folder.
+  - The first plan-usage read got a 401 while the page was still signing in.
+    The next, 4.6 s later, worked.
+
+Not checked live:
+
+- Bench 0.5.3's own updater taking this release: the update card's Install
+  Update. install.sh is what it runs, and that is checked above.
 - macOS keeping its permissions (microphone, notifications) across the
-  rename, and a Dock icon pinned to Bench.app;
-- a phone paired as Bench after the update: still paired, its Home Screen icon
-  still named Bench.
+  rename, and a Dock icon pinned to Bench.app.
+- A phone paired as Bench after the update: still paired, and its Home
+  Screen icon still named Bench. Tailscale was off on the Mac.
 
 ## 2026-10-15, Bench 0.5.3 (the usage pause, per session; review fixes)
 
