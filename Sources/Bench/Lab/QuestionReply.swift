@@ -466,17 +466,19 @@ final class QuestionReplier: ObservableObject {
     }
 
     /// Who owns a reply, for one session: its open window, a send under way,
-    /// or a draft (editing, changed or failed) for a session still waiting.
-    /// Anything else is let go: one sent or closed with no window to show
-    /// it, from the card's own buttons or a notification, and a draft whose
-    /// session no longer waits.
+    /// a draft (editing, changed or failed) for a session still waiting, or
+    /// its card while the card is still up, which shows how it ended (a
+    /// request handled elsewhere: its note and Open instead of Allow and
+    /// Deny). Anything else is let go: one sent or closed with no window or
+    /// card to show it, and a draft whose session no longer waits.
     private func prune(_ id: String) {
         guard !openWindows.contains(id), !demoSessions.contains(id) else { return }
+        let cardShows = cards[id] != nil
         func keeps(_ phase: ReplyPhase, waiting: Bool) -> Bool {
             switch phase {
             case .sending: true
-            case .editing, .changed, .failed: waiting
-            case .sent, .closed: false
+            case .editing, .changed, .failed: waiting || cardShows
+            case .sent, .closed: cardShows
             }
         }
         let asking = model.waiting.contains { $0.id == id && QuestionCardState.reads($0.waitingReason) }

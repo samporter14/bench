@@ -323,6 +323,129 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-17, Capsid 0.7.2: a review of 0.7.1, Close Other Tabs, nine specimens
+
+0.7.1 was pushed but never released; 0.7.2 is the next release after 0.7.0.
+It carries 0.7.1's six performance fixes, the fixes from a review of them,
+Close Other Tabs and Close All Tabs (next entry), and nine new specimens.
+
+**The review.** A Sonnet agent reviewed commit ba4103a in an isolated
+checkout, with probe tests, a seeded fuzz of the transfer queue (80 seeds ×
+3,000 steps: no double or missing resume, never more than two reads, every
+table empty at rest) and of the shelf's lifecycle (40 × 600), and the real
+reader script in Node against a slow local server. Nothing high. Fixed:
+
+- **Medium: a permission request handled elsewhere lost its explanation.**
+  `prune` released a `.closed` reply at once while its card was still up, so
+  the card went back to Allow and Deny with no word of why. A reply is now
+  also kept while its card is up (DESIGN.md, What is kept). This also
+  corrects 0.7.1's TESTING line "no assertion removed": two card assertions
+  were inverted then, and this one was wrong.
+- **Low: a stale Save All cleared a new one's progress.** Saving spinners are
+  counted per holder and a run releases only what it marked; a run the window
+  closed on before it started does nothing.
+- **Low: a cached copy handed out after close.** Re-checked after the
+  existence check's await.
+- **Documented, not fixed:** a reader that never returns pins its slot; one
+  serial writer for saved files has no time limit (DESIGN.md, Results).
+
+Automated, made-up fixtures only:
+
+- ✅ `swift test`: **1,373 tests in 174 suites, all passing in one run**.
+  New since 0.7.1: `PageTabsTests` and `TabContextMenuTests` (56, next
+  entry), `ShelfCloseAndReopenTests` and one more transfer test (7: the
+  review's Save All scenario asserted on the whole `$batches`/`$saving`
+  trail; a Save and a Save All on one file; a Save All closed before it
+  started; a copy not handed over while its existence is checked; a
+  download that landed just before close starting no write; a closed
+  window's asker not ending the next window's spinner; a closed run's copy
+  write not joined by the new window; a timed-out read not joined by the
+  next asker), and the handled-elsewhere card test rewritten as above.
+- ✅ Mutation checks, each reverted: the card rule (`.sent`/`.closed` kept
+  while the card is up) and, from the fix agent, ten guards in the shelf and
+  the queue (`timedOut`'s `live` reset, `endPreparing`'s generation check,
+  `close()`'s `copyWrites` reset, `temporaryCopy`'s post-fetch and
+  post-existence checks, `saveAll`'s registration check, `runSaveAll`'s top
+  guard and marked-only release, the stale tail's batch reset, the counted
+  spinner) were each caught.
+- ✅ **Nine specimens (528)**, drawn by three Sonnet agents in the specimen
+  harness (one fix round for four of them), registered with
+  `add-specimens.py`: Epithelial extrusion, Myelin wrapping, Membrane
+  repair, Lipid flip (cell); Laser capture, Crystal fishing, Paraffin
+  embedding (bench); Ring-opening polymerization (chemistry); Archimedes
+  screw (physics). Every one has 16 pt coverage 0.107–0.275, under 0.1 ms
+  a frame, and a seam of 0.0003 or less. The droplet's `LabSceneOrderTests`
+  and `LabScenesTests` pass (droplet commit ac14c34, local). `Capsid
+  --list-scenes` lists 528. Preview: ~/Documents/Default
+  Project/new-specimens-batch-P.gif.
+- ✅ `swift build -c release --product Capsid`, phone assets in sync,
+  `node --check`, `git diff --check`: clean.
+
+Not checked live: the card keeping "It was already handled." with Open;
+Save All after a quick reopen; the nine specimens in the panel and the
+menu bar.
+
+## 2026-10-17, after 0.7.1: Close Other Tabs / Close All Tabs (released in 0.7.2)
+
+File → Close Other Tabs (⌥⌘W) and Close All Tabs, and the same three items in the
+right-click menu of a tab in Claude Science's right-hand panel (DESIGN.md, Main window).
+Built from the 0.1.63 web bundle's source, not from a running page. 56 new tests
+(`PageTabsTests`, `TabContextMenuTests`, with `FakeTabDOM`), none of which loads a web
+view, reaches the daemon or reads a real page.
+
+- ✅ **The decision** (`benchTabsToClose`, run alone in JavaScriptCore): Others keeps the
+  given id, first, last, middle or only; with no id it keeps the one shown tab, and
+  refuses when none or two are shown; All closes every tab; an unknown kept id, another
+  mode and a kept id that isn't a string close nothing; an empty strip has nothing to
+  close; a repeated id is closed once.
+- ✅ **The page script**, against a fake strip built in the test (`querySelector`,
+  `querySelectorAll`, `closest`, `dataset`, `getAttribute`, `click`):
+  - presses only `button[data-tab-close]` inside the strip's toolbar, never the same ids
+    or buttons outside it, a block beside the toolbar, an "overflow" button or a "Close
+    Files" button; ids with quotes and brackets are never put into selectors;
+  - keeps the right tab, reads the strip again after every press (a fake page that makes
+    new elements on every render), and waits for a tab that leaves a little later;
+  - a tab that is still there (a pending question, or one that takes over 300 ms) stays,
+    and the sweep stops there: it is counted with every tab not reached;
+  - presses nothing, and says so, with no strip, no toolbar, two strips, or a tab to close
+    without a close button (not even the earlier tabs' buttons); a tab to keep needs none;
+  - refuses a kept tab that isn't in the strip, and Others with no shown tab.
+  - The mutation check: with the script changed to look document-wide, to continue past a
+    tab that stayed, to reuse the first read, or to skip the close-button check, the
+    matching tests fail.
+- ✅ **The answer** is checked again in Swift (negative, fractional, boolean, huge and
+  missing counts are refused); one sweep at a time (a second request while one runs is
+  dropped); the menu commands are on only for the main window with a ready page
+  (`PageTabCommands.canClose`, and following the window and the page).
+- ✅ **The right-click target**: the message is read (a non-empty string, at most 512 bytes,
+  else no tab), heard only from the main web view's main frame on the daemon's origin, a tab
+  is fresh for one second and taken once, a stale, missing or `null` tab adds no items, and
+  the user script (in JavaScriptCore, with a fake handler) posts the tab for a click on a tab
+  button, its other buttons or text in it, `null` anywhere else, nothing for a made-up event,
+  and installs nothing off the daemon's page or without its handler.
+- ✅ **The items** in an `NSMenu`: Close Tab, Close Other Tabs, Close All Tabs and a
+  separator at the top, once only, each running its own request relative to the tab.
+- ⏳ **Not verified; needs Sam, in the running app:**
+  - **The real page and its markup.** Everything above is the 0.1.63 source read as text. The
+    first real check is a session with three artifacts open: Close Other Tabs (⌥⌘W) on the
+    middle one, then Close All Tabs.
+  - **The discard question.** The bundle shows it is the page's own dialog, shown after the
+    press and answered later, not a `confirm` (DESIGN.md says what that means for the sweep).
+    Try it with a tab holding unsaved edits: the tab and those after it should stay, and the
+    page should ask. Also, whether the strip really leaves the page with its last tab.
+  - **The right-click menu in the app**: that the items show, at the top, for a tab and not
+    for anything else, and what Close Other Tabs shows afterwards (the page picks the tab it
+    shows when the shown one isn't the one kept).
+  - **The order of the script message and the menu** (`willOpenMenu`). Reasoned from WebKit's
+    single connection, not observed; a miss means no extra items, never the wrong tab.
+  - **⌥⌘W in the app**, with the web view the first responder. The one clash that can't be
+    ruled out from the repo: a standard File menu has Close (⌘W) with a hidden Option
+    alternate, Close All (⌥⌘W), and SwiftUI's generated menu most likely carries it. These
+    items sit in the group with Open Session… and Results…, above Close, so AppKit should
+    reach them first while they are enabled, and fall through to Close All while they are
+    dim. Where they sit against Close is also unseen.
+  - The enabled state in the real menus, with a Browser window, Settings or Quick Open in front.
+
 ## 2026-10-17, Capsid 0.7.1: six performance fixes from a review
 
 A review of 0.7.0 (Codex, with five probes on an isolated copy) found six

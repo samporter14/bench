@@ -256,6 +256,9 @@ final class ResultsShelf: ObservableObject {
     let thumbnailStore: ShelfThumbnails
     /// Where each file was saved, by version: Open and Reveal in Finder.
     @Published private(set) var saved: [String: URL] = [:]
+    /// Files being saved (Save, Save All), by version: a spinner on the row, and
+    /// a second Save of the file does nothing. Each is held by what is saving it
+    /// (`savingHolds`), so one that ends lets go of its own hold and no other.
     @Published private(set) var saving: Set<String> = []
     /// Files being fetched for Quick Look, a drag or Copy, by version: a spinner on the row.
     @Published private(set) var preparing: Set<String> = []
@@ -295,6 +298,9 @@ final class ResultsShelf: ObservableObject {
     private var copyWrites: [String: Task<URL?, any Error>] = [:]
     /// How many askers are fetching each version for a temporary copy or Copy.
     private var preparers: [String: Int] = [:]
+    /// How many are saving each version in `saving`: a Save, a Save All, and a
+    /// Save All the window's closing left unwinding while the next one began.
+    private var savingHolds: [String: Int] = [:]
     private var saveAllTasks: [String: Task<Void, Never>] = [:]
     /// What closing the window left to finish: stopped tasks unwinding and
     /// the old run's folder being deleted. Each close adds to the chain.
@@ -636,6 +642,25 @@ final class ResultsShelf: ObservableObject {
         }
     }
 
+    /// A version is being saved: its row's spinner, and the Save's busy guard.
+    private func beginSaving(_ version: String) {
+        let holds = savingHolds[version, default: 0]
+        savingHolds[version] = holds + 1
+        if holds == 0 { saving.insert(version) }
+    }
+
+    /// One saver is done with a version; the spinner goes with the last. Closing
+    /// the window doesn't clear these: a Save goes on, and a Save All unwinds.
+    private func endSaving(_ version: String) {
+        guard let holds = savingHolds[version] else { return }
+        if holds > 1 {
+            savingHolds[version] = holds - 1
+        } else {
+            savingHolds[version] = nil
+            saving.remove(version)
+        }
+    }
+
     // MARK: Temporary copies: Quick Look and drag
 
     /// The temporary copy made this run for a version, as last known: what
@@ -652,8 +677,14 @@ final class ResultsShelf: ObservableObject {
     /// withdraws its want of the download.
     func temporaryCopy(of entry: ArtifactEntry) async -> ShelfTemporaryOutcome {
         let version = entry.version
+        let started = generation
+        let run = runID
         if let url = copies[version] {
-            if await storage.exists(url) { return .ready(url) }
+            let there = await storage.exists(url)
+            // The window closed meanwhile: that copy is of the run being deleted,
+            // and nothing is fetched for a window that is gone.
+            guard started == generation else { return .cancelled }
+            if there { return .ready(url) }
             // The system cleaned it away: made again, not trusted.
             if copies[version] == url { copies[version] = nil }
         }
@@ -662,8 +693,6 @@ final class ResultsShelf: ObservableObject {
         case .failed(let failure)?: return .failed(failure)
         default: break
         }
-        let started = generation
-        let run = runID
         beginPreparing(version)
         defer { endPreparing(version, started: started) }
         let fetched = await fetch(entry, priority: .foreground)
@@ -835,8 +864,8 @@ final class ResultsShelf: ObservableObject {
         case .failed(let failure)?: return .failed(failure)
         default: break
         }
-        saving.insert(entry.version)
-        defer { saving.remove(entry.version) }
+        beginSaving(entry.version)
+        defer { endSaving(entry.version) }
         switch await fetch(entry, priority: .foreground, keepsOnClose: true) {
         case .bytes(let bytes):
             do {
@@ -893,16 +922,27 @@ final class ResultsShelf: ObservableObject {
         saveAllTasks[sessionID] = Task { [weak self] in
             guard let self else { return }
             await self.runSaveAll(sessionID, entries: entries, project: item.session.projectID, folder: folder, started: started)
+            // Only a run the window's closing didn't cut short unregisters itself.
+            // One that did is still unwinding while the next Save All may already
+            // be registered (one runs per opening), and that one is not its to clear.
             if started == self.generation { self.saveAllTasks[sessionID] = nil }
         }
     }
 
+    /// A run the window's closing cut short has nothing of its own to clear once
+    /// it unwinds but the files it marked saving: `close()` already dropped its
+    /// progress row and its registration, and the next Save All of the same
+    /// session may have set both again. (Only one Save All runs at a time, so a
+    /// run is the live one exactly while `started == generation`.)
     private func runSaveAll(_ sessionID: String, entries: [ArtifactEntry], project: String, folder: URL,
                             started: Int) async {
+        guard !Task.isCancelled, started == generation else { return }
         var summary = ShelfSaveAllSummary(folder: folder)
         var done = 0
         var remembered = false
         var reserved: Set<String> = []
+        // The files of `work` this run has marked saving and not yet let go of.
+        var marked: Set<Int> = []
         // The names are settled up front, in the session's order, so the first
         // of two of the same name gets the plain one whatever finishes first.
         var work: [(entry: ArtifactEntry, name: String)] = []
@@ -934,7 +974,8 @@ final class ResultsShelf: ObservableObject {
                     let entry = work[index].entry
                     next += 1
                     active += 1
-                    saving.insert(entry.version)
+                    beginSaving(entry.version)
+                    marked.insert(index)
                     group.addTask {
                         let fetched = await self.fetch(entry, priority: .saveAll)
                         return (index, fetched)
@@ -984,7 +1025,8 @@ final class ResultsShelf: ObservableObject {
                 case .cancelled:
                     break
                 }
-                saving.remove(entry.version)
+                endSaving(entry.version)
+                marked.remove(index)
                 guard !Task.isCancelled, started == generation else {
                     group.cancelAll()
                     break
@@ -992,11 +1034,8 @@ final class ResultsShelf: ObservableObject {
                 batches[sessionID] = .saving(done: done, total: entries.count)
             }
         }
-        for item in work { saving.remove(item.entry.version) }
-        guard !Task.isCancelled, started == generation else {
-            batches[sessionID] = nil
-            return
-        }
+        for index in marked { endSaving(work[index].entry.version) }
+        guard !Task.isCancelled, started == generation else { return }
         batches[sessionID] = .finished(summary)
     }
 

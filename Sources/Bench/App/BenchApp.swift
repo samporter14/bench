@@ -222,6 +222,9 @@ struct BenchCommands: Commands {
     /// Back/Forward act on that window's page, not always the main window's,
     /// and go dim when there is none (Settings).
     @ObservedObject private var active = ActiveWebPage.shared
+    /// Whether the main window is in front with its page ready: Close Other
+    /// Tabs and Close All Tabs act on that page's tabs only (Web/PageTabs.swift).
+    @ObservedObject private var tabs = PageTabCommands.shared
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
@@ -237,6 +240,14 @@ struct BenchCommands: Commands {
             Button("Results…") { ResultsWindowController.shared.show() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(Demo.mode != nil)
+            Divider()
+            // The artifact tabs in Claude Science's right-hand panel. ⌥⌘W is
+            // Safari's Close Other Tabs; Close All Tabs has no shortcut.
+            Button("Close Other Tabs") { PageTabCommands.shared.closeOthers() }
+                .keyboardShortcut("w", modifiers: [.command, .option])
+                .disabled(!tabs.isEnabled)
+            Button("Close All Tabs") { PageTabCommands.shared.closeAll() }
+                .disabled(!tabs.isEnabled)
         }
         CommandGroup(after: .toolbar) {
             Group {

@@ -584,6 +584,21 @@ enum SpecimenNotes {
             note: "A vacuum desiccator removes air and moisture, with silica gel soaking up water, to keep samples dry or dry them gently.",
             topics: ["chemistry", "sample prep"],
             also: ["desiccant", "silica gel", "vacuum", "drying"]),
+        "Laser capture": SpecimenNote(
+            caption: "Cutting cells out with a laser",
+            note: "Laser capture microdissection cuts a chosen group of cells out of a tissue section so their DNA, RNA or protein can be analyzed alone.",
+            topics: ["microscopy", "sample prep", "genomics"],
+            also: ["LCM", "microdissection", "histology", "tissue section"]),
+        "Crystal fishing": SpecimenNote(
+            caption: "Lifting a crystal from its drop",
+            note: "A protein crystal is lifted from its growth drop in a tiny nylon loop and flash-cooled in liquid nitrogen before X-ray diffraction.",
+            topics: ["protein structure", "sample prep"],
+            also: ["X-ray crystallography", "cryoloop", "harvesting", "crystal mounting"]),
+        "Paraffin embedding": SpecimenNote(
+            caption: "Setting tissue in a wax block",
+            note: "Fixed, dehydrated tissue is embedded in molten paraffin wax that sets into a block firm enough to cut into thin sections for microscopy.",
+            topics: ["sample prep", "microscopy", "medicine"],
+            also: ["histology", "FFPE", "microtome", "cassette"]),
         "Coffee": SpecimenNote(
             caption: "Filling a mug from the pot",
             note: "Coffee is the unofficial fuel of long lab days: caffeine blocks adenosine receptors in the brain, which wards off sleepiness.",
@@ -1199,6 +1214,26 @@ enum SpecimenNotes {
             note: "Inside-out signaling: talin binds the integrin's beta tail, the bent receptor extends, and its head grips matrix with high affinity.",
             topics: ["signaling", "cell biology", "membranes"],
             also: ["talin", "adhesion", "extracellular matrix", "fibronectin"]),
+        "Epithelial extrusion": SpecimenNote(
+            caption: "A crowded cell is squeezed out",
+            note: "Crowded epithelia squeeze surplus cells out through a contracting actomyosin ring, so cell number stays steady and the barrier stays sealed.",
+            topics: ["cell biology", "development"],
+            also: ["extrusion", "epithelium", "actomyosin", "crowding"]),
+        "Myelin wrapping": SpecimenNote(
+            caption: "A glial cell wraps an axon in myelin",
+            note: "Oligodendrocytes in the brain and Schwann cells in nerves spiral their membrane around axons, insulating them and speeding conduction.",
+            topics: ["neuroscience", "membranes"],
+            also: ["oligodendrocyte", "Schwann cell", "axon", "sheath"]),
+        "Membrane repair": SpecimenNote(
+            caption: "Vesicles patch a torn membrane",
+            note: "A torn plasma membrane lets calcium in, which triggers internal vesicles to fuse into a patch that reseals the cell within seconds.",
+            topics: ["membranes", "cell biology"],
+            also: ["wound", "reseal", "calcium", "vesicle fusion"]),
+        "Lipid flip": SpecimenNote(
+            caption: "A flippase swings a lipid inward",
+            note: "Flippases spend ATP to push phospholipids from the outer to the inner leaflet, keeping the two faces of a membrane different.",
+            topics: ["membranes", "transport", "enzymes"],
+            also: ["flippase", "phospholipid", "asymmetry", "P4-ATPase"]),
         "Mouse sniff": SpecimenNote(
             caption: "Mouse sniffing, whiskers twitching",
             note: "Mice sample odors by sniffing in quick bursts while moving their whiskers, behaviors used to study olfaction and sensory processing.",
@@ -1519,6 +1554,11 @@ enum SpecimenNotes {
             note: "Azobenzene switches from the extended trans form to the bent cis form under UV light, then back with visible light or heat.",
             topics: ["chemistry", "reactions"],
             also: ["photoswitch", "isomerization", "cis-trans", "photopharmacology"]),
+        "Ring-opening polymerization": SpecimenNote(
+            caption: "Ring opens and joins the chain",
+            note: "Ring strain drives ring-opening polymerization, as when lactide or caprolactone adds one unit at a time to a growing polyester chain.",
+            topics: ["chemistry", "reactions"],
+            also: ["polymer", "lactide", "caprolactone", "monomer"]),
         "Lollipop plot": SpecimenNote(
             caption: "Mutations plotted along a protein",
             note: "A lollipop plot marks mutation positions along a protein's domains, with stem height showing how often each occurs, to reveal hotspots.",
@@ -2239,6 +2279,11 @@ enum SpecimenNotes {
             note: "In an acoustic levitator, a standing ultrasonic wave traps small objects at its pressure nodes; shifting its phase moves them.",
             topics: ["waves", "physics"],
             also: ["ultrasound", "standing wave", "acoustic radiation force", "node"]),
+        "Archimedes screw": SpecimenNote(
+            caption: "Screw turns and lifts the water",
+            note: "A turning helix in an inclined tube traps pockets of water and carries them uphill, a pump still used for sewage, irrigation and drainage.",
+            topics: ["mechanics", "physics"],
+            also: ["pump", "helix", "irrigation", "Archimedes"]),
         "Seedling": SpecimenNote(
             caption: "A seed sprouting into leaves",
             note: "A germinating seed sends a shoot up through the soil and unfolds its first leaves, starting life as a photosynthesizing seedling.",

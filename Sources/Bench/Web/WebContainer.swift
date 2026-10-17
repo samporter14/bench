@@ -20,14 +20,20 @@ final class WebContainer: ObservableObject, WebPageWindow {
 
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
-    @Published private(set) var status: Status = .starting
+    @Published private(set) var status: Status = .starting {
+        // Close Other Tabs and Close All Tabs wait for a ready page.
+        didSet { if status != oldValue { PageTabCommands.shared.refresh() } }
+    }
     /// The session the page is showing (`/projects/<p>/frames/<id>`), or nil
     /// anywhere else: what the context ring is about.
     @Published private(set) var currentFrameID: String?
 
-    /// The one web view on the daemon. Created once, never recreated.
+    /// The one web view on the daemon. Created once, never recreated. It is a
+    /// `TabMenuWebView`, which adds the tab items to its right-click menu.
     let webView: WKWebView
     let finder: PageFinder
+    /// Closes the page's artifact tabs, one sweep at a time (Web/PageTabs.swift).
+    private(set) lazy var tabCloser = PageTabCloser { [unowned self] request in await self.closeTabs(request) }
     /// The daemon's port, once known.
     private(set) var port: Int?
 
@@ -53,8 +59,16 @@ final class WebContainer: ObservableObject, WebPageWindow {
         let bridge = NotificationBridge(daemonPort: { WebContainer.shared.port })
         bridge.install(on: configuration.userContentController)
         notifications = bridge
+        // Which tab a right-click was on, for the menu's tab items (Web/TabContextMenu.swift).
+        let tabMenu = TabContextMenu(daemonPort: { WebContainer.shared.port }, run: { request in
+            Task { await WebContainer.shared.tabCloser.close(request) }
+        })
+        tabMenu.install(on: configuration.userContentController)
 
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        let view = TabMenuWebView(frame: .zero, configuration: configuration)
+        view.tabMenu = tabMenu
+        tabMenu.webView = view
+        webView = view
         WebSetup.finish(webView)
         finder = PageFinder(webView: webView)
 

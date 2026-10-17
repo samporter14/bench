@@ -70,7 +70,7 @@ Group neighbouring glass (a row of chips, the stat tiles) in one
 `GlassEffectContainer(spacing:)` so the shapes blend.
 
 **Not glass:**
-- the 519 grid cells. That many glass layers costs frames. They get
+- the 528 grid cells. That many glass layers costs frames. They get
   a quiet `Color.primary.opacity(0.05)` fill, and a clay check when on.
 - the page itself;
 - text.
@@ -86,7 +86,7 @@ you", and the graph's steps. No other hues, no gradients.
 - **Specimens split button** (Lab/ScenesToolbarButton.swift): one glass
   capsule, with "🧪 Specimens" (a click shows or hides the panel) | ⌄. The
   arrow opens a glass POPOVER with the panel switch, the size, the category
-  checkboxes (the same `CategoryChip` as Settings), "N of 519 on" and
+  checkboxes (the same `CategoryChip` as Settings), "N of 528 on" and
   "Choose specimens one by one…" (`SettingsWindow.open(tab:)`). It is not a SwiftUI Menu: in
   this AppKit window's toolbar a Menu kept the ticks it was first drawn
   with, and showed stale settings.
@@ -110,7 +110,8 @@ you", and the graph's steps. No other hues, no gradients.
 - Closing the window hides it (the web view and its state survive). Clicking
   the Dock icon brings it back. ⌘Q quits Capsid but never stops the daemon.
 - Menus:
-  - File: Open Session… ⌘⇧O (Quick Open, below).
+  - File: Open Session… ⌘⇧O (Quick Open, below), Close Other Tabs ⌥⌘W and
+    Close All Tabs (artifact tabs, below).
   - View: Reload ⌘R, Zoom In ⌘+, Zoom Out ⌘−, Actual Size ⌘0, Find ⌘F,
     Show Lab Panel ⌘⇧L.
   - History: Back ⌘[, Forward ⌘].
@@ -129,6 +130,42 @@ you", and the graph's steps. No other hues, no gradients.
     holds nothing for it to read.
   - Window: the standard items.
   - Settings ⌘,.
+- **Close Other Tabs and Close All Tabs** (Web/PageTabs.swift, Web/TabContextMenu.swift,
+  since 0.7.2). Claude Science opens each artifact (a file, result or figure) as a tab in
+  its right-hand panel and has no command to close the rest. File → Close Other Tabs
+  (⌥⌘W, Safari's) closes every tab but the one shown; Close All Tabs has no shortcut.
+  Nothing else in Capsid uses ⌥⌘W, and the page binds no ⌘W or ⌥⌘W. Both act on the main
+  window's page only (not `ActiveWebPage`'s choice) and are on only while the main window
+  is the key window and the page is ready, so a Browser window, Settings or a sheet in
+  front dims them (`PageTabCommands`). With no tabs they do nothing. A right-click on a
+  tab also puts Close Tab, Close Other Tabs (keeping the tab clicked) and Close All Tabs,
+  then a separator, at the top of WebKit's menu.
+  - **They press the page's own close buttons**, one tab at a time, from inside the page
+    (`callAsyncJavaScript`, `.defaultClient`), so the page's own check before discarding
+    unsaved edits still applies. The strip is read again after every press. In 0.1.63 that
+    check is not a `confirm`: the page raises its own dialog and keeps the tab until it is
+    answered, and a second close that needs an answer would replace the first dialog. So
+    each press waits up to 300 ms for the tab to leave, and the sweep stops at the first tab
+    that is still there. That tab and the ones after it stay, and are counted as such; the
+    user answers the page and asks again. Only one sweep runs at a time.
+  - **Selectors relied on (Claude Science 0.1.63):** one `[data-testid="right-tab-strip"]`
+    holding `[role="toolbar"][aria-label="Open panels"]`; in it each tab is
+    `[data-tab-id]`, with `[data-tab-btn]` (`aria-current="true"` on the shown tab, or
+    `data-shown` on the tab) and `button[data-tab-close]`. Tabs are looked for only inside
+    the toolbar, and only those close buttons are pressed. If the strip, the toolbar or a
+    close button of a tab to close is missing, or there are two strips, nothing is pressed.
+    A tab to keep that is not in the strip also presses nothing. A newer Claude Science that
+    changes this markup makes the commands do nothing; the right-click target uses
+    `[data-testid="right-tab-strip"] [data-tab-id]`.
+  - **The right-click target** comes from a user script in its own content world
+    (`capsid-tabs`, document start, main frame only) with a capturing `contextmenu`
+    listener. It posts `{tab: <id>}` when the click is on a tab and `{tab: null}` for
+    anything else. Only the main web view's main frame on the daemon's origin is heard. The
+    main window's web view is a `TabMenuWebView`, which adds the items in `willOpenMenu`
+    if the last message named a tab less than a second ago, and uses it once. The message is
+    sent from inside the event and WebKit asks for the menu after it, over one connection, so
+    it should come first; that is not an API guarantee. If it didn't, the tab is not fresh
+    and the menu simply has no extra items, so the File menu is the main path.
 - The Dock badge is the number of sessions waiting for input, or no badge.
 - URL scheme `bench://open?url=<percent-encoded daemon URL>`, and
   `bench://session?project=<id>&frame=<id>`. Both show the window and
@@ -994,12 +1031,15 @@ and the session. Sent, or answered elsewhere meanwhile: nothing more. Not
 sent: the reply window opens with the answer still in it (or the session,
 when even that can't be).
 
-**What is kept** (since 0.7.1). A reply is owned by its open
+**What is kept** (since 0.7.1; the card rule since 0.7.2). A reply is owned by its open
 window (`windowOpened`, `windowClosed`, which the window controller calls), by
-a send under way, or, as a draft (editing, changed or failed), by a session
-still waiting. Anything else is let go at once (`prune`): one sent or closed
-from the card's own buttons or a notification with no window to show it, and
-a draft whose session no longer waits. An open window keeps what it shows,
+a send under way, as a draft (editing, changed or failed) by a session still
+waiting, or by its card while the card is still up, since the card shows how
+it ended (a request handled elsewhere: its note and Open in place of Allow and
+Deny; in 0.7.1 that was let go at once and Allow and Deny came back with no
+word of why). Anything else is let go at once (`prune`): one sent or closed
+with no window or card to show it, and a draft whose session no longer waits.
+An open window keeps what it shows,
 sent or closed, until it closes. What was read for a card (its state, what
 Claude said, a failed read's time) goes with the card however it goes (sent,
 Later, ×, the wait ending); a card read takes itself out of the reads under
@@ -1608,7 +1648,7 @@ main Claude Science window opens behind it as usual.
 ```
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
 Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo, Settings, Welcome   (planner)
-Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge   (web agent)
+Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge, page tabs (Close Other Tabs, Close All Tabs)   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule,
                           QuestionReply and ReplyWindow (a question, a permission request or a plan's
                           changes answered from its card)   (lab agent)
@@ -1708,7 +1748,10 @@ All, then lists, then thumbnails, oldest first within each; a read that has
 seen eight others start ahead of it goes next, so none waits for ever. Each
 read has 30 s from its start (not its wait in line); the page's own fetch
 gives up at 10 s, or 20 s for a download. Save All keeps two of its downloads
-in the queue at a time, so at most two finished files wait in memory.
+in the queue at a time, so at most two finished files wait in memory. A
+reader that never returns pins its slot until it does, so two such readers
+stop the shelf; the page's own 10/20 s fetch deadlines make that unlikely
+unless the page's JavaScript is frozen.
 
 **Cancellation.** Each asker can stop waiting on its own. A read nobody wants
 any more never starts if it was waiting, and is cancelled if it was running:
@@ -1724,7 +1767,11 @@ Save (you chose where it goes); a late answer lands nowhere and writes no
 copy. Moving through files in Quick Look withdraws the file left
 (`ShelfPreviewDemand`): its download never starts, or stops unless a drag,
 Copy or a save still wants it. The phone's reads carry no nonce, and nothing
-about them changed.
+about them changed. A Save All the window closed on lets go, as it unwinds, of
+only the files it marked as saving (each file's spinner is counted, so a Save
+and a Save All can hold it at once), so a Save All started after reopening
+keeps its progress row, its spinners and its place, and a Save of a file
+either has in hand answers busy (since 0.7.2).
 
 **Disk.** The temporary copies are written, read, re-checked and deleted by
 an actor (`ShelfTemporaryCopies`), off the main actor; saved files (Save…,
@@ -1735,7 +1782,11 @@ run never touches the new one's. Quick Look asks for a copy on the main
 thread, so the shelf keeps a list of copies known to be whole, updated when
 each write lands. Launch cleanup (`ResultsShelf.shared.cleanUpAtLaunch()`,
 from BenchApp) deletes earlier runs' folders off the main actor; this run's
-first copy is written after it, and it never deletes this run's folder. Left
+first copy is written after it, and it never deletes this run's folder. A
+cached copy asked for while its existence is being checked is not handed over
+if the window closes meanwhile: it belongs to the run being deleted (since
+0.7.2). `ShelfSavedFiles` is one serial writer with no time limit, so a save to
+an unresponsive folder delays every later save until macOS fails it. Left
 on the main actor on purpose: the existence checks behind Save All's names
 and the remembered folders (metadata only).
 

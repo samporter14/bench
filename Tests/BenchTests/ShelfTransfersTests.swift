@@ -4,7 +4,9 @@
 // (ShelfTemporaryCopies, ShelfSavedFiles), on made-up sessions and files.
 // Readers, clocks and disks are fakes the tests hold and let go: nothing waits
 // on a clock, and nothing reaches a page, a daemon, the real pasteboard or the
-// real temporary folder.
+// real temporary folder. Also here: a window closed and opened again while the
+// old run's work is still unwinding, which must leave the new run's alone.
+import Combine
 import Foundation
 import JavaScriptCore
 import Testing
@@ -366,10 +368,13 @@ private actor GatedStorage: ShelfCopyStorage {
     }
 }
 
-/// Waits until an operation of `storage` waits at its gate.
-private func untilHeld(_ storage: GatedStorage, _ name: String) async {
-    for _ in 0..<100_000 {
-        if await storage.waiting(name) > 0 { return }
+/// Waits until `count` operations of `storage` wait at its gate. Like `until`,
+/// a minute's limit is only a safety net: how long the work takes depends on
+/// how busy the other tests keep the machine.
+private func untilHeld(_ storage: GatedStorage, _ name: String, count: Int = 1) async {
+    let limit = ContinuousClock.now + .seconds(60)
+    while ContinuousClock.now < limit {
+        if await storage.waiting(name) >= count { return }
         await Task.yield()
     }
 }
@@ -576,6 +581,32 @@ struct ShelfTransfersTests {
         queue.reader.release(download(3))
         #expect(await waiting.value == .answered(.bytes(Data("bytes of v-3".utf8))))
         #expect(queue.reader.mostAtOnce == 2)
+    }
+
+    @Test func aReadThatTimedOutIsNotJoinedByTheNextAskerOfTheSameFile() async {
+        let queue = Queue()
+        let first = queue.ask(download(1), .foreground)
+        await until { queue.reader.inFlight == 1 && queue.clock.pending == 1 }
+        queue.clock.pass()
+        #expect(await first.value == .timedOut)
+        #expect(queue.transfers.active == 1, "its reader hasn't returned: its slot is still taken")
+        // The same file again while the old reader is still stuck: a read of its
+        // own, with a timer of its own, not the dead one.
+        let second = queue.ask(download(1), .foreground)
+        await until { queue.transfers.waiting(for: download(1)) == 1 }
+        await turns(10)
+        #expect(queue.reader.started == [download(1), download(1)], "the second asker started a reader")
+        #expect(queue.clock.pending == 1, "and a timer")
+        #expect(queue.transfers.active == 2)
+        // The old reader coming back late is not the new asker's answer.
+        queue.reader.releaseOldest()
+        await turns(10)
+        #expect(queue.transfers.active == 1 && queue.transfers.running == 1)
+        // The new read's own time limit passes.
+        queue.clock.pass()
+        #expect(await second.value == .timedOut)
+        queue.reader.releaseAll()
+        await until { queue.transfers.active == 0 }
     }
 
     @Test func cancellingBeforeTheStartAfterTheEndAndAtTheTimeLimit() async {
@@ -1039,6 +1070,277 @@ struct ShelfDiskTests {
         shelf.cleanUpAtLaunch()
         await shelf.settled()
         #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+}
+
+// MARK: A window closed and opened again
+
+/// What a session's Save All row and the spinners showed, change by change:
+/// each moment is the state of both just after one of them changed, and
+/// whether a Save All was still registered (so a close could stop it).
+@MainActor
+private final class SaveAllTrail {
+    struct Moment: Equatable {
+        var batch: ShelfSaveAllState?
+        var saving: Set<String>
+        var registered: Bool
+    }
+
+    private(set) var moments: [Moment] = []
+    private var batch: ShelfSaveAllState?
+    private var saving: Set<String>
+    private var subscriptions: [any Cancellable] = []
+
+    init(_ shelf: ResultsShelf, session id: String) {
+        batch = shelf.batches[id]
+        saving = shelf.saving
+        subscriptions.append(shelf.$batches.dropFirst().sink { [weak self, weak shelf] all in
+            MainActor.assumeIsolated {
+                self?.batch = all[id]
+                self?.note(shelf)
+            }
+        })
+        subscriptions.append(shelf.$saving.dropFirst().sink { [weak self, weak shelf] all in
+            MainActor.assumeIsolated {
+                self?.saving = all
+                self?.note(shelf)
+            }
+        })
+    }
+
+    private func note(_ shelf: ResultsShelf?) {
+        moments.append(Moment(batch: batch, saving: saving, registered: shelf?.isSavingAll ?? false))
+    }
+}
+
+/// The window closing while work for its run is still under way, and opening
+/// again: what the old run does when it winds up must touch nothing the new
+/// run owns.
+@MainActor
+struct ShelfCloseAndReopenTests {
+    // MARK: Save All
+
+    @Test func aSaveAllTheWindowClosedOnLeavesTheNextOneItsRowItsSpinnersAndItsPlace() async {
+        let rig = ShelfRig()
+        rig.recent = [session(1)]
+        rig.reader.answers[list(1)] = .list((1...3).map { file($0) })
+        let gate = ThreadGate()
+        let saved = rig.saved
+        let shelf = rig.shelf(write: { data, url in
+            // Only the first write is slow, as a slow destination would make it.
+            if !gate.hasEntered { gate.block() }
+            saved.write(data, to: url)
+        })
+        rig.reader.hold = false
+        shelf.open()
+        await shelf.settled()
+        let id = madeUpID(1)
+        let out = rig.scratch.appending(path: "Out", directoryHint: .isDirectory)
+        shelf.saveAll(id, into: out)
+        await until { gate.hasEntered }
+        // The window closes with the first file's write still under way, and opens again.
+        shelf.close()
+        #expect(shelf.batches[id] == nil && !shelf.isSavingAll)
+        shelf.open()
+        // A Save All of the same session: its first two downloads wait in the page.
+        rig.reader.hold = true
+        shelf.saveAll(id, into: out)
+        await until { rig.reader.inFlight == 2 }
+        #expect(shelf.batches[id] == .saving(done: 0, total: 3) && shelf.saving == ["v-1", "v-2"])
+        let trail = SaveAllTrail(shelf, session: id)
+        // The old write lands, and the old Save All winds up. Nothing it clears is the new one's.
+        gate.open()
+        await until { !shelf.saved.isEmpty }   // whichever of its two downloads came first
+        await turns(10)
+        #expect(shelf.isSavingAll, "the new Save All is still registered, so a close can stop it")
+        #expect(shelf.batches[id] == .saving(done: 0, total: 3), "its progress row is still there")
+        #expect(shelf.saving == ["v-1", "v-2"], "and so are the spinners of the files it is downloading")
+        // The new Save All goes on and finishes by itself.
+        rig.reader.hold = false
+        rig.reader.releaseAll()
+        await until { if case .finished? = shelf.batches[id] { true } else { false } }
+        await shelf.settled()
+        await until { shelf.saving.isEmpty }
+        if case .finished(let summary)? = shelf.batches[id] {
+            #expect(summary.saved == 3 && summary.failed == 0 && summary.tooBig == 0)
+        } else {
+            Issue.record("the new Save All never finished: \(String(describing: shelf.batches[id]))")
+        }
+        #expect(!shelf.isSavingAll && shelf.saving.isEmpty)
+        #expect(rig.saved.written.count == 4, "the old run's file, then the new run's three")
+        // Across every change on the way: a row all along, a spinner for every file in hand, and registered.
+        #expect(trail.moments.allSatisfy { $0.batch != nil }, "the row never went: \(trail.moments)")
+        #expect(trail.moments.allSatisfy { $0.registered }, "it never lost its place: \(trail.moments)")
+        // (The last file's spinner goes just before its progress is counted, so it is the one moment without.)
+        let unfinished = trail.moments.filter { moment in
+            if case .saving(let done, let total)? = moment.batch { done + 1 < total } else { false }
+        }
+        #expect(unfinished.allSatisfy { !$0.saving.isEmpty }, "files still to save always showed a spinner: \(trail.moments)")
+    }
+
+    @Test func aSaveAllOnAFileASaveIsWritingKeepsItsSpinnerAfterTheSaveEnds() async {
+        let rig = ShelfRig()
+        rig.recent = [session(1)]
+        rig.reader.answers[list(1)] = .list((1...3).map { file($0) })
+        let first = ThreadGate(), second = ThreadGate()
+        let saved = rig.saved
+        let shelf = rig.shelf(write: { data, url in
+            // The Save's write is slow, and so is the first one of the Save All after it.
+            if !first.hasEntered { first.block() } else if !second.hasEntered { second.block() }
+            saved.write(data, to: url)
+        })
+        rig.reader.hold = false
+        shelf.open()
+        await shelf.settled()
+        let id = madeUpID(1)
+        let out = rig.scratch.appending(path: "Out", directoryHint: .isDirectory)
+        let save = Task { await shelf.save(file(1), to: out.appending(path: "single.md")) }
+        await until { first.hasEntered }
+        #expect(shelf.saving == ["v-1"])
+        shelf.saveAll(id, into: out)
+        // The Save's download, then the Save All's of the same file and of the next.
+        await until { rig.reader.started.filter { $0 == download(1) || $0 == download(2) }.count == 3 }
+        first.open()
+        #expect(await save.value == .saved(out.appending(path: "single.md")))
+        await until { second.hasEntered }
+        // The Save is over; the Save All still has the file in hand.
+        #expect(shelf.saving.contains("v-1"), "the Save's end took the Save All's spinner")
+        let again = Task { await shelf.save(file(1), to: out.appending(path: "again.md")) }
+        second.open()
+        #expect(await again.value == .busy, "the file is still being saved: a second Save does nothing")
+        await shelf.settled()
+        await until { shelf.saving.isEmpty }
+        #expect(!shelf.isSavingAll)
+    }
+
+    @Test func closingBeforeASaveAllHasStartedLeavesItNoProgressRow() async {
+        let rig = ShelfRig()
+        rig.recent = [session(1)]
+        rig.reader.answers[list(1)] = .list((1...3).map { file($0) })
+        let shelf = rig.shelf()
+        rig.reader.hold = false
+        shelf.open()
+        await shelf.settled()
+        let id = madeUpID(1)
+        let out = rig.scratch.appending(path: "Out", directoryHint: .isDirectory)
+        // Asked and closed in one turn: the Save All's task hasn't run yet.
+        shelf.saveAll(id, into: out)
+        #expect(shelf.batches[id] == .saving(done: 0, total: 3))
+        shelf.close()
+        #expect(shelf.batches[id] == nil && !shelf.isSavingAll)
+        await turns(10)
+        #expect(shelf.batches[id] == nil, "the stopped run put its row back")
+        #expect(shelf.saving.isEmpty && !shelf.isSavingAll)
+        #expect(rig.reader.started == [list(1)] && rig.saved.written.isEmpty, "nothing was downloaded or written")
+        // The window's next Save All is its own.
+        shelf.open()
+        shelf.saveAll(id, into: out)
+        await shelf.settled()
+        if case .finished(let summary)? = shelf.batches[id] {
+            #expect(summary.saved == 3)
+        } else {
+            Issue.record("the next Save All never finished: \(String(describing: shelf.batches[id]))")
+        }
+    }
+
+    // MARK: Copies
+
+    @Test func aCopyIsNotHandedOverWhenTheWindowClosesWhileItsExistenceIsChecked() async throws {
+        let rig = ShelfRig()
+        rig.reader.hold = false
+        let storage = GatedStorage(base: rig.base)
+        rig.storage = storage
+        let shelf = rig.shelf()
+        let url = try #require(await shelf.prepareQuickLook(file(1)))
+        #expect(shelf.cachedCopy("v-1") == url)
+        // A drop asks for the copy again; the window closes while the check that
+        // it is still there is under way. The run's folder is still there too
+        // (its deletion waits), so the check answers yes.
+        await storage.hold("exists")
+        await storage.hold("remove")
+        let drop = Task { await shelf.temporaryCopy(of: file(1)) }
+        await untilHeld(storage, "exists")
+        shelf.close()
+        await storage.release("exists")
+        #expect(await drop.value == .cancelled, "a drop in flight must not be handed a copy of the run being deleted")
+        #expect(shelf.cachedCopy("v-1") == nil && shelf.preparing.isEmpty && shelf.fileProblems.isEmpty)
+        #expect(rig.reader.started == [download(1)], "nothing was downloaded for a window that closed")
+        await storage.release("remove")
+        await shelf.settled()
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func aDownloadThatLandedJustBeforeTheWindowClosedStartsNoWriteForTheDeadRun() async {
+        let rig = ShelfRig()
+        let storage = GatedStorage(base: rig.base)
+        rig.storage = storage
+        let shelf = rig.shelf()
+        let asker = Task { await shelf.temporaryCopy(of: file(1)) }
+        await until { rig.reader.inFlight == 1 }
+        // The page answers: the reader returns and the asker is handed its bytes,
+        // but its turn is queued behind this test's own (which yielded before the
+        // reader ran), so the window closes before the asker has run again. It has
+        // bytes, and the run they are for is over.
+        rig.reader.release(download(1))
+        await until { shelf.transfers.active == 0 }
+        shelf.close()
+        #expect(await asker.value == .cancelled)
+        await shelf.settled()
+        #expect(await storage.calls.contains("write") == false, "no write was started for the closed run")
+        #expect(files(under: rig.base).isEmpty && shelf.cachedCopy("v-1") == nil)
+        #expect(shelf.preparing.isEmpty && shelf.fileProblems.isEmpty)
+    }
+
+    @Test func anAskerThatOutlivedTheWindowDoesNotEndTheNextWindowsSpinner() async throws {
+        let rig = ShelfRig()
+        rig.reader.hold = false
+        let storage = GatedStorage(base: rig.base)
+        rig.storage = storage
+        await storage.hold("write")
+        let shelf = rig.shelf()
+        // The first window's copy is being written when it closes and opens again.
+        let old = Task { await shelf.prepareQuickLook(file(1)) }
+        await untilHeld(storage, "write")
+        shelf.close()
+        shelf.open()
+        #expect(shelf.preparing.isEmpty)
+        // The same file is asked for in the new window: its download is under way.
+        rig.reader.hold = true
+        let new = Task { await shelf.prepareQuickLook(file(1)) }
+        await until { rig.reader.inFlight == 1 }
+        #expect(shelf.preparing == ["v-1"])
+        // The first window's asker is done. The new window's is not.
+        await storage.release("write")
+        #expect(await old.value == nil)
+        #expect(shelf.preparing == ["v-1"], "the old asker's end took the new asker's spinner")
+        rig.reader.hold = false
+        rig.reader.releaseAll()
+        let url = try #require(await new.value)
+        #expect(shelf.cachedCopy("v-1") == url && shelf.preparing.isEmpty)
+    }
+
+    @Test func aCopyBeingWrittenForTheClosedWindowIsNotJoinedByTheNewWindowsAsker() async throws {
+        let rig = ShelfRig()
+        rig.reader.hold = false
+        let storage = GatedStorage(base: rig.base)
+        rig.storage = storage
+        await storage.hold("write")
+        let shelf = rig.shelf()
+        let old = Task { await shelf.prepareQuickLook(file(1)) }
+        await untilHeld(storage, "write")
+        shelf.close()
+        shelf.open()
+        // The same file again, in the new window: a write of its own, not the old run's.
+        let new = Task { await shelf.prepareQuickLook(file(1)) }
+        await untilHeld(storage, "write", count: 2)
+        #expect(await storage.waiting("write") == 2, "the new asker waits on a write of its own")
+        await storage.release("write")
+        #expect(await old.value == nil, "the old run's copy was dropped")
+        let url = try #require(await new.value)
+        await shelf.settled()
+        #expect(shelf.cachedCopy("v-1") == url)
+        #expect(files(under: rig.base) == [url.path.replacingOccurrences(of: rig.base.path + "/", with: "")],
+                "only the new run's copy is on the disk")
     }
 }
 

@@ -493,6 +493,15 @@ enum LabScenes {
         LabScene(name: "Vacuum desiccator", theme: .bench, duration: VacuumDesiccator.duration) { context, size, t, tint in
             VacuumDesiccator.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Laser capture", theme: .bench, duration: LaserCapture.duration) { context, size, t, tint in
+            LaserCapture.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Crystal fishing", theme: .bench, duration: CrystalFishing.duration) { context, size, t, tint in
+            CrystalFishing.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Paraffin embedding", theme: .bench, duration: ParaffinEmbedding.duration) { context, size, t, tint in
+            ParaffinEmbedding.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Molecular
         LabScene(name: "Chromatin breathing", theme: .molecular, duration: ChromatinBreathing.duration) { context, size, t, tint in
             ChromatinBreathing.draw(in: &context, size: size, time: t, tint: tint)
@@ -807,6 +816,18 @@ enum LabScenes {
         LabScene(name: "Integrin activation", theme: .cell, duration: IntegrinActivation.duration) { context, size, t, tint in
             IntegrinActivation.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Epithelial extrusion", theme: .cell, duration: EpithelialExtrusion.duration) { context, size, t, tint in
+            EpithelialExtrusion.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Myelin wrapping", theme: .cell, duration: MyelinWrapping.duration) { context, size, t, tint in
+            MyelinWrapping.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Membrane repair", theme: .cell, duration: MembraneRepair.duration) { context, size, t, tint in
+            MembraneRepair.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Lipid flip", theme: .cell, duration: LipidFlip.duration) { context, size, t, tint in
+            LipidFlip.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Organisms
         LabScene(name: "Mouse sniff", theme: .organisms, duration: MouseSniff.duration) { context, size, t, tint in
             MouseSniff.draw(in: &context, size: size, time: t, tint: tint)
@@ -1016,6 +1037,9 @@ enum LabScenes {
         LabScene(name: "Acoustic levitation", theme: .physics, duration: AcousticLevitation.duration) { context, size, t, tint in
             AcousticLevitation.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Archimedes screw", theme: .physics, duration: ArchimedesScrew.duration) { context, size, t, tint in
+            ArchimedesScrew.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Chemistry
         LabScene(name: "Caffeine", theme: .chemistry, duration: Caffeine.duration) { context, size, t, tint in
             Caffeine.draw(in: &context, size: size, time: t, tint: tint)
@@ -1145,6 +1169,9 @@ enum LabScenes {
         },
         LabScene(name: "Azobenzene switch", theme: .chemistry, duration: AzobenzeneSwitch.duration) { context, size, t, tint in
             AzobenzeneSwitch.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Ring-opening polymerization", theme: .chemistry, duration: RingOpening.duration) { context, size, t, tint in
+            RingOpening.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Plants
         LabScene(name: "Seedling", theme: .plants, duration: Seedling.duration) { context, size, t, tint in

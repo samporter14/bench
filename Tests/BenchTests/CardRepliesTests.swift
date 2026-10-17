@@ -376,7 +376,13 @@ struct CardRepliesTests {
         core.results = [RemoteActionResult(result: .changed, sentence: PermissionDecide.Sentence.alreadyHandled)]
         core.reads[session] = waiting(nil)
         #expect(await replier.decide(session, allow: false)?.value == .closed(PermissionDecide.Sentence.alreadyHandled))
-        #expect(replier.permissionReplies[session] == nil, "nothing left to show, no window to show it")
+        // The card is still up and says so, with Open instead of Allow and Deny.
+        #expect(replier.cardState(for: session) != nil)
+        #expect(replier.permissionReplies[session]?.phase == .closed(PermissionDecide.Sentence.alreadyHandled))
+        // Once the card goes, so does the reply.
+        model.ingest(Fixture.snapshot(Fixture.session(session, .running)))
+        replier.sync()
+        #expect(replier.permissionReplies[session] == nil)
     }
 
     @Test func aFailureSaysTryAgainAndARefusalSaysWhyForTheMac() async {
