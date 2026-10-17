@@ -105,6 +105,10 @@ enum ArtifactReadOutcome: Equatable, Sendable {
     case unreadable
     /// A 401: the page's session didn't take.
     case lost
+    /// A 404 or 410: the version (or the session's list) isn't there any
+    /// more, deleted or expired. The phone's routes answer it as
+    /// `unreadable`; the results shelf says which.
+    case missing
 }
 
 // MARK: The script
@@ -327,6 +331,8 @@ enum ArtifactReaderScript {
         catch (e) { return null; }
     };
     const drop = async () => { try { if (response.body && response.body.cancel) { await response.body.cancel(); } } catch (e) { } };
+    // Not there any more: a version deleted or expired, or a session gone.
+    if (response.status === 404 || response.status === 410) { await drop(); return answer({ outcome: "missing" }); }
 
     if (op === "list") {
         if (response.status !== 200) { return answer({ outcome: "unreadable" }); }
@@ -406,6 +412,8 @@ enum ArtifactReaderScript {
         switch (outcome, read) {
         case ("lost", _):
             return .lost
+        case ("missing", _):
+            return .missing
         case ("list", .list):
             return entries(root["artifacts"]).map(ArtifactReadOutcome.list) ?? .unreadable
         case ("bytes", .thumb), ("bytes", .download):

@@ -789,6 +789,41 @@ enum RemotePermission {
     }
 }
 
+// MARK: The Mac's card
+
+extension RemotePermission {
+    /// The same table on the Mac's card (Lab/PermissionReply.swift): what may
+    /// be allowed once or denied is exactly what the phone may, since the card
+    /// shows no more of a request than the phone does. Only the words differ:
+    /// "Open it in Capsid" where the phone says "on your Mac".
+    static func decideOnMac(_ request: PermissionRequest) -> Decision {
+        let decision = decide(request, actionsOn: true)
+        return Decision(canAllow: decision.canAllow, canDeny: decision.canDeny, why: decision.why.map(onMac))
+    }
+
+    /// One of the phone's sentences, said for the Mac. A sentence it doesn't
+    /// know comes back as it is.
+    static func onMac(_ sentence: String) -> String {
+        switch sentence {
+        case Why.lasting, Why.source:
+            "Allowing this can give lasting access, so choose how long in Capsid."
+        case Why.onMac: "This one is answered in Capsid."
+        case Why.unknown: "Capsid doesn't know this kind of request. Open it in Capsid."
+        case Why.unreadable: "Capsid can't read this request well enough. Open it in Capsid."
+        case Why.language: "Only Python, R, Bash and PowerShell code can be allowed from here. Open it in Capsid."
+        case Why.shared: "This code would run in a shared environment. Open it in Capsid."
+        case Why.codeLong, Why.codeLines: "The code is too long to show here. Open it in Capsid."
+        case Why.codeOdd: "The code has characters Capsid can't show safely. Open it in Capsid."
+        case Why.toolIdShared: "This needs more than one approval. Open it in Capsid."
+        case Why.helperAsked: "A helper agent asked a question. Answer it in Capsid."
+        case Why.noCode: "Capsid can't see the code to run. Open it in Capsid."
+        case Why.notReadOnly: "This tool isn't marked as read-only. Open it in Capsid to see what it would do."
+        case RemoteActionResult.unavailable.sentence: "Couldn't do that from here. Open it in Capsid."
+        default: sentence
+        }
+    }
+}
+
 // MARK: Answering
 
 /// Every decision about a permission answer, pure: check the fresh read, say

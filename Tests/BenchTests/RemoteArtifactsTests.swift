@@ -435,7 +435,9 @@ struct ArtifactReadTests {
     }
 
     @Test func aListThatFailsIsUnreadable() {
-        #expect(page.run(.list(frame: Made.session), [Made.listPath: .init(status: 404, text: "{}")]).outcome == .unreadable)
+        // A session that isn't there any more is told apart (the results shelf says so).
+        #expect(page.run(.list(frame: Made.session), [Made.listPath: .init(status: 404, text: "{}")]).outcome == .missing)
+        #expect(page.run(.list(frame: Made.session), [Made.listPath: .init(status: 500, text: "{}")]).outcome == .unreadable)
         #expect(page.run(.list(frame: Made.session), [Made.listPath: .init(status: 200, text: "<html>")]).outcome == .unreadable)
         #expect(page.run(.list(frame: Made.session), [:]).outcome == .unreadable)
         #expect(page.run(.list(frame: Made.session), [Made.listPath: .init(status: 401, text: "")]).outcome == .lost)
@@ -487,11 +489,24 @@ struct ArtifactReadTests {
     }
 
     @Test func otherStatusesAreUnreadable() {
-        for status in [204, 206, 302, 403, 404, 500] {
+        for status in [204, 206, 302, 403, 500] {
             let result = page.run(.download(version: Made.version), [Made.versionPath: .init(status: status, length: 4)])
             #expect(result.outcome == .unreadable, "\(status)")
         }
         #expect(page.run(.download(version: Made.version), [Made.versionPath: .init(status: 401)]).outcome == .lost)
+    }
+
+    /// A version deleted or expired is told apart from a failure, for every
+    /// read, and nothing of its body is read.
+    @Test func aVersionThatIsGoneIsMissing() {
+        for status in [404, 410] {
+            for read in [ArtifactRead.download(version: Made.version), .text(version: Made.version),
+                         .thumb(version: Made.version, width: 120)] {
+                let result = page.run(read, [Made.versionPath: .init(status: status, length: 4),
+                                             Made.versionPath + "?thumbnail=120": .init(status: status, length: 4)])
+                #expect(result.outcome == .missing, "\(status) \(read)")
+            }
+        }
     }
 
     @Test func textIsARangeReadOfTheFirst256KB() {
@@ -985,6 +1000,9 @@ struct ArtifactServingTests {
         files.answers[.text(version: "log")] = .binary
         #expect(json(await files.get("/api/files/log/text"))["error"] as? String == "notText")
         files.answers[.text(version: "log")] = .unreadable
+        #expect(await files.get("/api/files/log/text").status == 503)
+        // A version that's gone answers the phone as it always did.
+        files.answers[.text(version: "log")] = .missing
         #expect(await files.get("/api/files/log/text").status == 503)
     }
 

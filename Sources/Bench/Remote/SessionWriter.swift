@@ -36,6 +36,11 @@ enum RemoteWrite: Equatable, Sendable {
     /// `POST /api/frames/<holder>/resolve-input`: `{responses:[{requestId,
     /// tool_id, approved, action}]}`, never a `scope`. // Phase 4 permissions
     case permission(frame: String, requestID: String, toolID: String, allow: Bool)
+    /// `POST /api/request` as `message`, but with no `plan_mode` at all: what
+    /// to change in a plan waiting for approval. The daemon takes a message
+    /// to such a session as a change request, and the session keeps its own
+    /// plan mode; the plan stays unapproved until Approve. Plain text only.
+    case planFeedback(frame: String, agent: String, projectID: String, text: String, intentID: String)
 
     /// The script's arguments: every name always there, null when unused.
     var arguments: [String: Any] {
@@ -80,6 +85,13 @@ enum RemoteWrite: Equatable, Sendable {
             all["toolId"] = toolID
             all["requestId"] = requestID
             all["decision"] = allow ? "allow" : "deny"
+        case .planFeedback(let frame, let agent, let projectID, let text, let intentID):
+            all["kind"] = "planFeedback"
+            all["frameId"] = frame
+            all["agent"] = agent
+            all["projectId"] = projectID
+            all["text"] = text
+            all["intentId"] = intentID
         }
         return all
     }
@@ -233,6 +245,16 @@ enum SessionWriterScript {
                            intent_id: a.intentId, plan_mode: false };
             if (typeof a.projectId === "string") { body.project_id = a.projectId; }
             return { path: "/api/request", body: body };
+        }
+        // What to change in a plan that waits: a message with no plan_mode, so the
+        // session's own stays as it is. Plain text, a project always.
+        if (a.kind === "planFeedback") {
+            if (!text(a.agent, 1, 200) || !request(a.text, false) || !text(a.projectId, 1, 200)) { return null; }
+            if (typeof a.intentId !== "string"
+                || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a.intentId)) { return null; }
+            return { path: "/api/request",
+                     body: { target_agent: a.agent, root_frame_id: a.frameId, project_id: a.projectId,
+                             input_data: { request: a.text }, intent_id: a.intentId } };
         }
         return null;
     }

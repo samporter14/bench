@@ -29,9 +29,10 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   your own paired devices over your Tailscale network, with notifications,
   if you turn them on, carried by Apple's push service and encrypted so only
   your device can read them. Capsid reads Claude Science and changes nothing
-  in it, except when you press Approve on a plan's card, or answer, approve,
-  send a message or start a session from a paired device. It saves nothing
-  but its own settings.
+  in it, except when you press Approve on a plan's card, send an answer from
+  a question's reply window, or answer, approve, send a message or start a
+  session from a paired device. It saves nothing but its own settings, and
+  the files you choose to save.
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
 - **Know when it needs you.** While a session works, one of 519 little
@@ -45,8 +46,28 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   titles one click away) and Claude's own feasibility estimate, with an
   **Approve** button. Capsid checks it's still the
   same plan just before approving; if anything is off, Open takes you to the
-  session instead. Never from a Mac notification. Turn it off in Settings →
-  General.
+  session instead. **Request changes…** lets you type what to change, and
+  Claude revises the plan and asks again. Never from a Mac notification.
+  Turn it off in Settings → Alerts.
+- **Answer from its card.** The card shows what the session asks, with
+  **Reply**, which opens a small window beside the panel with what Claude
+  said last, to pick an answer (⌘1–⌘9) or type your own and send it (⌘↩).
+  It always shows which session and project you're answering, and **Next**
+  takes you to the next session waiting. A permission request shows what it
+  wants, with **Allow Once** for a read-only tool, **Review** to read code
+  before allowing it once, and **Deny**; anything that needs more opens in
+  Capsid. Capsid checks it's still the same question or request just before
+  sending, and keeps your answer if sending fails. Nothing takes the keyboard
+  from what you're doing; only your click does. With Mac notifications on, a
+  question with a few choices can be answered from its notification too.
+- **Results.** File → Results… (⇧⌘R), the tray in the toolbar, or
+  **Results** on a session's Finished card: the files your sessions made, by
+  project and session. Preview any of them with Quick Look (Space), drag one
+  out to Finder or another app, copy an image, text or PDF, Save… one or Save
+  All… of a session into a folder (remembered per project), and jump back to
+  the conversation each came from. It reads your most recent sessions when it
+  opens, and older ones only when you ask. Quick Look's copies live in a
+  private temporary folder that is emptied when the window closes.
 - **Mac notifications, if you want them.** Off until you turn on **Also
   send a Mac notification** in Settings → Alerts → Mac notifications. Then
   a session that needs you or stops with an error sends a notification too,

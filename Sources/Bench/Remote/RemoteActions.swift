@@ -105,6 +105,9 @@ enum RemoteActionRequest: Equatable, Sendable {
     /// `{"id","decision":"allow"|"deny"}`, and optionally the `kind` the phone
     /// showed. // Phase 4 permissions
     case permission(id: String, allow: Bool, kind: String?)
+    /// What to change in the plan the Mac's window showed (by its version):
+    /// never parsed from the phone, only made by the reply window.
+    case planFeedback(version: String, text: String, intentID: String)
 
     static let answerLimit = 1_000
     static let messageLimit = 4_000
@@ -126,16 +129,13 @@ enum RemoteActionRequest: Equatable, Sendable {
                 default: return nil
                 }
             }
-            guard let given = root["answers"] as? [String: Any],
-                  (1...SessionProjection.Limit.questions).contains(given.count) else { return nil }
+            guard let given = root["answers"] as? [String: Any] else { return nil }
             var answers: [String: String] = [:]
             for (question, value) in given {
-                guard !question.isEmpty, question.unicodeScalars.count <= SessionProjection.Limit.question,
-                      let text = Pick.string(value)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !text.isEmpty, text.unicodeScalars.count <= answerLimit else { return nil }
+                guard let text = Pick.string(value) else { return nil }
                 answers[question] = text
             }
-            return .answer(toolID: toolID, answers: answers)
+            return checkedAnswer(toolID: toolID, answers: answers)
         case .message:
             guard let text = Pick.string(root["text"])?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !text.isEmpty, text.unicodeScalars.count <= messageLimit, !PhotoText.hasReference(text),
@@ -144,6 +144,34 @@ enum RemoteActionRequest: Equatable, Sendable {
         case .permission: // Phase 4 permissions
             return parsePermission(root)
         }
+    }
+
+    /// An answer, checked as every answer is, whoever sends it: the phone's
+    /// body (`parse`) or the Mac's reply window (Lab/QuestionReply.swift). One
+    /// to ten questions, each named, each answer trimmed, not empty and at
+    /// most 1,000 characters. Nil for anything else.
+    static func checkedAnswer(toolID: String, answers: [String: String]) -> RemoteActionRequest? {
+        guard !toolID.isEmpty, toolID.unicodeScalars.count <= SessionProjection.Limit.toolID,
+              (1...SessionProjection.Limit.questions).contains(answers.count) else { return nil }
+        var checked: [String: String] = [:]
+        for (question, value) in answers {
+            let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !question.isEmpty, question.unicodeScalars.count <= SessionProjection.Limit.question,
+                  !text.isEmpty, text.unicodeScalars.count <= answerLimit else { return nil }
+            checked[question] = text
+        }
+        return .answer(toolID: toolID, answers: checked)
+    }
+
+    /// What to change in a plan, from the Mac's reply window: the text
+    /// trimmed, 1 to 4,000 characters with none of the UI's reference
+    /// prefixes (as a phone message), the plan's version and a uuid v4 intent
+    /// id. Nil for anything else.
+    static func checkedPlanFeedback(version: String, text: String, intentID: String) -> RemoteActionRequest? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard PlanCheck.isVersionID(version), !text.isEmpty, text.unicodeScalars.count <= messageLimit,
+              !PhotoText.hasReference(text), isUUIDv4(intentID) else { return nil }
+        return .planFeedback(version: version, text: text, intentID: intentID)
     }
 
     /// The answer to a body `parse` turned away: 400 `{"error":"reference"}`
@@ -271,6 +299,8 @@ enum RemoteDecide {
         static let queued = "Queued. Claude reads it at the next safe point."
         static let resumed = "Sent. The session picks up again."
         static let tooManyQueued = "Too many messages are waiting for it. Try again later."
+        static let revising = "Sent. Claude is revising the plan."
+        static let planGone = "The plan isn't waiting for you any more."
     }
 
     // MARK: Approve
@@ -338,6 +368,40 @@ enum RemoteDecide {
             return RemoteActionResult(result: .changed, sentence: Sentence.alreadyAnswered)
         case (400, _) where reply.staleInput:
             return RemoteActionResult(result: .changed, sentence: Sentence.questionChanged)
+        default:
+            return .unavailable
+        }
+    }
+
+    // MARK: What to change in a plan
+
+    /// The plan still waits, not approved, at the very version the window
+    /// showed; the fresh read names the agent and the project. Then a message
+    /// with no `plan_mode`, which the daemon takes as a change request: the
+    /// plan stays unapproved and Claude revises it.
+    static func planFeedback(_ request: RemoteActionRequest, session: String, fresh: SessionProjection?) -> Step {
+        guard case .planFeedback(let version, let text, let intentID) = request, let fresh else {
+            return .answer(.unavailable)
+        }
+        guard fresh.status == "awaiting_plan_approval" else {
+            return .answer(RemoteActionResult(result: .changed, sentence: Sentence.planGone))
+        }
+        guard PlanCheck.versionToRead(fresh.planFrame) == version else {
+            return .answer(RemoteActionResult(result: .changed, sentence: Sentence.planChanged))
+        }
+        guard let agent = fresh.agentName, let project = fresh.projectID else { return .answer(.unavailable) }
+        return .write(.planFeedback(frame: session, agent: agent, projectID: project, text: text, intentID: intentID))
+    }
+
+    static func planFeedbackSent(_ reply: RemoteWriteResult?) -> RemoteActionResult {
+        guard let reply, reply.isJSON else { return .unavailable }
+        switch (reply.status, reply.bodyStatus) {
+        case (200, "accepted"?), (200, "already_delivered"?):
+            return RemoteActionResult(result: .sent, sentence: Sentence.revising)
+        case (200, "message_queued"?):
+            return RemoteActionResult(result: .queued, sentence: Sentence.queued)
+        case (429, _):
+            return RemoteActionResult(result: .blocked, sentence: Sentence.tooManyQueued)
         default:
             return .unavailable
         }
@@ -634,9 +698,9 @@ final class RemoteSessions {
 
     // MARK: Acting
 
-    /// One action: actions on (403), within the device's limit (429), a
-    /// session Bench knows (404), a body that fits (400); then, one at a time
-    /// per session, read afresh, decide, write.
+    /// One action from a paired device: actions on (403), within the
+    /// device's limit (429), a session Bench knows (404), a body that fits
+    /// (400); then `respond`.
     func act(_ action: RemoteAction, session id: String, device: String, body: Data) async -> RemoteActionReply {
         guard dependencies.actionsOn() else { return .actionsOff }
         guard limiter.allow(device, at: dependencies.now()) else { return .tooMany }
@@ -644,44 +708,59 @@ final class RemoteSessions {
         guard let request = RemoteActionRequest.parse(action, body: body) else {
             return action == .message ? RemoteActionRequest.refusal(body: body) : .badRequest
         }
-        let previous = acting[id]
-        let task = Task { [weak self] () -> RemoteActionReply in
-            _ = await previous?.value
-            guard let self else { return .ok(.unavailable) }
-            let reply = await self.perform(request, session: id)
-            self.forget(id)
-            return reply
-        }
-        acting[id] = task
-        let reply = await task.value
-        if acting[id] == task { acting[id] = nil }
-        return reply
+        return .ok(await respond(request, session: id))
     }
 
-    private func perform(_ request: RemoteActionRequest, session id: String) async -> RemoteActionReply {
+    /// The part beneath every way of acting, the phone's routes and the Mac's
+    /// reply window alike: one at a time per session, on the queue the photo
+    /// flow shares, read the session afresh, decide, and only then write.
+    /// What was held of the session is dropped once it is done. The phone's
+    /// own gates (Settings → Phone, the device's limit, which sessions it may
+    /// open) are `act`'s, so a reply from the Mac works with the phone off.
+    func respond(_ request: RemoteActionRequest, session id: String) async -> RemoteActionResult {
+        var result = RemoteActionResult.unavailable
+        _ = await actSerially(on: id) { [weak self] in
+            if let self { result = await self.perform(request, session: id) }
+            return .ok(result)
+        }
+        return result
+    }
+
+    /// The root frame as an action's check reads it, or with `full` its turns
+    /// and the head of its permission requests too: what the Mac's card and
+    /// reply window show before anything is answered. Nil when it can't be read.
+    func readFrame(_ id: String, full: Bool = false) async -> SessionProjection? {
+        await dependencies.read(id, full)
+    }
+
+    private func perform(_ request: RemoteActionRequest, session id: String) async -> RemoteActionResult {
         // Phase 4 permissions: an answer to a request reads the helpers' frames too (a full read).
         let fresh = await dependencies.read(id, request.isPermission)
         switch request {
         case .approve(let version):
             switch RemoteDecide.approve(version: version, session: id, fresh: fresh) {
-            case .answer(let result): return .ok(result)
-            case .write(let write): return .ok(RemoteDecide.approved(await dependencies.write(write)))
+            case .answer(let result): return result
+            case .write(let write): return RemoteDecide.approved(await dependencies.write(write))
             }
         case .answer, .chooseForMe, .cancel:
             switch RemoteDecide.answer(request, session: id, fresh: fresh) {
-            case .answer(let result): return .ok(result)
-            case .write(let write): return .ok(RemoteDecide.answered(await dependencies.write(write), request: request))
+            case .answer(let result): return result
+            case .write(let write): return RemoteDecide.answered(await dependencies.write(write), request: request)
             }
         case .message:
             switch RemoteDecide.message(request, session: id, fresh: fresh) {
-            case .answer(let result): return .ok(result)
-            case .write(let write):
-                return .ok(RemoteDecide.messaged(await dependencies.write(write), status: fresh?.status ?? ""))
+            case .answer(let result): return result
+            case .write(let write): return RemoteDecide.messaged(await dependencies.write(write), status: fresh?.status ?? "")
             }
         case .permission(_, let allow, _): // Phase 4 permissions
             switch PermissionDecide.decide(request, session: id, fresh: fresh) {
-            case .answer(let result): return .ok(result)
-            case .write(let write): return .ok(PermissionDecide.answered(await dependencies.write(write), allow: allow))
+            case .answer(let result): return result
+            case .write(let write): return PermissionDecide.answered(await dependencies.write(write), allow: allow)
+            }
+        case .planFeedback:
+            switch RemoteDecide.planFeedback(request, session: id, fresh: fresh) {
+            case .answer(let result): return result
+            case .write(let write): return RemoteDecide.planFeedbackSent(await dependencies.write(write))
             }
         }
     }

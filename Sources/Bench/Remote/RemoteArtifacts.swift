@@ -457,6 +457,49 @@ enum ArtifactJSON {
     }
 }
 
+// MARK: What may be read
+
+/// What may be read of a listed version, and whether what came back may be
+/// used: the phone's routes and the results shelf (Results/ResultsShelf.swift)
+/// ask the very same questions, with the kind and size from the listing,
+/// never from whoever asks.
+enum ArtifactGate {
+    enum Refusal: Error, Equatable, Sendable {
+        /// Not a kind this read is for.
+        case kind
+        /// Over the cap: 4 MB for a thumbnail, 8 MB for a download.
+        case tooBig
+        /// A thumbnail whose bytes don't say WebP.
+        case notWebP
+    }
+
+    /// A thumbnail: only of an image.
+    static func thumb(kind: ArtifactKind) -> Refusal? {
+        kind == .image ? nil : .kind
+    }
+
+    /// Text: only of markdown, text and tables.
+    static func text(kind: ArtifactKind) -> Refusal? {
+        RemoteArtifacts.textKinds.contains(kind) ? nil : .kind
+    }
+
+    /// A download: only when the listing's own size is within 8 MB.
+    static func download(size: Int) -> Refusal? {
+        size <= ArtifactReaderScript.Cap.download ? nil : .tooBig
+    }
+
+    /// A thumbnail's bytes: within 4 MB, and WebP by their own first bytes.
+    static func thumbBytes(_ data: Data) -> Result<Data, Refusal> {
+        guard data.count <= ArtifactReaderScript.Cap.thumb else { return .failure(.tooBig) }
+        return ArtifactHeaders.isWebP(data) ? .success(data) : .failure(.notWebP)
+    }
+
+    /// A download's bytes: within 8 MB, whatever the listing said.
+    static func downloadBytes(_ data: Data) -> Result<Data, Refusal> {
+        data.count <= ArtifactReaderScript.Cap.download ? .success(data) : .failure(.tooBig)
+    }
+}
+
 // MARK: Serving
 
 /// The four routes over an injected read. Order of the checks: the browse
@@ -494,7 +537,7 @@ final class RemoteArtifacts {
     }
 
     /// The kinds `/text` serves.
-    static let textKinds: Set<ArtifactKind> = [.markdown, .text, .table]
+    nonisolated static let textKinds: Set<ArtifactKind> = [.markdown, .text, .table]
 
     private let dependencies: Dependencies
 
@@ -511,16 +554,19 @@ final class RemoteArtifacts {
         case .thumb(let version):
             guard let info = listed(version, device: device) else { return .notFound }
             guard let width = Self.width(target) else { return .error(400, "width") }
-            guard info.kind == .image else { return .error(415, "kind") }
+            if let refusal = ArtifactGate.thumb(kind: info.kind) { return Self.reply(refusal) }
             switch await dependencies.read(.thumb(version: version, width: width)) {
-            case .bytes(let data) where data.count > ArtifactReaderScript.Cap.thumb: return .tooBig
-            case .bytes(let data): return ArtifactHeaders.isWebP(data) ? .webp(data) : .error(415, "notWebP")
+            case .bytes(let data):
+                switch ArtifactGate.thumbBytes(data) {
+                case .success(let data): return .webp(data)
+                case .failure(let refusal): return Self.reply(refusal)
+                }
             case .tooBig: return .tooBig
             default: return .unreadable
             }
         case .text(let version):
             guard let info = listed(version, device: device) else { return .notFound }
-            guard Self.textKinds.contains(info.kind) else { return .error(415, "kind") }
+            if let refusal = ArtifactGate.text(kind: info.kind) { return Self.reply(refusal) }
             switch await dependencies.read(.text(version: version)) {
             case .text(let text, let truncated): return Self.text(text, truncated: truncated, info: info)
             case .binary: return .error(415, "notText")
@@ -528,13 +574,25 @@ final class RemoteArtifacts {
             }
         case .download(let version):
             guard let info = listed(version, device: device) else { return .notFound }
-            guard info.size <= ArtifactReaderScript.Cap.download else { return .tooBig }
+            if let refusal = ArtifactGate.download(size: info.size) { return Self.reply(refusal) }
             switch await dependencies.read(.download(version: version)) {
-            case .bytes(let data) where data.count > ArtifactReaderScript.Cap.download: return .tooBig
-            case .bytes(let data): return .download(data, name: info.name, kind: info.kind)
+            case .bytes(let data):
+                switch ArtifactGate.downloadBytes(data) {
+                case .success(let data): return .download(data, name: info.name, kind: info.kind)
+                case .failure(let refusal): return Self.reply(refusal)
+                }
             case .tooBig: return .tooBig
             default: return .unreadable
             }
+        }
+    }
+
+    /// A gate's refusal, as the phone's routes answer it.
+    private static func reply(_ refusal: ArtifactGate.Refusal) -> RemoteFilesReply {
+        switch refusal {
+        case .kind: .error(415, "kind")
+        case .tooBig: .tooBig
+        case .notWebP: .error(415, "notWebP")
         }
     }
 

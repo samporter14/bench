@@ -423,11 +423,16 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     the primary action), **Open** (`.glass`) and Later. Pressed, Approve is a
     small spinner; approved, the row reads "Approved ✓" in clay. The card
     keeps its width and grows taller; the panel measures its content, so the
-    window follows. See Approving a plan from its card.
+    window follows. See Approving a plan from its card. Beside Show steps,
+    **Request changes…** (since 0.7.0).
+  - Any other wait (since 0.7.0, with the same setting): the question and
+    Reply, or a permission request with Allow Once, Review or Deny. See
+    Answering from the card.
 - **Finished.**
   - Left well: the flask, still.
   - Caption: "Finished", then the duration and the tokens.
-  - Open.
+  - Open, and **Results** (`.glass`, since 0.7.0): the Results window on this
+    session's files (Results → Opening on one session).
 - **Web notification.** Claude Science's title as the caption, then the body,
   then Open.
 - **Saved.** "Saved", the file name and Show in Finder.
@@ -640,8 +645,13 @@ The poster, `MacNotifications`, is thin and tests never use it.
   title and "and 2 more". With names off, "A session finished while you
   focused", or "Sessions finished while you focused". A click opens the
   session when there is one, else the window. No other notice is sent.
-- **Never with Approve.** A notification only opens its session; approving
-  a plan is on the panel's card alone (Approving a plan from its card).
+- **Never with Approve.** A plan's notification only opens its session;
+  approving a plan is on the panel's card alone (Approving a plan from its
+  card), and so is a permission request's Allow Once or Deny. A question's
+  notification may offer its answers (since 0.7.0; Answering from the card →
+  From a Mac notification): every answer is checked against the question's
+  id and words on a fresh read before anything is written, which is the
+  check this rule was missing for plans.
 - **Sound.** Capsid's own "Play a sound" on: the notification is silent, as
   the panel chimes. Off: the default sound.
 - **Identifier.** The card's id, so a question that becomes a plan to
@@ -789,23 +799,213 @@ ended ("approved", "changed"…). The demo and the tests use made-up plans.
 **Not in notifications, ever.** A Mac notification can be read, and acted
 on, away from the card (in Notification Center later, on a lock screen),
 without the plan in front of you and
-without the check against the plan you saw. So Mac notifications, the
-activity list and the Dock menu stay Open-only; Approve is only on the
-panel's card, where the summary shows.
+without the check against the plan you saw. So for a plan, Mac
+notifications, the activity list and the Dock menu stay Open-only; Approve
+(and Request changes) is only on the panel's card, where the summary shows.
+A question's notification may offer its answers (since 0.7.0; Answering from
+the card → From a Mac notification): the answer is checked against the very
+question the notification showed, its id and its words, on a fresh read.
 
 **The fallback is Open.** A setting turned off, a read that fails, a shape
 that doesn't match (a newer daemon, a 404 or 405, an unknown code), a
 sub-agent waiting, a changed plan: each leaves the card as it was before
 0.3.4, with Open taking you to the session to decide there.
 
-**Setting.** Settings → Alerts → On the panel → **Show plans
-on the card, with Approve** (`showPlansOnCard`), on by default. Off, a plan's
-card is Open and Later, and no plan is read.
+**Setting.** Settings → Alerts → On the panel → **Show plans,
+questions and requests on the card** (`showPlansOnCard`; it read "Show plans on the card,
+with Approve" until the question card, then "Show plans and questions on the
+card"), on by default. Off, a plan's card is Open and Later, and no plan is
+read; the same for every other wait (Answering from the card). A plan's
+card also has **Request changes…** (Answering from the card → What to change
+in a plan).
 
 **Demo.** `Capsid --demo plan`: a made-up session whose made-up plan is
 ready ("Screen 24 buffer conditions", "10 steps · feasibility: high", with
 10 made-up step titles, so the list shows "and 2 more…", one of them long
 enough to be cut). Its Approve shows the Approved state and calls nothing.
+
+### Answering from the card (Lab/QuestionReply.swift, Lab/ReplyWindow.swift, since 0.7.0)
+
+A session's question, a permission request, or what to change in a plan can be
+answered without opening Claude Science: the card shows it, and a button
+opens a small window to answer in where typing or reading is needed.
+
+**The card.** `QuestionReplier` follows the cards as `PlanApprover` does. When
+the card on top is a needs-input card waiting for anything but a plan
+(`QuestionCardState.reads`), it reads the session once
+(`RemoteSessions.readFrame(_:full: true)`: the root frame, its last turns, and
+the head of its and its helpers' permission requests, as the phone's session
+read), while the card says "Loading…". It reads nothing while the setting or
+"Show a card" is off, before the page is up, or in a demo; a read that fails
+is tried again after 15 s. Then (`QuestionCardState`, pure):
+
+- **Ready**: the root itself is `awaiting_user_response` with its own first
+  `ask` readable. The card shows the first question in two lines and how it
+  is answered ("3 choices", "Pick any of 4", "Type an answer", "2
+  questions"), never the answer choices themselves, and offers **Reply**
+  (primary), **Open** and **Later**.
+- **Permission**: no root question, but a permission request at the head of
+  the queue (the root's or a helper's). See below.
+- **Unsupported**: anything else: a question asked mid-run (`processing`,
+  which the phone can't answer either), a first `ask` whose shape Capsid
+  doesn't know, or a wait the read shows nothing for. The card says "Answer
+  this one in Capsid" and offers **Open in Capsid** and **Later**.
+- **Unavailable**: the read failed: Open and Later, as before.
+
+**What Claude said.** The same read's last Claude turn
+(`QuestionCardState.context`) is shown at the top of the window, three lines
+and **Show more**, so a question that refers back ("which of these?") can be
+answered without opening the session.
+
+**The window.** The panel is never key (it must not take the keyboard from
+whatever you're typing in), so Reply opens a window of its own
+(`ReplyWindowController`): Capsid comes forward, as you asked it to, and the
+window opens beside the panel (above it, or below when there is no room). A
+question arriving never opens it; a second Reply brings the same window
+forward. At its top it says where the answer goes: "Answering" (or "Request
+from", "Changing the plan of"), the session's title and its project. Then
+what Claude said, then each question with its header, its text, and its
+choices as radio buttons (checkboxes when several may be picked), each with
+its detail, and **Other…** with a text field (a question with no choices has
+only the field). Below: **More** (Choose for Me, Cancel Question), **Open in
+Capsid**, and **Send Answer**, which is only enabled once every question has
+an answer.
+
+**Keys** (`ReplyKeys`): ⌘1…⌘9 pick a choice of the question in hand (the
+last one touched; the number after the last choice is Other…), shown as
+"⌘1"… beside its choices; **⌘↩ sends**; Esc closes. Plain Return is left to
+the text field, so a line break never sends.
+
+**Next.** Sent, with more needs-input cards waiting (any but a plan's,
+`othersWaiting`), the window doesn't close: **Next (N more)** (Return) gives
+way to a window for the next session in the queue, in the same place; a card
+not yet read is read then (`prepare`), the window saying "Loading…" until it
+is. With none waiting, it closes after a moment as before.
+
+**The answer** is the phone's own (`QuestionAnswers`, mirroring `answerOf` in
+RemoteWeb/app.js): with one choice, the typed text when Other… is on, else
+the pick; with several, the picked labels in the options' order, then the
+typed text, joined by ", ". The request is built by
+`RemoteActionRequest.checkedAnswer`, the very check the phone's bodies get
+(one to ten questions, each answer trimmed, not empty, at most 1,000
+characters), so the Mac sends nothing the phone's parser would refuse.
+
+**Sending** goes through `RemoteSessions.respond`, the part beneath the
+phone's gates (Capsid on your phone → Actions): on the session's own queue,
+shared with the phone's actions and photos, it reads the root frame afresh,
+checks it still asks the very question shown (the same `tool_id`, the same
+question texts, every one answered), and only then writes `resolve-input`.
+The phone's own gates (Settings → Phone's switches, the device's six a
+minute, which sessions a device may open) stay in `act`, so a reply from the
+Mac works with Capsid on your phone off, and a phone with actions off still
+can't answer.
+
+**States** (`ReplyPhase`): editing; **sending** (a spinner, everything
+disabled: a second press sends nothing, and the card shows a spinner too);
+**sent** ("Answer sent.", and the card and any reminder for it go);
+**changed** (the question isn't the one shown: the window shows the new one,
+keeping the draft when it is the same request read again, a fresh one when it
+is another); **failed** ("Couldn't send it. Your answer is still here…": the
+draft is kept and Send tries again); **closed** (answered elsewhere, "It was
+already answered.", or the session stopped waiting). A re-read after
+"changed" that fails claims neither: the draft stays, and Send, whose own
+check reads afresh, can be pressed again. A reply outlives its card (Later,
+×) but not the session's wait; closing the window keeps the draft for the
+next Reply while the session still waits.
+
+**Permission requests.** What may be done is the phone's own table
+(Capsid on your phone → Phase 4), unchanged: `RemotePermission.decideOnMac`
+is `decide(_:actionsOn: true)` with the reasons said for the Mac ("Open it in
+Capsid" where the phone says "on your Mac"; `onMac`). The card shows no more
+of a request than the phone does (never its `input`, never free text the
+agent wrote), so it may do no more: an allow only for `local_exec` in Python,
+R, Bash or PowerShell, in no shared environment, with its code whole (at
+most 60 lines of 160 characters, no invisible or direction characters), and for an
+`mcp_tool` that says it only reads, from a listed source; a deny for every
+kind whose "no" is a plain no; nothing else (a password, an email, a
+license, a usage checkpoint, a goal, a scan, a provider) but Open. The
+daemon's own table confirms what an allow without a `scope` is: no grant is
+recorded at all, so it is for this once whatever the kind's default scope in
+Claude Science's UI. On the card:
+
+| The Mac's table | Buttons | Under the title |
+|---|---|---|
+| Code that may run | **Review** (opens the window), **Deny**, Later (with Open in Capsid in its menu) | what it is ("Claude wants to run this code on your Mac.") |
+| A read-only tool | **Allow Once**, **Deny**, Later (with Open in Capsid) | "The tool says it only reads." |
+| Deny only | **Open**, **Deny**, Later | what it is, and why allowing is in Capsid ("Allowing this can give lasting access, so choose how long in Capsid.") |
+| Neither | **Open in Capsid**, Later | why |
+
+The window ("Permission Request") shows the request's title and detail, the
+code in a monospaced, selectable, scrolling box with its line count, and
+**Deny** and **Allow Once** (no key sends either). Allow Once and Deny go
+through `respond` like an answer, as the phone's do (`PermissionDecide`):
+read afresh with the helpers, the same request still the head and of the
+same kind, its holder in this session, then `resolve-input` to the holder
+with no `scope`. Sent: "Allowed once" / "Denied" ✓ on the card, which then
+goes. Changed: the new request takes its place ("The request changed. Look
+at it again."); handled elsewhere: closed. A failed write says try again; a
+refusal from the table says why, in the Mac's words.
+
+**What to change in a plan.** A plan's card (shown and not being approved)
+has **Request changes…** beside Show steps. It opens the window ("Request
+Changes"): the plan's summary and steps line, and "What should change?" (a
+text field, focused). **Send** (⌘↩) sends it through `respond` as
+`RemoteActionRequest.planFeedback(version:text:intentID:)`, checked as a phone
+message is (trimmed, 1 to 4,000 characters, none of the UI's reference
+prefixes) and made only by this window; the phone has no route for it. The
+check (`RemoteDecide.planFeedback`): the root still `awaiting_plan_approval`,
+not approved, at the very version the card showed, with an agent and a
+project; then `POST /api/request` `{target_agent, root_frame_id, project_id,
+input_data:{request}, intent_id}` with **no `plan_mode`**
+(`RemoteWrite.planFeedback`). From the daemon's own code: a message to a
+session whose plan waits is taken as a change request (its system prompt
+tells the model that a change request is not approval: revise the plan and
+keep waiting), the tool gate stays shut until `approve-plan`
+(`plan_artifact_id` set and not approved), and a request without `plan_mode`
+leaves the session's own as it is, where the phone's messages say `false`.
+The intent id is kept while the words are the same, so a retry after a lost
+reply is recognised ("already_delivered") and not sent twice; new words get a
+new one. Sent: "Sent. Claude is revising the plan." and the card goes (the
+session runs, then waits again with the new plan). The plan changed or stopped
+waiting: closed, with the words still there to copy. The phone is unchanged: a
+message to a session whose plan waits is still refused there ("Approve or
+revise the plan on your Mac").
+
+**From a Mac notification.** With Mac notifications on, names shown and this
+setting on, a question's notification offers its answers
+(`NotificationRules.QuestionActions`): a button per choice and **Reply…** (a
+text field), for a single question with one answer and at most four choices
+or none. Its words are then the question's. The question is the card's read,
+or one read of its own when the card hasn't one (`askForNotification`, four
+seconds at most; a notification that can't wait for it goes as before). The
+buttons need the Mac unlocked and don't bring Capsid forward. An answer is
+read back from the notification's own copy of what it offered, checked again
+as the page's words are, made into a draft by the same rule, and sent by
+`answerFromNotification` through `respond`, which checks the question's
+`tool_id` and words afresh. That check is why a question may be answered
+here while a plan may not (Mac notifications: plans and permission requests
+stay Open-only). A launch from the notification waits up to 20 s for the page
+and the session; anything but sent opens the reply window with the answer
+still in it (or the session, when even that can't be).
+
+**Privacy.** As the plan card: the question's texts and choices, a
+permission request's plain fields (as the phone's), and the session's last
+Claude turn are read for the card and the window, kept in memory while the
+session waits, and never logged or saved. What to change in a plan is typed
+here and only sent. The log says only how a reply ended ("sent",
+"changed"…). A question's notification holds its text and choices, as
+Notification Center keeps any delivered notification (Mac notifications,
+What stays on the Mac).
+
+**Setting.** The plan card's (**Show plans, questions and requests on the
+card**, `showPlansOnCard`): off, every needs-input card is Open and Later
+(with Approve gone from plans), nothing is read, and notifications offer no
+answers.
+
+**Demo.** `Capsid --demo card`: the made-up session's made-up question, with
+Reply, and behind it a second card asking to run made-up Python, with
+Review; Next steps from one to the other. `--demo plan` has Request
+changes. Nothing is sent anywhere.
 
 ## Scenes settings (Lab/SceneSettings.swift, Lab/SpecimenChoice.swift)
 
@@ -1390,7 +1590,10 @@ main Claude Science window opens behind it as usual.
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
 Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo, Settings, Welcome   (planner)
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge   (web agent)
-Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule   (lab agent)
+Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule,
+                          QuestionReply and ReplyWindow (a question, a permission request or a plan's
+                          changes answered from its card)   (lab agent)
+Sources/Bench/Results/    ResultsShelf and ResultsWindow: the results shelf (Results)
 Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and ScienceCore. Don't edit here:
                           change them in the droplet, then run Scripts/sync-shared.sh. Except
                           Core/CLIStatus.swift and Core/SQLiteSource.swift, which are Capsid's own
@@ -1436,6 +1639,137 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] update check against a real newer release: the card comes once, Settings shows "Capsid 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Capsid in /Applications) quits Capsid, installs it and reopens it. Capsid started from a build folder offers no Install
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption lines (Panel, "Name the specimen that's playing")
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Capsid settings already stored; Help → Welcome to Capsid shows it again; Return and Esc work; the updates switch stays off until turned on
+
+## Results (Results/, since 0.7.0)
+
+The files sessions made, in one native window: **File → Results…** (⇧⌘R) or
+the toolbar's tray. Sessions by project, recent then older, each with its
+files: a thumbnail (images) or an icon, the name, the kind, the size and the
+date; **Preview** (Quick Look), **Copy**, **Save…**, a drag out to Finder or
+another app, and once saved **Open** and **Reveal in Finder**; **Save All…**
+on a session's row; and **Open Conversation** (the arrow on the session's
+row) for where a file came from. A filter field narrows by file name,
+among the files read so far (it says so: sessions not read yet aren't
+searched). A session's row is open once read with results; one opened by hand
+to load stays open when they arrive (`ShelfDisclosure`).
+
+**Reading** (`ResultsShelf`) goes through the page's own artifact reader
+(`WebContainer.readArtifact`, Remote/ArtifactReader.swift: the three allowed
+GETs, every answer checked again in Swift) with the phone's own checks
+(`ArtifactGate`, shared with Capsid on your phone's file routes: a thumbnail
+only of an image, text only of markdown, text and tables, a download only
+when the listing's size is within 8 MB, and the bytes checked again). It
+needs nothing of Capsid on your phone: no server, no paired device, no
+Settings → Phone switch. A file's version id is only ever one its session's
+list gave.
+
+**Coverage, said in the window:**
+
+- **Recent sessions**: the ~25 the Lab reads anyway (`LabModel.sessions`),
+  taken when the window opens and on Refresh, never followed live (they
+  change with every write while a session works). The 8 newest are read
+  then; the rest when you open them. A list read in the last 5 minutes is
+  kept when the window opens again.
+- **Older sessions**: **Show Older Sessions** reads 50 root sessions from the
+  database (`fetchRecentSessions`: every project's, counted as the project
+  lists count them, newest first by `(updated_at, id)`), **Show More** the
+  next 50. Each one's files are read only when you open it.
+
+Nothing scans in the background. Reads go **two at a time** (lists and
+thumbnails together), each within 30 s (the page's own fetch gives up sooner,
+at 10 s, or 20 s for a download), and **stop when the window closes**: what
+was waiting is let go and a read that answers late lands nowhere. What was
+read stays in memory.
+
+**States**, each with what to do: not read yet (**Load Results**), reading,
+no files, and failures: "Capsid isn't connected to Claude Science right now",
+"Claude Science needs you to sign in again", "This isn't in Claude Science any
+more" (a 404 or 410: the session, or a version deleted or expired, told apart
+by the reader's `missing` outcome since this change; the phone's routes still
+answer it 503), "Couldn't read this", and "Claude Science took too long to
+answer", each with **Try Again**. Older sessions that fail to read say so,
+and Try Again picks up from the page that failed.
+
+**Preview** opens the real macOS Quick Look panel on a temporary copy of the
+file: the row's eye, **Preview** in its context menu, or the Space bar on a
+selected file. The Results window is the panel's controller
+(`ResultsWindow`, with `ResultsQuickLook` as the data source), so the panel
+follows the responder chain as in Finder. The arrow keys move between the
+files the list shows, bar any over 8 MB; only the file asked for is
+downloaded, and the others are fetched one at a time as the keys reach them
+(Quick Look shows its loading view meanwhile). Every kind can be previewed:
+Quick Look renders HTML and SVG without running their scripts. While a copy
+downloads the row shows a spinner and another press does nothing. A file
+over 8 MB by its listing is never downloaded; its row says "Too big to
+preview here (over 8 MB). Save it instead, or open it in Capsid."
+Unreadable, missing, signed-out and timed-out files use the shelf's usual
+sentences on the row. (Until this change Preview was in memory only, with no
+temporary file: a thumbnail, styled markdown, text, a parsed table or PDFKit,
+and never web pages, SVGs or notebooks. Quick Look was chosen over it, which
+is what put a temporary copy on the disk.)
+
+**Temporary copies** (`ShelfTemporaryCopies`). Quick Look and a drag need a
+file, so the shelf writes one:
+`<temporary folder>/Capsid Quick Look/<UUID>/<version id>/<file name>`, in
+the user's own temporary folder. The folders are 0700 and the file 0600; the
+name is sanitized (no path separators or colons, no leading dot, at most 255
+bytes, extension kept), and the version id keeps two files of one name
+apart. A copy is cached by version id while the window is open, so going
+back to a file doesn't download it again. The run's folder is deleted when
+the window closes (the panel is closed first), and the whole "Capsid Quick
+Look" folder at launch (`ResultsShelf.removeTemporaryCopies()`, from
+BenchApp), for a run that never closed.
+
+**Drag out.** Each file row can be dragged to Finder, Mail, Slack and the
+like. The drag carries a file representation (an `NSItemProvider`, typed by
+the file's extension, plain data when unknown) that is fetched when the drop
+is made, not when the drag begins, through the same capped download and into
+the same temporary copy; two drops share one download. A file over 8 MB
+carries nothing and its row says so. (Not SwiftUI's `Transferable`: its
+content type is fixed per type, and this one follows each file.)
+
+**Copy** (context menu) puts on the pasteboard the full image (not the
+thumbnail), the text of markdown, plain text and tables (UTF-8; a file that
+isn't valid UTF-8 says so), or a PDF's data. Other kinds aren't offered. The
+decision is a pure function (`ShelfCopy.content(kind:data:)`); the download
+keeps to the 8 MB cap.
+
+**Save All…** (a button on a session's row once its results are read and
+non-empty, and in its context menu) asks for a folder (choose or create),
+then saves every file of the session there: two downloads at a time, each
+within the time limit and the 8 MB cap (a file over it by its listing is
+skipped without a download). A name already in the folder, or earlier in the
+batch, gets " 2", " 3"… before its extension (compared without case);
+nothing is overwritten. Each file saved is recorded like a single Save, so
+Open and Reveal in Finder work for it, with no Saved card per file. The row
+says "Saving 3 of 7…", then "Saved 6 files. 1 was too big to save here."
+with a Reveal in Finder button for the folder. Failures are counted ("2
+couldn't be saved."), never named; each file's own row says why. One Save
+All runs at a time. Closing the window stops what hasn't started; a file is
+written only whole, once its download is complete, so none is left
+half-written.
+
+**Folder memory.** The folder last saved to is remembered per project, by
+project id and never its name (`UserDefaults` `resultsFolders`,
+`[projectID: path]`), and starts both the Save All… panel and the Save…
+panel for that project's files. A folder that no longer exists is ignored
+and the panel starts in Downloads.
+
+**Saving** (Save… and Save All…) and the temporary copies are the only ways
+a result's content reaches the disk. Save… asks where, reads the file within
+the 8 MB cap and writes it there; the panel's Saved card follows, as for a
+download. **Open** and **Reveal in Finder** then act on that copy; one that
+was moved or deleted is forgotten and says so. Over 8 MB says to open the
+session and download it there.
+
+**Opening on one session.** The Finished card's **Results** button
+(`ResultsWindowController.shared.show(focusing:)`) opens or brings forward
+the window, and the shelf makes sure the session is listed (taking the
+recent sessions again if the Lab knows it now, else putting it at the top of
+the recent ones), opens its row, reads its results if they weren't read or
+were read before it last wrote, and the window selects it and scrolls to
+it. The card shows no count of the files: nothing is read when a session
+finishes, so it can't know one.
 
 ## Capsid on your phone (Remote, since 0.4.0)
 
@@ -1859,6 +2193,17 @@ unexpected status, 404/405, unknown 4xx `code` or non-JSON reply is
   (`remoteActions`, on); off, the routes answer 403 and `can` is all off with
   `why` "Actions are off in Capsid's Settings".
 - **Never logged**: route pattern and status only, as for every request.
+- **Beneath the gates** (since 0.7.0): `act` checks the phone's own gates
+  (the switch, the device's limit, which sessions it may open, the body),
+  then calls `RemoteSessions.respond`, which does the rest on the session's
+  serial queue: the fresh read, the decision and the write. The Mac's reply
+  window (Lab, Answering from the card) calls `respond` itself,
+  with an answer built by `RemoteActionRequest.checkedAnswer`, the check
+  `parse` also uses; so the two take turns on a session, and the second to
+  arrive finds it answered and writes nothing. Its permission answers are
+  the phone's `.permission` requests, under the same table; what to change
+  in a plan is `.planFeedback`, which `parse` never makes, so no phone route
+  can send it.
 
 #### How the server does it (Phase 2 actions)
 

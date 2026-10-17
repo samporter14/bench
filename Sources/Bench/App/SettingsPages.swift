@@ -201,8 +201,8 @@ struct AlertSettingsView: View {
                     Text("In the panel's corner: a question, a plan to approve, an error or a finish. Recent in the toolbar keeps them either way.")
                 }
                 Toggle(isOn: $plansOnCard) {
-                    Text("Show plans on the card, with Approve")
-                    Text("When a session asks you to approve its plan, the card shows the plan's summary and an Approve button. Capsid checks it's still the same plan before approving; anything else opens the session.")
+                    Text("Show plans, questions and requests on the card")
+                    Text("A plan shows its summary, Approve and Request changes; a question shows what it asks and Reply; a permission request shows what it wants, with Allow Once or Deny when they can be answered here (code is read in a small window first). Capsid checks it's still the same plan, question or request before sending; anything else opens the session. With names shown, a question's Mac notification offers its answers too.")
                 }
                 .disabled(!showCards)
                 Toggle(isOn: $sound) {

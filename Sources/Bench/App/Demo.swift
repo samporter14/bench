@@ -35,11 +35,14 @@ enum Demo {
     enum Mode: String, CaseIterable {
         /// One session working: the panel's compact face.
         case working
-        /// One session asking a question: the panel's card face.
+        /// One session asking a question: the panel's card face, with the
+        /// question and Reply; behind it a second card, a request to run
+        /// code, with Review (and Next after a reply). The window sends
+        /// nothing anywhere.
         case card
         /// One session with a plan to approve, its made-up summary on the
-        /// card with Approve. Approve shows the Approved state and sends
-        /// nothing anywhere.
+        /// card with Approve and Request changes. Both show their sent state
+        /// and send nothing anywhere.
         case plan
         /// One session that stopped with an error: the failure card.
         case failed
@@ -143,7 +146,19 @@ enum Demo {
                 ? [session(.running, id: "demo-2", title: "Buffer screen"), session(.running, id: "demo-3", title: "Assay plan")] : []
             showPanel(working: [session(.running)] + others, cards: [])
         case .card?:
-            showPanel(working: [], cards: [.needsInput(session(.needsInput))])
+            let asking = session(.needsInput)
+            // Its question on the card, with Reply; sending it sends nothing anywhere.
+            QuestionReplier.shared.showDemo(sessionID: asking.id, ask: QuestionAsk(toolID: "demo", items: [
+                .init(question: "Which buffer should the screen use for the first plate?", header: "Buffer", multi: false,
+                      options: [.init(label: "HEPES", detail: "Most stable across the temperature range"),
+                                .init(label: "Tris", detail: nil), .init(label: "PBS", detail: "Cheapest")]),
+            ]))
+            // A second card, a request to run code, for Next and Review.
+            let requesting = session(.needsInput, id: "demo-2", title: "Colony counts", reason: .other)
+            QuestionReplier.shared.showDemo(sessionID: requesting.id, request: PermissionRequest(
+                requestID: "demo-request", toolID: "demo-tool", kind: "local_exec", frame: requesting.id, tool: "python",
+                code: "import pandas as pd\n\nplates = pd.read_csv(\"plates.csv\")\nprint(plates.groupby(\"buffer\")[\"colonies\"].sum())\n"))
+            showPanel(working: [], cards: [.needsInput(asking), .needsInput(requesting)])
         case .plan?:
             let waiting = session(.needsInput, reason: .plan)
             // Ten steps, so the list shows "and 2 more…"; one title is long
@@ -163,6 +178,8 @@ enum Demo {
                     "Write up the top three",
                 ],
                 versionID: "demo", artifactID: nil))
+            // Request Changes sends nothing anywhere either.
+            QuestionReplier.shared.markDemo(waiting.id)
             showPanel(working: [], cards: [.needsInput(waiting)])
         case .failed?:
             showPanel(working: [], cards: [.failed(session(.error))])

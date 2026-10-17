@@ -127,6 +127,40 @@ struct BrowseSQLTests {
         #expect(!projects.flatMap(strings).contains { $0.contains("SECRET") })
     }
 
+    /// The results shelf's older sessions: every project's, as the lists
+    /// count them, newest first, a page at a time.
+    @Test func recentSessionsSpanProjectsAndPage() throws {
+        let db = try MadeUpDatabase()
+        defer { db.remove() }
+        try db.project("proj_a", "Made-up A")
+        try db.project("proj_b", "Made-up B")
+        try db.project("proj_old", "Made-up archived", archivedAt: 1_791_000_000_000)
+        var sql = ""
+        for n in 1...(BrowseSQL.pageSize + 5) {
+            sql += MadeUpDatabase.frameSQL(madeUpID(n), project: n % 2 == 0 ? "proj_a" : "proj_b", name: "Session \(n)",
+                                           created: 1, updated: 1_791_000_000_000 + Int64(n) * 1000)
+        }
+        // Never listed: a sub-agent, no task summary, an archived project's.
+        sql += MadeUpDatabase.frameSQL(madeUpID(900), project: "proj_a", created: 1, updated: 1_799_000_000_000,
+                                       parent: madeUpID(1))
+        sql += MadeUpDatabase.frameSQL(madeUpID(901), project: "proj_a", created: 1, updated: 1_799_000_000_000, summary: nil)
+        sql += MadeUpDatabase.frameSQL(madeUpID(902), project: "proj_old", created: 1, updated: 1_799_000_000_000)
+        try db.run(sql)
+
+        let first = try #require(try fetchRecentSessions(db: db.url, after: nil))
+        #expect(first.count == BrowseSQL.pageSize + 1)
+        #expect(first.first?.id == madeUpID(BrowseSQL.pageSize + 5))
+        #expect(Set(first.map(\.projectID)) == ["proj_a", "proj_b"])
+        #expect(first.first?.projectName == "Made-up A" || first.first?.projectName == "Made-up B")
+        #expect(!first.map(\.id).contains(madeUpID(900)) && !first.map(\.id).contains(madeUpID(901)) && !first.map(\.id).contains(madeUpID(902)))
+        let last = first[BrowseSQL.pageSize - 1]
+        let next = try #require(try fetchRecentSessions(db: db.url, after: BrowseCursor(updatedMs: last.updatedMs, id: last.id)))
+        #expect(next.map(\.id) == (1...5).reversed().map(madeUpID))
+        // A cursor out of shape reads nothing.
+        #expect(try fetchRecentSessions(db: db.url, after: BrowseCursor(updatedMs: 1, id: "x' OR 1=1")) == nil)
+        #expect(!first.flatMap(strings).contains { $0.contains("SECRET") })
+    }
+
     @Test func aDatabaseWithoutArchivedAtListsEveryProject() throws {
         let db = try MadeUpDatabase(archived: false)
         defer { db.remove() }

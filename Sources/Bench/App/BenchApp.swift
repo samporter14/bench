@@ -61,6 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LabPanelController.shared.start()
         // Reads a plan for its card, and approves it when asked (Lab/PlanApproval.swift).
         PlanApprover.shared.start()
+        // A question, a permission request or a plan's changes answered from its card (Lab/QuestionReply.swift).
+        QuestionReplier.shared.start()
+        // Quick Look's temporary copies left by a run that never closed Results (Results/ShelfTemporaryCopies.swift).
+        ResultsShelf.removeTemporaryCopies()
         NidusFocus.shared.start()
         NoticeWatchers.shared.start()
         // Running sessions held by a used-up plan limit (Lab/UsagePause.swift).
@@ -199,6 +203,9 @@ struct BenchToolbar: ViewModifier {
                 }
                 ToolbarSpacer(.fixed)
                 ToolbarItem {
+                    ResultsToolbarButton()
+                }
+                ToolbarItem {
                     ScenesToolbarButton()
                 }
             }
@@ -224,6 +231,10 @@ struct BenchCommands: Commands {
             // A demo has no main window to show it on.
             Button("Open Session…") { QuickOpenPresenter.shared.show() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
+                .disabled(Demo.mode != nil)
+            // The files sessions made (Results/ResultsWindow.swift).
+            Button("Results…") { ResultsWindowController.shared.show() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(Demo.mode != nil)
         }
         CommandGroup(after: .toolbar) {

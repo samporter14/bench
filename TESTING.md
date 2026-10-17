@@ -323,6 +323,259 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-17, Capsid 0.7.0: more from the card, and the shelf's Quick Look, drag, copy and Save All
+
+Built on the 2026-10-16 entry (DESIGN.md, Lab → Answering from the card;
+Results). Sending results to Plaque is still held back.
+
+- **More from the card.**
+  - Every needs-input card but a plan's reads its session once, in full
+    (the frame, its last turns and the head of its permission requests),
+    so the card can show a permission request, and the window what Claude
+    said last.
+  - The reply window: ⌘1–⌘9 choose, ⌘↩ sends, Esc closes; once sent with
+    more waiting, Next steps to the next session.
+  - Permission requests on the card, under the phone's own table said for
+    the Mac: Allow Once for a read-only tool, Review (the code in the
+    window) for code, Deny where a no is plain, Open for the rest. From the
+    daemon's code: an allow without a scope records no grant, so it is once.
+  - Request changes… on a plan's card: what to change, sent as a message
+    with no `plan_mode` after a fresh check of the plan's version. From the
+    daemon's code: a message to a waiting plan is a change request, and the
+    plan stays unapproved until Approve. The phone's own message to a
+    waiting plan is still refused.
+  - A question's Mac notification offers its answers (one question, one
+    answer, four choices at most, names shown), checked as the window's.
+  - The Finished card has **Results**, which opens the shelf on that
+    session. It shows no count of files: nothing is read when a session
+    finishes.
+- **The results shelf, more** (built by a sub-agent in a scratch copy, then
+  merged and read through here):
+  - Preview is now the real Quick Look panel (Space, arrow keys between
+    files) on a private temporary copy, replacing the in-memory preview.
+  - Drag a file out (fetched only on the drop), Copy (image, text, PDF),
+    and Save All… of a session, with the last folder remembered per project.
+  - Temporary copies are 0700/0600, in the user's temporary folder, deleted
+    when the window closes and at launch.
+
+Automated, with made-up fixtures only:
+
+- ✅ `swift test`: 1,234 tests in 163 suites (was 1,146 in 151). In full runs
+  today three real-time suites failed by turns (`LettingGoTests`,
+  `RemoteServerLiveTests`' 120-requests-in-half-a-second budget test,
+  `RemotePhotoLiveTests`) while the Mac's load average was 15–93 (Codex in
+  ChatGPT, media analysis, Spotlight). Every other test passed in one run
+  (1,227 in 160 suites); the three passed on their own at lower load, and the
+  budget test failed the same way on a copy without any of today's changes.
+  New:
+  - `CardRepliesTests` and friends (33):
+    - the plan-change write: exactly a message with no `plan_mode`, and
+      refused out of shape; the request's checks (trim, 4,000, references,
+      version, a lower-case uuid v4);
+    - `RemoteDecide.planFeedback`: only the version shown, only while it
+      waits and isn't approved, a project needed; the daemon's replies;
+    - through `RemoteSessions`: the Mac's plan change written with phone
+      actions off, and the phone's own message to a waiting plan still
+      refused, with no new phone route;
+    - the Mac's permission table equal to the phone's for every kind and
+      shape, every sentence said for the Mac, none mentioning a phone;
+    - the card's read: a request at the head of the queue, the root's own
+      question first, every wait but a plan's read, what Claude said last;
+    - the window's keys (`ReplyKeys`);
+    - the replier: a read-only tool allowed once from the card and the card
+      gone, one send per press; what the table doesn't offer never sent; a
+      changed request shown instead; handled elsewhere closed; a failure
+      saying try again and a refusal saying why for the Mac; a request that
+      stops waiting; what Claude said carried;
+    - plan changes: not read for the card but sent from it; the same words
+      keeping their intent id across a retry, new words a new one; a plan
+      that changed or stopped waiting sending no more, the words kept; a
+      reference never sent;
+    - Next: the other cards but a plan's, in order; a card not on top read
+      when the window steps to it;
+    - a notification's answer sent through the same check, and one before
+      the page is up kept for the window;
+    - `NotificationAnswerTests`: which questions get answers (one question,
+      one answer, at most four choices, names shown), the notification
+      saying the question, its copy of the answers checked again on the way
+      back, and buttons and Reply… making the window's answer (not past
+      1,000 characters, not blank).
+  - The shelf (56 new, the in-memory preview's test removed):
+    - `ResultsShelfTests`: Quick Look's copy (one per version and reused,
+      the folder layout and 0700/0600, same-named files apart, an awkward
+      name made safe); over-cap files never downloaded; each failure's
+      sentence on the row; a second press while loading doing nothing;
+      close deleting the copies and writing nothing mid-download; launch
+      cleanup; drag (nothing read until the drop, through a real
+      `NSItemProvider` load, sharing Quick Look's copy, two drops fetching
+      once, over-cap carrying nothing, the content type from the extension);
+      the panel's file list; browsing making no temporary folder.
+    - `ShelfCopyTests` (7): the pure decision by kind and bytes (UTF-8, a
+      byte-order mark, PDF, image, kinds not offered); Copy through the
+      shelf; the write into a private named pasteboard.
+    - `ShelfSaveAllTests` (14): names against the folder and within the
+      batch, without case; two at a time with the progress line moving;
+      over-cap skipped; failures counted, never named; one batch at a time;
+      each file recorded with no Saved card; closing leaving no partial
+      files (on a real folder); the folder remembered per project by id,
+      across shelves, forgotten when gone, and not after a failed save.
+    - `ShelfFocusTests` (7): the session listed, opened and read; found by
+      taking the snapshot again; put at the top; an older one; a stale list
+      read again; the page not up; close clearing it.
+    - `ShelfFileNameTests` (3) and `ShelfTemporaryCopiesTests` (8).
+- ✅ Mutation checks, each reverted: the Mac's table allowing everything
+  (73 failures), `plan_mode: false` in a plan change, no version check
+  before a plan change, and the replier skipping the table: each caught.
+  In the shelf, dropping the 8 MB check on a listing's size (12 failures)
+  or on the bytes (19) was caught. Dropping Save All's own "window closed"
+  check before a write was not: a closed window cancels the batch's reads,
+  which then come back as nothing, so no write follows either way. The
+  check stays as a second guard, untested on its own.
+- ✅ Off-screen renders (made-up data, no window on screen): the reply
+  window as a question with what Claude said and its keys, a permission
+  request with its code, sent with Next, and a plan change, light and dark;
+  the shelf with Save All's row and summary (it draws only inside a window
+  that is never shown). The card's Liquid Glass doesn't draw off-screen.
+
+Not checked live (Capsid wasn't launched, and nothing reached a real page or
+daemon). Check the first two of each first:
+
+- a plan change reaching Claude Science and the plan coming back revised
+  and waiting (the daemon's code says so; not seen) — try it in Example
+  project;
+- Allow Once and Deny reaching a real request, and Review's code box;
+- a question's notification with its buttons and Reply…, from Notification
+  Center and the lock screen, and a launch from one;
+- the window's keys (⌘1–⌘9, ⌘↩, Esc) and Next in the app;
+- the card's new lines and buttons (Request changes…, the permission rows,
+  Finished's Results) at the panel's width;
+- `.onDrag` inside the list (it may fight the list's own row drag), and the
+  dropped file's name and extension in Finder;
+- Space opening Quick Look from a file row inside its session's disclosure,
+  the arrow keys moving between files, HTML and SVG without scripts;
+- Copy's results pasted in other apps; the open and save panels starting in
+  the remembered folder; "Saving 3 of 7…" and Reveal in Finder; the window
+  scrolling to the focused session;
+- the temporary folder's permissions and its cleanup on a real launch.
+
+## 2026-10-16, after 0.6.0: answering from the card, and the results shelf (released in 0.7.0)
+
+Two features, built on what Capsid on your phone already had (DESIGN.md,
+Lab → Answering from the card; Results). Sending results to
+Plaque was held back for now.
+
+- **A question answered from its card.**
+  - The card shows the question and how it's answered, with Reply, Open
+    and Later.
+  - Reply opens a small window beside the panel, never on its own.
+  - Answers go through `RemoteSessions.respond`, the actions' own core
+    beneath the phone's gates. It reads the session afresh and checks the
+    question is still the one shown, so the Mac's answers work with
+    Capsid on your phone off.
+  - The answer is built by the phone's rule and checked by
+    `RemoteActionRequest.checkedAnswer`, the check `parse` now shares.
+- **The results shelf.**
+  - Opened from File → Results… (⇧⌘R) or the toolbar's tray.
+  - It reads through the page's artifact reader with the phone's own size
+    and kind checks (`ArtifactGate`, now shared with the phone's routes).
+  - Recent sessions are taken when it opens, with the 8 newest read then.
+    Older sessions come from a new database page query
+    (`fetchRecentSessions`), on request.
+  - Reads go two at a time, within a time limit, and stop when the window
+    closes.
+  - Previews stay in memory, and only Save writes a file.
+  - The artifact reader now tells a 404/410 (`missing`) apart from other
+    failures; the phone's routes still answer it 503.
+
+Automated, with made-up fixtures only:
+
+- ✅ `swift test`: 1,146 tests in 151 suites, all passing. New:
+  - `QuestionAnswersTests`:
+    - the answer rule for one choice, Other replacing the choice, several
+      in the options' order plus typed text, several but only typed, and a
+      question with no choices;
+    - completeness and the 1,000-character cap;
+    - that `checkedAnswer` refuses what `parse` refuses.
+  - `QuestionCardStateTests`: which requests the card answers (the root's
+    own waiting question only), and what the card says of it.
+  - `QuestionReplierTests`:
+    - one read per card, with the setting off or for a plan reading
+      nothing;
+    - unsupported requests, and a failed read tried again after 15 s;
+    - the destination shown;
+    - an unfinished answer sending nothing;
+    - one send per press, with the card going once sent;
+    - a new question replacing the draft, and the same request keeping it;
+    - answered elsewhere;
+    - a re-read that fails after "changed" claiming nothing, keeping the
+      draft and Send;
+    - a failure keeping the draft, and Send trying again;
+    - the session stopping waiting;
+    - the draft kept when the window closes, and after Later.
+  - `NativeReplyCoreTests`, through `RemoteSessions` itself:
+    - with phone actions off, the phone's route answers 403 while the
+      Mac's reply is written;
+    - the request is read again just before sending, so a replaced or
+      resolved question writes nothing;
+    - the replier end to end with the phone off;
+    - a Mac and a phone answer at once take turns, and only one is written.
+  - `ResultsShelfTests`:
+    - coverage, grouping and the coverage sentence;
+    - two reads at a time;
+    - not connected;
+    - reopening keeping fresh results, and Refresh;
+    - each failure's state, and Try Again;
+    - a malformed list (the reader's own check) unreadable;
+    - a read that never answers running out of time, with the late answer
+      ignored;
+    - closing stopping reads, with late answers landing nowhere;
+    - older sessions a page at a time, only when asked, with a failed page
+      retried from where it failed;
+    - a page's cursor and each session's link;
+    - Open Conversation;
+    - thumbnails only for images, only WebP, and once;
+    - each kind's preview, or why not, with never a read for HTML, SVG,
+      notebooks or a PDF over 8 MB;
+    - Save writing only where chosen, keeping to the caps, and reporting a
+      failed write;
+    - a second Save while one runs doing nothing;
+    - a failed thumbnail tried again when the window opens again;
+    - a moved saved copy forgotten;
+    - browsing never writing to the disk.
+  - `ShelfDisclosureTests`: a session opened to load stays open when its
+    results arrive. A review caught it snapping shut; the rule is now a
+    value with tests. Rows read with results are open until closed by hand,
+    and a search opens them all.
+  - `BrowseSQLTests.recentSessionsSpanProjectsAndPage`: the new query
+    across projects, with sub-agents, sessions without a summary and
+    archived projects left out, the cursor, and a bad cursor reading
+    nothing.
+  - `RemoteArtifactsTests`:
+    - a 404 or 410 is `missing` for every read (and a list's), not
+      `unreadable`;
+    - the phone's text route still answers it 503;
+    - the other statuses are still unreadable.
+- ✅ Mutation checks, each reverted:
+  - letting the shelf read eight at a time fails `readsGoTwoAtATime`;
+  - dropping its closed-window check fails
+    `closingStopsTheReadsAndLateAnswersLandNowhere`.
+- ✅ Off-screen renders (made-up data, no window on screen) of the reply
+  window, light and dark, editing and failed, and the shelf, light and dark,
+  with each kind of session state. The floating card's Liquid Glass doesn't
+  draw off-screen, so the card was not seen.
+
+Not checked live (Capsid wasn't launched, and nothing reached a real page or
+daemon):
+
+- the question card and the reply window in the app: the window's
+  placement beside the panel, its keyboard focus, and that the panel still
+  never takes the keyboard (`--demo card` shows the card with a made-up
+  question);
+- a real answer reaching Claude Science through the reply window;
+- the results shelf against real sessions and files: the reads, thumbnails,
+  previews (PDFKit, markdown), Save, Open and Reveal in Finder, the menu item
+  and the toolbar button.
+
 ## 2026-10-15, Capsid 0.6.0 (Bench is renamed Capsid)
 
 Bench is now Capsid (DESIGN.md, Naming). Every name a person reads changed,

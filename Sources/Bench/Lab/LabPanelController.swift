@@ -72,6 +72,10 @@ final class LabPanelController {
         }
     }
 
+    /// Where the panel is on screen while it is up: the reply window
+    /// (Lab/ReplyWindow.swift) opens beside it.
+    var panelFrame: NSRect? { panel?.isVisible == true ? panel?.frame : nil }
+
     /// Starts observing; the panel comes and goes with the model and the settings.
     func start() {
         guard subscriptions.isEmpty else { return }

@@ -775,6 +775,34 @@ func fetchProjectSessions(db: URL, project: String, after cursor: BrowseCursor?,
     return try runReadOnlyQuery(db: db, sql: sql, arguments: arguments).compactMap(BrowseSQL.row)
 }
 
+/// One page of root sessions across every project, newest first by
+/// `(updated_at, id)`, after `cursor`: the results shelf's older sessions
+/// (Results/ResultsShelf.swift), read only when asked for. Counted as
+/// `fetchProjectSessions` counts them (with a task summary; an archived
+/// project's left out). Up to `BrowseSQL.pageSize + 1` rows: the extra one
+/// says there is a next page. Nil (nothing read) for a cursor out of shape.
+func fetchRecentSessions(db: URL, after cursor: BrowseCursor?) throws -> [BrowseRow]? {
+    var conditions = ["\(sessionFilterSQL("f"))", "f.task_summary IS NOT NULL"]
+    var arguments: [SQLArgument] = []
+    if try ColumnProbe.shared.has(db: db, table: "projects", column: "archived_at") { conditions.append("p.archived_at IS NULL") }
+    if let cursor {
+        guard PlanCheck.isFrameID(cursor.id), cursor.updatedMs >= 0 else { return nil }
+        conditions.append("""
+            (COALESCE(f.updated_at,0) < ? \
+            OR (COALESCE(f.updated_at,0) = ? AND f.id < ?))
+            """)
+        arguments += [.integer(cursor.updatedMs), .integer(cursor.updatedMs), .text(cursor.id)]
+    }
+    let sql = """
+        SELECT \(BrowseSQL.rowColumns)
+        FROM frames f LEFT JOIN projects p ON p.id = f.project_id
+        WHERE \(conditions.joined(separator: "\n  AND "))
+        ORDER BY COALESCE(f.updated_at,0) DESC, f.id DESC
+        LIMIT \(BrowseSQL.pageSize + 1);
+        """
+    return try runReadOnlyQuery(db: db, sql: sql, arguments: arguments).compactMap(BrowseSQL.row)
+}
+
 /// One root session by its full id, as the session list's filter counts
 /// sessions (without the `task_summary` test, so any root opens). Nil when
 /// there is none, or for an id out of shape.

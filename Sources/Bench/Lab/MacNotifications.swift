@@ -44,6 +44,99 @@ enum NotificationRules {
         /// longer knows the session (a notification that outlived a launch).
         let sessionID: String?
         let link: URL?
+        /// A question's own answers, offered on the notification
+        /// (`questionActions`); its words are then the question's.
+        var question: QuestionActions? = nil
+    }
+
+    // MARK: Answering a question from its notification
+
+    /// The answers a question's notification offers: a button for each
+    /// choice and Reply… to type one. Only for a single question with one
+    /// answer and at most four choices, and only when names are shown, since
+    /// the buttons say what it asks. A plan or a permission request never
+    /// gets an answer here: those are read on the card first.
+    struct QuestionActions: Equatable, Sendable {
+        static let maxChoices = 4
+        static let replyID = "reply"
+        static let choicePrefix = "answer."
+
+        let toolID: String
+        let question: String
+        let choices: [String]
+
+        /// The category: one per card, as the buttons are the card's own.
+        static func categoryID(for cardID: String) -> String { "question." + cardID }
+
+        static func choiceID(_ index: Int) -> String { choicePrefix + String(index) }
+
+        // The notification's own copy of what it offered, read back when an
+        // answer comes, checked again as the page's words are.
+        private static let toolKey = "q.tool", questionKey = "q.text", choicesKey = "q.choices"
+
+        var userInfo: [String: Any] {
+            [Self.toolKey: toolID, Self.questionKey: question, Self.choicesKey: choices]
+        }
+
+        init(toolID: String, question: String, choices: [String]) {
+            self.toolID = toolID
+            self.question = question
+            self.choices = choices
+        }
+
+        init?(userInfo: [AnyHashable: Any]) {
+            guard let toolID = Pick.text(userInfo[Self.toolKey], limit: SessionProjection.Limit.toolID),
+                  let question = Pick.text(userInfo[Self.questionKey], limit: SessionProjection.Limit.question),
+                  let raw = userInfo[Self.choicesKey] as? [Any], raw.count <= Self.maxChoices else { return nil }
+            var choices: [String] = []
+            for value in raw {
+                guard let label = Pick.text(value, limit: SessionProjection.Limit.label) else { return nil }
+                choices.append(label)
+            }
+            self.init(toolID: toolID, question: question, choices: choices)
+        }
+
+        /// The question as the notification knows it: enough for the check
+        /// beneath every answer, which matches its request id and its words.
+        var ask: QuestionAsk {
+            QuestionAsk(toolID: toolID, items: [SessionProjection.Question(
+                question: question, header: "", multi: false,
+                options: choices.map { SessionProjection.Option(label: $0, detail: nil) })])
+        }
+
+        /// What a button or Reply… answers, as a draft the window could show;
+        /// nil for anything else, or an answer that couldn't be sent.
+        func draft(actionID: String, typed: String?) -> ReplyDraft? {
+            var draft = ReplyDraft(for: ask)
+            if actionID.hasPrefix(Self.choicePrefix) {
+                guard let index = Int(actionID.dropFirst(Self.choicePrefix.count)), choices.indices.contains(index) else {
+                    return nil
+                }
+                draft.pick(index, in: 0, multi: false)
+            } else if actionID == Self.replyID, let typed {
+                draft.setOther(true, in: 0, multi: false)
+                draft.other[0] = typed
+            } else {
+                return nil
+            }
+            return QuestionAnswers.request(ask, draft: draft) == nil ? nil : draft
+        }
+    }
+
+    static func questionActions(for ask: QuestionAsk, settings: Settings) -> QuestionActions? {
+        guard settings.showNames, ask.items.count == 1, let item = ask.items.first, !item.multi,
+              item.options.count <= QuestionActions.maxChoices else { return nil }
+        return QuestionActions(toolID: ask.toolID, question: item.question, choices: item.options.map(\.label))
+    }
+
+    /// A question card's notification once its question is read: the
+    /// question as the words, and its answers.
+    static func withQuestion(_ content: Content, ask: QuestionAsk?, settings: Settings) -> Content {
+        guard let ask, let actions = questionActions(for: ask, settings: settings) else { return content }
+        var asked = Content(id: content.id, title: content.title, body: actions.question, sound: content.sound,
+                            sessionID: content.sessionID, link: content.link)
+        asked.question = actions
+        return asked
     }
 
     /// Nil when the card gets no notification: the setting is off, macOS
@@ -162,6 +255,9 @@ final class MacNotifications: NSObject, ObservableObject {
     /// by id, the latest of each: one that goes meanwhile is not posted, and
     /// one that asks something new meanwhile posts as it is now.
     private var waiting: [String: LabCard] = [:]
+    /// A question card's answers, by card id: the categories registered with
+    /// macOS, one per card, dropped with the card.
+    private var categories: [String: UNNotificationCategory] = [:]
 
     private override init() { super.init() }
 
@@ -225,8 +321,19 @@ final class MacNotifications: NSObject, ObservableObject {
         // The card went, or was dealt with, while macOS answered; or an
         // earlier answer already posted its latest.
         guard let card = waiting.removeValue(forKey: id) else { return }
-        guard let content = NotificationRules.content(for: card, settings: Self.settings(authorized: authorization == .allowed))
-        else { return }
+        let settings = Self.settings(authorized: authorization == .allowed)
+        guard let content = NotificationRules.content(for: card, settings: settings) else { return }
+        // A question's answers come with it: its question is read first (or
+        // taken from the card's read), a few seconds at most.
+        if case .needsInput(let session) = card, session.waitingReason == .question, settings.showNames {
+            Task {
+                let ask = await QuestionReplier.shared.askForNotification(session.id)
+                // Gone, or dealt with, meanwhile.
+                guard LabModel.shared.cards.contains(where: { $0.id == card.id }) else { return }
+                self.add(NotificationRules.withQuestion(content, ask: ask, settings: settings))
+            }
+            return
+        }
         add(content)
     }
 
@@ -236,6 +343,7 @@ final class MacNotifications: NSObject, ObservableObject {
         guard card.hasNotification else { return }
         waiting.removeValue(forKey: card.id)
         center?.removeDeliveredNotifications(withIdentifiers: [card.id])
+        if categories.removeValue(forKey: card.id) != nil { center?.setNotificationCategories(Set(categories.values)) }
     }
 
     /// Clears every notification Bench has delivered: when names are turned
@@ -243,6 +351,8 @@ final class MacNotifications: NSObject, ObservableObject {
     func clearDelivered() {
         waiting.removeAll()
         center?.removeAllDeliveredNotifications()
+        categories.removeAll()
+        center?.setNotificationCategories([])
     }
 
     private static func settings(authorized: Bool) -> NotificationRules.Settings {
@@ -269,13 +379,59 @@ final class MacNotifications: NSObject, ObservableObject {
         var info: [String: String] = [:]
         if let id = content.sessionID { info[Self.sessionKey] = id }
         if let link = content.link { info[Self.linkKey] = link.absoluteString }
-        note.userInfo = info
+        var userInfo: [String: Any] = info
+        if let question = content.question {
+            // Its own category, registered before it is posted, so the
+            // buttons are there when it shows.
+            let category = Self.category(content.id, question)
+            categories[content.id] = category
+            center.setNotificationCategories(Set(categories.values))
+            note.categoryIdentifier = category.identifier
+            userInfo.merge(question.userInfo) { _, new in new }
+        }
+        note.userInfo = userInfo
         // The card's id is the identifier, so a card that asks something new
         // replaces its notification rather than adding another.
         center.add(UNNotificationRequest(identifier: content.id, content: note, trigger: nil)) { error in
             if let error {
                 log.error("Couldn't post a notification: \(error.localizedDescription, privacy: .public)")
             }
+        }
+    }
+
+    /// A button for each choice, then Reply… to type an answer. Each asks for
+    /// the Mac to be unlocked first, and none brings Capsid forward.
+    private static func category(_ cardID: String, _ question: NotificationRules.QuestionActions) -> UNNotificationCategory {
+        var actions: [UNNotificationAction] = question.choices.enumerated().map { index, label in
+            UNNotificationAction(identifier: NotificationRules.QuestionActions.choiceID(index),
+                                 title: label.count > 60 ? String(label.prefix(59)) + "…" : label,
+                                 options: [.authenticationRequired])
+        }
+        actions.append(UNTextInputNotificationAction(identifier: NotificationRules.QuestionActions.replyID, title: "Reply…",
+                                                     options: [.authenticationRequired], textInputButtonTitle: "Send",
+                                                     textInputPlaceholder: "Your answer"))
+        return UNNotificationCategory(identifier: NotificationRules.QuestionActions.categoryID(for: cardID),
+                                      actions: actions, intentIdentifiers: [], options: [])
+    }
+
+    /// An answer chosen in a notification: sent as the window sends it, once
+    /// the page is up and the session known (a launch from the notification
+    /// waits a little for both). Anything but sent opens the reply window,
+    /// with the answer still in it, or the session when even that can't be.
+    fileprivate func answered(sessionID: String, link: URL?, ask: QuestionAsk, draft: ReplyDraft) async {
+        let replier = QuestionReplier.shared
+        for _ in 0..<40 where !(WebContainer.shared.status == .ready && LabModel.shared.knows(sessionID)) {
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        replier.answerFromNotification(sessionID, ask: ask, draft: draft)
+        await replier.settled()
+        switch replier.replies[sessionID]?.phase {
+        case .sent?:
+            break
+        case nil:
+            opened(sessionID: sessionID, link: link)
+        default:
+            ReplyWindowController.shared.show(sessionID)
         }
     }
 
@@ -302,7 +458,17 @@ extension MacNotifications: UNUserNotificationCenterDelegate {
         let link = (info[Self.linkKey] as? String).flatMap { URL(string: $0) }
         let isClick = response.actionIdentifier == UNNotificationDefaultActionIdentifier
             && response.notification.request.identifier != Self.testID
+        // A button or Reply…: the answer the notification offered, read back
+        // from its own copy and checked as any answer is.
+        let typed = (response as? UNTextInputNotificationResponse)?.userText
+        let question = NotificationRules.QuestionActions(userInfo: info)
+        let draft = question?.draft(actionID: response.actionIdentifier, typed: typed)
+        let ask = question?.ask
         completionHandler()
+        if let session, let ask, let draft, PlanCheck.isFrameID(session) {
+            Task { @MainActor in await self.answered(sessionID: session, link: link, ask: ask, draft: draft) }
+            return
+        }
         guard isClick else { return }
         Task { @MainActor in self.opened(sessionID: session, link: link) }
     }
@@ -314,10 +480,17 @@ extension LabModel {
     /// clears the session's cards and reminder.
     @discardableResult
     func open(sessionID id: String) -> Bool {
-        let known = cards.compactMap(\.session) + waiting + working + latest + recent.compactMap(\.session)
-        guard let session = known.first(where: { $0.id == id }) else { return false }
+        guard let session = known(id) else { return false }
         open(session)
         return true
+    }
+
+    /// Whether Bench knows the session now, from a card or the lists.
+    func knows(_ id: String) -> Bool { known(id) != nil }
+
+    private func known(_ id: String) -> SessionStatus? {
+        let known = cards.compactMap(\.session) + waiting + working + latest + recent.compactMap(\.session)
+        return known.first(where: { $0.id == id })
     }
 }
 
@@ -353,7 +526,7 @@ struct MacNotificationsSection: View {
             .disabled(!enabled)
             Toggle(isOn: $names) {
                 Text("Show session and project names")
-                Text("Off, they read \u{201C}A session needs you\u{201D}, and so on.")
+                Text("On, a question's notification also offers its answers when it has a few choices or a typed answer (with questions shown on the card). Off, they read \u{201C}A session needs you\u{201D}, and so on, with no answers.")
             }
             .disabled(!enabled)
             // Those already in Notification Center named their sessions, or
