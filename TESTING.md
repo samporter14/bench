@@ -328,6 +328,11 @@ yet checked live: a real failed session, and a real notification close.
 Built on the 2026-10-16 entry (DESIGN.md, Lab → Answering from the card;
 Results). Sending results to Plaque is still held back.
 
+- ✅ Released as v0.7.0 (`Bench.zip` with Capsid.app inside) and installed
+  with the README's `install.sh` line: /Applications/Capsid.app is 0.7.0
+  (33), signed by Solanum Code Signing, CDHash `47a787c6…`, the same as the
+  release's download and the local build, and running.
+
 - **More from the card.**
   - Every needs-input card but a plan's reads its session once, in full
     (the frame, its last turns and the head of its permission requests),
