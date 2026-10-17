@@ -63,8 +63,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PlanApprover.shared.start()
         // A question, a permission request or a plan's changes answered from its card (Lab/QuestionReply.swift).
         QuestionReplier.shared.start()
-        // Quick Look's temporary copies left by a run that never closed Results (Results/ShelfTemporaryCopies.swift).
-        ResultsShelf.removeTemporaryCopies()
+        // Quick Look's temporary copies left by a run that never closed Results, deleted off
+        // the main actor; this run's first copy waits for it (Results/ShelfTemporaryCopies.swift).
+        ResultsShelf.shared.cleanUpAtLaunch()
         NidusFocus.shared.start()
         NoticeWatchers.shared.start()
         // Running sessions held by a used-up plan limit (Lab/UsagePause.swift).

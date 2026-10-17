@@ -55,6 +55,8 @@ final class ReplyWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.setFrameOrigin(origin ?? Self.origin(for: window.frame.size, beside: LabPanelController.shared.panelFrame))
         windows[sessionID] = window
+        // Its reply is kept while the window shows it, sent or not.
+        replier.windowOpened(sessionID)
         window.makeKeyAndOrderFront(nil)
     }
 
@@ -78,7 +80,7 @@ final class ReplyWindowController: NSObject, NSWindowDelegate {
         guard let window = notification.object as? NSWindow,
               let id = windows.first(where: { $0.value === window })?.key else { return }
         windows[id] = nil
-        QuestionReplier.shared.closeReply(id)
+        QuestionReplier.shared.windowClosed(id)
     }
 
     static func title(_ mode: ReplyMode?) -> String {

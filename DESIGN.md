@@ -976,17 +976,36 @@ setting on, a question's notification offers its answers
 (`NotificationRules.QuestionActions`): a button per choice and **Reply…** (a
 text field), for a single question with one answer and at most four choices
 or none. Its words are then the question's. The question is the card's read,
-or one read of its own when the card hasn't one (`askForNotification`, four
-seconds at most; a notification that can't wait for it goes as before). The
+or one read of its own when the card hasn't one (`askForNotification`). Either
+way it waits four seconds at most (an injected clock in tests), then goes as
+before. Waiting on the card's own read never cancels it, since the card still
+needs it; a read of its own that loses to the limit is cancelled, and the
+timer is cancelled when the read wins. Whichever comes first answers, once. The
 buttons need the Mac unlocked and don't bring Capsid forward. An answer is
 read back from the notification's own copy of what it offered, checked again
 as the page's words are, made into a draft by the same rule, and sent by
 `answerFromNotification` through `respond`, which checks the question's
-`tool_id` and words afresh. That check is why a question may be answered
+`tool_id` and words afresh. It answers with how that one send ended, so the
+notification waits for its own answer and never for other sessions' reads or
+sends. That check is why a question may be answered
 here while a plan may not (Mac notifications: plans and permission requests
 stay Open-only). A launch from the notification waits up to 20 s for the page
-and the session; anything but sent opens the reply window with the answer
-still in it (or the session, when even that can't be).
+and the session. Sent, or answered elsewhere meanwhile: nothing more. Not
+sent: the reply window opens with the answer still in it (or the session,
+when even that can't be).
+
+**What is kept** (since 0.7.1). A reply is owned by its open
+window (`windowOpened`, `windowClosed`, which the window controller calls), by
+a send under way, or, as a draft (editing, changed or failed), by a session
+still waiting. Anything else is let go at once (`prune`): one sent or closed
+from the card's own buttons or a notification with no window to show it, and
+a draft whose session no longer waits. An open window keeps what it shows,
+sent or closed, until it closes. What was read for a card (its state, what
+Claude said, a failed read's time) goes with the card however it goes (sent,
+Later, ×, the wait ending); a card read takes itself out of the reads under
+way when it ends. So a long run keeps nothing for sessions answered from the
+card: hundreds of direct approvals or notification answers leave nothing
+behind (`ReplyLifetimeTests`).
 
 **Privacy.** As the plan card: the question's texts and choices, a
 permission request's plain fields (as the phone's), and the session's last
@@ -1675,11 +1694,71 @@ list gave.
   lists count them, newest first by `(updated_at, id)`), **Show More** the
   next 50. Each one's files are read only when you open it.
 
-Nothing scans in the background. Reads go **two at a time** (lists and
-thumbnails together), each within 30 s (the page's own fetch gives up sooner,
-at 10 s, or 20 s for a download), and **stop when the window closes**: what
-was waiting is let go and a read that answers late lands nowhere. What was
-read stays in memory.
+Nothing scans in the background. What was read stays in memory, except the
+decoded thumbnails, which are let go when the window closes.
+
+**Transfers** (`ShelfTransfers`, since 0.7.1). Every read the shelf makes goes
+through one queue: lists, thumbnails, Quick Look's and a drag's copies, Copy,
+Save and Save All. At most two run at once, whoever asked (in 0.7.0 only
+lists and thumbnails shared that limit; whole-file reads didn't, and eight
+previews could download at once). The same read asked for twice (a preview
+and a drop of one file, say) is read once, and each asker gets the answer.
+Order: what you asked for (Quick Look, a drag, Copy, Save) first, then Save
+All, then lists, then thumbnails, oldest first within each; a read that has
+seen eight others start ahead of it goes next, so none waits for ever. Each
+read has 30 s from its start (not its wait in line); the page's own fetch
+gives up at 10 s, or 20 s for a download. Save All keeps two of its downloads
+in the queue at a time, so at most two finished files wait in memory.
+
+**Cancellation.** Each asker can stop waiting on its own. A read nobody wants
+any more never starts if it was waiting, and is cancelled if it was running:
+the shelf's reads carry a nonce, and the page files an `AbortController`
+under it in the reader's own content world (`globalThis.benchArtifactReads`),
+so `benchAbortRead(nonce)` aborts that fetch and no other. An aborted read
+answers `cancelled`, never a failure; one stopped by the 10/20 s deadline is
+still "Couldn't read this". Cancelling a Swift task is never taken for proof
+that a fetch stopped: a read cancelled or timed out keeps its place among the
+two until the page has actually answered, so closing and reopening the window
+never runs more than two. Closing the window lets every asker go except a
+Save (you chose where it goes); a late answer lands nowhere and writes no
+copy. Moving through files in Quick Look withdraws the file left
+(`ShelfPreviewDemand`): its download never starts, or stops unless a drag,
+Copy or a save still wants it. The phone's reads carry no nonce, and nothing
+about them changed.
+
+**Disk.** The temporary copies are written, read, re-checked and deleted by
+an actor (`ShelfTemporaryCopies`), off the main actor; saved files (Save…,
+Save All…) are written by another (`ShelfSavedFiles`), one at a time. Each
+window opening is a run; a write that lands after its run was deleted is
+dropped, so a closed window's folder is never made again, and deleting an old
+run never touches the new one's. Quick Look asks for a copy on the main
+thread, so the shelf keeps a list of copies known to be whole, updated when
+each write lands. Launch cleanup (`ResultsShelf.shared.cleanUpAtLaunch()`,
+from BenchApp) deletes earlier runs' folders off the main actor; this run's
+first copy is written after it, and it never deletes this run's folder. Left
+on the main actor on purpose: the existence checks behind Save All's names
+and the remembered folders (metadata only).
+
+**Thumbnails** (`ShelfThumbnails`, since 0.7.1). A thumbnail read's WebP is
+decoded once, with ImageIO, off the main actor, to a picture of at most 144 px
+on its long side (twice the 72 px the row's 36 pt square needs on a Retina
+screen; the daemon's 120-px thumbnails are kept as they come, never
+enlarged), and only that picture is kept; the WebP bytes are dropped. Before
+decoding, the type and the size in the header are checked: more than 4096 ×
+4096 pixels is refused unread, and bytes that aren't an image keep nothing;
+either way the version is marked, so it isn't read again in a loop. What is
+kept is counted: each picture costs its pixels (never less than width ×
+height × 4) plus 1 KiB, and the total never exceeds 16 MiB (about 450 usual
+thumbnails, 199 of the largest), the least recently used going first;
+storing a version again replaces its cost. Rows draw the kept picture
+through `ShelfThumbnailView`, which watches only this store, so progress
+lines and other rows' states don't touch a thumbnail and nothing is decoded
+while drawing. The pictures are let go when the window closes (a decode still
+running then keeps nothing); opening again, or Refresh, the rows ask again. A
+picture that didn't decode is tried again the next time the window opens,
+not on Refresh. (Until this change the shelf kept up to 200 thumbnails as
+WebP bytes, bounded by count and not by size: up to 800 MiB in theory, and
+every row rebuilt its image from the bytes whenever the shelf changed.)
 
 **States**, each with what to do: not read yet (**Load Results**), reading,
 no files, and failures: "Capsid isn't connected to Claude Science right now",
@@ -1717,7 +1796,7 @@ bytes, extension kept), and the version id keeps two files of one name
 apart. A copy is cached by version id while the window is open, so going
 back to a file doesn't download it again. The run's folder is deleted when
 the window closes (the panel is closed first), and the whole "Capsid Quick
-Look" folder at launch (`ResultsShelf.removeTemporaryCopies()`, from
+Look" folder at launch (`ResultsShelf.shared.cleanUpAtLaunch()`, off the main actor, from
 BenchApp), for a run that never closed.
 
 **Drag out.** Each file row can be dragged to Finder, Mail, Slack and the
@@ -1736,7 +1815,7 @@ keeps to the 8 MB cap.
 
 **Save All…** (a button on a session's row once its results are read and
 non-empty, and in its context menu) asks for a folder (choose or create),
-then saves every file of the session there: two downloads at a time, each
+then saves every file of the session there: two downloads at a time in the shared queue, each
 within the time limit and the 8 MB cap (a file over it by its listing is
 skipped without a download). A name already in the folder, or earlier in the
 batch, gets " 2", " 3"… before its extension (compared without case);

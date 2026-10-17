@@ -10,10 +10,12 @@
 //     newest are read then; the rest when opened.
 //   - Older: read from the database a page at a time, and each session's results
 //     only when asked for.
-// Reads go two at a time, each with a time limit, and stop when the window
-// closes. What is listed lives in memory only; a file's contents reach the disk
-// only through Save, Save All, and the temporary copies Quick Look and a drag
-// need (ShelfTemporaryCopies: a private folder, deleted when the window closes).
+// Every read goes through one queue (ShelfTransfers): two at a time, whoever
+// asked, each with a time limit, and stopped when the window closes, down to
+// the page's fetch. What is listed lives in memory only; a file's contents
+// reach the disk only through Save, Save All, and the temporary copies Quick
+// Look and a drag need (ShelfTemporaryCopies: a private folder, deleted when
+// the window closes). The disk is written and read off the main actor.
 import Foundation
 
 /// Which part of the shelf a session is in.
@@ -148,6 +150,8 @@ enum ShelfSaveOutcome: Equatable, Sendable {
     case tooBig
     case failed(ShelfFailure)
     case writeFailed(String)
+    /// The task asking was cancelled before the file arrived: nothing was written.
+    case cancelled
 }
 
 /// Which sessions' rows are open. By default a session is open once read
@@ -182,6 +186,7 @@ final class ResultsShelf: ObservableObject {
         /// A page of older root sessions from the database; nil when it can't be read.
         var older: @MainActor (BrowseCursor?) async -> OlderPage?
         /// The page's artifact reader, checked (`WebContainer.readArtifact`).
+        /// Cancelling the task awaiting it aborts the page's fetch (`ArtifactReadAbort`).
         var read: @MainActor (ArtifactRead) async -> ArtifactReadOutcome
         /// The page is up, so it can read.
         var isReady: @MainActor () -> Bool
@@ -189,15 +194,19 @@ final class ResultsShelf: ObservableObject {
         var open: @MainActor (SessionStatus) -> Void
         /// A file was saved: the panel's Saved card (`Router.downloadSaved`).
         var didSave: @MainActor (URL) -> Void = { _ in }
-        /// Writes a saved file's bytes.
-        var write: @MainActor (Data, URL) throws -> Void = { data, url in try data.write(to: url, options: .atomic) }
+        /// Writes a saved file's bytes. Always run off the main actor, one at
+        /// a time (`ShelfSavedFiles`).
+        var write: @Sendable (Data, URL) throws -> Void = { data, url in try data.write(to: url, options: .atomic) }
         var now: @MainActor () -> Date = { Date() }
-        /// How long one read may take before it counts as failed.
+        /// How long one read may take, from its start, before it counts as failed.
         var timeout: Duration = .seconds(30)
         /// Waits out the time limit; tests stand in for the clock.
         var wait: @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
         /// The folder the temporary copies go under ("Capsid Quick Look").
         var temporaryFolder: URL = ShelfTemporaryCopies.defaultBase
+        /// The temporary copies' disk work; nil for `ShelfTemporaryCopies`
+        /// under `temporaryFolder`. Tests hold it with a gate.
+        var storage: (any ShelfCopyStorage)?
         /// Whether a file or folder is there: Save All never overwrites, and a
         /// remembered folder that is gone is forgotten.
         var exists: @MainActor (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
@@ -220,7 +229,11 @@ final class ResultsShelf: ObservableObject {
                 },
                 read: { read in
                     guard Demo.mode == nil else { return .unreadable }
-                    return (try? await WebContainer.shared.readArtifact(read)) ?? .unreadable
+                    return await ArtifactReadAbort.abortable(read, perform: { read, nonce in
+                        (try? await WebContainer.shared.readArtifact(read, nonce: nonce)) ?? .unreadable
+                    }, abort: { nonce in
+                        await WebContainer.shared.abortArtifactRead(nonce)
+                    })
                 },
                 isReady: { Demo.mode == nil && WebContainer.shared.status == .ready },
                 open: { LabModel.shared.open($0) },
@@ -230,19 +243,17 @@ final class ResultsShelf: ObservableObject {
 
     /// How many of the recent sessions are read when the window opens.
     static let autoLoad = 8
-    /// Reads at once, of lists and thumbnails together.
+    /// Reads at once, of every kind together (`ShelfTransfers`).
     static let concurrency = 2
     /// A list read this lately is kept when the window opens again.
     static let freshFor: TimeInterval = 300
-    /// Thumbnails kept in memory, at most.
-    static let thumbnailLimit = 200
 
     @Published private(set) var sessions: [ShelfSession] = []
     @Published private(set) var older: OlderState = .hidden
     /// When the recent sessions were taken.
     @Published private(set) var takenAt: Date?
-    /// 120-pixel WebP thumbnails, by version.
-    @Published private(set) var thumbnails: [String: Data] = [:]
+    /// The thumbnails, decoded small and kept within a byte budget (ShelfThumbnails).
+    let thumbnailStore: ShelfThumbnails
     /// Where each file was saved, by version: Open and Reveal in Finder.
     @Published private(set) var saved: [String: URL] = [:]
     @Published private(set) var saving: Set<String> = []
@@ -258,30 +269,47 @@ final class ResultsShelf: ObservableObject {
     @Published private(set) var fileProblems: [String: String] = [:]
 
     private let dependencies: Dependencies
+    /// Every read the shelf makes, two at a time.
+    let transfers: ShelfTransfers
 
     private enum Job: Hashable {
         case list(String)
         case thumb(String)
     }
 
-    private var pending: [Job] = []
-    private var running: [Job: Task<Void, Never>] = [:]
-    private var thumbnailOrder: [String] = []
+    /// The list and thumbnail reads asked for, each waiting in `transfers`.
+    private var jobs: [Job: Task<Void, Never>] = [:]
     private var failedThumbnails: Set<String> = []
     /// Bumped when the window closes: a read started before lands nowhere.
     private var generation = 0
     private var olderTask: Task<Void, Never>?
-    private let copies: ShelfTemporaryCopies
+    private let storage: any ShelfCopyStorage
+    private let savedFiles = ShelfSavedFiles()
     private let folders: ShelfFolderMemory
-    /// Temporary copies being made, by version: a second asker joins the first.
-    private var temporaryTasks: [String: Task<ShelfTemporaryOutcome, Never>] = [:]
+    /// This window's run of temporary copies; a new one each time it closes.
+    private var runID = UUID()
+    /// The copies known to be complete this run, by version: what Quick Look
+    /// asks for on the main thread (`cachedCopy`). Set when a write lands.
+    private var copies: [String: URL] = [:]
+    /// Copies being written, by version: a second asker waits for the first.
+    private var copyWrites: [String: Task<URL?, any Error>] = [:]
+    /// How many askers are fetching each version for a temporary copy or Copy.
+    private var preparers: [String: Int] = [:]
     private var saveAllTasks: [String: Task<Void, Never>] = [:]
+    /// What closing the window left to finish: stopped tasks unwinding and
+    /// the old run's folder being deleted. Each close adds to the chain.
+    private var unwinding: Task<Void, Never>?
+    /// Launch's cleanup of earlier runs' copies: the first copy is written after it.
+    private var launchCleanup: Task<Void, Never>?
     /// Where the next page of older sessions starts (nil: the first page).
     private var olderCursor: BrowseCursor?
 
-    init(dependencies: Dependencies) {
+    init(dependencies: Dependencies, thumbnails: ShelfThumbnails = ShelfThumbnails()) {
         self.dependencies = dependencies
-        copies = ShelfTemporaryCopies(base: dependencies.temporaryFolder)
+        transfers = ShelfTransfers(limit: Self.concurrency, read: dependencies.read, isReady: dependencies.isReady,
+                                   timeout: dependencies.timeout, wait: dependencies.wait)
+        storage = dependencies.storage ?? ShelfTemporaryCopies(base: dependencies.temporaryFolder)
+        thumbnailStore = thumbnails
         folders = ShelfFolderMemory(defaults: dependencies.defaults, exists: dependencies.exists)
     }
 
@@ -347,23 +375,24 @@ final class ResultsShelf: ObservableObject {
             default: break
             }
         }
-        pump()
     }
 
-    /// The window closed: every read stops, and what was waiting is let go.
-    /// What was read stays, in memory. A Save All that hasn't finished stops
-    /// (files already saved stay saved; none is left half-written), and the
-    /// temporary copies are deleted.
+    /// The window closed: every read stops (one under way is cancelled, down
+    /// to the page's fetch, and keeps its place among the two until it has
+    /// returned), and what was waiting is let go. What was read stays, in
+    /// memory, but for the decoded thumbnails, which are let go. A Save All
+    /// that hasn't finished stops (files already saved stay saved; none is
+    /// left half-written), and the temporary copies are deleted, off the main
+    /// actor. A single Save goes on: the person chose where it goes.
     func close() {
         generation += 1
-        for task in running.values { task.cancel() }
-        running = [:]
-        pending = []
-        for task in temporaryTasks.values { task.cancel() }
-        temporaryTasks = [:]
-        preparing = []
-        for task in saveAllTasks.values { task.cancel() }
+        transfers.close()
+        let stopped = Array(jobs.values) + Array(saveAllTasks.values)
+        for task in stopped { task.cancel() }
+        jobs = [:]
         saveAllTasks = [:]
+        preparers = [:]
+        preparing = []
         batches = batches.filter { if case .finished = $0.value { true } else { false } }
         olderTask?.cancel()
         olderTask = nil
@@ -377,13 +406,39 @@ final class ResultsShelf: ObservableObject {
             }
         }
         focused = nil
-        copies.removeAll()
+        // A new run: a write still landing for the old one is dropped.
+        let oldRun = runID
+        runID = UUID()
+        copies = [:]
+        let writes = Array(copyWrites.values)
+        copyWrites = [:]
+        let previous = unwinding
+        let storage = storage
+        unwinding = Task {
+            await previous?.value
+            await storage.remove(run: oldRun)
+            for task in stopped { await task.value }
+            for write in writes { _ = try? await write.value }
+        }
+        thumbnailStore.removeAll()
     }
 
-    /// Deletes every temporary copy of every run: "Capsid Quick Look" in the
-    /// temporary folder. Capsid does this at launch, for a run that never closed.
-    nonisolated static func removeTemporaryCopies() {
-        ShelfTemporaryCopies.removeAll(base: ShelfTemporaryCopies.defaultBase)
+    /// Launch: deletes the temporary copies every earlier run left (a run
+    /// that never closed), off the main actor. It returns at once; this run's
+    /// first copy is written only after it, and it never deletes this run's.
+    func cleanUpAtLaunch() {
+        let previous = launchCleanup
+        let storage = storage
+        launchCleanup = Task {
+            await previous?.value
+            await storage.removeLeftovers()
+        }
+    }
+
+    /// BenchApp's launch call: `cleanUpAtLaunch()` on the shared shelf.
+    /// It doesn't wait for the disk.
+    static func removeTemporaryCopies() {
+        shared.cleanUpAtLaunch()
     }
 
     /// A session opened or retried: its results are read.
@@ -393,7 +448,6 @@ final class ResultsShelf: ObservableObject {
         case .queued, .loading: return
         default: enqueue(.list(sessionID))
         }
-        pump()
     }
 
     /// "Show Older Sessions", then "Show More": the next page from the database.
@@ -429,88 +483,87 @@ final class ResultsShelf: ObservableObject {
         dependencies.open(session)
     }
 
-    /// Waits until the reads under way, and any they start, are done. For tests.
+    /// Waits until the work the shelf owns is done: the reads asked for and
+    /// any they start, Save All, copies being written, what a close left to
+    /// unwind, and launch's cleanup. A read nobody waits for any more isn't
+    /// waited for (`transfers.active` still counts it). For tests.
     func settled() async {
         var seen: Set<Task<Void, Never>> = []
+        var seenWrites: Set<Task<URL?, any Error>> = []
         while true {
-            if let task = (Array(running.values) + [olderTask].compactMap { $0 } + Array(saveAllTasks.values))
-                .first(where: { !seen.contains($0) }) {
+            let owned = Array(jobs.values) + [olderTask, unwinding, launchCleanup].compactMap { $0 } + Array(saveAllTasks.values)
+            if let task = owned.first(where: { !seen.contains($0) }) {
                 await task.value
                 seen.insert(task)
-            } else if let task = temporaryTasks.values.first {
-                _ = await task.value
+            } else if let write = copyWrites.values.first(where: { !seenWrites.contains($0) }) {
+                _ = try? await write.value
+                seenWrites.insert(write)
             } else {
                 break
             }
         }
     }
 
-    /// How many reads are under way: for tests.
-    var readsUnderWay: Int { running.count }
+    /// Reads under way that someone still waits for: for tests.
+    var readsUnderWay: Int { transfers.running }
 
     // MARK: Thumbnails
 
     /// An image's row came into view: its thumbnail, once.
     func wantThumbnail(_ entry: ArtifactEntry) {
-        guard ArtifactGate.thumb(kind: entry.kind) == nil, thumbnails[entry.version] == nil,
-              !failedThumbnails.contains(entry.version), running[.thumb(entry.version)] == nil,
-              !pending.contains(.thumb(entry.version)) else { return }
+        guard ArtifactGate.thumb(kind: entry.kind) == nil, !thumbnailStore.knows(entry.version),
+              !failedThumbnails.contains(entry.version), jobs[.thumb(entry.version)] == nil else { return }
         enqueue(.thumb(entry.version))
-        pump()
     }
 
-    // MARK: The queue
+    /// Hands a thumbnail's bytes to the store, which decodes and keeps them within its budget.
+    private func storeThumbnail(_ data: Data, for version: String) {
+        thumbnailStore.receive(data, for: version)
+    }
 
+    // MARK: Lists and thumbnails
+
+    /// A list (before thumbnails) or a thumbnail (last of all) joins the queue.
     private func enqueue(_ job: Job) {
-        guard !pending.contains(job), running[job] == nil else { return }
-        pending.append(job)
-        if case .list(let id) = job { setResults(id, .queued) }
-    }
-
-    private func pump() {
-        while running.count < Self.concurrency, !pending.isEmpty {
-            let job = pending.removeFirst()
-            guard dependencies.isReady() else {
-                if case .list(let id) = job { setResults(id, .failed(.notReady)) }
-                continue
-            }
-            start(job)
-        }
-    }
-
-    private func start(_ job: Job) {
+        guard jobs[job] == nil else { return }
         let started = generation
-        if case .list(let id) = job { setResults(id, .loading) }
-        running[job] = Task { [weak self] in
-            guard let self else { return }
-            let read: ArtifactRead = switch job {
-            case .list(let id): .list(frame: id)
-            case .thumb(let version): .thumb(version: version, width: 120)
-            }
-            let outcome = await self.bounded(read)
-            guard !Task.isCancelled, started == self.generation else { return }
-            self.running[job] = nil
-            self.finish(job, outcome)
-            self.pump()
-        }
-    }
-
-    private func finish(_ job: Job, _ outcome: ArtifactReadOutcome?) {
+        let key: ArtifactRead
+        let priority: ShelfTransfers.Priority
         switch job {
         case .list(let id):
-            switch outcome {
-            case .list(let entries)?: setResults(id, .loaded(ArtifactJSON.sorted(entries), at: dependencies.now()))
-            case nil: setResults(id, .failed(.timedOut))
-            case let other?: setResults(id, .failed(ShelfFailure(other)))
+            key = .list(frame: id)
+            priority = .list
+            setResults(id, .queued)
+        case .thumb(let version):
+            key = .thumb(version: version, width: 120)
+            priority = .thumbnail
+        }
+        jobs[job] = Task { [weak self] in
+            guard let self else { return }
+            let result = await self.transfers.read(key, priority: priority, started: { [weak self] in
+                guard let self, started == self.generation, case .list(let id) = job else { return }
+                self.setResults(id, .loading)
+            })
+            guard started == self.generation else { return }
+            self.jobs[job] = nil
+            self.finish(job, result)
+        }
+    }
+
+    private func finish(_ job: Job, _ result: ShelfTransferResult) {
+        switch job {
+        case .list(let id):
+            switch result {
+            case .answered(.list(let entries)): setResults(id, .loaded(ArtifactJSON.sorted(entries), at: dependencies.now()))
+            case .answered(.cancelled), .cancelled: setResults(id, .notLoaded)
+            case .answered(let other): setResults(id, .failed(ShelfFailure(other)))
+            case .timedOut: setResults(id, .failed(.timedOut))
+            case .notReady: setResults(id, .failed(.notReady))
             }
         case .thumb(let version):
-            if case .bytes(let data)? = outcome, case .success(let webp) = ArtifactGate.thumbBytes(data) {
-                thumbnails[version] = webp
-                thumbnailOrder.append(version)
-                while thumbnailOrder.count > Self.thumbnailLimit {
-                    thumbnails[thumbnailOrder.removeFirst()] = nil
-                }
-            } else {
+            if case .answered(.bytes(let data)) = result, case .success(let webp) = ArtifactGate.thumbBytes(data) {
+                storeThumbnail(webp, for: version)
+            } else if result != .cancelled, result != .answered(.cancelled) {
                 failedThumbnails.insert(version)
             }
         }
@@ -521,30 +574,6 @@ final class ResultsShelf: ObservableObject {
         sessions[index].results = results
     }
 
-    /// One read, within the time limit: nil when it took longer, or the
-    /// window closed meanwhile. The page's own fetch gives up sooner
-    /// (10 s, 20 s for a download); this is the backstop for a page that
-    /// doesn't answer at all.
-    private func bounded(_ read: ArtifactRead) async -> ArtifactReadOutcome? {
-        let reader = dependencies.read
-        let timeout = dependencies.timeout
-        let wait = dependencies.wait
-        let race = Race<ArtifactReadOutcome>()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                race.continuation = continuation
-                race.work = Task { @MainActor in race.finish(await reader(read)) }
-                race.timer = Task { @MainActor in
-                    await wait(timeout)
-                    guard !Task.isCancelled else { return }
-                    race.finish(nil)
-                }
-            }
-        } onCancel: {
-            Task { @MainActor in race.finish(nil) }
-        }
-    }
-
     // MARK: Fetching a file
 
     /// A file's whole content, or why not.
@@ -552,6 +581,8 @@ final class ResultsShelf: ObservableObject {
         case bytes(Data)
         case tooBig
         case failed(ShelfFailure)
+        /// The asker stopped waiting, or the window closed: no failure to show.
+        case cancelled
     }
 
     /// Before any read: the page is up, and the listing's size is within the 8 MB cap.
@@ -562,73 +593,118 @@ final class ResultsShelf: ObservableObject {
     }
 
     /// The one path every whole-file read takes (Quick Look, drag, Copy, Save,
-    /// Save All): the page's reader within the time limit, and the bytes
+    /// Save All): the shared queue within the time limit, and the bytes
     /// checked against the cap again, whatever the listing said.
-    private func read(_ entry: ArtifactEntry) async -> Fetched {
-        if let refusal = refusal(for: entry) { return refusal }
-        return await readChecked(entry)
-    }
-
-    private func readChecked(_ entry: ArtifactEntry) async -> Fetched {
-        switch await bounded(.download(version: entry.version)) {
-        case .bytes(let data)?:
+    private func fetch(_ entry: ArtifactEntry, priority: ShelfTransfers.Priority,
+                       keepsOnClose: Bool = false) async -> Fetched {
+        switch await transfers.read(.download(version: entry.version), priority: priority, keepsOnClose: keepsOnClose) {
+        case .answered(.bytes(let data)):
             guard case .success(let bytes) = ArtifactGate.downloadBytes(data) else { return .tooBig }
             return .bytes(bytes)
-        case .tooBig?: return .tooBig
-        case nil: return .failed(.timedOut)
-        case let other?: return .failed(ShelfFailure(other))
+        case .answered(.tooBig): return .tooBig
+        case .answered(.cancelled), .cancelled: return .cancelled
+        case .answered(let other): return .failed(ShelfFailure(other))
+        case .timedOut: return .failed(.timedOut)
+        case .notReady: return .failed(.notReady)
         }
     }
 
     /// Puts what a refused or failed fetch says on the row.
     private func setProblem(_ fetched: Fetched, for entry: ArtifactEntry, use: ShelfFileUse) {
         switch fetched {
-        case .bytes: break
+        case .bytes, .cancelled: break
         case .tooBig: fileProblems[entry.version] = use.tooBig
         case .failed(let failure): fileProblems[entry.version] = failure.sentence
         }
     }
 
-    // MARK: Temporary copies: Quick Look and drag
-
-    /// The temporary copy made this run for a version, if it is still there.
-    func cachedCopy(_ version: String) -> URL? {
-        copies.cached(version)
+    /// A version is being fetched for a copy or Copy: the row's spinner.
+    private func beginPreparing(_ version: String) {
+        preparers[version, default: 0] += 1
+        preparing.insert(version)
     }
 
-    /// A file's temporary copy: the one made already this run (by version id),
-    /// or a download within the cap, written 0600 into this run's private
-    /// folder. A second ask while it downloads joins the first.
+    /// One asker is done; the spinner goes with the last. A close since
+    /// cleared them all.
+    private func endPreparing(_ version: String, started: Int) {
+        guard started == generation, let count = preparers[version] else { return }
+        if count > 1 {
+            preparers[version] = count - 1
+        } else {
+            preparers[version] = nil
+            preparing.remove(version)
+        }
+    }
+
+    // MARK: Temporary copies: Quick Look and drag
+
+    /// The temporary copy made this run for a version, as last known: what
+    /// Quick Look asks for on the main thread, so nothing is read from the
+    /// disk here.
+    func cachedCopy(_ version: String) -> URL? {
+        copies[version]
+    }
+
+    /// A file's temporary copy: the one made already this run (by version id,
+    /// if it is still on disk), or a download within the cap, written 0600
+    /// into this run's private folder off the main actor. Askers of the same
+    /// version share one download and one write. Cancelling the asking task
+    /// withdraws its want of the download.
     func temporaryCopy(of entry: ArtifactEntry) async -> ShelfTemporaryOutcome {
         let version = entry.version
-        if let url = copies.cached(version) { return .ready(url) }
-        if let task = temporaryTasks[version] { return await task.value }
+        if let url = copies[version] {
+            if await storage.exists(url) { return .ready(url) }
+            // The system cleaned it away: made again, not trusted.
+            if copies[version] == url { copies[version] = nil }
+        }
         switch refusal(for: entry) {
         case .tooBig?: return .tooBig
         case .failed(let failure)?: return .failed(failure)
         default: break
         }
         let started = generation
-        preparing.insert(version)
-        let task = Task { [weak self] () -> ShelfTemporaryOutcome in
-            guard let self else { return .cancelled }
-            let fetched = await self.readChecked(entry)
-            guard !Task.isCancelled, started == self.generation else { return .cancelled }
-            self.temporaryTasks[version] = nil
-            self.preparing.remove(version)
-            switch fetched {
-            case .bytes(let data):
-                do {
-                    return .ready(try self.copies.write(data, for: entry))
-                } catch {
-                    return .writeFailed("Couldn't make a temporary copy: \(error.localizedDescription)")
+        let run = runID
+        beginPreparing(version)
+        defer { endPreparing(version, started: started) }
+        let fetched = await fetch(entry, priority: .foreground)
+        guard started == generation else { return .cancelled }
+        switch fetched {
+        case .bytes(let data):
+            do {
+                guard let url = try await writeCopy(data, for: entry, run: run), started == generation else {
+                    return .cancelled
                 }
-            case .tooBig: return .tooBig
-            case .failed(let failure): return .failed(failure)
+                return .ready(url)
+            } catch {
+                return .writeFailed("Couldn't make a temporary copy: \(error.localizedDescription)")
             }
+        case .tooBig: return .tooBig
+        case .failed(let failure): return .failed(failure)
+        case .cancelled: return .cancelled
         }
-        temporaryTasks[version] = task
-        return await task.value
+    }
+
+    /// Writes a copy off the main actor, once however many asked; nil when
+    /// the run ended meanwhile (the storage dropped it). The first copy waits
+    /// for launch's cleanup.
+    private func writeCopy(_ data: Data, for entry: ArtifactEntry, run: UUID) async throws -> URL? {
+        let version = entry.version
+        let task: Task<URL?, any Error>
+        if let writing = copyWrites[version] {
+            task = writing
+        } else {
+            let storage = storage
+            let cleanup = launchCleanup
+            task = Task {
+                await cleanup?.value
+                return try await storage.write(data, for: entry, run: run)
+            }
+            copyWrites[version] = task
+        }
+        defer { if copyWrites[version] == task { copyWrites[version] = nil } }
+        guard let url = try await task.value, run == runID else { return nil }
+        copies[version] = url
+        return url
     }
 
     /// Preview: the file's temporary copy, ready for Quick Look. Nil when it
@@ -636,6 +712,12 @@ final class ResultsShelf: ObservableObject {
     func prepareQuickLook(_ entry: ArtifactEntry) async -> URL? {
         guard !preparing.contains(entry.version) else { return nil }
         return await readyCopy(of: entry, use: .preview)
+    }
+
+    /// The Quick Look panel reached a file: its copy, joining a download
+    /// already under way for it (Preview's one-press rule is the button's).
+    func previewCopy(_ entry: ArtifactEntry) async -> URL? {
+        await readyCopy(of: entry, use: .preview)
     }
 
     /// A drag was dropped: the file's temporary copy to hand over, fetched
@@ -668,7 +750,8 @@ final class ResultsShelf: ObservableObject {
 
     /// Copy: the file's content on the pasteboard (an image, text or a PDF;
     /// `ShelfCopy` decides), read within the cap, or from this run's temporary
-    /// copy when there is one. True when it was copied; otherwise the row says why.
+    /// copy when there is one (read off the main actor). True when it was
+    /// copied; otherwise the row says why.
     @discardableResult
     func copy(_ entry: ArtifactEntry) async -> Bool {
         let version = entry.version
@@ -678,26 +761,32 @@ final class ResultsShelf: ObservableObject {
             fileProblems[version] = ShelfCopyContent.notOffered.problem
             return false
         }
-        let data: Data
-        if let url = copies.cached(version), let cached = try? Data(contentsOf: url) {
-            data = cached
-        } else {
+        let started = generation
+        var data: Data?
+        if let url = copies[version] {
+            beginPreparing(version)
+            data = try? await storage.read(url)
+            endPreparing(version, started: started)
+            guard started == generation else { return false }
+            // Gone from the disk: fetched again, and not offered to Quick Look.
+            if data == nil, copies[version] == url { copies[version] = nil }
+        }
+        if data == nil {
             if let refusal = refusal(for: entry) {
                 setProblem(refusal, for: entry, use: .copy)
                 return false
             }
-            let started = generation
-            preparing.insert(version)
-            let fetched = await readChecked(entry)
+            beginPreparing(version)
+            let fetched = await fetch(entry, priority: .foreground)
             guard started == generation else { return false }
-            preparing.remove(version)
+            endPreparing(version, started: started)
             guard case .bytes(let bytes) = fetched else {
                 setProblem(fetched, for: entry, use: .copy)
                 return false
             }
             data = bytes
         }
-        let content = ShelfCopy.content(kind: entry.kind, data: data)
+        let content = ShelfCopy.content(kind: entry.kind, data: data ?? Data())
         if let problem = content.problem {
             fileProblems[version] = problem
             return false
@@ -712,9 +801,10 @@ final class ResultsShelf: ObservableObject {
     // MARK: Saving
 
     /// Save: the file's bytes, within 8 MB by its listing and again by its
-    /// bytes, written where the person chose. Only here, and in Save All,
-    /// does a result's content reach the disk for keeps. Pass the file's
-    /// project to remember the folder for the next save in it.
+    /// bytes, written where the person chose (off the main actor). Only here,
+    /// and in Save All, does a result's content reach the disk for keeps.
+    /// Pass the file's project to remember the folder for the next save in it.
+    /// It goes on if the window closes.
     @discardableResult
     func save(_ entry: ArtifactEntry, to url: URL, project: String? = nil) async -> ShelfSaveOutcome {
         guard !saving.contains(entry.version) else { return .busy }
@@ -731,7 +821,7 @@ final class ResultsShelf: ObservableObject {
             fileProblems[entry.version] = failure.sentence
         case .writeFailed(let reason):
             fileProblems[entry.version] = reason
-        case .busy:
+        case .busy, .cancelled:
             break
         }
         return outcome
@@ -747,16 +837,17 @@ final class ResultsShelf: ObservableObject {
         }
         saving.insert(entry.version)
         defer { saving.remove(entry.version) }
-        switch await readChecked(entry) {
+        switch await fetch(entry, priority: .foreground, keepsOnClose: true) {
         case .bytes(let bytes):
             do {
-                try dependencies.write(bytes, url)
+                try await savedFiles.write(bytes, to: url, using: dependencies.write)
                 return .saved(url)
             } catch {
                 return .writeFailed("Couldn't save it there: \(error.localizedDescription)")
             }
         case .tooBig: return .tooBig
         case .failed(let failure): return .failed(failure)
+        case .cancelled: return .cancelled
         }
     }
 
@@ -785,10 +876,12 @@ final class ResultsShelf: ObservableObject {
     var isSavingAll: Bool { !saveAllTasks.isEmpty }
 
     /// Save All…: every file of a loaded session, saved into `folder`.
-    /// Two download at a time, each within the time limit and the 8 MB cap
-    /// (one over it is skipped without a download). A name already in the
-    /// folder, or earlier in the batch, gets " 2", " 3"… before its extension:
-    /// nothing is overwritten. Each file saved is recorded like a single Save
+    /// Two of its downloads wait in the shared queue at a time (after what the
+    /// person asked for, before lists and thumbnails), each within the time
+    /// limit and the 8 MB cap (one over it is skipped without a download).
+    /// A name already in the folder, or earlier in the batch, gets " 2",
+    /// " 3"… before its extension: nothing is overwritten. Each file is
+    /// written whole, off the main actor, and recorded like a single Save
     /// (Open and Reveal in Finder work for it). Progress and then a summary
     /// by count go in `batches`. Closing the window stops what hasn't started.
     func saveAll(_ sessionID: String, into folder: URL) {
@@ -834,7 +927,8 @@ final class ResultsShelf: ObservableObject {
             var next = 0
             var active = 0
             while true {
-                // Up to `concurrency` downloads at once; one more starts as each ends.
+                // Up to `concurrency` of this batch's downloads ask at once (so
+                // at most that many files wait in memory); one more as each ends.
                 while active < Self.concurrency, next < work.count, !Task.isCancelled {
                     let index = next
                     let entry = work[index].entry
@@ -842,7 +936,7 @@ final class ResultsShelf: ObservableObject {
                     active += 1
                     saving.insert(entry.version)
                     group.addTask {
-                        let fetched = await self.read(entry)
+                        let fetched = await self.fetch(entry, priority: .saveAll)
                         return (index, fetched)
                     }
                 }
@@ -854,7 +948,6 @@ final class ResultsShelf: ObservableObject {
                     break
                 }
                 let entry = work[index].entry
-                saving.remove(entry.version)
                 done += 1
                 switch fetched {
                 case .bytes(let bytes):
@@ -870,7 +963,8 @@ final class ResultsShelf: ObservableObject {
                         url = folder.appending(path: name, directoryHint: .notDirectory)
                     }
                     do {
-                        try dependencies.write(bytes, url)
+                        try await savedFiles.write(bytes, to: url, using: dependencies.write)
+                        // Written whole: saved, even if the window closed meanwhile.
                         saved[entry.version] = url
                         summary.saved += 1
                         if !remembered {
@@ -887,6 +981,13 @@ final class ResultsShelf: ObservableObject {
                 case .failed(let failure):
                     summary.failed += 1
                     fileProblems[entry.version] = failure.sentence
+                case .cancelled:
+                    break
+                }
+                saving.remove(entry.version)
+                guard !Task.isCancelled, started == generation else {
+                    group.cancelAll()
+                    break
                 }
                 batches[sessionID] = .saving(done: done, total: entries.count)
             }
@@ -931,21 +1032,5 @@ final class ResultsShelf: ObservableObject {
         default: break
         }
         focused = ShelfFocus(sessionID: session.id, token: (focused?.token ?? 0) + 1)
-    }
-}
-
-/// One of two finishers wins: the read, or the time limit (or the window
-/// closing). Main-actor only, so the continuation is resumed exactly once.
-@MainActor
-private final class Race<Value: Sendable> {
-    var continuation: CheckedContinuation<Value?, Never>?
-    var work: Task<Void, Never>?
-    var timer: Task<Void, Never>?
-
-    func finish(_ value: Value?) {
-        guard let continuation else { return }
-        self.continuation = nil
-        timer?.cancel()
-        continuation.resume(returning: value)
     }
 }

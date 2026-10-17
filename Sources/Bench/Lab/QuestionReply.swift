@@ -259,6 +259,9 @@ final class QuestionReplier: ObservableObject {
         var plan: @MainActor (String) -> PlanPreview? = { _ in nil }
         /// A fresh uuid v4, lower case: the intent id of what to change in a plan.
         var newIntentID: @MainActor () -> String = { UUID().uuidString.lowercased() }
+        /// Waits out a notification's time limit; tests stand in for the clock.
+        /// Returns early when its task is cancelled.
+        var wait: @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
 
         static func live() -> Dependencies {
             Dependencies(
@@ -305,10 +308,17 @@ final class QuestionReplier: ObservableObject {
 
     static let retryAfter: TimeInterval = 15
 
+    /// Sessions whose reply window is open: their reply is kept while it
+    /// shows, sent or not (`windowOpened`, `windowClosed`).
+    private(set) var openWindows: Set<String> = []
+
     private let model: LabModel
     private let dependencies: Dependencies
+    /// Card reads under way, by session; each one takes itself out when done.
     private var tasks: [String: Task<Void, Never>] = [:]
-    private var sending: [String: Task<Void, Never>] = [:]
+    private var loadTokens: [String: UUID] = [:]
+    /// Sends under way, by session: each answers with the reply's phase once done.
+    private var sending: [String: Task<ReplyPhase?, Never>] = [:]
     private var unavailableSince: [String: Date] = [:]
     /// `--demo card`'s made-up session: answering it sends nothing anywhere.
     private var demoSessions: Set<String> = []
@@ -345,23 +355,26 @@ final class QuestionReplier: ObservableObject {
             readCards.insert(session.id)
         }
         for id in Array(cards.keys) where !demoSessions.contains(id) && (!enabled || !readCards.contains(id)) {
-            tasks.removeValue(forKey: id)?.cancel()
-            cards[id] = nil
-            contexts[id] = nil
-            unavailableSince[id] = nil
+            forgetCard(id)
         }
-        // A reply outlives its card (Later, ×), but not the session's wait.
-        let asking = Set(model.waiting.filter { QuestionCardState.reads($0.waitingReason) }.map(\.id))
+        // What was kept for a card that is gone goes too, whatever took the card.
+        for id in Array(contexts.keys) where cards[id] == nil { contexts[id] = nil }
+        for id in Array(unavailableSince.keys) where cards[id] == nil { unavailableSince[id] = nil }
+        for id in Array(tasks.keys) where cards[id] == nil { tasks.removeValue(forKey: id)?.cancel(); loadTokens[id] = nil }
+        // A reply outlives its card (Later, ×), but not the session's wait. An
+        // open window still says why; any other is let go (`prune`).
+        let asking = asking()
         for (id, reply) in replies where !asking.contains(id) && !Self.isSettled(reply.phase) {
             replies[id]?.phase = .closed(Sentence.stoppedWaiting)
         }
         for (id, reply) in permissionReplies where !asking.contains(id) && !Self.isSettled(reply.phase) {
             permissionReplies[id]?.phase = .closed(Sentence.requestGone)
         }
-        let planning = Set(model.waiting.filter { $0.waitingReason == .plan }.map(\.id))
+        let planning = planning()
         for (id, reply) in planReplies where !planning.contains(id) && !Self.isSettled(reply.phase) {
             planReplies[id]?.phase = .closed(Sentence.planGone)
         }
+        for id in Set(replies.keys).union(permissionReplies.keys).union(planReplies.keys) { prune(id) }
         guard case .needsInput(let session)? = model.cards.first else { return }
         prepare(session.id)
     }
@@ -399,15 +412,78 @@ final class QuestionReplier: ObservableObject {
             return
         }
         cards[id] = .loading
+        let token = UUID()
+        loadTokens[id] = token
         tasks[id] = Task { [weak self] in
             guard let self else { return }
             let read = await self.dependencies.read(id)
+            // Done: this read is no longer under way, whatever it found.
+            defer {
+                if self.loadTokens[id] == token {
+                    self.tasks[id] = nil
+                    self.loadTokens[id] = nil
+                }
+            }
             let state = QuestionCardState.from(read)
             guard !Task.isCancelled, self.cards[id] == .loading else { return }
             self.cards[id] = state
             self.contexts[id] = QuestionCardState.context(read)
             self.unavailableSince[id] = state == .unavailable ? self.dependencies.now() : nil
         }
+    }
+
+    /// A card's state and everything read for it.
+    private func forgetCard(_ id: String) {
+        tasks.removeValue(forKey: id)?.cancel()
+        loadTokens[id] = nil
+        cards[id] = nil
+        contexts[id] = nil
+        unavailableSince[id] = nil
+    }
+
+    /// Sessions waiting for anything a card here answers, and those waiting for a plan.
+    private func asking() -> Set<String> {
+        Set(model.waiting.filter { QuestionCardState.reads($0.waitingReason) }.map(\.id))
+    }
+
+    private func planning() -> Set<String> {
+        Set(model.waiting.filter { $0.waitingReason == .plan }.map(\.id))
+    }
+
+    // MARK: What is kept
+
+    /// The reply window for a session opened: its reply is kept while it
+    /// shows, whatever its phase.
+    func windowOpened(_ sessionID: String) {
+        openWindows.insert(sessionID)
+    }
+
+    /// It closed: what it showed is kept only if it is still a draft for a
+    /// session that waits, or still being sent.
+    func windowClosed(_ sessionID: String) {
+        openWindows.remove(sessionID)
+        closeReply(sessionID)
+    }
+
+    /// Who owns a reply, for one session: its open window, a send under way,
+    /// or a draft (editing, changed or failed) for a session still waiting.
+    /// Anything else is let go: one sent or closed with no window to show
+    /// it, from the card's own buttons or a notification, and a draft whose
+    /// session no longer waits.
+    private func prune(_ id: String) {
+        guard !openWindows.contains(id), !demoSessions.contains(id) else { return }
+        func keeps(_ phase: ReplyPhase, waiting: Bool) -> Bool {
+            switch phase {
+            case .sending: true
+            case .editing, .changed, .failed: waiting
+            case .sent, .closed: false
+            }
+        }
+        let asking = model.waiting.contains { $0.id == id && QuestionCardState.reads($0.waitingReason) }
+        let planning = model.waiting.contains { $0.id == id && $0.waitingReason == .plan }
+        if let reply = replies[id], !keeps(reply.phase, waiting: asking) { replies[id] = nil }
+        if let reply = permissionReplies[id], !keeps(reply.phase, waiting: asking) { permissionReplies[id] = nil }
+        if let reply = planReplies[id], !keeps(reply.phase, waiting: planning) { planReplies[id] = nil }
     }
 
     // MARK: Which reply
@@ -488,67 +564,77 @@ final class QuestionReplier: ObservableObject {
     }
 
     /// Sends, once: only from a phase that allows it, which it leaves at
-    /// once, so a second press sends nothing.
-    func submit(_ sessionID: String, _ kind: ReplyKind = .answer) {
-        guard var reply = replies[sessionID], reply.phase.canSend, sending[sessionID] == nil else { return }
+    /// once, so a second press sends nothing. The send's task answers with
+    /// the reply's phase when it is done.
+    @discardableResult
+    func submit(_ sessionID: String, _ kind: ReplyKind = .answer) -> Task<ReplyPhase?, Never>? {
+        guard var reply = replies[sessionID], reply.phase.canSend, sending[sessionID] == nil else { return nil }
         let request: RemoteActionRequest?
         switch kind {
         case .answer: request = QuestionAnswers.request(reply.ask, draft: reply.draft)
         case .chooseForMe: request = .chooseForMe(toolID: reply.ask.toolID)
         case .cancel: request = .cancel(toolID: reply.ask.toolID)
         }
-        guard let request else { return }
+        guard let request else { return nil }
         reply.phase = .sending
         replies[sessionID] = reply
-        if fakeSend(sessionID, { $0.replies[sessionID]?.phase = .sent(RemoteDecide.Sentence.answered) }) { return }
+        if let fake = fakeSend(sessionID, { $0.replies[sessionID]?.phase = .sent(RemoteDecide.Sentence.answered) }) {
+            return fake
+        }
         let toolID = reply.ask.toolID
-        sending[sessionID] = Task { [weak self] in
-            guard let self else { return }
+        let task = Task { [weak self] () -> ReplyPhase? in
+            guard let self else { return nil }
             let result = await self.dependencies.respond(request, sessionID)
             await self.finish(sessionID, toolID: toolID, result: result)
-            self.sending[sessionID] = nil
+            return self.done(sessionID, phase: self.replies[sessionID]?.phase)
         }
+        sending[sessionID] = task
+        return task
     }
 
-    /// An answer chosen in a Mac notification (`NotificationRules.answer`):
-    /// sent as Send sends it, through the same check of the question's id.
-    /// Whatever happens, the reply is kept, so a failure can be opened in
-    /// the window with the answer still in it.
-    func answerFromNotification(_ sessionID: String, ask: QuestionAsk, draft: ReplyDraft) {
+    /// A send is over: it is no longer under way, and what nothing owns any
+    /// more is let go. Answers with the phase it ended in.
+    private func done(_ id: String, phase: ReplyPhase?) -> ReplyPhase? {
+        sending[id] = nil
+        prune(id)
+        return phase
+    }
+
+    /// An answer chosen in a Mac notification (`NotificationRules.QuestionActions`):
+    /// sent as Send sends it, through the same check of the question's id,
+    /// and answered with how this send ended (nil when nothing could start).
+    /// It waits for this send alone. A draft that didn't go is kept while the
+    /// session waits, so the window can show it; a sent one is let go.
+    @discardableResult
+    func answerFromNotification(_ sessionID: String, ask: QuestionAsk, draft: ReplyDraft) async -> ReplyPhase? {
         guard sending[sessionID] == nil, replies[sessionID]?.phase != .sending,
-              let session = waitingSession(sessionID) else { return }
+              let session = waitingSession(sessionID) else { return nil }
         replies[sessionID] = QuestionReply(session: session, ask: ask, draft: draft, phase: .editing,
                                            context: contexts[sessionID])
         guard dependencies.isReady() else {
             replies[sessionID]?.phase = .failed(Sentence.failed)
-            return
+            return replies[sessionID]?.phase
         }
-        submit(sessionID)
+        guard let send = submit(sessionID) else { return replies[sessionID]?.phase }
+        return await send.value
     }
 
     /// The question a Mac notification offers answers for: the card's read
-    /// when there is one, else one read of its own, a few seconds at most.
-    /// Nil with the card setting off, the page down, or anything but a root
-    /// question to answer.
+    /// when there is one, else one read of its own, within `limit` whichever
+    /// it is. Nil with the card setting off, the page down, the limit passed,
+    /// or anything but a root question to answer. Waiting on the card's own
+    /// read never cancels it (the card still needs it); a read of its own
+    /// that loses to the limit is cancelled.
     func askForNotification(_ sessionID: String, within limit: Duration = .seconds(4)) async -> QuestionAsk? {
         guard dependencies.isEnabled(), dependencies.isReady(), PlanCheck.isFrameID(sessionID) else { return nil }
         if case .ready(let ask)? = cards[sessionID] { return ask }
-        if cards[sessionID] == .loading, let task = tasks[sessionID] {
-            await task.value
-            if case .ready(let ask)? = cards[sessionID] { return ask }
-            return nil
+        if cards[sessionID] == .loading, let shared = tasks[sessionID] {
+            guard await firstOf(within: limit, { await shared.value; return true }) == true,
+                  case .ready(let ask)? = cards[sessionID] else { return nil }
+            return ask
         }
-        // The read or the limit, whichever comes first; a late read is let go.
-        let once = Once()
-        let read: SessionProjection?? = await withCheckedContinuation { continuation in
-            Task { @MainActor in
-                let read = await self.dependencies.read(sessionID)
-                if once.claim() { continuation.resume(returning: .some(read)) }
-            }
-            Task { @MainActor in
-                try? await Task.sleep(for: limit)
-                if once.claim() { continuation.resume(returning: nil) }
-            }
+        let read: SessionProjection?? = await firstOf(within: limit) { () async -> SessionProjection? in
+            await self.dependencies.read(sessionID)
         }
         guard let read else { return nil }
         let state = QuestionCardState.from(read)
@@ -561,12 +647,35 @@ final class QuestionReplier: ObservableObject {
         return ask
     }
 
+    /// The work's answer, or nil once `limit` passes first or the caller is
+    /// cancelled: exactly once. The loser is cancelled at once (the work's
+    /// task when the limit wins, the timer when the work does), so nothing
+    /// is left waiting for it.
+    private func firstOf<Value: Sendable>(within limit: Duration,
+                                         _ work: @escaping @MainActor () async -> Value) async -> Value? {
+        let deadline = Deadline<Value>()
+        let wait = dependencies.wait
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                deadline.continuation = continuation
+                deadline.work = Task { @MainActor in deadline.finish(await work()) }
+                deadline.timer = Task { @MainActor in
+                    await wait(limit)
+                    deadline.finish(nil)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in deadline.finish(nil) }
+        }
+    }
+
     /// The window was closed. A reply that went, or has nothing left to
     /// answer, is let go; any other keeps its draft for the next Reply.
     func closeReply(_ sessionID: String) {
         if let reply = replies[sessionID], Self.isDone(reply.phase) { replies[sessionID] = nil }
         if let reply = permissionReplies[sessionID], Self.isDone(reply.phase) { permissionReplies[sessionID] = nil }
         if let reply = planReplies[sessionID], Self.isDone(reply.phase) { planReplies[sessionID] = nil }
+        prune(sessionID)
     }
 
     private static func isDone(_ phase: ReplyPhase) -> Bool {
@@ -602,25 +711,28 @@ final class QuestionReplier: ObservableObject {
     /// request shown. The answer is the phone's (`PermissionDecide`): the
     /// request read afresh, still the head and the same, then `resolve-input`
     /// with no scope, so an allow is for this once.
-    func decide(_ sessionID: String, allow: Bool) {
+    @discardableResult
+    func decide(_ sessionID: String, allow: Bool) -> Task<ReplyPhase?, Never>? {
         if permissionReplies[sessionID] == nil || cards[sessionID].map(Self.isPermission) == true {
             beginPermission(sessionID)
         }
-        guard var reply = permissionReplies[sessionID], reply.phase.canSend, sending[sessionID] == nil else { return }
+        guard var reply = permissionReplies[sessionID], reply.phase.canSend, sending[sessionID] == nil else { return nil }
         let decision = reply.decision
-        guard allow ? decision.canAllow : decision.canDeny else { return }
+        guard allow ? decision.canAllow : decision.canDeny else { return nil }
         reply.phase = .sending
         permissionReplies[sessionID] = reply
         let words = allow ? PermissionDecide.Sentence.allowed : PermissionDecide.Sentence.denied
-        if fakeSend(sessionID, { $0.permissionReplies[sessionID]?.phase = .sent(words) }) { return }
+        if let fake = fakeSend(sessionID, { $0.permissionReplies[sessionID]?.phase = .sent(words) }) { return fake }
         let request = RemoteActionRequest.permission(id: reply.request.id, allow: allow, kind: reply.request.kind)
         let shown = reply.request.id
-        sending[sessionID] = Task { [weak self] in
-            guard let self else { return }
+        let task = Task { [weak self] () -> ReplyPhase? in
+            guard let self else { return nil }
             let result = await self.dependencies.respond(request, sessionID)
             await self.finishPermission(sessionID, shown: shown, result: result)
-            self.sending[sessionID] = nil
+            return self.done(sessionID, phase: self.permissionReplies[sessionID]?.phase)
         }
+        sending[sessionID] = task
+        return task
     }
 
     private static func isPermission(_ state: QuestionCardState) -> Bool {
@@ -703,18 +815,23 @@ final class QuestionReplier: ObservableObject {
     /// Sends what to change, once, through the same core: the plan read
     /// afresh, still waiting at the version shown, then a message with no
     /// `plan_mode`.
-    func submitPlanFeedback(_ sessionID: String) {
+    @discardableResult
+    func submitPlanFeedback(_ sessionID: String) -> Task<ReplyPhase?, Never>? {
         guard var reply = planReplies[sessionID], reply.phase.canSend, sending[sessionID] == nil,
-              let request = planFeedbackRequest(sessionID) else { return }
+              let request = planFeedbackRequest(sessionID) else { return nil }
         reply.phase = .sending
         planReplies[sessionID] = reply
-        if fakeSend(sessionID, { $0.planReplies[sessionID]?.phase = .sent(RemoteDecide.Sentence.revising) }) { return }
-        sending[sessionID] = Task { [weak self] in
-            guard let self else { return }
+        if let fake = fakeSend(sessionID, { $0.planReplies[sessionID]?.phase = .sent(RemoteDecide.Sentence.revising) }) {
+            return fake
+        }
+        let task = Task { [weak self] () -> ReplyPhase? in
+            guard let self else { return nil }
             let result = await self.dependencies.respond(request, sessionID)
             self.finishPlanFeedback(sessionID, result: result)
-            self.sending[sessionID] = nil
+            return self.done(sessionID, phase: self.planReplies[sessionID]?.phase)
         }
+        sending[sessionID] = task
+        return task
     }
 
     private func finishPlanFeedback(_ id: String, result: RemoteActionResult) {
@@ -758,26 +875,42 @@ final class QuestionReplier: ObservableObject {
 
     /// Waits until the reads and sends under way are done. For tests.
     func settled() async {
-        var done: Set<Task<Void, Never>> = []
-        while let task = (Array(tasks.values) + Array(sending.values)).first(where: { !done.contains($0) }) {
-            await task.value
-            done.insert(task)
+        var reads: Set<Task<Void, Never>> = []
+        var sends: Set<Task<ReplyPhase?, Never>> = []
+        while true {
+            if let task = tasks.values.first(where: { !reads.contains($0) }) {
+                await task.value
+                reads.insert(task)
+            } else if let task = sending.values.first(where: { !sends.contains($0) }) {
+                _ = await task.value
+                sends.insert(task)
+            } else {
+                return
+            }
         }
+    }
+
+    /// How much is held, for tests: replies of each kind, contexts, card
+    /// states, and reads and sends under way.
+    var retained: (replies: Int, permissions: Int, plans: Int, contexts: Int, cards: Int, tasks: Int, sends: Int) {
+        (replies.count, permissionReplies.count, planReplies.count, contexts.count, cards.count, tasks.count, sending.count)
     }
 
     // MARK: Parts
 
     /// A demo's send: the given result after a moment, with nothing sent
     /// anywhere. False for a real session.
-    private func fakeSend(_ id: String, _ done: @escaping @MainActor (QuestionReplier) -> Void) -> Bool {
-        guard demoSessions.contains(id) else { return false }
-        sending[id] = Task { [weak self] in
+    private func fakeSend(_ id: String, _ sent: @escaping @MainActor (QuestionReplier) -> Void) -> Task<ReplyPhase?, Never>? {
+        guard demoSessions.contains(id) else { return nil }
+        let task = Task { [weak self] () -> ReplyPhase? in
             try? await Task.sleep(for: .milliseconds(600))
-            guard let self else { return }
-            done(self)
+            guard let self else { return nil }
+            sent(self)
             self.sending[id] = nil
+            return nil
         }
-        return true
+        sending[id] = task
+        return task
     }
 
     /// Answered: its card has done its job, and a reminder for it too.
@@ -786,7 +919,7 @@ final class QuestionReplier: ObservableObject {
             model.dismiss(card)
         }
         model.cancelReminder(id)
-        cards[id] = nil
+        forgetCard(id)
     }
 
     private func finish(_ id: String, toolID: String, result: RemoteActionResult) async {
@@ -836,14 +969,22 @@ final class QuestionReplier: ObservableObject {
     }
 }
 
-/// The first of two to claim it wins.
+/// A wait with a time limit: the first of the work and the timer to finish
+/// answers, exactly once, and cancels the other.
 @MainActor
-private final class Once {
-    private var claimed = false
+private final class Deadline<Value: Sendable> {
+    var continuation: CheckedContinuation<Value?, Never>?
+    var work: Task<Void, Never>?
+    var timer: Task<Void, Never>?
 
-    func claim() -> Bool {
-        defer { claimed = true }
-        return !claimed
+    func finish(_ value: Value?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        work?.cancel()
+        timer?.cancel()
+        work = nil
+        timer = nil
+        continuation.resume(returning: value)
     }
 }
 

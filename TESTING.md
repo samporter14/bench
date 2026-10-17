@@ -323,6 +323,122 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-17, Capsid 0.7.1: six performance fixes from a review
+
+A review of 0.7.0 (Codex, with five probes on an isolated copy) found six
+resource-lifecycle problems; all six are fixed here. Fixes 1, 2 and 4 were
+built by an Opus agent and fix 6 by a Sonnet agent, each in a scratch copy of
+`1e769b1`, then merged by hand (the thumbnail store's few lines applied onto
+the rewritten shelf) and read through; fixes 3 and 5 were made here. DESIGN.md:
+Results → Transfers, Cancellation, Disk, Thumbnails; Answering from the card →
+From a Mac notification, What is kept.
+
+1. **One limit for every Results read** (`ShelfTransfers`): lists,
+   thumbnails, Quick Look, drag, Copy, Save and Save All share two slots;
+   the same read is shared; what you asked for goes first, with promotion
+   after eight starts; Quick Look withdraws the file it leaves.
+2. **Cancellation that reaches the page**: each consumer withdraws alone; an
+   unwanted read is cancelled and the page's fetch aborted by its nonce
+   (`benchAbortRead`); a slot is held until the reader really returns;
+   timers are owned and released; late answers land nowhere.
+3. **Replies let go**: a reply is owned by its open window, a send, or a
+   draft for a session still waiting; finished replies from the card's
+   buttons or notifications, and what was read for a card that is gone, are
+   released; a notification answer gets its own result.
+4. **Disk off the main actor**: temporary copies and saved files go through
+   actors, with a run identity so cleanup and late writes can't cross; launch
+   cleanup runs off the main actor and before the first copy.
+5. **Notification deadlines**: four seconds on every path (an injected
+   clock); the card's shared read is never cancelled for it; the loser is
+   cancelled; a notification waits for its own answer alone.
+6. **Thumbnails**: decoded once with ImageIO off the main actor at 144 px at
+   most, refused over 4096 × 4096 from the header, kept within 16 MiB by cost
+   with LRU eviction, let go on close, and drawn by a view that watches only
+   the thumbnail store.
+
+Automated, with made-up fixtures, scratch folders and private pasteboards
+only:
+
+- ✅ `swift test`: **1,309 tests in 171 suites, all passing in one run**
+  (was 1,234 in 163 at 0.7.0). Also `swift test --skip
+  "LettingGoTests|RemoteServerLiveTests|RemotePhotoLiveTests"` (1,302 in
+  168) and those three alone (7 in 3), as they are real-time and failed by
+  turns earlier today under a load average up to 300. `--disable-sandbox`
+  was not needed anywhere. New:
+  - `ShelfTransfersTests` and its sibling suites (37): never more than two
+    reads, foreground first, then Save All, lists, thumbnails; promotion;
+    one read per version with every asker answered; a queued asker
+    cancelled never starts; one of two askers cancelled keeps the read; the
+    last cancelled cancels the reader and its slot is held until it returns;
+    a timeout answers at once and holds the slot; cancellation before the
+    start, after the end and at the timeout boundary; timers let go; close
+    lets everyone go but a Save; not ready uses no slot; a mixed load with
+    two Save All batches stays within two, across close and reopen; a late
+    answer writes no copy; moving through Quick Look downloads only the last
+    file, and leaving a file stops it unless a drop still wants it; a
+    blocked disk write leaves the main actor free (copies and saved files
+    run off the main thread); closing during a write leaves no copy and no
+    folder; quick reopening keeps only the open run's copy, 0700/0600;
+    write and read failures; launch cleanup goes first and keeps the new
+    copy; the abort script in JavaScriptCore (with and without
+    `AbortSignal.any`): an abort mid-fetch or mid-body is `cancelled` and
+    removes its entry, other reads go on, an unknown nonce is a no-op, the
+    deadline is still `unreadable`, and no nonce (the phone) files nothing.
+  - `ShelfThumbnailsTests` (14) and five more in `ResultsShelfTests`: the
+    budget and LRU eviction, a peek isn't a use, replacement accounting, a
+    picture over the budget refused, a 16,384 × 16,384 PNG and 4097 × 4096
+    refused from the header (4096 × 4096 decoded), 4000 × 3000 kept at
+    144 × 108, EXIF orientation, a tiny image not enlarged, the same image
+    decoded once in 50 asks, a decode after `removeAll()` keeping nothing;
+    closing lets the pictures go; unrelated shelf updates (Save All
+    progress, another session's list, Refresh) cause no decode, no read and
+    no change from the store.
+  - `ReplyLifetimeTests` (16): 300 direct approvals and 300 notification
+    answers leave nothing kept; a direct approval is let go before its
+    session ends; plan changes are let go when their window closes; a draft
+    closed before the session ends is kept, then let go; Later and the card
+    coming back keep the draft; a window closed while sending keeps the
+    send, then lets go; an open window keeps its status; a failed or changed
+    request stays while its session waits; what was read for a card goes
+    with it; a stalled card read reaches the limit while the card still gets
+    it later; a fast read cancels its timer; the limit cancels a private
+    read and a late one changes nothing; a cancelled caller returns at once;
+    the limit and the read racing answer once (100 times); an unrelated
+    stalled session doesn't hold a notification answer.
+  - Updated, with no assertion removed: the card tests whose replies are
+    shown in a window now open one (`windowOpened`); those answered from the
+    card's own buttons now assert that nothing is kept; the shelf tests read
+    through the transfers and the actor-backed disk.
+- ✅ Mutation checks, each reverted: no `prune` after a send, the limit
+  cancelling the card's shared read, and the deadline not cancelling its
+  loser were each caught (`ReplyLifetimeTests`). After the merge, freeing a
+  slot when its last waiter leaves (14 failures in the transfer suites) and
+  keeping the decoded thumbnails on close (4) were caught too. In their own
+  copies the agents also caught dropping the removed-run check and letting
+  the thumbnail "already known" check pass.
+- ✅ `swift build -c release --product Capsid`: complete, no warnings.
+- ✅ `python3 Scripts/embed-remote-web.py --check` (phone assets unchanged and
+  in sync), `node --check` on RemoteWeb/app.js and sw.js, and `git diff
+  --check`: clean.
+
+Not measured: no CPU, energy, memory, latency or main-thread-stall figure
+was taken, so none is claimed. Profiling a build on synthetic data isn't
+possible as things stand: Results is off in demo mode, so it would need new
+demo plumbing first. Left pending: idle with Results closed, repeated
+open/close, rapid Quick Look navigation, a large shelf of thumbnails, Save
+All to a slow folder, and repeated direct replies.
+
+Not checked live (nothing was installed or launched):
+
+- the abort reaching a real WKWebView fetch, `.defaultClient` keeping
+  `benchArtifactReads` from the page, and WebKit's `AbortSignal.any`;
+- Quick Look moving between files in the app, and the panel's begin/end;
+- thumbnails drawn by `ShelfThumbnailView` (`Image(decorative:)`), and rows
+  asking again after a reopen (`onChange(of: takenAt)`);
+- launch cleanup at a real launch;
+- the reply window's open/close reaching `windowOpened`/`windowClosed`, and
+  a notification answer that fails opening its window.
+
 ## 2026-10-17, Capsid 0.7.0: more from the card, and the shelf's Quick Look, drag, copy and Save All
 
 Built on the 2026-10-16 entry (DESIGN.md, Lab → Answering from the card;

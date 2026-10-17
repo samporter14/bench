@@ -1,6 +1,7 @@
 // ShelfTemporaryCopiesTests.swift — the temporary copies Quick Look and drag use,
 // and the names the shelf writes: where a copy goes, how a name is made safe, the
-// permissions, the cache by version, and deleting a run's folder or all of them.
+// permissions, a run removed (and a late write for it dropped), and launch's
+// cleanup of every earlier run.
 // Each test works in a folder of its own under the temporary folder, removed after.
 import Foundation
 import Testing
@@ -52,7 +53,6 @@ struct ShelfFileNameTests {
     }
 }
 
-@MainActor
 final class ShelfTemporaryCopiesTests {
     private let scratch = FileManager.default.temporaryDirectory
         .appending(path: "capsid-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -62,84 +62,122 @@ final class ShelfTemporaryCopiesTests {
         try? FileManager.default.removeItem(at: scratch)
     }
 
-    @Test func aCopyGoesIntoThisRunsFolderUnderTheVersionID() {
+    @Test func aCopyGoesIntoItsRunsFolderUnderTheVersionID() async {
         let copies = ShelfTemporaryCopies(base: base)
-        let url = copies.url(for: made("report.md", version: "v-md"))
-        #expect(url.path == copies.runFolder.path + "/v-md/report.md")
-        #expect(copies.runFolder.deletingLastPathComponent().path == base.path)
-        #expect(UUID(uuidString: copies.runFolder.lastPathComponent) != nil)
+        let run = UUID()
+        let url = copies.url(for: made("report.md", version: "v-md"), run: run)
+        #expect(url.path == copies.runFolder(run).path + "/v-md/report.md")
+        #expect(copies.runFolder(run).deletingLastPathComponent().path == base.path)
+        #expect(copies.runFolder(run).lastPathComponent == run.uuidString)
         #expect(!FileManager.default.fileExists(atPath: base.path), "working out a path makes nothing")
-        #expect(copies.cached("v-md") == nil)
+        #expect(await !copies.exists(url))
         // Another run has another folder.
-        #expect(ShelfTemporaryCopies(base: base).runFolder != copies.runFolder)
+        #expect(copies.runFolder(UUID()) != copies.runFolder(run))
     }
 
-    @Test func foldersAreOwnerOnlyAndFilesAreReadWriteForTheOwnerOnly() throws {
+    @Test func foldersAreOwnerOnlyAndFilesAreReadWriteForTheOwnerOnly() async throws {
         let copies = ShelfTemporaryCopies(base: base)
-        let url = try copies.write(Data("made-up".utf8), for: made("report.md", version: "v-md"))
+        let run = UUID()
+        let url = try #require(try await copies.write(Data("made-up".utf8), for: made("report.md", version: "v-md"), run: run))
         #expect(try Data(contentsOf: url) == Data("made-up".utf8))
+        #expect(try await copies.read(url) == Data("made-up".utf8))
         #expect(permissions(url) == 0o600)
-        #expect([url.deletingLastPathComponent(), copies.runFolder, base].map(permissions) == [0o700, 0o700, 0o700])
+        #expect([url.deletingLastPathComponent(), copies.runFolder(run), base].map(permissions) == [0o700, 0o700, 0o700])
     }
 
-    @Test func aCopyIsCachedByVersionUntilItsFileGoes() throws {
+    @Test func aCopyThatGoesIsSeenToBeGoneAndIsWrittenAgainInItsPlace() async throws {
         let copies = ShelfTemporaryCopies(base: base)
-        let url = try copies.write(Data("a".utf8), for: made("a.md", version: "v-a"))
-        #expect(copies.cached("v-a") == url)
-        #expect(copies.cached("v-other") == nil)
+        let run = UUID()
+        let url = try #require(try await copies.write(Data("a".utf8), for: made("a.md", version: "v-a"), run: run))
+        #expect(await copies.exists(url))
         try FileManager.default.removeItem(at: url)
-        #expect(copies.cached("v-a") == nil, "a file the system cleaned away is made again, not trusted")
+        #expect(await !copies.exists(url), "a file the system cleaned away is made again, not trusted")
+        await #expect(throws: (any Error).self) { try await copies.read(url) }
         // Written again over the same place.
-        let again = try copies.write(Data("b".utf8), for: made("a.md", version: "v-a"))
-        #expect(again == url && copies.cached("v-a") == url)
+        let again = try #require(try await copies.write(Data("b".utf8), for: made("a.md", version: "v-a"), run: run))
+        #expect(again == url)
         #expect(try Data(contentsOf: again) == Data("b".utf8))
     }
 
-    @Test func twoVersionsOfOneNameDontShareAFile() throws {
+    @Test func twoVersionsOfOneNameDontShareAFile() async throws {
         let copies = ShelfTemporaryCopies(base: base)
-        let first = try copies.write(Data("1".utf8), for: made("figure.png", version: "v-1"))
-        let second = try copies.write(Data("2".utf8), for: made("figure.png", version: "v-2"))
+        let run = UUID()
+        let first = try #require(try await copies.write(Data("1".utf8), for: made("figure.png", version: "v-1"), run: run))
+        let second = try #require(try await copies.write(Data("2".utf8), for: made("figure.png", version: "v-2"), run: run))
         #expect(first != second && first.lastPathComponent == second.lastPathComponent)
         #expect(try Data(contentsOf: first) == Data("1".utf8) && Data(contentsOf: second) == Data("2".utf8))
     }
 
-    @Test func aHostileNameOrVersionStaysInsideTheRunFolder() throws {
+    @Test func aHostileNameOrVersionStaysInsideTheRunFolder() async throws {
         let copies = ShelfTemporaryCopies(base: base)
-        let url = try copies.write(Data("x".utf8), for: made("../../../escape.md", version: "../../v"))
-        #expect(url.path.hasPrefix(copies.runFolder.path + "/"))
-        #expect(url.standardizedFileURL.path.hasPrefix(copies.runFolder.standardizedFileURL.path + "/"))
+        let run = UUID()
+        let url = try #require(try await copies.write(Data("x".utf8), for: made("../../../escape.md", version: "../../v"), run: run))
+        #expect(url.path.hasPrefix(copies.runFolder(run).path + "/"))
+        #expect(url.standardizedFileURL.path.hasPrefix(copies.runFolder(run).standardizedFileURL.path + "/"))
         #expect(!FileManager.default.fileExists(atPath: scratch.appending(path: "escape.md").path))
     }
 
-    @Test func removingAllDeletesTheRunAndTheNextCopyGoesToANewOne() throws {
+    @Test func removingARunDeletesItAndTheNextCopyGoesToANewOne() async throws {
         let copies = ShelfTemporaryCopies(base: base)
-        let first = try copies.write(Data("x".utf8), for: made("a.md", version: "v-a"))
-        let run = copies.runFolder
-        copies.removeAll()
-        #expect(!FileManager.default.fileExists(atPath: run.path))
-        #expect(copies.cached("v-a") == nil)
-        copies.removeAll() // nothing there: no trouble
-        let second = try copies.write(Data("y".utf8), for: made("a.md", version: "v-a"))
-        #expect(second != first && copies.runFolder != run)
+        let run = UUID()
+        let first = try #require(try await copies.write(Data("x".utf8), for: made("a.md", version: "v-a"), run: run))
+        await copies.remove(run: run)
+        #expect(!FileManager.default.fileExists(atPath: copies.runFolder(run).path))
+        #expect(await !copies.exists(first))
+        await copies.remove(run: run) // nothing there: no trouble
+        let next = UUID()
+        let second = try #require(try await copies.write(Data("y".utf8), for: made("a.md", version: "v-a"), run: next))
+        #expect(second != first && copies.runFolder(next) != copies.runFolder(run))
     }
 
-    @Test func removingTheBaseTakesEveryRunsFolder() throws {
+    @Test func aWriteThatLandsAfterItsRunWasRemovedIsDroppedAndMakesNoFolder() async throws {
+        let copies = ShelfTemporaryCopies(base: base)
+        let run = UUID()
+        _ = try await copies.write(Data("x".utf8), for: made("a.md", version: "v-a"), run: run)
+        await copies.remove(run: run)
+        // The window closed while this one was on its way.
+        #expect(try await copies.write(Data("late".utf8), for: made("b.md", version: "v-b"), run: run) == nil)
+        #expect(!FileManager.default.fileExists(atPath: copies.runFolder(run).path), "the run's folder isn't made again")
+        // A run that was never written to is removed the same way.
+        let unused = UUID()
+        await copies.remove(run: unused)
+        #expect(try await copies.write(Data("late".utf8), for: made("c.md", version: "v-c"), run: unused) == nil)
+        #expect(!FileManager.default.fileExists(atPath: copies.runFolder(unused).path))
+    }
+
+    @Test func removingTheBaseTakesEveryRunsFolder() async throws {
         let one = ShelfTemporaryCopies(base: base)
         let two = ShelfTemporaryCopies(base: base)
-        try one.write(Data("1".utf8), for: made("a.md"))
-        try two.write(Data("2".utf8), for: made("b.md"))
+        _ = try await one.write(Data("1".utf8), for: made("a.md"), run: UUID())
+        _ = try await two.write(Data("2".utf8), for: made("b.md"), run: UUID())
         #expect(try FileManager.default.contentsOfDirectory(atPath: base.path).count == 2)
         ShelfTemporaryCopies.removeAll(base: base)
         #expect(!FileManager.default.fileExists(atPath: base.path))
         ShelfTemporaryCopies.removeAll(base: base) // already gone: no trouble
     }
 
-    @Test func aWriteThatCantBeMadeSaysSo() throws {
+    @Test func launchCleanupTakesEarlierRunsAndLeavesTheOneBeingWritten() async throws {
+        // An earlier launch's run that never closed.
+        let earlier = ShelfTemporaryCopies(base: base)
+        _ = try await earlier.write(Data("old".utf8), for: made("old.md"), run: UUID())
+        let copies = ShelfTemporaryCopies(base: base)
+        let run = UUID()
+        let kept = try #require(try await copies.write(Data("new".utf8), for: made("new.md", version: "v-new"), run: run))
+        await copies.removeLeftovers()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: base.path) == [run.uuidString])
+        #expect(try Data(contentsOf: kept) == Data("new".utf8))
+        // With nothing of its own written, the whole folder goes.
+        await copies.remove(run: run)
+        await copies.removeLeftovers()
+        #expect(!FileManager.default.fileExists(atPath: base.path))
+        await copies.removeLeftovers() // already gone: no trouble
+    }
+
+    @Test func aWriteThatCantBeMadeSaysSo() async throws {
         // The base is a file, so no folder can go under it.
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         try Data("x".utf8).write(to: base)
         let copies = ShelfTemporaryCopies(base: base)
-        #expect(throws: (any Error).self) { try copies.write(Data("x".utf8), for: made("a.md")) }
-        #expect(copies.cached("v-1") == nil)
+        await #expect(throws: (any Error).self) { try await copies.write(Data("x".utf8), for: made("a.md"), run: UUID()) }
     }
 }

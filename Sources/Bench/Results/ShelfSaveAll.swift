@@ -1,7 +1,8 @@
 // ShelfSaveAll.swift — Save All… and the folder a project's files are saved
 // to (DESIGN.md, Results): the progress and summary lines a session's row
 // shows, and the folder remembered per project. The batch itself runs in
-// ResultsShelf (it needs the reads, the time limit and the cap).
+// ResultsShelf (it needs the reads, the time limit and the cap). Here too:
+// the writer every saved file goes through, off the main actor.
 import Foundation
 
 /// What a session row says about its Save All.
@@ -59,5 +60,13 @@ struct ShelfFolderMemory {
         var all = (defaults.dictionary(forKey: Self.key) as? [String: String]) ?? [:]
         all[projectID] = folder.path
         defaults.set(all, forKey: Self.key)
+    }
+}
+
+/// Writes saved files (Save…, Save All…) off the main actor, one at a time:
+/// a slow destination never holds up typing, scrolling or closing the window.
+actor ShelfSavedFiles {
+    func write(_ data: Data, to url: URL, using write: @Sendable (Data, URL) throws -> Void) throws {
+        try write(data, url)
     }
 }

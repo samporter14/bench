@@ -3,10 +3,16 @@
 // writes one besides Save. A run's copies live in
 // `<temporary folder>/Capsid Quick Look/<UUID>/<version id>/<file name>`: the
 // folders are 0700, the files 0600, and the whole run folder goes when the
-// shelf closes (and the whole "Capsid Quick Look" folder at launch, for a run
-// that never got to close). The version id in the path keeps two files of the
-// same name apart, and the leaf keeps the file's real name, which is what
-// Finder and Quick Look show.
+// shelf closes (and every earlier run's at launch, for a run that never got
+// to close). The version id in the path keeps two files of the same name
+// apart, and the leaf keeps the file's real name, which is what Finder and
+// Quick Look show.
+//
+// The disk work is an actor's, off the main actor, one operation at a time:
+// a write and a run's deletion never overlap. The shelf names the run each
+// write is for (a window's opening to its closing); a run once removed is
+// never written to again, so a write that lands late for it is dropped
+// instead of making its folder anew.
 import Foundation
 
 /// File names for what the shelf writes: safe on disk, and never taking
@@ -50,27 +56,42 @@ enum ShelfFileName {
     }
 }
 
-@MainActor
-final class ShelfTemporaryCopies {
+/// The temporary copies' disk work, off the main actor. Injectable, so tests
+/// can hold it. Every call names the run it is for.
+protocol ShelfCopyStorage: Sendable {
+    /// Writes a copy for `run` (0600, in 0700 folders) and answers where;
+    /// nil when that run was removed meanwhile, and then nothing is written.
+    func write(_ data: Data, for entry: ArtifactEntry, run: UUID) async throws -> URL?
+    /// Whether a copy is still there (the system may clean the temporary folder).
+    func exists(_ url: URL) async -> Bool
+    /// A copy's bytes: Copy, from the preview's copy.
+    func read(_ url: URL) async throws -> Data
+    /// Deletes a run's folder; a later write for that run is dropped.
+    func remove(run: UUID) async
+    /// Launch: deletes every run's folder but the ones this storage is writing.
+    func removeLeftovers() async
+}
+
+actor ShelfTemporaryCopies: ShelfCopyStorage {
     nonisolated static let folderName = "Capsid Quick Look"
     nonisolated static var defaultBase: URL {
         FileManager.default.temporaryDirectory.appending(path: folderName, directoryHint: .isDirectory)
     }
 
-    let base: URL
-    private let fileManager: FileManager
-    /// This run's folder name; a new one after `removeAll()`.
-    private var runID = UUID()
-    /// Where each version's copy was written this run.
-    private var copies: [String: URL] = [:]
+    nonisolated let base: URL
+    /// Runs removed: a write for one that comes late is dropped.
+    private var removed: Set<UUID> = []
+    /// Runs written to and not removed: what launch cleanup leaves.
+    private var current: Set<UUID> = []
 
-    init(base: URL = ShelfTemporaryCopies.defaultBase, fileManager: FileManager = .default) {
+    init(base: URL = ShelfTemporaryCopies.defaultBase) {
         self.base = base
-        self.fileManager = fileManager
     }
 
-    /// This run's folder. Nothing is made until the first copy is written.
-    var runFolder: URL { base.appending(path: runID.uuidString, directoryHint: .isDirectory) }
+    /// A run's folder. Nothing is made until its first copy is written.
+    nonisolated func runFolder(_ run: UUID) -> URL {
+        base.appending(path: run.uuidString, directoryHint: .isDirectory)
+    }
 
     /// A version id as a folder name: it is path-safe already, but never trusted to be.
     nonisolated static func folderComponent(for version: String) -> String {
@@ -81,49 +102,58 @@ final class ShelfTemporaryCopies {
         return safe.isEmpty ? "_" : safe
     }
 
-    /// Where an entry's copy goes (or went): `<run>/<version>/<sanitized name>`.
-    func url(for entry: ArtifactEntry) -> URL {
-        runFolder
+    /// Where an entry's copy goes (or went) in a run: `<run>/<version>/<sanitized name>`.
+    nonisolated func url(for entry: ArtifactEntry, run: UUID) -> URL {
+        runFolder(run)
             .appending(path: Self.folderComponent(for: entry.version), directoryHint: .isDirectory)
             .appending(path: ShelfFileName.sanitized(entry.name), directoryHint: .notDirectory)
     }
 
-    /// The copy made this run for a version, if it is still on disk.
-    func cached(_ version: String) -> URL? {
-        guard let url = copies[version] else { return nil }
-        guard fileManager.fileExists(atPath: url.path) else {
-            copies[version] = nil
-            return nil
-        }
-        return url
-    }
-
-    /// Writes an entry's bytes into its place (0600, in 0700 folders) and
-    /// remembers the copy.
-    @discardableResult
-    func write(_ data: Data, for entry: ArtifactEntry) throws -> URL {
-        let url = url(for: entry)
-        for folder in [base, runFolder, url.deletingLastPathComponent()] where !fileManager.fileExists(atPath: folder.path) {
+    func write(_ data: Data, for entry: ArtifactEntry, run: UUID) throws -> URL? {
+        // Checked here, with the write, on the one actor that also removes runs.
+        guard !removed.contains(run) else { return nil }
+        let fileManager = FileManager.default
+        let url = url(for: entry, run: run)
+        for folder in [base, runFolder(run), url.deletingLastPathComponent()] where !fileManager.fileExists(atPath: folder.path) {
             try fileManager.createDirectory(at: folder, withIntermediateDirectories: true,
                                             attributes: [.posixPermissions: 0o700])
             try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
         }
+        current.insert(run)
         try data.write(to: url, options: .atomic)
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        copies[entry.version] = url
         return url
     }
 
-    /// Deletes this run's folder and forgets its copies; the next copy goes
-    /// into a new run folder. Errors are ignored: it is only a temporary folder.
-    func removeAll() {
-        try? fileManager.removeItem(at: runFolder)
-        copies = [:]
-        runID = UUID()
+    func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
+    func read(_ url: URL) throws -> Data {
+        try Data(contentsOf: url)
+    }
+
+    /// Errors are ignored: it is only a temporary folder.
+    func remove(run: UUID) {
+        removed.insert(run)
+        current.remove(run)
+        try? FileManager.default.removeItem(at: runFolder(run))
+    }
+
+    func removeLeftovers() {
+        guard !current.isEmpty else {
+            Self.removeAll(base: base)
+            return
+        }
+        let keep = Set(current.map(\.uuidString))
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? [] where !keep.contains(name) {
+            try? FileManager.default.removeItem(at: base.appending(path: name))
+        }
     }
 
     /// Deletes the whole "Capsid Quick Look" folder: every run's, including
-    /// one that never closed (launch does this).
+    /// one that never closed. Synchronous: only ever called off the main actor
+    /// (and by tests).
     nonisolated static func removeAll(base: URL) {
         try? FileManager.default.removeItem(at: base)
     }

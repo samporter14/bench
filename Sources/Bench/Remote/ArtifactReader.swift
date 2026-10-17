@@ -109,6 +109,10 @@ enum ArtifactReadOutcome: Equatable, Sendable {
     /// more, deleted or expired. The phone's routes answer it as
     /// `unreadable`; the results shelf says which.
     case missing
+    /// The results shelf withdrew the read and the page aborted its fetch
+    /// (`benchAbortRead`). Never a failure, and never the phone's: its reads
+    /// carry no nonce, so nothing can abort them.
+    case cancelled
 }
 
 // MARK: The script
@@ -304,19 +308,55 @@ enum ArtifactReaderScript {
     }
     """#
 
+    /// The page-side map of the shelf's reads under way, nonce → AbortController,
+    /// on `globalThis` of the reader's content world (never the page's own).
+    static let readsName = "benchArtifactReads"
+
     /// What `callAsyncJavaScript` runs, with the arguments of
-    /// `ArtifactRead.arguments`. Answers a JSON string: `{"outcome":"list",
-    /// "artifacts":[…]}`, `"bytes"` with `base64`, `"text"` with `text` and
-    /// `truncated`, `"binary"`, `"tooBig"`, `"unreadable"`, `"lost"` (a 401)
-    /// or `"refused"` (the arguments made no allowed path).
+    /// `ArtifactRead.arguments` and `nonce` (a string for the shelf's reads,
+    /// null or absent for the phone's). Answers a JSON string:
+    /// `{"outcome":"list", "artifacts":[…]}`, `"bytes"` with `base64`,
+    /// `"text"` with `text` and `truncated`, `"binary"`, `"tooBig"`,
+    /// `"unreadable"`, `"lost"` (a 401), `"refused"` (the arguments made no
+    /// allowed path) or `"cancelled"` (`benchAbortRead` aborted it).
+    ///
+    /// With a nonce, the read files an AbortController under it in
+    /// `globalThis.benchArtifactReads` before its fetch and takes it out when
+    /// it ends, whatever the end. The fetch's signal is that controller's and
+    /// the deadline's together (`AbortSignal.any`, or a third controller
+    /// where that is missing), so the 10 s and 20 s deadlines still hold; a
+    /// read the deadline stopped is `unreadable`, one the abort stopped is
+    /// `cancelled`. Without a nonce nothing is filed and every answer is as
+    /// before.
     static let body = pathBuilder + "\n" + projection + "\n" + codecs + #"""
 
     const CAP = { list: \#(Cap.list), thumb: \#(Cap.thumb), text: \#(Cap.text), download: \#(Cap.download), sniff: \#(Cap.sniff) };
     const answer = value => JSON.stringify(value);
     const path = benchArtifactPath(op, frameId, versionId, width);
     if (path === null) { return answer({ outcome: "refused" }); }
-    const signal = ms => typeof AbortSignal === "function" && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(ms) : undefined;
+    // `typeof`: the phone's reads may not pass a nonce at all.
+    const readID = typeof nonce === "string" && /^[A-Za-z0-9-]{1,64}$/.test(nonce) ? nonce : null;
+    const controller = readID !== null && typeof AbortController === "function" ? new AbortController() : null;
+    const reads = controller === null ? null
+        : (globalThis.\#(readsName) = globalThis.\#(readsName) || Object.create(null));
+    if (controller !== null) { reads[readID] = controller; }
+    const aborted = () => controller !== null && controller.signal.aborted === true;
+    const failed = () => answer({ outcome: aborted() ? "cancelled" : "unreadable" });
+    const signal = ms => {
+        const deadline = typeof AbortSignal === "function" && typeof AbortSignal.timeout === "function"
+            ? AbortSignal.timeout(ms) : undefined;
+        if (controller === null) { return deadline; }
+        if (deadline === undefined) { return controller.signal; }
+        if (typeof AbortSignal.any === "function") { return AbortSignal.any([controller.signal, deadline]); }
+        // No AbortSignal.any: a third controller, aborted by either.
+        const either = new AbortController();
+        const stop = () => { try { either.abort(); } catch (e) { } };
+        for (const one of [controller.signal, deadline]) {
+            if (one.aborted) { stop(); } else if (typeof one.addEventListener === "function") { one.addEventListener("abort", stop); }
+        }
+        return either.signal;
+    };
+    try {
     // no-store: nothing read here stays in WebKit's cache.
     const headers = { "Accept": op === "list" ? "application/json" : "*/*" };
     if (op === "text") { headers["Range"] = "bytes=0-" + (CAP.text - 1); }
@@ -324,7 +364,7 @@ enum ArtifactReaderScript {
     try {
         response = await fetch(path, { credentials: "include", cache: "no-store", headers: headers,
                                        signal: signal(op === "download" ? 20000 : 10000) });
-    } catch (e) { return answer({ outcome: "unreadable" }); }
+    } catch (e) { return failed(); }
     if (response.status === 401) { return answer({ outcome: "lost" }); }
     const header = name => {
         try { const value = response.headers && response.headers.get(name); return typeof value === "string" ? value : null; }
@@ -338,7 +378,7 @@ enum ArtifactReaderScript {
         if (response.status !== 200) { return answer({ outcome: "unreadable" }); }
         let list = null;
         try { list = benchProjectArtifacts(JSON.parse(await response.text()), CAP.list); } catch (e) { list = null; }
-        return answer(list === null ? { outcome: "unreadable" } : { outcome: "list", artifacts: list });
+        return list === null ? failed() : answer({ outcome: "list", artifacts: list });
     }
 
     // An empty file has no first byte to give.
@@ -383,7 +423,9 @@ enum ArtifactReaderScript {
         return { bytes: bytes, more: more };
     };
     const read = await readCapped();
-    if (read === null) { return answer({ outcome: "unreadable" }); }
+    if (read === null) { return failed(); }
+    // Aborted after the last bytes came: nothing more is done with them.
+    if (aborted()) { return failed(); }
 
     if (op !== "text") {
         return answer(read.more ? { outcome: "tooBig" } : { outcome: "bytes", base64: await benchBase64Chunked(read.bytes) });
@@ -400,7 +442,27 @@ enum ArtifactReaderScript {
         if (read.bytes[i] === 0) { return answer({ outcome: "binary" }); }
     }
     return answer({ outcome: "text", text: benchDecodeUTF8(read.bytes, truncated), truncated: truncated });
+    } finally {
+        if (controller !== null && reads[readID] === controller) { delete reads[readID]; }
+    }
     """#
+
+    /// `benchAbortRead(nonce)`: aborts the one read filed under `nonce`, and
+    /// answers whether there was one. An unknown nonce is let be; no other
+    /// request of the page is touched. Run in the reads' own content world.
+    static let abortFunction = #"""
+    function benchAbortRead(nonce) {
+        "use strict";
+        const reads = globalThis.\#(readsName);
+        const controller = reads && typeof nonce === "string" ? reads[nonce] : undefined;
+        if (!controller || typeof controller.abort !== "function") { return false; }
+        controller.abort();
+        return true;
+    }
+    """#
+
+    /// What `callAsyncJavaScript` runs to abort a read, with `nonce`.
+    static let abort = abortFunction + "\nreturn benchAbortRead(nonce);"
 
     // MARK: Checking what the page sent
 
@@ -414,6 +476,8 @@ enum ArtifactReaderScript {
             return .lost
         case ("missing", _):
             return .missing
+        case ("cancelled", _):
+            return .cancelled
         case ("list", .list):
             return entries(root["artifacts"]).map(ArtifactReadOutcome.list) ?? .unreadable
         case ("bytes", .thumb), ("bytes", .download):
@@ -479,16 +543,50 @@ enum ArtifactReaderScript {
 extension WebContainer {
     /// One artifact read, made from inside the page (`ArtifactReaderScript`)
     /// and checked again. Throws when the page isn't up or the read makes no
-    /// allowed path; a 401 also starts signing in again.
-    func readArtifact(_ read: ArtifactRead) async throws -> ArtifactReadOutcome {
+    /// allowed path; a 401 also starts signing in again. `nonce` is the
+    /// shelf's alone (ArtifactReadAbort): with it, `abortArtifactRead` can
+    /// stop this read's fetch. The phone's routes pass none.
+    func readArtifact(_ read: ArtifactRead, nonce: String? = nil) async throws -> ArtifactReadOutcome {
         guard status == .ready else { throw WebAPIError.notReady }
         guard read.path != nil else { throw WebAPIError.notAllowed }
-        let value = try await webView.callAsyncJavaScript(ArtifactReaderScript.body, arguments: read.arguments,
+        var arguments = read.arguments
+        arguments["nonce"] = nonce ?? NSNull()
+        let value = try await webView.callAsyncJavaScript(ArtifactReaderScript.body, arguments: arguments,
                                                           in: nil, contentWorld: .defaultClient)
         guard let text = value as? String else { throw WebAPIError.badResponse }
         let outcome = ArtifactReaderScript.outcome(of: Data(text.utf8), for: read)
         // Refused: the page's session didn't take. Sign in again.
         if outcome == .lost { sessionLost() }
         return outcome
+    }
+
+    /// Aborts the page's fetch for the read made with `nonce`, in the reads'
+    /// own content world, and nothing else. Only the results shelf calls it.
+    func abortArtifactRead(_ nonce: String) async {
+        _ = try? await webView.callAsyncJavaScript(ArtifactReaderScript.abort, arguments: ["nonce": nonce],
+                                                   in: nil, contentWorld: .defaultClient)
+    }
+}
+
+/// A read the page drops when the task awaiting it is cancelled: the results
+/// shelf's reads go through this, the phone's don't. Each gets a nonce of its
+/// own; cancelling the task asks the page to abort that read's fetch
+/// (`benchAbortRead`). Swift's cancellation alone never reaches a fetch, and
+/// is never taken for proof that one stopped: the read still returns when
+/// the page answers.
+enum ArtifactReadAbort {
+    /// A fresh nonce, as the script accepts it.
+    static func makeNonce() -> String { UUID().uuidString.lowercased() }
+
+    @MainActor
+    static func abortable(_ read: ArtifactRead, nonce: String = makeNonce(),
+                          perform: @MainActor (ArtifactRead, String) async -> ArtifactReadOutcome,
+                          abort: @escaping @Sendable @MainActor (String) async -> Void) async -> ArtifactReadOutcome {
+        guard !Task.isCancelled else { return .cancelled }
+        return await withTaskCancellationHandler {
+            await perform(read, nonce)
+        } onCancel: {
+            Task { @MainActor in await abort(nonce) }
+        }
     }
 }

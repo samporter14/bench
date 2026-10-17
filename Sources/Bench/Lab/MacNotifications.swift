@@ -416,17 +416,17 @@ final class MacNotifications: NSObject, ObservableObject {
 
     /// An answer chosen in a notification: sent as the window sends it, once
     /// the page is up and the session known (a launch from the notification
-    /// waits a little for both). Anything but sent opens the reply window,
-    /// with the answer still in it, or the session when even that can't be.
+    /// waits a little for both). It waits for this answer's own send, never
+    /// for other sessions'. Sent, or answered elsewhere meanwhile: nothing
+    /// more. Not sent: the reply window with the answer still in it, or the
+    /// session when even that can't be.
     fileprivate func answered(sessionID: String, link: URL?, ask: QuestionAsk, draft: ReplyDraft) async {
         let replier = QuestionReplier.shared
         for _ in 0..<40 where !(WebContainer.shared.status == .ready && LabModel.shared.knows(sessionID)) {
             try? await Task.sleep(for: .milliseconds(500))
         }
-        replier.answerFromNotification(sessionID, ask: ask, draft: draft)
-        await replier.settled()
-        switch replier.replies[sessionID]?.phase {
-        case .sent?:
+        switch await replier.answerFromNotification(sessionID, ask: ask, draft: draft) {
+        case .sent?, .closed?:
             break
         case nil:
             opened(sessionID: sessionID, link: link)

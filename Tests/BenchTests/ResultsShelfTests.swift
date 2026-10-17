@@ -30,6 +30,44 @@ private func entry(_ name: String, version: String, size: Int = 1_024, mime: Str
 
 private let webp = Data("RIFF\u{4}\0\0\0WEBPVP8L".utf8)
 
+/// What the fake disk holds and was asked to write. Saved files are written
+/// off the main actor, so the fake's writer reaches it under a lock.
+private final class FakeDisk: @unchecked Sendable {
+    struct State {
+        /// Paths that exist already; what is "written" is added.
+        var existing: Set<String> = []
+        var written: [URL] = []
+        var writtenBytes: [Data] = []
+        var writeFails = false
+        /// Writes to the disk for real, instead of only recording them.
+        var realWrites = false
+        /// Whether each write ran on the main thread.
+        var onMain: [Bool] = []
+    }
+
+    private let lock = NSLock()
+    private var state = State()
+
+    func with<T>(_ body: (inout State) throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body(&state)
+    }
+
+    /// The saved-file writer the shelf runs off the main actor.
+    func write(_ data: Data, to url: URL) throws {
+        let (fails, real) = with { ($0.writeFails, $0.realWrites) }
+        with { $0.onMain.append(Thread.isMainThread) }
+        if fails { throw CocoaError(.fileWriteNoPermission) }
+        if real { try data.write(to: url, options: .atomic) }
+        with { state in
+            state.written.append(url)
+            state.writtenBytes.append(data)
+            state.existing.insert(url.path)
+        }
+    }
+}
+
 /// Stands in for the page, the database, the clock and the disk: answers
 /// from tables, records every read and write, and can hold reads until let go.
 @MainActor
@@ -41,11 +79,21 @@ private final class FakeShelf {
     var ready = true
     var hold = false
     var expireAtOnce = false
-    var writeFails = false
+    let disk = FakeDisk()
+    var writeFails: Bool {
+        get { disk.with { $0.writeFails } }
+        set { disk.with { $0.writeFails = newValue } }
+    }
     /// Paths that exist already (the fake disk); what is "written" is added.
-    var existing: Set<String> = []
+    var existing: Set<String> {
+        get { disk.with { $0.existing } }
+        set { disk.with { $0.existing = newValue } }
+    }
     /// Writes to the disk for real, instead of only recording them.
-    var realWrites = false
+    var realWrites: Bool {
+        get { disk.with { $0.realWrites } }
+        set { disk.with { $0.realWrites = newValue } }
+    }
     var pasteboardFails = false
     var now = start
     private(set) var reads: [ArtifactRead] = []
@@ -53,8 +101,8 @@ private final class FakeShelf {
     private(set) var inFlight = 0
     private(set) var mostAtOnce = 0
     private(set) var opened: [String] = []
-    private(set) var written: [URL] = []
-    private(set) var writtenBytes: [Data] = []
+    var written: [URL] { disk.with { $0.written } }
+    var writtenBytes: [Data] { disk.with { $0.writtenBytes } }
     private(set) var savedNotices: [URL] = []
     private(set) var copied: [ShelfCopyContent] = []
     private var gates: [CheckedContinuation<Void, Never>] = []
@@ -76,7 +124,7 @@ private final class FakeShelf {
         }
     }
 
-    func shelf() -> ResultsShelf {
+    func shelf(thumbnails: ShelfThumbnails = ShelfThumbnails()) -> ResultsShelf {
         ResultsShelf(dependencies: ResultsShelf.Dependencies(
             recent: { [unowned self] in self.recent },
             older: { [unowned self] cursor in
@@ -96,13 +144,7 @@ private final class FakeShelf {
             isReady: { [unowned self] in self.ready },
             open: { [unowned self] in self.opened.append($0.id) },
             didSave: { [unowned self] in self.savedNotices.append($0) },
-            write: { [unowned self] data, url in
-                if self.writeFails { throw CocoaError(.fileWriteNoPermission) }
-                if self.realWrites { try data.write(to: url, options: .atomic) }
-                self.written.append(url)
-                self.writtenBytes.append(data)
-                self.existing.insert(url.path)
-            },
+            write: { [disk] data, url in try disk.write(data, to: url) },
             now: { [unowned self] in self.now },
             wait: { [unowned self] limit in
                 if self.expireAtOnce { return }
@@ -117,7 +159,7 @@ private final class FakeShelf {
                 if self.pasteboardFails { return false }
                 self.copied.append(content)
                 return true
-            }))
+            }), thumbnails: thumbnails)
     }
 
     /// Lets every held read answer.
@@ -135,6 +177,16 @@ private final class FakeShelf {
     var downloads: [String] {
         reads.compactMap { if case .download(let version) = $0 { version } else { nil } }
     }
+}
+
+/// Lets the other work run until `condition` holds: saved files are written
+/// off the main actor, so a fixed number of turns isn't enough. No clock.
+@MainActor
+private func until(_ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async {
+    // A minute's limit is only a safety net for a broken run.
+    let limit = ContinuousClock.now + .seconds(60)
+    while !condition(), ContinuousClock.now < limit { await Task.yield() }
+    if !condition() { Issue.record("the condition never held", sourceLocation: sourceLocation) }
 }
 
 @MainActor
@@ -371,37 +423,162 @@ struct ResultsShelfTests {
         #expect(fake.written == [url])
     }
 
+    /// The daemon's kind of thumbnail: a WebP that decodes.
+    private let drawn = DemoChart.webp(bars: [3, 5, 4, 6], width: 120)
+
     @Test func aFailedThumbnailIsTriedAgainWhenTheWindowOpensAgain() async {
         let shelf = fake.shelf()
         let image = entry("plot.png", version: "v-img", mime: "image/png")
         shelf.wantThumbnail(image)
         await shelf.settled()
-        #expect(shelf.thumbnails.isEmpty)
+        #expect(shelf.thumbnailStore.versions.isEmpty)
         shelf.wantThumbnail(image)
         await shelf.settled()
         #expect(fake.reads.count == 1)
-        fake.files[.thumb(version: "v-img", width: 120)] = .bytes(webp)
+        fake.files[.thumb(version: "v-img", width: 120)] = .bytes(drawn)
         shelf.open()
         shelf.wantThumbnail(image)
         await shelf.settled()
-        #expect(shelf.thumbnails["v-img"] == webp)
+        await shelf.thumbnailStore.settled()
+        #expect(shelf.thumbnailStore.contains("v-img"))
     }
 
     @Test func thumbnailsOnlyForImagesOnlyWebPAndOnce() async {
-        let shelf = fake.shelf()
+        let log = ThumbnailDecodeLog()
+        let shelf = fake.shelf(thumbnails: ShelfThumbnails(decoder: log.decoder))
         let image = entry("plot.png", version: "v-img", mime: "image/png")
         let other = entry("plot2.png", version: "v-img2", mime: "image/png")
-        fake.files[.thumb(version: "v-img", width: 120)] = .bytes(webp)
+        fake.files[.thumb(version: "v-img", width: 120)] = .bytes(drawn)
         fake.files[.thumb(version: "v-img2", width: 120)] = .bytes(Data([0x89, 0x50, 0x4E, 0x47]))
         shelf.wantThumbnail(entry("notes.md", version: "v-md"))
         shelf.wantThumbnail(image)
         shelf.wantThumbnail(other)
         await shelf.settled()
+        await shelf.thumbnailStore.settled()
         shelf.wantThumbnail(image)
         shelf.wantThumbnail(other)
         await shelf.settled()
+        await shelf.thumbnailStore.settled()
         #expect(fake.reads == [.thumb(version: "v-img", width: 120), .thumb(version: "v-img2", width: 120)])
-        #expect(shelf.thumbnails == ["v-img": webp])
+        #expect(shelf.thumbnailStore.versions == ["v-img"])
+        #expect(log.inputs == [drawn], "only the checked WebP reached the decoder, once")
+    }
+
+    @Test func bytesThatDontDecodeAreNotReadAgainUntilTheWindowOpensAgain() async {
+        let log = ThumbnailDecodeLog()
+        let shelf = fake.shelf(thumbnails: ShelfThumbnails(decoder: log.decoder))
+        let image = entry("plot.png", version: "v-img", mime: "image/png")
+        // WebP by its first bytes, so the phone's check lets it by; not a picture.
+        fake.files[.thumb(version: "v-img", width: 120)] = .bytes(webp)
+        shelf.wantThumbnail(image)
+        await shelf.settled()
+        await shelf.thumbnailStore.settled()
+        #expect(shelf.thumbnailStore.versions.isEmpty && shelf.thumbnailStore.totalCost == 0)
+        shelf.wantThumbnail(image)
+        await shelf.settled()
+        #expect(fake.reads.count == 1 && log.count == 1, "not fetched again in a loop")
+        // The window closes and opens again: tried again.
+        shelf.close()
+        shelf.open()
+        shelf.wantThumbnail(image)
+        await shelf.settled()
+        await shelf.thumbnailStore.settled()
+        #expect(fake.reads.count == 2 && log.count == 2)
+    }
+
+    @Test func aThumbnailIsNotReadAgainWhileItsBytesAreBeingDecoded() async {
+        let gate = ThumbnailDecodeGate()
+        let shelf = fake.shelf(thumbnails: ShelfThumbnails(decoder: gate.decoder))
+        let image = entry("plot.png", version: "v-img", mime: "image/png")
+        fake.files[.thumb(version: "v-img", width: 120)] = .bytes(drawn)
+        shelf.wantThumbnail(image)
+        await shelf.settled()
+        #expect(shelf.thumbnailStore.knows("v-img") && !shelf.thumbnailStore.contains("v-img"), "read, decode held")
+        shelf.wantThumbnail(image)
+        await shelf.settled()
+        #expect(fake.reads.count == 1)
+        gate.open()
+        await shelf.thumbnailStore.settled()
+        #expect(shelf.thumbnailStore.contains("v-img"))
+    }
+
+    @Test func closingTheWindowLetsTheDecodedThumbnailsGoAndOpeningReadsThemAgain() async {
+        let shelf = fake.shelf()
+        let image = entry("plot.png", version: "v-img", mime: "image/png")
+        fake.files[.thumb(version: "v-img", width: 120)] = .bytes(drawn)
+        shelf.open()
+        shelf.wantThumbnail(image)
+        await shelf.settled()
+        await shelf.thumbnailStore.settled()
+        #expect(shelf.thumbnailStore.contains("v-img") && shelf.thumbnailStore.totalCost > 0)
+        shelf.close()
+        #expect(shelf.thumbnailStore.versions.isEmpty && shelf.thumbnailStore.totalCost == 0)
+        // Open again: the row asks again, and the picture is read and decoded again.
+        shelf.open()
+        shelf.wantThumbnail(image)
+        await shelf.settled()
+        await shelf.thumbnailStore.settled()
+        #expect(fake.reads.count == 2 && shelf.thumbnailStore.contains("v-img"))
+    }
+
+    @Test func aDecodeStillRunningWhenTheWindowClosesKeepsNothing() async {
+        let gate = ThumbnailDecodeGate()
+        let shelf = fake.shelf(thumbnails: ShelfThumbnails(decoder: gate.decoder))
+        fake.files[.thumb(version: "v-img", width: 120)] = .bytes(drawn)
+        shelf.wantThumbnail(entry("plot.png", version: "v-img", mime: "image/png"))
+        await shelf.settled()
+        shelf.close()
+        gate.open()
+        await shelf.thumbnailStore.settled()
+        #expect(shelf.thumbnailStore.versions.isEmpty && shelf.thumbnailStore.totalCost == 0)
+    }
+
+    @Test func unrelatedShelfUpdatesDecodeNothingAndTouchNoThumbnail() async {
+        let log = ThumbnailDecodeLog()
+        let store = ShelfThumbnails(decoder: log.decoder)
+        fake.recent = [made(1), made(2)]
+        let image = entry("plot.png", version: "v-img", mime: "image/png")
+        fake.lists[madeUpID(1)] = .list([image, entry("report.md", version: "v-md")])
+        fake.lists[madeUpID(2)] = .list([entry("notes.md", version: "v-notes"), entry("counts.csv", version: "v-csv")])
+        fake.files[.thumb(version: "v-img", width: 120)] = .bytes(drawn)
+        for version in ["v-md", "v-notes", "v-csv"] { fake.files[.download(version: version)] = .bytes(Data(version.utf8)) }
+        let shelf = fake.shelf(thumbnails: store)
+        shelf.open()
+        await shelf.settled()
+        shelf.wantThumbnail(image)
+        await shelf.settled()
+        await store.settled()
+        let picture = store.image(for: "v-img")
+        #expect(picture != nil && log.count == 1)
+
+        // What the rows watch: the store's own changes, and the shelf's.
+        let storeChanges = ChangeCount(store.objectWillChange)
+        let shelfChanges = ChangeCount(shelf.objectWillChange)
+        // Save All's progress on the other session, line by line.
+        fake.hold = true
+        shelf.saveAll(madeUpID(2), into: URL(fileURLWithPath: "/made-up/Out", isDirectory: true))
+        for _ in 0..<10 { await Task.yield() }
+        #expect(shelf.batches[madeUpID(2)] == .saving(done: 0, total: 2))
+        fake.release()
+        for _ in 0..<10 { await Task.yield() }
+        fake.hold = false
+        fake.release()
+        await shelf.settled()
+        // Another session's list arrives, the list is taken again, and the row asks again.
+        shelf.load(madeUpID(2))
+        await shelf.settled()
+        shelf.open(refresh: true)
+        await shelf.settled()
+        shelf.wantThumbnail(image)
+        shelf.wantThumbnail(image)
+        await shelf.settled()
+        await store.settled()
+
+        #expect(shelfChanges.count > 0, "the shelf did publish")
+        #expect(storeChanges.count == 0, "no thumbnail view is told anything")
+        #expect(log.count == 1, "nothing was decoded again")
+        #expect(fake.reads.filter { $0 == .thumb(version: "v-img", width: 120) }.count == 1, "nor read again")
+        #expect(store.image(for: "v-img") === picture, "the very same picture")
     }
 
     // MARK: Saving
@@ -611,12 +788,16 @@ extension ResultsShelfTests {
         let first = try #require(await shelf.prepareQuickLook(report))
         let firstRun = first.deletingLastPathComponent().deletingLastPathComponent()
         shelf.close()
+        #expect(shelf.cachedCopy("v-md") == nil)
+        // Deleted off the main actor.
+        await shelf.settled()
         #expect(!FileManager.default.fileExists(atPath: firstRun.path))
         #expect(shelf.cachedCopy("v-md") == nil)
         let second = try #require(await shelf.prepareQuickLook(report))
         #expect(fake.downloads == ["v-md", "v-md"])
         #expect(second.deletingLastPathComponent().deletingLastPathComponent() != firstRun, "a new run, a new folder")
         shelf.close()
+        await shelf.settled()
         #expect(files(under: fake.temporaryFolder).isEmpty)
     }
 
@@ -994,7 +1175,7 @@ struct ShelfSaveAllTests {
         #expect(shelf.saving.count == 2, "the rows show their spinners")
         // Two finish: two more start, and the line moves on.
         fake.release()
-        for _ in 0..<10 { await Task.yield() }
+        await until { fake.downloads.count == 4 && fake.inFlight == 2 }
         #expect(fake.downloads.count == 4 && fake.inFlight == 2)
         #expect(shelf.batches[madeUpID(1)] == .saving(done: 2, total: 5))
         #expect(shelf.batches[madeUpID(1)]?.line == "Saving 3 of 5…")
@@ -1093,7 +1274,7 @@ struct ShelfSaveAllTests {
         for _ in 0..<10 { await Task.yield() }
         // The first two arrive and are saved; the next two start and are waiting.
         fake.release()
-        for _ in 0..<10 { await Task.yield() }
+        await until { fake.downloads.count == 4 && fake.inFlight == 2 }
         #expect(fake.written.count == 2 && fake.downloads.count == 4)
         #expect(files(under: folder).count == 2)
         shelf.close()

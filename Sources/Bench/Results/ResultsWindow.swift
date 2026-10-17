@@ -392,7 +392,7 @@ struct ResultFileRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            thumbnail
+            ShelfThumbnailView(store: shelf.thumbnailStore, version: entry.version, kind: entry.kind)
                 .frame(width: 36, height: 36)
                 .clipShape(.rect(cornerRadius: 6))
                 .accessibilityHidden(true)
@@ -416,6 +416,8 @@ struct ResultFileRow: View {
         }
         .padding(.vertical, 2)
         .onAppear { shelf.wantThumbnail(entry) }
+        // The window opened again or Refresh: closing let the pictures go.
+        .onChange(of: shelf.takenAt) { shelf.wantThumbnail(entry) }
         // Dragged out, the file is fetched when it is dropped, not when the drag begins.
         .onDrag { ShelfDrag.provider(for: entry, shelf: shelf) }
         .contextMenu {
@@ -432,19 +434,6 @@ struct ResultFileRow: View {
             }
             Divider()
             Button("Open Conversation") { shelf.openSession(session) }
-        }
-    }
-
-    @ViewBuilder
-    private var thumbnail: some View {
-        if let data = shelf.thumbnails[entry.version], let image = NSImage(data: data) {
-            Image(nsImage: image).resizable().scaledToFill()
-        } else {
-            Image(systemName: ResultFileRow.symbol(entry.kind))
-                .font(.system(size: 18))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.primary.opacity(0.05))
         }
     }
 
@@ -517,6 +506,28 @@ struct ResultFileRow: View {
         case .pdf: "doc.text.image"
         case .notebook: "book.closed"
         case .other: "doc"
+        }
+    }
+}
+
+/// A file's thumbnail, or the icon of its kind. It watches the thumbnail store
+/// and nothing else, so the shelf changing (a progress line, another row's
+/// state) never reaches it; and it decodes nothing: the store did, once, when
+/// the bytes came, and this draws that picture.
+struct ShelfThumbnailView: View {
+    @ObservedObject var store: ShelfThumbnails
+    let version: String
+    let kind: ArtifactKind
+
+    var body: some View {
+        if let image = store.image(for: version) {
+            Image(decorative: image, scale: 1).resizable().scaledToFill()
+        } else {
+            Image(systemName: ResultFileRow.symbol(kind))
+                .font(.system(size: 18))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.primary.opacity(0.05))
         }
     }
 }

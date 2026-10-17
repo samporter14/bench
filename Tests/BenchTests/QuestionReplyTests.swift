@@ -222,10 +222,11 @@ struct QuestionReplierTests {
         return replier
     }
 
-    /// Reply pressed, and HEPES picked.
+    /// Reply pressed (its window open), and HEPES picked.
     private func replying() async -> QuestionReplier {
         let replier = await ready()
         #expect(replier.beginReply(session))
+        replier.windowOpened(session)
         replier.updateDraft(session) { $0.pick(0, in: 0, multi: false) }
         return replier
     }
@@ -384,9 +385,10 @@ struct QuestionReplierTests {
         let replier = await replying()
         model.ingest(Fixture.snapshot(Fixture.session(session, .running)))
         replier.sync()
+        // The open window still says why.
         #expect(replier.replies[session]?.phase == .closed(QuestionReplier.Sentence.stoppedWaiting))
         #expect(!replier.canSend(session))
-        replier.closeReply(session)
+        replier.windowClosed(session)
         #expect(replier.replies[session] == nil)
     }
 
@@ -483,6 +485,7 @@ struct NativeReplyCoreTests {
         replier.sync()
         await replier.settled()
         #expect(replier.beginReply(session))
+        replier.windowOpened(session)
         replier.updateDraft(session) { $0.pick(2, in: 0, multi: false) }
         replier.submit(session)
         await replier.settled()

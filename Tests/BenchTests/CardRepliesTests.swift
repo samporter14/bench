@@ -334,11 +334,13 @@ struct CardRepliesTests {
         let replier = await card(.tool, read: waiting(readOnlyTool))
         #expect(replier.cardState(for: session) == .permission(readOnlyTool))
         core.results = [RemoteActionResult(result: .allowed, sentence: PermissionDecide.Sentence.allowed)]
-        replier.decide(session, allow: true)
-        replier.decide(session, allow: true)
-        await replier.settled()
+        let send = replier.decide(session, allow: true)
+        #expect(replier.decide(session, allow: true) == nil, "one send per press")
+        #expect(await send?.value == .sent(PermissionDecide.Sentence.allowed))
         #expect(core.requests == [.permission(id: "req-tool", allow: true, kind: "mcp_tool")])
-        #expect(replier.permissionReplies[session]?.phase == .sent(PermissionDecide.Sentence.allowed))
+        // Answered from the card itself, with no window to show it: nothing is kept.
+        #expect(replier.permissionReplies[session] == nil)
+        #expect(replier.contexts[session] == nil)
         #expect(!model.cards.contains { $0.id == LabCard.needsInput(waitingCard(reason: .tool)).id })
         #expect(replier.cardState(for: session) == nil)
     }
@@ -373,9 +375,8 @@ struct CardRepliesTests {
         let replier = await card(.tool, read: waiting(readOnlyTool))
         core.results = [RemoteActionResult(result: .changed, sentence: PermissionDecide.Sentence.alreadyHandled)]
         core.reads[session] = waiting(nil)
-        replier.decide(session, allow: false)
-        await replier.settled()
-        #expect(replier.permissionReplies[session]?.phase == .closed(PermissionDecide.Sentence.alreadyHandled))
+        #expect(await replier.decide(session, allow: false)?.value == .closed(PermissionDecide.Sentence.alreadyHandled))
+        #expect(replier.permissionReplies[session] == nil, "nothing left to show, no window to show it")
     }
 
     @Test func aFailureSaysTryAgainAndARefusalSaysWhyForTheMac() async {
@@ -395,11 +396,12 @@ struct CardRepliesTests {
     @Test func aRequestThatStopsWaitingClosesItsReply() async {
         let replier = await card(.tool, read: waiting(readOnlyTool))
         #expect(replier.begin(session))
+        replier.windowOpened(session)
         #expect(replier.mode(session) == .permission)
         model.ingest(Fixture.snapshot(Fixture.session(session, .running)))
         replier.sync()
         #expect(replier.permissionReplies[session]?.phase == .closed(QuestionReplier.Sentence.requestGone))
-        replier.closeReply(session)
+        replier.windowClosed(session)
         #expect(replier.permissionReplies[session] == nil)
     }
 
@@ -426,6 +428,7 @@ struct CardRepliesTests {
         #expect(replier.cards.isEmpty)
         #expect(!replier.begin(session), "Reply is for questions and requests")
         #expect(replier.begin(session, plan: true))
+        replier.windowOpened(session)
         #expect(replier.mode(session) == .plan)
         #expect(!replier.canSendPlanFeedback(session), "nothing typed")
         replier.updatePlanFeedback(session, text: "Add a made-up control plate.")
@@ -463,6 +466,7 @@ struct CardRepliesTests {
     @Test func aPlanThatChangedOrStoppedWaitingSendsNoMore() async {
         let replier = planCard()
         #expect(replier.begin(session, plan: true))
+        replier.windowOpened(session)
         replier.updatePlanFeedback(session, text: "Drop step 3.")
         core.results = [RemoteActionResult(result: .changed, sentence: RemoteDecide.Sentence.planChanged)]
         replier.submitPlanFeedback(session)
@@ -471,8 +475,10 @@ struct CardRepliesTests {
         #expect(replier.planReplies[session]?.text == "Drop step 3.", "still there to copy")
         #expect(!replier.canSendPlanFeedback(session))
         // The session runs again: a reply still open says so.
-        replier.closeReply(session)
+        replier.windowClosed(session)
+        #expect(replier.planReplies[session] == nil, "closed with nothing to send: let go")
         #expect(replier.begin(session, plan: true))
+        replier.windowOpened(session)
         #expect(replier.planReplies[session]?.phase == .editing)
         model.ingest(Fixture.snapshot(Fixture.session(session, .running)))
         replier.sync()
@@ -532,10 +538,11 @@ struct CardRepliesTests {
         let replier = await card(.question, read: read)
         var draft = ReplyDraft(for: ask())
         draft.pick(1, in: 0, multi: false)
-        replier.answerFromNotification(session, ask: ask(), draft: draft)
-        await replier.settled()
+        let phase = await replier.answerFromNotification(session, ask: ask(), draft: draft)
         #expect(core.requests == [.answer(toolID: "toolu_made_up_1", answers: [buffer.question: "Tris"])])
-        #expect(replier.replies[session]?.phase == .sent(RemoteDecide.Sentence.answered))
+        #expect(phase == .sent(RemoteDecide.Sentence.answered))
+        // Sent with no window to show it: nothing of it is kept.
+        #expect(replier.replies[session] == nil)
     }
 
     /// A question's notification reads it when the card hasn't, and the card
@@ -561,9 +568,9 @@ struct CardRepliesTests {
         core.ready = false
         var draft = ReplyDraft(for: ask())
         draft.pick(0, in: 0, multi: false)
-        replier.answerFromNotification(session, ask: ask(), draft: draft)
-        await replier.settled()
+        let phase = await replier.answerFromNotification(session, ask: ask(), draft: draft)
         #expect(core.requests.isEmpty)
+        #expect(phase == .failed(QuestionReplier.Sentence.failed))
         #expect(replier.replies[session]?.phase == .failed(QuestionReplier.Sentence.failed))
         #expect(replier.replies[session]?.draft.picks[0] == [0])
         core.ready = true
