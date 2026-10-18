@@ -326,6 +326,12 @@ yet checked live: a real failed session, and a real notification close.
 ## 2026-10-17, Capsid 0.7.2: a review of 0.7.1, Close Other Tabs, nine specimens
 
 0.7.1 was pushed but never released; 0.7.2 is the next release after 0.7.0.
+
+- ✅ Released as v0.7.2 (`Bench.zip` with Capsid.app inside) and installed
+  with the README's `install.sh` line, which quit the running copy:
+  /Applications/Capsid.app is 0.7.2 (35), signed by Solanum Code Signing,
+  CDHash `484fada9…`, the same as the release's download and the local
+  build, and running.
 It carries 0.7.1's six performance fixes, the fixes from a review of them,
 Close Other Tabs and Close All Tabs (next entry), and nine new specimens.
 
