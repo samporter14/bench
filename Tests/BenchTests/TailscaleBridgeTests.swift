@@ -489,3 +489,19 @@ struct TailscaleRemovalTests {
         #expect(await TailscaleBridge(runner: added).serve(port: 47280) == TailscaleBridge.Served(outcome: .serving, othersShare: true))
     }
 }
+
+
+// MARK: The actual child process, without running Tailscale
+
+struct TailscaleProcessRunnerTests {
+    @Test func spawnedProcessAlwaysUsesCLIMode() async {
+        // A Finder-launched app has no terminal environment. Tailscale's
+        // bundled executable otherwise opens its GUI instead of returning
+        // status JSON. Check the environment received by the actual child.
+        let runner = ProcessTailscaleRunner(executable: URL(fileURLWithPath: "/usr/bin/printenv"))
+        let run = await runner.run(["TAILSCALE_BE_CLI"], timeout: 3, stopWhen: nil)
+        #expect(run.exitStatus == 0)
+        #expect(!run.timedOut)
+        #expect(run.output.trimmingCharacters(in: .whitespacesAndNewlines) == "1")
+    }
+}

@@ -323,6 +323,55 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-19, Capsid 0.7.3: phone setup sees a connected Tailscale; the task you're viewing, for Nidus
+
+Two changes made in Codex chats, then reviewed here. Not released yet: 0.7.3
+(36) is a local build, installed on this Mac.
+
+**Phone setup detects connected Tailscale.**
+
+- Fixed the real Tailscale runner to set `TAILSCALE_BE_CLI=1`. The macOS
+  Tailscale executable otherwise chooses its GUI when Capsid is launched
+  without a terminal environment, leaving Phone setup on Sign in even though
+  Tailscale is connected. This is the override documented in
+  https://tailscale.com/docs/reference/tailscale-cli?tab=macos.
+- The new child-process regression (`TailscaleProcessRunnerTests`, which runs
+  `/usr/bin/printenv`, never Tailscale) failed before the change and passed
+  after it. `swift test --filter 'Tailscale|PhoneSetup|RemoteController'`
+  passed 62 tests in 7 suites with `TAILSCALE_BE_CLI` unset in the test
+  parent.
+- ✅ Checked live on a local build (then still numbered 0.7.2): Phone setup
+  completed its first five steps and showed the pairing QR code; Tailscale
+  Serve contained only Capsid's HTTPS 8443 route to loopback 47280; the
+  private HTTPS page returned 200 with title Capsid and a valid TLS
+  certificate.
+- ⏳ Pairing an iPhone: not done. A code read for Sam while he was away
+  expired before he could use it, and the locked Mac couldn't show a new
+  one. The page loading is not proof that pairing works.
+
+**The task you're viewing, for Nidus** (DESIGN.md, The task you're viewing,
+for Nidus). Off by default; Settings → General → Nidus.
+
+- `NidusTaskSelection` tests: only an exact project/frame route on the
+  daemon, with a matching session row, names a task; an overview, another
+  project's route or another site doesn't; empty names publish nothing and
+  long ones are cut to 240 characters with no newline.
+- Fixed in review: a `--demo` copy's quit, or its Settings switch, deleted
+  the running Capsid's file (`clear()` ran in any copy). Now only the copy
+  that started publishing refreshes or removes it.
+- ✅ Fixed in review: the new section pushed Help → Diagnostics below the
+  General page's bottom edge (a quiet `--demo general` capture showed it cut
+  off at 580). The page is now 634, and the capture shows every row with even
+  margins.
+- ⏳ Nidus showing the name live: not tried. Nidus's reader is uncommitted
+  in its own checkout, and live testing stopped at Sam's request.
+
+Automated, made-up fixtures only:
+
+- ✅ `swift test`: **1,376 tests in 176 suites, all passing in one run**
+  (3 more than 0.7.2: the Tailscale child process and two Nidus selection
+  tests).
+
 ## 2026-10-17, Capsid 0.7.2: a review of 0.7.1, Close Other Tabs, nine specimens
 
 0.7.1 was pushed but never released; 0.7.2 is the next release after 0.7.0.

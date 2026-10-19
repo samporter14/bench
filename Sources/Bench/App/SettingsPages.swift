@@ -38,6 +38,7 @@ extension View {
 /// sessions, the theme, updates and help.
 struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.appearance) private var appearance = BenchAppearance.system.rawValue
+    @AppStorage(SettingsKey.shareTaskWithNidus) private var shareTaskWithNidus = false
     @ObservedObject private var lab = LabModel.shared
 
     private var version: String {
@@ -94,6 +95,14 @@ struct GeneralSettingsView: View {
 
             UpdatesSection()
 
+            Section("Nidus") {
+                Toggle(isOn: $shareTaskWithNidus) {
+                    Text("Share the task I'm viewing with Nidus")
+                    Text("While Capsid's Claude Science window is focused, Nidus can show its project and task title. Capsid clears them when you switch away.")
+                }
+                .onChange(of: shareTaskWithNidus) { NidusTaskContext.shared.refresh() }
+            }
+
             Section("Help") {
                 LabeledContent {
                     Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
@@ -103,7 +112,7 @@ struct GeneralSettingsView: View {
                 }
             }
         }
-        .settingsPage(height: 500)
+        .settingsPage(height: 634)
         .onChange(of: appearance) { BenchAppearance.apply() }
     }
 }

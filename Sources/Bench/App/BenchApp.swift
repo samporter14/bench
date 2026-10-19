@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the main actor; this run's first copy waits for it (Results/ShelfTemporaryCopies.swift).
         ResultsShelf.shared.cleanUpAtLaunch()
         NidusFocus.shared.start()
+        NidusTaskContext.shared.start()
         NoticeWatchers.shared.start()
         // Running sessions held by a used-up plan limit (Lab/UsagePause.swift).
         UsagePauseModel.shared.start()
@@ -107,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        NidusTaskContext.shared.clear()
         LabModel.shared.stop()
         // Capsid on your phone: its Serve mapping goes with it, waiting
         // at most 2 s (Remote/RemoteController.swift). Never in a demo.

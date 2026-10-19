@@ -43,6 +43,9 @@ enum SettingsKey {
     static let weekInReview = "weekInReview"
     /// Hold "Finished" cards while a Nidus focus session runs.
     static let holdDuringFocus = "holdDuringNidusFocus"
+    /// Share the focused Claude Science task's project and title with Nidus.
+    /// Off until chosen in Settings → General.
+    static let shareTaskWithNidus = "shareTaskWithNidus"
     static let soundOnNeedsInput = "soundOnNeedsInput"
     /// A plan's card shows its summary and an Approve button (since 0.3.4).
     /// Off, the card is Open and Later, and no plan is read.
@@ -112,6 +115,7 @@ enum SettingsKey {
             headsUpNotices: true,
             weekInReview: true,
             holdDuringFocus: true,
+            shareTaskWithNidus: false,
             soundOnNeedsInput: true,
             showPlansOnCard: true,
             macNotifications: false,

@@ -17,7 +17,7 @@ fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
-swift build -c release --product Capsid
+swift build -c release --product Capsid --jobs "${CAPSID_BUILD_JOBS:-2}"
 BIN="$(swift build -c release --product Capsid --show-bin-path)/Capsid"
 
 APP="$ROOT/build/Capsid.app"

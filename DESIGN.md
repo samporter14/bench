@@ -616,6 +616,33 @@ their sessions still wait.
   reminders don't come out behind the lock screen. An older Nidus leaves the
   key out, and its pause ends the hold as before.
 
+### The task you're viewing, for Nidus (Lab/NidusTaskContext.swift, since 0.7.3)
+
+The other way round, and off by default: Settings → General → Nidus → "Share
+the task I'm viewing with Nidus". Nidus's activity record can then name the
+Claude Science task you spent the time in, not just "Capsid".
+
+- **What is written:** `~/Library/Application Support/Capsid/nidus-context.json`,
+  `{version: 1, pid, updatedAt, projectName, taskName}`. Names only: no
+  conversation text, no URLs. Each name drops control characters and is cut
+  to 240 characters; a file over 8 KiB is never written. The file is 0600 and
+  replaced by a rename, so Nidus never reads half of one.
+- **When:** only while Capsid is the active app, its main window is key, and
+  the page is an exact `/projects/<id>/frames/<id>` route on the daemon whose
+  session row has the same project. A project overview, the Browser window,
+  Settings or any other window writes nothing. Names come from the 25 recent
+  sessions LabModel already has; an older task is looked up by its exact ID
+  off the main actor, at most once every five seconds.
+- **Kept fresh:** rewritten on focus, route, session and settings changes and
+  every five seconds, and removed when any condition above stops holding, the
+  setting goes off, or Capsid quits. A crash leaves a file behind; Nidus
+  ignores it because it accepts the file only when `pid` is the frontmost
+  app's, `updatedAt` is at most 15 s old (or 2 s ahead), and its own
+  document-names setting is on.
+- **Only the copy that started it touches the file.** A `--demo` copy never
+  starts it, so its Settings switch and its quit leave a running Capsid's
+  file alone.
+
 ### Menu bar specimen (Lab/MenuBarSpecimen.swift, since 0.3.0)
 
 Off by default. While a session works, the specimen plays in the menu bar;
@@ -1560,7 +1587,8 @@ Six tabs since 0.4.0 (`App/SettingsPages.swift`), each a grouped form at its
 own height (the window follows the tab):
 
 - **General** (`general`): Capsid's name and version, a banner when it can't see
-  your sessions, Appearance, Updates (since 0.3.6) and Help → Diagnostics.
+  your sessions, Appearance, Updates (since 0.3.6), Nidus (since 0.7.3) and
+  Help → Diagnostics.
 - **Panel** (`panel`): the specimen while a session works (show it, name it,
   the menu bar), where the panel sits (corner, screen, while Capsid is in
   front), and a way to the Specimens tab.

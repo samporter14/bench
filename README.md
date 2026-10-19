@@ -78,8 +78,7 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 - **Every session in one list.** Click the status in the toolbar, or
   right-click Capsid in the Dock, for what needs you, what's working and what
   happened lately, each one click from its session. Press ⌘⇧O to jump to any
-  recent session by typing part of its name. Nothing about your sessions is
-  saved to disk: Recent lasts until Capsid quits.
+  recent session by typing part of its name. Recent lasts until Capsid quits.
 
   <img src="docs/activity.png" width="390" alt="The activity list under the toolbar's 2 need you: two sessions waiting, one stopped with an error, two working with their clocks, and Recent below">
 - **A heads-up before you hit a wall.** A card when your plan is nearly
@@ -88,7 +87,11 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   Once a new week starts, a quiet week in review.
 - **Plays well with Nidus.** While a [Nidus](https://github.com/samporter14/nidus)
   focus session runs, "Finished" cards wait until it ends and come as one;
-  questions and errors still come at once.
+  questions and errors still come at once. If you turn on **Settings → General
+  → Share the task I'm viewing with Nidus**, Capsid also writes the focused
+  Claude Science task's project and title to a small local file for Nidus.
+  It clears the file when you leave that task or switch away from Capsid.
+  Conversation text is never included.
 - **Optional menu bar specimen.** Turn it on in Settings to see a session
   working, or a count of those waiting, from the menu bar.
 - **Usage at a glance.** The title bar shows how full your session's context

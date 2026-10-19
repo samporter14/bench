@@ -405,6 +405,11 @@ private final class ProcessRun: @unchecked Sendable {
         let pipe = Pipe()
         process.executableURL = executable
         process.arguments = arguments
+        // Tailscale bundles its GUI and CLI in one executable. Finder-launched
+        // apps have no terminal environment, so explicitly request CLI mode.
+        var environment = ProcessInfo.processInfo.environment
+        environment["TAILSCALE_BE_CLI"] = "1"
+        process.environment = environment
         process.standardOutput = pipe
         process.standardError = pipe
         process.standardInput = FileHandle.nullDevice
