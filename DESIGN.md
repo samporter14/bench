@@ -125,8 +125,9 @@ clay-text (Look).
 - Closing the window hides it (the web view and its state survive). Clicking
   the Dock icon brings it back. ⌘Q quits Capsid but never stops the daemon.
 - Menus:
-  - File: Open Session… ⌘⇧O (Quick Open, below), Close Other Tabs ⌥⌘W and
-    Close All Tabs (artifact tabs, below).
+  - File: Open Session… ⌘⇧O (Quick Open, below), Next Waiting Session ⌥⌘↓
+    (since 0.9.0, below), Close Other Tabs ⌥⌘W and Close All Tabs (artifact
+    tabs, below).
   - View: Reload ⌘R, Zoom In ⌘+, Zoom Out ⌘−, Actual Size ⌘0, Find ⌘F,
     Show Lab Panel ⌘⇧L.
   - History: Back ⌘[, Forward ⌘].
@@ -465,8 +466,8 @@ question is still seen.
   - **In memory only**, like Recent: nothing about sessions is written to
     disk, due times included (the one thing kept is the two ids of the
     session you were in: Reopen where you were). A put-off session stays in
-    the activity list's Needs you and in the Dock badge, which count what
-    waits, not what is on the panel.
+    the activity list's Needs you, under its Later group, and in the Dock
+    badge, which count what waits, not what is on the panel.
 - `failed` ("Stopped with an error", Open and Dismiss, with the sound) comes
   when a working or waiting session ends in an error, and stays until it is
   opened, dismissed, or the session runs again.
@@ -601,15 +602,35 @@ list.
 ### Activity list (Lab/ActivityList.swift, Lab/ActivityMenu.swift, since 0.2.0)
 
 Every session at once, in a popover under the status capsule and in the Dock
-icon's menu: **Needs you** (waiting sessions with their reason, and failures
-not yet dismissed), **Working** (with each turn's clock) and **Recent** (the
-last 30 events: questions, plans, errors, finishes and saved downloads, in the
-past tense, with when). Each row opens its session in the one web view and
-closes the list; a saved file shows in Finder. Both read `LabModel`, so
-nothing else polls.
+icon's menu: **Needs you** (waiting sessions with their reason, failures not
+yet dismissed, and what is put off with Later), **Working** (with each turn's
+clock) and **Recent** (the last 30 events: questions, plans, errors, finishes
+and saved downloads, in the past tense, with when). Each row opens its session
+in the one web view and closes the list; a saved file shows in Finder. Both
+read `LabModel`, so nothing else polls.
 
-A session put off with Later (see Later) keeps its row in **Needs you**,
-quieter:
+**Needs you's groups and order** (`NeedsYou`, since 0.9.0). One pure type
+decides them, for the popover, the Dock menu and Next Waiting Session, so they
+cannot disagree about which sessions need you or which comes first:
+
+1. **What asks now** (`asks`): waiting sessions whose card is not put off,
+   **the one that has waited longest first**. A waiting session stops writing
+   when it parks, so its last write (`updatedAt`, which the lists sort and date
+   by) is when it began to wait: ascending, then by id. This is the order the
+   panel's card queue comes in (oldest card on top) and the order Next Waiting
+   Session walks, top to bottom. `LabModel.waiting` itself is unchanged, the
+   most recently active first (the Dock badge, the capsule's glyph, the phone
+   and the reply window read it as it is); only these lists reorder it.
+2. **Stopped with an error** (`failed`): failures not yet dismissed, in the
+   order the cards queue them.
+3. **Later** (`later`), under a small "Later" title at the bottom of Needs
+   you: the sessions put off with Later (below), the reminder due soonest first,
+   the one that waits for the focus session last, a tie by the longer wait. It
+   is a group of Needs you and not a section of its own because these sessions
+   are still counted as needing you (the capsule's "N need you", the Dock
+   badge). In the Dock menu it is a **Later** header after Needs you.
+
+A session put off with Later keeps its row in Needs you, quieter:
 
 - Where the reason was, a secondary line: "Reminds you at 2:15 PM" (the time
   in the Mac's own format) or "Reminds you after your focus session".
@@ -626,13 +647,94 @@ The Dock menu item's subtitle is the same line. Show Now and Cancel Reminder
 are the popover's only: a submenu on the item would take the click that opens
 the session, and items of their own would triple the section.
 
+**A put-off session counts as waiting once its reminder is due.** There is no
+date to compare: a reminder that comes due (or is brought forward with Show
+Now, or whose focus session ends) leaves `snoozed` in the same step that brings
+its card back, so it is an ask again, with its wait counted from when it began.
+Cancel Reminder does the same without the card. Before then it is under Later
+and Next Waiting Session passes over it.
+
+**Size** (`ActivitySizing`, since 0.9.0). The popover is as tall as its rows,
+up to the space from the window's toolbar to the bottom of the screen's usable
+area (`visibleFrame`) and no taller than that screen, but never under 320 pt
+(it was a fixed 480 pt, which cut Working's rows in half once six sessions
+waited). It scrolls only past that. Long lists keep what matters in view: Needs
+you shows the rows that fit once Working's (up to three) and the titles have
+their room, at least four, and the rest wait behind a quiet **N more** row that
+shows them in place when pressed (cut from the end, so Later goes first, then
+failures, then the most recent ask). Row heights are the drawn ones (52 pt a
+row, 30 pt a title), so the count is an estimate that errs toward showing
+fewer. With a 900 pt list and two working, ten or more Needs-you rows show
+whole.
+
+**Next Waiting Session** has a hint in the popover: at the end of Needs you's
+title, "Next Waiting Session ⌥⌘↓", a plain button that does what the menu item
+does (below). It shows while anything asks.
+
+**Acting from a row** (since 0.9.0). On hover, or when keyboard focus is on
+it, a Needs-you row offers what its card would, at its right end:
+
+- a question: **Reply…**, which opens the reply window as the card's Reply does
+  (the list closes first, as the window opens beside the panel);
+- a plan, once it is read: **Approve** and **Request changes…**;
+- a permission request: **Allow Once** or **Review…** (code to run) with
+  **Deny**, **Deny** alone where the Mac's table offers nothing but a plain no,
+  and nothing for a request it can't answer (an email, a helper's question),
+  exactly the card's rules (`RemotePermission.decideOnMac`).
+
+They stack in a small column at the row's right end, and the row's lines give
+way to it (cut at their ends) rather than going under it. Only the answer the
+card makes its primary (Reply, Approve, Review, Allow Once) is in the clay;
+Deny and Request changes… are plain, alone or beside it. They are also in the
+row's context menu and offered to VoiceOver as its actions, so they don't need a
+hover. The list's content says it appears active
+(`.environment(\.appearsActive, true)`, as the panel's does): a popover nothing has
+made key would draw the clay button dimmed. Allow
+Once, Deny and Approve leave the list open, so the row shows how the send goes:
+a spinner while it is sent, then, as the card does, a failed or changed one says why
+in a line under the project (clay-text), with its buttons still there to try
+again. "Approved ✓" stays for a moment, as on the card (`PlanApprover` holds the
+card for it). A request or question that went has no such moment: its card goes
+with the send (`settleCard`), so its row turns plain until the next read takes the
+session off the list.
+
+- **Reuse, not a copy.** What a card offers is decided in one place,
+  `CardOffer.of` (Lab/CardActions.swift), from the states the card reads
+  (the plan's `PlanCardState`, the question's `QuestionCardState`, where each
+  reply stands). The card (`LabPanelView`) and the rows (`ActivityList`) both draw
+  from it and both call `CardActions.perform`, which is the card's own core:
+  `PlanApprover.approve`, `QuestionReplier.decide`, `ReplyWindowController.show`.
+  Neither view sends anything itself. `CardAction` carries the titles and
+  tooltips; a row says "Reply…" and "Review…" where the card says "Reply" and
+  "Review", since they open a window.
+- **The same gates.** The offer comes from states that exist only while the card
+  would show them: "Show a card" and "Show plans, questions and requests on the
+  card" on, the page up, no demo. With either off no state is read and the
+  row only opens the session, as before. A row acts while **its card is in the
+  queue**: a session put off with Later or dismissed has no card, so no state,
+  and its row only opens it (the Later rows keep Show Now and Cancel Reminder).
+  Failures keep their one action, Open.
+- **Reading a card.** `QuestionReplier` and `PlanApprover` read only the card on
+  top as it comes. A row's card is read when the list opens (each shown ask) or
+  when the pointer or focus comes to it, once (`prepare`, which `PlanApprover`
+  gained for this, sharing `sync`'s load and its 15 s retry), never when the
+  settings are off. "Loading…" has no row text: the buttons appear when the
+  state does.
+- A demo can't hover: `--demo toolbar --open-activity --hover-row "<title>"`
+  shows that row's actions as if the pointer were on it (and leaves the plan
+  out of Later, and adds a session asking to use a read-only tool). Answering
+  sends nothing anywhere.
+
 The Dock menu is never empty: with nothing working or waiting it says
 "Nothing working right now", and while Recent is still empty (right after a
 start) it lists **Latest**, the five sessions active most recently that
 neither work nor wait, from the last read. The popover lists Latest the same
-way since 0.3.1. Below a divider it ends with **Quiet While Presenting**
-(Quiet while presenting); `applicationDockMenu` adds it, so the list is the
-same whatever the switch says.
+way since 0.3.1. It starts with **Next Waiting Session** (⌥⌘↓, dim when
+nothing asks) and a separator, then the sessions in the popover's order:
+Needs you, Later, Working, Recent. Below a divider it ends with **Quiet While
+Presenting** (Quiet while presenting); `applicationDockMenu` adds it, so the
+list is the same whatever the switch says. The panel's "+N more" pops up the
+same menu.
 
 Recent is kept in memory only, so Capsid still writes no title, state or time
 of a session to disk (the one thing kept is the two ids of the session you
@@ -644,6 +746,47 @@ The working specimen and the cards are separate settings since 0.2.0
 (`showLabPanel`, `showLabCards`): the specimen can be off while questions and
 errors still come. Someone who had the whole panel off before keeps the cards
 off after updating. Under Reduce Motion the working specimen is a still.
+
+### Next Waiting Session (Lab/NextWaiting.swift, since 0.9.0)
+
+**File → Next Waiting Session**, ⌥⌘↓, also the first item of the Dock menu and
+a button in the activity list's Needs you title. It opens the session that has
+waited longest among those that need you, and on the next press the one after
+it, and round again. Today, with several waiting, it is open the list, click,
+come back, repeat.
+
+- **Which sessions.** `NeedsYou.asks`: the waiting sessions whose card is not
+  put off, in the list's order, the longest wait first. A session put off with
+  Later counts again once its reminder is due (see the Activity list), not
+  before. **Failures are not in it**: it is about what waits for you, which
+  is what the capsule's "N need you" and the Dock badge count, and a failure
+  has its card, its Dock-menu row and its notification.
+- **The cycle.** `NextWaiting.pick`, pure: no press yet, the first; else the one
+  after the one the last press opened, and the first again after the last.
+  Opening a session doesn't take it out of what waits, so stepping past it is
+  what makes repeated presses go round. If the one opened last has since been
+  answered and left, the next press goes on from where it stood in the order
+  (the first that waited less long), not back to the top. One session
+  waiting is its own next. It opens as every row does (`LabModel.open`, which
+  clears its cards and reminder). Kept in memory only.
+- **Dim when nothing asks** (the File item and the Dock item), and in a demo,
+  which has no main window.
+- **Why ⌥⌘↓.** Not a letter: the page takes common ones (⌘⇧O and its like, which
+  is why Quick Open is caught ahead of it) and ⌘⇧N is "new window" everywhere.
+  Capsid binds nothing on the arrows (the menus' ⌘⇧O, ⌘⇧R, ⌘⇧L, ⌥⌘W, ⌘R, ⌘F,
+  ⌘+ ⌘− ⌘0, ⌘[ ⌘] are held to one use each by `NextWaitingWiringTests`; the
+  reply window's ⌘1…⌘9 and ⌘↩ are another window's). A text field has no
+  binding for ⌥⌘↓, so it is safe in the composer, and the system has none
+  (Mission Control takes ⌃, Safari's tabs ⌥⌘←/→). Down is "the next one down
+  the list".
+- **Caught ahead of the page.** A web view is offered key equivalents before the
+  menu, so a local `NSEvent` monitor (beside Quick Open's, `AppDelegate`) takes
+  ⌥⌘↓ in the main window and only there: a Browser window shows other sites,
+  which may use it themselves, and keeps it. Matched by key code (125) and the
+  four modifiers alone (`NextWaiting.isKey`; the arrow key's own `function` and
+  `numericPad` flags and Caps Lock don't count). A held key does nothing
+  after the first press and is not passed on while something waits; with nothing
+  waiting the key goes on to the page.
 
 ### Quick Open (since 0.3.3)
 
@@ -1122,6 +1265,12 @@ The plan state is dropped when the card goes, when it stops being about a
 plan (a new request replaced it), or when the setting is turned off; a card
 that comes back reads its plan afresh.
 
+Since 0.9.0 `prepare(_:)` reads the plan of any plan card in the queue, not only
+the one on top (`sync` reads the top one as before, by the same load and the
+same 15 s retry): a row of the activity list offers Approve for it (Activity
+list → Acting from a row). The button is the card's: `CardActions.perform(.approve)`
+calls `approve`.
+
 **The checks** (`PlanCheck`, pure, tested on made-up JSON):
 
 - **Offer Approve** only when all of these hold: the **root** frame's own
@@ -1256,6 +1405,19 @@ is tried again after 15 s. Then (`QuestionCardState`, pure):
   doesn't know, or a wait the read shows nothing for. The card says "Answer
   this one in Capsid" and offers **Open in Capsid** and **Later**.
 - **Unavailable**: the read failed: Open and Later, as before.
+
+**Which buttons** (`CardOffer`, Lab/CardActions.swift, since 0.9.0). What a needs-input
+card offers is one pure decision, from the states it has read: the primary
+button (Approve, Reply, Review, Allow Once, else Open or Open in Capsid), whether
+a plain Open follows, Deny, what Later's menu carries, Request changes…, the line
+for an answer on its way ("Sending…" spinner) or one sent ("Sent ✓", "Approved ✓",
+"Allowed once ✓", "Denied ✓"; a card whose send went is dismissed with it, so these
+show only for a moment, or while the reply window keeps the reply), and the sentence for
+a send that didn't go. The card
+draws it, and the activity list's rows draw the same (Activity list → Acting from a
+row); both call `CardActions.perform`, which calls the replier, the approver or the
+reply window as the card's buttons always did. `QuestionReplier.prepare` reads a card
+that is not on top (it already did, for the reply window's Next).
 
 **What Claude said.** The same read's last Claude turn
 (`QuestionCardState.context`) is shown at the top of the window, three lines
@@ -2265,6 +2427,9 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] update check against a real newer release: the card comes once, Settings shows "Capsid 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Capsid in /Applications) quits Capsid, installs it and reopens it. Capsid started from a build folder offers no Install
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption lines (Panel, "Name the specimen that's playing")
 - [ ] Quick Open finds an older session: ⌘⇧O, type a word from the title (or project) of a session older than the ~25 recent ones; it joins the list a moment after the recent matches and opens; a hidden or sub-agent session is never found; Esc closes without leaving anything running
+- [ ] Next Waiting Session: with three sessions waiting (one a plan), ⌥⌘↓ in the Claude Science window with the page focused, and again with the cursor in the composer, opens the one that has waited longest, then the next, then the third, then the first; the same from File → Next Waiting Session and the Dock menu's first item; a Later session is skipped until its reminder is due; the items are dim with nothing waiting; in a Browser window the keys reach its page
+- [ ] activity list: with six waiting, one put off with Later, and two working, Later is its own group at the bottom of Needs you, Working shows whole with its clocks, and the Dock menu has the same order; on a short screen "N more" appears and opens in place
+- [ ] acting from the list: hover a question's row, Reply… opens the reply window; hover a plan's row, Approve approves it (a throwaway session) and the row says Approved; hover a read-only tool's request, Allow Once and Deny; Tab to a row with full keyboard access on and the same buttons appear; with "Show plans, questions and requests on the card" off, no buttons and the row only opens; a Later row has only its bells
 - [ ] reopen where you were: open a session, ⌘Q, launch: that session; go to the home page, ⌘Q, launch: the home page; `kill -9` Capsid while in a session, launch: that session; launch from a `bench://session?…` link of another session: that one, not the remembered; the remembered session gone (deleted, or another org active): the home page; sign out and back in on a remembered session: still on it
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Capsid settings already stored; Help → Welcome to Capsid shows it again; Return and Esc work; the updates switch stays off until turned on
 

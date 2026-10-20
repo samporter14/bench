@@ -89,6 +89,8 @@ struct LabPanelView: View {
     /// A question's card: what it asks, and Reply (Lab/QuestionReply.swift).
     @ObservedObject private var questions = QuestionReplier.shared
     @ObservedObject private var usagePause = UsagePauseModel.shared
+    /// What a card offers and does (Lab/CardActions.swift), over the same model and states.
+    private var actions: CardActions { CardActions(model: model, plans: plans, questions: questions) }
     /// Reports the window size the content wants, whenever it changes.
     let onFit: (CGSize) -> Void
 
@@ -283,17 +285,16 @@ struct LabPanelView: View {
             let plan = reason == .plan ? plans.state(for: session.id) : nil
             // Any other wait's (a question, a permission request), under the same setting.
             let question = QuestionCardState.reads(reason) ? questions.cardState(for: session.id) : nil
+            // What the card offers, from those states: the one rule the activity list's rows
+            // read too (Lab/CardActions.swift).
+            let offer = actions.offer(for: session)
             Row(side: wellSide, well: PlayedLoop(glyph: reason.glyph, tint: colorScheme.sceneInk)) {
                 caption(reason.sentence, style: Theme.clayText, weight: .semibold, trailing: position)
                 title(session.displayTitle)
                 detail(session.projectName)
-                if let plan { planLines(plan, sessionID: session.id) }
-                if let question { questionLines(question, sessionID: session.id) }
-                if let question, plan == nil {
-                    questionActions(card, session: session, question: question)
-                } else {
-                    needsInputActions(card, session: session, plan: plan)
-                }
+                if let plan { planLines(plan, session: session) }
+                if let question { questionLines(question, sessionID: session.id, offer: offer) }
+                needsInputButtons(offer, card: card, session: session)
             }
         case .failed(let session):
             Row(side: wellSide, well: symbol("exclamationmark.triangle")) {
@@ -367,7 +368,7 @@ struct LabPanelView: View {
     /// and feasibility, with the steps' titles a click away, or why it
     /// couldn't be approved here.
     @ViewBuilder
-    private func planLines(_ plan: PlanCardState, sessionID: String) -> some View {
+    private func planLines(_ plan: PlanCardState, session: SessionStatus) -> some View {
         switch plan {
         case .loading:
             detail("Loading the plan…")
@@ -378,19 +379,19 @@ struct LabPanelView: View {
             planSummary(preview.summary)
             stepsLine(preview)
             HStack(spacing: 10) {
-                if let list = preview.stepList { stepsToggle(list, sessionID: sessionID) }
-                requestChangesLink(sessionID)
+                if let list = preview.stepList { stepsToggle(list, sessionID: session.id) }
+                requestChangesLink(session)
             }
             .padding(.top, 2)
-            if let list = preview.stepList, plans.isShowingSteps(sessionID) { stepRows(list) }
+            if let list = preview.stepList, plans.isShowingSteps(session.id) { stepRows(list) }
         case .approving(let preview), .approved(let preview):
             planSummary(preview.summary)
             stepsLine(preview)
-            if let list = preview.stepList { stepsDisclosure(list, sessionID: sessionID) }
+            if let list = preview.stepList { stepsDisclosure(list, sessionID: session.id) }
         case .problem(let message, let preview):
             planSummary(preview.summary)
             detail(message)
-            requestChangesLink(sessionID)
+            requestChangesLink(session)
                 .padding(.top, 2)
         }
     }
@@ -398,18 +399,18 @@ struct LabPanelView: View {
     /// "Request changes…": what to change in the plan, typed in the reply
     /// window (Lab/ReplyWindow.swift) and sent as the session's own composer
     /// would, so Claude revises it and it waits for approval again.
-    private func requestChangesLink(_ sessionID: String) -> some View {
+    private func requestChangesLink(_ session: SessionStatus) -> some View {
         Button {
-            ReplyWindowController.shared.show(sessionID, plan: true)
+            actions.perform(.requestChanges, for: session)
         } label: {
-            Text("Request changes…")
+            Text(CardAction.requestChanges.title)
                 .foregroundStyle(.secondary)
                 .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help("Tell Claude what to change. The plan waits for your approval again.")
+        .help(CardAction.requestChanges.help ?? "")
     }
 
     /// The question under the title: what it asks, in two lines, and how it
@@ -417,7 +418,7 @@ struct LabPanelView: View {
     /// permission request: what it wants, then what it is or why it can't be
     /// answered here, or how its answer went.
     @ViewBuilder
-    private func questionLines(_ question: QuestionCardState, sessionID: String) -> some View {
+    private func questionLines(_ question: QuestionCardState, sessionID: String, offer: CardOffer) -> some View {
         switch question {
         case .loading:
             detail("Loading…")
@@ -429,10 +430,10 @@ struct LabPanelView: View {
             let words = RemotePermission.words(for: request)
             let decision = RemotePermission.decideOnMac(request)
             planSummary(words.title)
-            switch questions.permissionReplies[sessionID]?.phase {
-            case .changed(let sentence)?, .failed(let sentence)?, .closed(let sentence)?:
-                note(sentence, tint: Theme.clayText)
-            default:
+            // How a send went (changed, failed, closed) in place of what the request is.
+            if let problem = offer.problem {
+                note(problem, tint: Theme.clayText)
+            } else {
                 if decision.canAllow || decision.canDeny, !words.detail.isEmpty {
                     note(words.detail)
                 }
@@ -454,118 +455,6 @@ struct LabPanelView: View {
             .lineLimit(3)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.top, 2)
-    }
-
-    /// Reply, the primary action, then Open and Later. Reply opens the reply
-    /// window (Lab/ReplyWindow.swift): the panel itself never takes the
-    /// keyboard. While an answer is sent the row is a spinner; sent, "Sent ✓".
-    /// A request the card can't answer offers Open in Capsid.
-    @ViewBuilder
-    private func questionActions(_ card: LabCard, session: SessionStatus, question: QuestionCardState) -> some View {
-        switch (question, questions.replies[session.id]?.phase) {
-        case (.ready, .sending?):
-            buttons {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(minWidth: 64)
-                    .accessibilityLabel("Sending the answer")
-                Button("Open") { model.open(card) }
-                    .buttonStyle(.glass)
-                later(card)
-            }
-        case (.ready, .sent?):
-            HStack(spacing: 4) {
-                Text("Sent")
-                Image(systemName: "checkmark")
-            }
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Theme.clayText)
-            .padding(.top, 8)
-            .accessibilityElement(children: .combine)
-        case (.ready, _):
-            buttons {
-                Button("Reply") { ReplyWindowController.shared.show(session.id) }
-                    .buttonStyle(.glassProminent)
-                    .tint(Theme.clay)
-                    .help("Answer here. Capsid checks it's still the same question before sending.")
-                Button("Open") { model.open(card) }
-                    .buttonStyle(.glass)
-                later(card)
-            }
-        case (.permission(let request), let phase):
-            permissionActions(card, session: session, request: request, phase: phase)
-        case (.unsupported, _):
-            buttons {
-                Button("Open in Capsid") { model.open(card) }
-                    .buttonStyle(.glassProminent)
-                    .tint(Theme.clay)
-                later(card)
-            }
-        default:
-            needsInputActions(card, session: session, plan: nil)
-        }
-    }
-
-    /// A permission request's buttons, from the Mac's table: code to run is
-    /// read in the reply window first (Review), a read-only tool may be
-    /// allowed once right here, and Deny wherever a plain no is all a deny is.
-    /// The rest open in Capsid, which also offers how long an allow lasts.
-    @ViewBuilder
-    private func permissionActions(_ card: LabCard, session: SessionStatus, request: PermissionRequest,
-                                   phase: ReplyPhase?) -> some View {
-        let decision = RemotePermission.decideOnMac(request)
-        switch questions.permissionReplies[session.id]?.phase {
-        case .sending?:
-            buttons {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(minWidth: 64)
-                    .accessibilityLabel("Sending")
-                Button("Open") { model.open(card) }
-                    .buttonStyle(.glass)
-                later(card)
-            }
-        case .sent(let sentence)?:
-            HStack(spacing: 4) {
-                Text(sentence == PermissionDecide.Sentence.allowed ? "Allowed once" : "Denied")
-                Image(systemName: "checkmark")
-            }
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Theme.clayText)
-            .padding(.top, 8)
-            .accessibilityElement(children: .combine)
-        case .closed?:
-            buttons {
-                Button("Open") { model.open(card) }
-                    .buttonStyle(.glassProminent)
-                    .tint(Theme.clay)
-                later(card)
-            }
-        default:
-            buttons {
-                if decision.canAllow, request.known == .localExec {
-                    Button("Review") { ReplyWindowController.shared.show(session.id) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
-                        .help("Read the code, then allow it once or deny it.")
-                } else if decision.canAllow {
-                    Button("Allow Once") { questions.decide(session.id, allow: true) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
-                        .help("Allow this once. Capsid checks it's still the same request first.")
-                } else {
-                    Button(decision.canDeny ? "Open" : "Open in Capsid") { model.open(card) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
-                }
-                if decision.canDeny {
-                    Button("Deny") { questions.decide(session.id, allow: false) }
-                        .buttonStyle(.glass)
-                        .help("Deny it. Claude carries on without it.")
-                }
-                later(card, withOpen: decision.canAllow)
-            }
-        }
     }
 
     /// "6 steps · feasibility: high". The word "feasibility" is Claude's own
@@ -647,48 +536,59 @@ struct LabPanelView: View {
             .padding(.top, 4)
     }
 
-    /// Open and Later, as on every needs-input card. A plan that is ready
-    /// adds Approve in front, the primary action, and Open steps back to
-    /// plain glass. Pressed, Approve becomes a spinner; approved, the row is
-    /// "Approved ✓" until the card goes.
+    /// The card's buttons, from what it offers (`CardOffer`): the primary action
+    /// (Approve, Reply, Review, Allow Once, else Open), then Open as plain glass
+    /// where there is room, Deny, and Later. An answer on its way is a spinner;
+    /// one sent is "Sent ✓", "Approved ✓", "Allowed once ✓" or "Denied ✓" until the
+    /// card goes. Reply and Review open the reply window (Lab/ReplyWindow.swift):
+    /// the panel itself never takes the keyboard.
     @ViewBuilder
-    private func needsInputActions(_ card: LabCard, session: SessionStatus, plan: PlanCardState?) -> some View {
-        switch plan {
-        case .approved?:
+    private func needsInputButtons(_ offer: CardOffer, card: LabCard, session: SessionStatus) -> some View {
+        switch offer.lead {
+        case .done(let text):
             HStack(spacing: 4) {
-                Text("Approved")
+                Text(text)
                 Image(systemName: "checkmark")
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(Theme.clayText)
             .padding(.top, 8)
             .accessibilityElement(children: .combine)
-        case .ready?:
-            buttons {
-                Button("Approve") { plans.approve(session.id) }
-                    .buttonStyle(.glassProminent)
-                    .tint(Theme.clay)
-                    .help("Approve this plan. Capsid checks it's still the same plan first.")
-                Button("Open") { model.open(card) }
-                    .buttonStyle(.glass)
-                later(card)
-            }
-        case .approving?:
+        case .sending(let label):
             buttons {
                 ProgressView()
                     .controlSize(.small)
                     .frame(minWidth: 64)
-                    .accessibilityLabel("Approving")
-                Button("Open") { model.open(card) }
-                    .buttonStyle(.glass)
+                    .accessibilityLabel(label)
+                if offer.hasOpen {
+                    Button("Open") { model.open(card) }
+                        .buttonStyle(.glass)
+                }
                 later(card)
             }
-        default:
+        case .button(let lead):
             buttons {
-                Button("Open") { model.open(card) }
-                    .buttonStyle(.glassProminent)
-                    .tint(Theme.clay)
-                later(card)
+                switch lead {
+                case .open, .openInCapsid:
+                    Button(lead.title) { model.open(card) }
+                        .buttonStyle(.glassProminent)
+                        .tint(Theme.clay)
+                default:
+                    Button(lead.title) { actions.perform(lead, for: session) }
+                        .buttonStyle(.glassProminent)
+                        .tint(Theme.clay)
+                        .help(lead.help ?? "")
+                }
+                if offer.hasOpen {
+                    Button("Open") { model.open(card) }
+                        .buttonStyle(.glass)
+                }
+                if offer.hasDeny {
+                    Button(CardAction.deny.title) { actions.perform(.deny, for: session) }
+                        .buttonStyle(.glass)
+                        .help(CardAction.deny.help ?? "")
+                }
+                later(card, withOpen: offer.laterHasOpen)
             }
         }
     }

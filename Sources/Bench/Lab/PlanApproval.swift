@@ -517,12 +517,29 @@ final class PlanApprover: ObservableObject {
         }
         guard enabled, case .needsInput(let session)? = model.cards.first, session.waitingReason == .plan,
               dependencies.isReady() else { return }
-        switch states[session.id] {
+        loadIfNeeded(session.id)
+    }
+
+    /// Reads the plan of a plan card that is in the queue but not on top, when
+    /// it has none yet: `sync` reads the card on top as it comes, and a row of
+    /// the activity list offers Approve for any (Lab/CardActions.swift). Nothing
+    /// with the card's settings off, the page down, or no plan card for the
+    /// session. Reads once, and again only as `sync` does after a failed read.
+    func prepare(_ id: String) {
+        guard dependencies.isEnabled(), dependencies.isReady(),
+              model.cards.contains(where: { card in
+                  if case .needsInput(let session) = card { session.id == id && session.waitingReason == .plan } else { false }
+              }) else { return }
+        loadIfNeeded(id)
+    }
+
+    private func loadIfNeeded(_ id: String) {
+        switch states[id] {
         case nil:
-            load(session.id)
+            load(id)
         case .unavailable?:
-            if Date().timeIntervalSince(unavailableSince[session.id] ?? .distantPast) >= Self.retryAfter {
-                load(session.id)
+            if Date().timeIntervalSince(unavailableSince[id] ?? .distantPast) >= Self.retryAfter {
+                load(id)
             }
         default:
             break

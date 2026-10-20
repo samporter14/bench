@@ -4,7 +4,7 @@
 import AppKit
 
 @MainActor
-final class ActivityMenu: NSObject {
+final class ActivityMenu: NSObject, NSMenuItemValidation {
     static let shared = ActivityMenu()
 
     /// How many Recent events the Dock menu lists; the popover has them all.
@@ -15,20 +15,25 @@ final class ActivityMenu: NSObject {
     /// Tests pass their own model.
     func make(model: LabModel = .shared) -> NSMenu {
         let menu = NSMenu()
-        let failed = model.cards.compactMap { if case .failed(let session) = $0 { session } else { nil } }
+        let needs = NeedsYou(model: model)
 
-        if !model.waiting.isEmpty || !failed.isEmpty {
+        if !needs.asks.isEmpty || !needs.failed.isEmpty {
             menu.addItem(.sectionHeader(title: "Needs you"))
-            for session in model.waiting {
-                // A session put off with Later says when it comes back. The
-                // item keeps opening the session; Show Now and Cancel Reminder
-                // are the popover's, so the menu stays one line a session.
-                let subtitle = model.snoozed.first { $0.id == session.id }
-                    .map { ActivityList.line(for: $0) } ?? (session.waitingReason ?? .other).sentence
-                menu.addItem(item(session, subtitle: subtitle))
+            for session in needs.asks {
+                menu.addItem(item(session, subtitle: (session.waitingReason ?? .other).sentence))
             }
-            for session in failed {
+            for session in needs.failed {
                 menu.addItem(item(session, subtitle: "Stopped with an error"))
+            }
+        }
+        if !needs.later.isEmpty {
+            // Put off with Later, under their own title as in the popover: each
+            // says when it comes back. The item keeps opening the session; Show
+            // Now and Cancel Reminder are the popover's, so the menu stays one
+            // line a session.
+            menu.addItem(.sectionHeader(title: "Later"))
+            for reminder in needs.later {
+                menu.addItem(item(reminder.session, subtitle: ActivityList.line(for: reminder)))
             }
         }
         if !model.working.isEmpty {
@@ -46,7 +51,7 @@ final class ActivityMenu: NSObject {
                 }
             }
         }
-        if model.waiting.isEmpty, failed.isEmpty, model.working.isEmpty {
+        if needs.isEmpty, model.working.isEmpty {
             let idle = NSMenuItem(title: "Nothing working right now", action: nil, keyEquivalent: "")
             idle.isEnabled = false
             menu.insertItem(idle, at: 0)
@@ -59,6 +64,16 @@ final class ActivityMenu: NSObject {
                 menu.addItem(item(session, subtitle: "\(session.state.label) · \(session.projectName)"))
             }
         }
+        // First, with its keys: the session that has waited longest, then the next.
+        // Dim when nothing waits, so the menu keeps its shape.
+        let next = NSMenuItem(title: NextWaiting.title, action: #selector(openNext(_:)), keyEquivalent: String(Character(UnicodeScalar(NSDownArrowFunctionKey)!)))
+        next.keyEquivalentModifierMask = [.command, .option]
+        next.target = self
+        // The menu validates its items (an item with a target is on): `tag` says whether this one is.
+        next.tag = needs.asks.isEmpty ? 0 : 1
+        next.isEnabled = !needs.asks.isEmpty
+        menu.insertItem(next, at: 0)
+        menu.insertItem(.separator(), at: 1)
         return menu
     }
 
@@ -68,6 +83,15 @@ final class ActivityMenu: NSObject {
         item.target = self
         item.representedObject = session.id
         return item
+    }
+
+    /// Every item opens a session and is on, but Next Waiting Session while nothing asks.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        item.action == #selector(openNext(_:)) ? item.tag == 1 : true
+    }
+
+    @objc private func openNext(_ item: NSMenuItem) {
+        NextWaiting.shared.openNext()
     }
 
     @objc private func open(_ item: NSMenuItem) {
