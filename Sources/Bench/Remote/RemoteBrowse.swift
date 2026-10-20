@@ -537,6 +537,7 @@ final class RemoteBrowser {
         case .turn(let id, let index):
             guard BrowseQuery.parse(target, allowed: []) != nil else { return .badRequest }
             guard await sessions.admitted(id) != nil else { return .notFound }
+            guard !Task.isCancelled else { return Self.unreadable }
             switch await dependencies.turn(id, index) {
             case .turn(let turn) where turn.i == index: return Self.json(BrowseAPI.encode(turn))
             case .none: return .notFound
@@ -574,6 +575,8 @@ final class RemoteBrowser {
             before = index
         }
         guard await sessions.admitted(id) != nil else { return .notFound }
+        // The phone hung up while the session was looked up: the page is not asked to read for nobody.
+        guard !Task.isCancelled else { return Self.unreadable }
         guard let read = await historyPage(id, before: before) else { return Self.unreadable }
         let page = read.capped { BrowseAPI.encode($0) }
         dependencies.listed(page.files, device)

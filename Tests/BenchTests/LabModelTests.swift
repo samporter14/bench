@@ -155,6 +155,58 @@ struct LatestTests {
         #expect(Set(model.latest.map(\.id)) == ["b", "d"])
     }
 
+    private static let started = Date(timeIntervalSince1970: 1_791_800_000)
+
+    /// A made-up finished session whose dates stay put between reads.
+    private func finished(_ id: String, title: String, project: String = "Made-up project", state: SessionState = .finished,
+                          wroteAt seconds: TimeInterval = 0, tokens: Int? = nil) -> SessionStatus {
+        SessionStatus(id: id, projectID: "p", projectName: project, title: title, state: state,
+                      updatedAt: Self.started.addingTimeInterval(seconds), startedAt: Self.started, tokens: tokens,
+                      deepLink: URL(string: "http://localhost:8765/projects/p/frames/\(id)"))
+    }
+
+    private func dockTitles(_ model: LabModel) -> [String] {
+        ActivityMenu.shared.make(model: model).items.filter { $0.action != nil && $0.representedObject != nil }.map(\.title)
+    }
+
+    @Test func aRenameInPlaceReachesTheDockMenu() {
+        let model = LabModel()
+        model.ingest(Fixture.snapshot(finished("a", title: "Old title"), finished("b", title: "Other", wroteAt: -60)))
+        #expect(model.latest.map(\.title) == ["Old title", "Other"])
+        #expect(dockTitles(model) == ["Old title", "Other"])
+        var published = 0
+        let watch = model.objectWillChange.sink { published += 1 }
+        defer { watch.cancel() }
+
+        // The same sessions in the same order, one renamed: the ids don't move, the label does.
+        model.ingest(Fixture.snapshot(finished("a", title: "New title"), finished("b", title: "Other", wroteAt: -60)))
+        #expect(model.latest.map(\.id) == ["a", "b"])
+        #expect(model.latest.map(\.title) == ["New title", "Other"])
+        #expect(dockTitles(model) == ["New title", "Other"])
+        #expect(published >= 1)
+    }
+
+    @Test func theOtherShownFieldsRefreshToo() {
+        let model = LabModel()
+        model.ingest(Fixture.snapshot(finished("a", title: "Same", project: "Old project")))
+        // The project's name, and a session that ended in an error rather than finishing, are on the menu's line.
+        model.ingest(Fixture.snapshot(finished("a", title: "Same", project: "Renamed project")))
+        #expect(model.latest.first?.projectName == "Renamed project")
+        model.ingest(Fixture.snapshot(finished("a", title: "Same", project: "Renamed project", state: .error)))
+        #expect(model.latest.first?.state == .error)
+    }
+
+    @Test func aReadThatMovesOnlyTokensOrTheLastWriteDoesNotPublishAgain() {
+        let model = LabModel()
+        model.ingest(Fixture.snapshot(finished("a", title: "Same", tokens: 10)))
+        var published = 0
+        let watch = model.objectWillChange.sink { published += 1 }
+        defer { watch.cancel() }
+        model.ingest(Fixture.snapshot(finished("a", title: "Same", wroteAt: 30, tokens: 900)))
+        #expect(published == 0)
+        #expect(model.latest.first?.tokens == 10)
+    }
+
     @Test func theDockMenuIsNeverEmpty() {
         let model = LabModel()
         #expect(model.latest.isEmpty && model.recent.isEmpty && model.working.isEmpty)
