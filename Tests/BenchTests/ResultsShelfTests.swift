@@ -598,7 +598,7 @@ struct ResultsShelfTests {
         // Save All's progress on the other session, line by line.
         fake.hold = true
         shelf.saveAll(madeUpID(2), into: URL(fileURLWithPath: "/made-up/Out", isDirectory: true))
-        for _ in 0..<10 { await Task.yield() }
+        await until { fake.inFlight == 2 }
         #expect(shelf.batches[madeUpID(2)] == .saving(done: 0, total: 2))
         fake.release()
         for _ in 0..<10 { await Task.yield() }
@@ -1221,7 +1221,7 @@ struct ShelfSaveAllTests {
                                        entry("figure.png", version: "v-3", mime: "image/png")])
         fake.hold = true
         shelf.saveAll(madeUpID(1), into: out)
-        for _ in 0..<10 { await Task.yield() }
+        await until { fake.inFlight == 2 }
         #expect(fake.inFlight == 2, "the names are settled: the downloads are under way")
         // A program puts a file at the planned name since the plan was made.
         fake.existing.insert("/made-up/Out/report.md")
@@ -1233,6 +1233,30 @@ struct ShelfSaveAllTests {
         #expect(shelf.saved["v-1"]?.lastPathComponent == "report 3.md", "numbered from report.md around what is taken")
         #expect(Set(fake.written.map(\.path)).count == 3 && fake.written.count == 3)
         #expect(summary(shelf) == ShelfSaveAllSummary(folder: out, saved: 3))
+    }
+
+    @Test func aPlannedNumberTakenAfterThePlanIsNumberedFromTheNameTheFileAskedFor() async {
+        let shelf = await shelf(with: [entry("report.md", version: "v-1"), entry("report.md", version: "v-2")])
+        fake.hold = true
+        shelf.saveAll(madeUpID(1), into: out)
+        await until { fake.inFlight == 2 }
+        // Both planned names ("report.md" and "report 2.md") are taken since.
+        fake.existing.formUnion(["/made-up/Out/report.md", "/made-up/Out/report 2.md"])
+        fake.hold = false
+        fake.release()
+        await shelf.settled()
+        #expect(Set(fake.written.map(\.lastPathComponent)) == ["report 3.md", "report 4.md"],
+                "numbered from report.md, not from the number that was taken (never \"report 2 2.md\")")
+        #expect(summary(shelf) == ShelfSaveAllSummary(folder: out, saved: 2))
+    }
+
+    @Test func aSaveAllOfFilesAllOverTheCapLooksAtNothingOnTheDisk() async {
+        let shelf = await shelf(with: [entry("huge.csv", version: "v-1", size: cap + 1),
+                                       entry("huger.csv", version: "v-2", size: cap + 1)])
+        shelf.saveAll(madeUpID(1), into: out)
+        await shelf.settled()
+        #expect(summary(shelf) == ShelfSaveAllSummary(folder: out, tooBig: 2))
+        #expect(fake.listCalls.isEmpty && fake.existsCalls.isEmpty, "no names to settle: a folder that doesn't answer costs nothing")
     }
 
     @Test func theRememberedFolderIsReadWithoutAskingTheDisk() {
@@ -1284,7 +1308,8 @@ struct ShelfSaveAllTests {
         let shelf = await shelf(with: (1...5).map { entry("f\($0).md", version: "v-\($0)") })
         fake.hold = true
         shelf.saveAll(madeUpID(1), into: out)
-        for _ in 0..<10 { await Task.yield() }
+        // The names are settled off the main actor first, so the downloads start a little later.
+        await until { fake.inFlight == 2 }
         #expect(fake.inFlight == 2)
         #expect(fake.downloads.count == 2)
         #expect(shelf.batches[madeUpID(1)] == .saving(done: 0, total: 5))
@@ -1388,7 +1413,7 @@ struct ShelfSaveAllTests {
         let shelf = await shelf(with: (1...4).map { entry("f\($0).md", version: "v-\($0)") })
         fake.hold = true
         shelf.saveAll(madeUpID(1), into: folder)
-        for _ in 0..<10 { await Task.yield() }
+        await until { fake.inFlight == 2 }
         // The first two arrive and are saved; the next two start and are waiting.
         fake.release()
         await until { fake.downloads.count == 4 && fake.inFlight == 2 }
@@ -1416,7 +1441,7 @@ struct ShelfSaveAllTests {
         let shelf = await shelf(with: (1...3).map { entry("f\($0).md", version: "v-\($0)") })
         fake.hold = true
         shelf.saveAll(madeUpID(1), into: folder)
-        for _ in 0..<10 { await Task.yield() }
+        await until { fake.inFlight == 2 }
         shelf.close()
         fake.hold = false
         fake.release()

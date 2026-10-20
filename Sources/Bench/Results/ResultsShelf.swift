@@ -1001,6 +1001,11 @@ final class ResultsShelf: ObservableObject {
             wanted.append((entry, ShelfFileName.sanitized(entry.name)))
         }
         batches[sessionID] = .saving(done: done, total: entries.count)
+        // Everything was over the cap: no names to settle, so the folder is not asked about.
+        if wanted.isEmpty {
+            batches[sessionID] = .finished(summary)
+            return
+        }
         // The names are settled up front, in the session's order, so the first
         // of two of the same name gets the plain one whatever finishes first.
         // That asks the disk (one listing of the folder), so it happens off the
