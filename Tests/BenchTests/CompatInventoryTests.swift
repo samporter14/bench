@@ -243,7 +243,11 @@ struct CompatEndpointTests {
     }
 
     /// Reads that are not a path of their own.
-    private let notPaths: Set<String> = ["GET /api/csrf", "401 on any /api read"]
+    private let notPaths: Set<String> = [
+        "GET /api/csrf", "401 on any /api read",
+        // A field of the shallow read above, which is a path already listed.
+        "output_data.error on GET /api/frames/<session>?shallow=true",
+    ]
 
     @Test func everyReadInTheInventoryIsAPathCapsidBuildsAndItsGateAllows() {
         for (token, built, allowed) in reads {
@@ -351,7 +355,7 @@ struct CompatEndpointTests {
     @Test func everyDaemonResourceTheReadersAndWritersNameIsInTheInventory() {
         let files = ["Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/RemoteLive.swift", "Remote/RemotePhotoUpload.swift",
                      "Remote/SessionReader.swift", "Remote/SessionWriter.swift", "Remote/RemotePermissions.swift",
-                     "Lab/PlanApproval.swift", "Web/WebAPI.swift"]
+                     "Lab/PlanApproval.swift", "Lab/FailureReason.swift", "Web/WebAPI.swift"]
         var segments = Set<String>()
         for file in files {
             segments.formUnion(ScriptLiterals.matches(#""/api/([a-z][a-z-]*)"#, in: Repo.source(file), group: 1))
@@ -591,6 +595,7 @@ struct CompatWiringTests {
         #expect(contains("Context/ContextModel.swift", "try TokenSeries.decodeNoting(data)"))
         #expect(contains("Web/PageTabs.swift", "PageTabsOutcome.read(value)"))
         #expect(contains("Lab/PlanApproval.swift", "dependencies.breadcrumbs.record(.planFrameNotUnderstood)"))
+        #expect(contains("Lab/FailureReason.swift", "if let miss = FailureCheck.miss(frame) { dependencies.breadcrumbs.record(miss) }"))
     }
 
     @Test func theSignInFallbackNotesNothing() {

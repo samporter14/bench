@@ -15,8 +15,9 @@ private let log = Logger(subsystem: "local.sam.bench", category: "plan")
 // MARK: What is read
 
 /// Reads single values out of parsed JSON, leniently: a value of the wrong
-/// type is no value. Nothing here keeps what it was given.
-private enum JSONPick {
+/// type is no value. Nothing here keeps what it was given. (The failure card's
+/// reason, Lab/FailureReason.swift, reads the same way.)
+enum JSONPick {
     static func parse(_ data: Data) -> [String: Any]? {
         (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) as? [String: Any]
     }

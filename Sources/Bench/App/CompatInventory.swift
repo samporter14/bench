@@ -53,7 +53,7 @@ enum CompatKind: String, CaseIterable, Sendable {
 /// the app uses for them. Also what a breadcrumb names (CompatBreadcrumbs).
 enum CompatFeature: String, CaseIterable, Sendable {
     case closeTabs, tabMenu, signIn, notifications, sessionAddress, previews
-    case usage, context, planCard, approve, phone
+    case usage, context, planCard, approve, errorCard, phone
     case start, sessions, activity, browse
 
     var title: String {
@@ -68,6 +68,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .context: "The context ring"
         case .planCard: "A plan on its card"
         case .approve: "Approve a plan"
+        case .errorCard: "The reason on a failure card"
         case .phone: "Capsid on your phone"
         case .start: "Starting Claude Science"
         case .sessions: "Sessions in the Lab"
@@ -182,8 +183,11 @@ extension CompatInventory {
              .usage, "Usage/PlanUsageModel.swift"),
         read("GET /api/frames/<session>/token-series", "{window, turns: [{ctx_total}], truncated}",
              .context, "Context/ContextModel.swift"),
-        read("GET /api/frames/<session>?shallow=true", "status, and the plan fields of context_data and output_data; the phone reads it too",
+        read("GET /api/frames/<session>?shallow=true", "status, and the plan fields of context_data and output_data (and a failed one's error, next); the phone reads it too",
              .planCard, "Lab/PlanApproval.swift"),
+        read("output_data.error on GET /api/frames/<session>?shallow=true",
+             "a failed session's root frame: status \"failed\", and output_data.error, a string (often \"400 {…}\" holding error.message or message), with error_status beside it; read once, for the failure card",
+             .errorCard, "Lab/FailureReason.swift", check: .whenUsed("read only when a session stops with an error")),
         read("GET /api/artifacts/versions/<version>", "a plan file: task_summary, phases[].delegations[].steps[], feasibility.confidence; the phone reads artifacts here too",
              .planCard, "Lab/PlanApproval.swift"),
         read("GET /api/artifacts/versions/<version>?thumbnail=<width>", "a WebP thumbnail, 120 or 800 wide",
