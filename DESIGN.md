@@ -3032,9 +3032,12 @@ would and never sleep.
 
 **Looks within the same limit** (`ShelfSavedFiles`, since 0.9.2). Asking a
 destination something is a call like a write, and has every rule of one: its
-own thread, its turn in the destination's lane (so a look waits behind a write
-to that folder, and the other way round), the injected clock and limit (a look
-has no bytes, so 15 s), and a hold-off when it doesn't answer. A look that
+own thread, a turn (looks go one at a time per destination, in turns of their
+own, so a slow write to a folder never holds up a look at it, nor a look a
+write: a Save All started while a write is out still settles its names and
+starts its downloads, and its writes then queue behind that write), the
+injected clock and limit (a look has no bytes, so 15 s), and the destination's
+one hold-off when it doesn't answer. A look that
 doesn't answer counts like a write that didn't: its caller gets "The folder
 didn't respond. If it comes back, the file may still appear there.", the
 destination refuses everything at once ("The folder still isn't responding.",

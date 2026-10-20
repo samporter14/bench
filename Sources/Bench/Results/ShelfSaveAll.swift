@@ -112,7 +112,10 @@ enum ShelfSaveError: Error, LocalizedError, Equatable {
 /// it goes. The looks ask the destination something (`fileExists`,
 /// `folderExists`, `names(in:)`, and `plan`, which is built on them): is
 /// there a file at this name, is the remembered folder there, what does the
-/// folder hold. A blocking file-system call can't be cancelled, so each runs
+/// folder hold. Writes go one at a time per destination, and so do looks, each
+/// in a turn of its own: a slow write never holds up a look, nor a look a write
+/// (a Save All started while a write is out still settles its names and starts
+/// its downloads). A blocking file-system call can't be cancelled, so each runs
 /// on a queue of its own and is only waited for: when its time limit passes
 /// (15 s, and a second for each MiB of a write's bytes; a look has no bytes,
 /// so 15 s) the caller is told the folder didn't respond and the call is left
@@ -132,24 +135,36 @@ enum ShelfSaveError: Error, LocalizedError, Equatable {
 final class ShelfSavedFiles {
     typealias Work = @Sendable () -> Void
 
-    /// One destination: its calls wait here in turn.
+    /// What a call does: a write, or a look at the destination.
+    private enum Kind {
+        case write, look
+    }
+
+    /// One destination: its writes wait here in turn, and its looks in theirs
+    /// (a slow write never holds up a look, nor a look a write). The time limit
+    /// and the hold-off are the destination's, whichever kind of call timed out.
     private struct Lane {
-        /// A call is out here, within its time limit.
+        /// A write is out here, within its time limit.
         var busy = false
-        /// Calls waiting for their turn, oldest first.
+        /// Writes waiting for their turn, oldest first.
         var waiting: [CheckedContinuation<Void, Never>] = []
+        /// A look is out here, within its time limit.
+        var lookBusy = false
+        /// Looks waiting for their turn, oldest first.
+        var lookWaiting: [CheckedContinuation<Void, Never>] = []
         /// Calls past their time limit that haven't come back.
         var silent = 0
         /// Refusing calls: one timed out and neither it nor the hold-off has ended.
         var heldOff = false
         var holdOffTimer: Task<Void, Never>?
 
-        var isIdle: Bool { !busy && waiting.isEmpty && silent == 0 && !heldOff }
+        var isIdle: Bool { !busy && waiting.isEmpty && !lookBusy && lookWaiting.isEmpty && silent == 0 && !heldOff }
     }
 
     /// One call, from the moment it starts to the moment it returns.
     @MainActor
     private final class Attempt<Value: Sendable> {
+        let kind: Kind
         /// The file name a write speaks for until its call returns; nil for a look.
         let name: String?
         let destination: String
@@ -160,7 +175,8 @@ final class ShelfSavedFiles {
         /// The time limit passed first: the caller was told, and the call is still out.
         var timedOut = false
 
-        init(name: String?, destination: String) {
+        init(kind: Kind, name: String?, destination: String) {
+            self.kind = kind
             self.name = name
             self.destination = destination
         }
@@ -258,8 +274,8 @@ final class ShelfSavedFiles {
         } else {
             body = { try write(data, url) }
         }
-        try await perform(in: Self.destination(of: url), reserving: Self.name(of: url), allowed: limit(data.count),
-                          cancellable: false, body)
+        try await perform(.write, in: Self.destination(of: url), reserving: Self.name(of: url),
+                          allowed: limit(data.count), body)
     }
 
     // MARK: Looking
@@ -269,7 +285,7 @@ final class ShelfSavedFiles {
     /// when the folder didn't respond in time or is still held off, and
     /// `CancellationError` when the asking task was cancelled before its turn.
     func fileExists(_ url: URL, using exists: @escaping @Sendable (URL) -> Bool) async throws -> Bool {
-        try await perform(in: Self.destination(of: url), reserving: nil, allowed: limit(0), cancellable: true) {
+        try await perform(.look, in: Self.destination(of: url), reserving: nil, allowed: limit(0)) {
             exists(url)
         }
     }
@@ -277,8 +293,9 @@ final class ShelfSavedFiles {
     /// Whether the folder itself is there: by the folder's own destination
     /// (where a Save All into it would go), not its parent's.
     func folderExists(_ folder: URL, using exists: @escaping @Sendable (URL) -> Bool) async throws -> Bool {
-        try await perform(in: Self.destination(inFolder: folder), reserving: nil, allowed: limit(0),
-                          cancellable: true) { exists(folder) }
+        try await perform(.look, in: Self.destination(inFolder: folder), reserving: nil, allowed: limit(0)) {
+            exists(folder)
+        }
     }
 
     /// What the folder holds, lowercased. Nil when it can't be listed: the
@@ -287,8 +304,8 @@ final class ShelfSavedFiles {
     /// by one. Throws as `fileExists` does.
     func names(in folder: URL, using list: @escaping @Sendable (URL) throws -> [String]?) async throws -> Set<String>? {
         do {
-            let listed = try await perform(in: Self.destination(inFolder: folder), reserving: nil, allowed: limit(0),
-                                           cancellable: true) { try list(folder) }
+            let listed = try await perform(.look, in: Self.destination(inFolder: folder), reserving: nil,
+                                           allowed: limit(0)) { try list(folder) }
             return listed.map { Set($0.map { $0.lowercased() }) }
         } catch let error as ShelfSaveError {
             throw error
@@ -333,23 +350,23 @@ final class ShelfSavedFiles {
 
     // MARK: One call
 
-    /// Runs `body` off the main actor for `destination`, in its turn and
+    /// Runs `body` off the main actor for `destination`, in its kind's turn and
     /// within `allowed`. A write names the file it speaks for (`reserving`);
-    /// a look is `cancellable`: if its task was cancelled while it waited for
+    /// a look is cancellable: if its task was cancelled while it waited for
     /// the turn, it makes no call (a write already chosen goes on, as a Save
     /// does when the window closes).
-    private func perform<Value: Sendable>(in destination: String, reserving name: String?, allowed: Duration,
-                                          cancellable: Bool,
+    private func perform<Value: Sendable>(_ kind: Kind, in destination: String, reserving name: String?,
+                                          allowed: Duration,
                                           _ body: @escaping @Sendable () throws -> Value) async throws -> Value {
         if let name, pending.contains(name) { throw ShelfSaveError.earlierSaveUnfinished }
         if lanes[destination]?.heldOff == true { throw ShelfSaveError.folderStillSilent }
         if let name { pending.insert(name) }
-        await takeTurn(in: destination)
+        await takeTurn(in: destination, kind)
         func giveUpTurn() {
             if let name { pending.remove(name) }
-            passTurn(in: destination)
+            passTurn(in: destination, kind)
         }
-        if cancellable, Task.isCancelled {
+        if kind == .look, Task.isCancelled {
             giveUpTurn()
             throw CancellationError()
         }
@@ -358,7 +375,7 @@ final class ShelfSavedFiles {
             giveUpTurn()
             throw ShelfSaveError.folderStillSilent
         }
-        let attempt = Attempt<Value>(name: name, destination: destination)
+        let attempt = Attempt<Value>(kind: kind, name: name, destination: destination)
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Value, any Error>) in
             attempt.continuation = continuation
             run { [weak self] in
@@ -390,7 +407,7 @@ final class ShelfSavedFiles {
         }
         attempt.continuation?.resume(with: result)
         attempt.continuation = nil
-        passTurn(in: attempt.destination)
+        passTurn(in: attempt.destination, attempt.kind)
     }
 
     /// The time limit passed with the call still out: the caller is told at
@@ -411,7 +428,7 @@ final class ShelfSavedFiles {
         }
         attempt.continuation?.resume(throwing: ShelfSaveError.folderDidNotRespond)
         attempt.continuation = nil
-        passTurn(in: destination)
+        passTurn(in: destination, attempt.kind)
     }
 
     private func endHoldOff(_ destination: String) {
@@ -423,23 +440,43 @@ final class ShelfSavedFiles {
 
     // MARK: Turns
 
-    private func takeTurn(in destination: String) async {
-        if lanes[destination]?.busy != true {
-            lanes[destination, default: Lane()].busy = true
-            return
+    private func takeTurn(in destination: String, _ kind: Kind) async {
+        switch kind {
+        case .write:
+            if lanes[destination]?.busy != true {
+                lanes[destination, default: Lane()].busy = true
+                return
+            }
+            await withCheckedContinuation { lanes[destination]?.waiting.append($0) }
+        case .look:
+            if lanes[destination]?.lookBusy != true {
+                lanes[destination, default: Lane()].lookBusy = true
+                return
+            }
+            await withCheckedContinuation { lanes[destination]?.lookWaiting.append($0) }
         }
-        await withCheckedContinuation { lanes[destination]?.waiting.append($0) }
     }
 
     /// The call that held the turn is over (returned, or past its limit):
-    /// the next call of the destination goes, if any.
-    private func passTurn(in destination: String) {
-        if let next = lanes[destination]?.waiting.first {
-            lanes[destination]?.waiting.removeFirst()
-            next.resume()
-        } else {
-            lanes[destination]?.busy = false
-            tidy(destination)
+    /// the next call of its kind for the destination goes, if any.
+    private func passTurn(in destination: String, _ kind: Kind) {
+        switch kind {
+        case .write:
+            if let next = lanes[destination]?.waiting.first {
+                lanes[destination]?.waiting.removeFirst()
+                next.resume()
+            } else {
+                lanes[destination]?.busy = false
+                tidy(destination)
+            }
+        case .look:
+            if let next = lanes[destination]?.lookWaiting.first {
+                lanes[destination]?.lookWaiting.removeFirst()
+                next.resume()
+            } else {
+                lanes[destination]?.lookBusy = false
+                tidy(destination)
+            }
         }
     }
 

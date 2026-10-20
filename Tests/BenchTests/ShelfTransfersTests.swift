@@ -2412,23 +2412,29 @@ struct ShelfDestinationLookTests {
         await until { rig.writer.isAtRest }
     }
 
-    @Test func looksAndWritesTakeTurnsInOneDestinationInOrder() async {
+    @Test func writesGoOneAtATimeAndSoDoLooksEachInTheirOwnTurnAndNeitherWaitsForTheOther() async {
         let rig = WriterRig()
         let write = rig.save("/made-up/a/one.md")
         await until { rig.calls.count == 1 }
+        // A look doesn't wait behind a slow write to the same folder (a Save All started now still settles its names)...
         let look = rig.exists("/made-up/a/two.md")
-        let second = rig.save("/made-up/a/three.md")
-        let elsewhere = rig.exists("/made-up/b/four.md")
         await until { rig.calls.count == 2 }
+        // ...but a second write waits for the first, and a second look for the first look.
+        let second = rig.save("/made-up/a/three.md")
+        let secondLook = rig.exists("/made-up/a/four.md")
+        let elsewhere = rig.exists("/made-up/b/five.md")
+        await until { rig.calls.count == 3 }
         await turns(10)
-        #expect(rig.calls.count == 2, "the look and the second write wait for the first write; b's goes")
-        rig.calls.finish(at: 1)
+        #expect(rig.calls.count == 3, "b's look goes; the second write and the second look wait")
+        rig.calls.finish(at: 2)
         #expect((await finished(elsewhere))?.answer == true)
+        rig.calls.finish(at: 1)
+        #expect((await finished(look))?.answer == true)
+        await until { rig.calls.count == 2 }
+        rig.calls.finish(at: 1)
+        #expect((await finished(secondLook))?.answer == true)
         rig.calls.finishOldest()
         #expect((await finished(write))?.isWritten == true)
-        await until { rig.calls.count == 1 }
-        rig.calls.finishOldest()
-        #expect((await finished(look))?.answer == true)
         await until { rig.calls.count == 1 }
         rig.calls.finishOldest()
         #expect((await finished(second))?.isWritten == true)
@@ -2438,22 +2444,22 @@ struct ShelfDestinationLookTests {
 
     @Test func aLookWhoseTaskWasCancelledWhileItWaitedForItsTurnMakesNoCall() async {
         let rig = WriterRig()
-        let write = rig.save("/made-up/a/one.md")
+        let first = rig.exists("/made-up/a/one.md")
         await until { rig.calls.count == 1 }
         let look = rig.exists("/made-up/a/two.md")
         await turns(10)
         look.cancel()
         rig.calls.finishOldest()
+        #expect((await finished(first))?.answer == true)
         #expect((await finished(look))?.wasCancelled == true)
-        #expect((await finished(write))?.isWritten == true)
         await turns(10)
-        #expect(rig.calls.count == 0, "the look was never made")
+        #expect(rig.calls.count == 0, "the cancelled look was never made")
         #expect(rig.writer.isAtRest && !rig.writer.isHeldOff(folder("/made-up/a")))
         // And a cancelled look gives the turn to the next.
-        let after = rig.save("/made-up/a/three.md")
+        let after = rig.exists("/made-up/a/three.md")
         await until { rig.calls.count == 1 }
         rig.calls.finishOldest()
-        #expect((await finished(after))?.isWritten == true)
+        #expect((await finished(after))?.answer == true)
     }
 
     @Test func aListingHasLowercasedNamesAndFailsOrTooLongIsNilWithoutHoldingAnythingOff() async {
