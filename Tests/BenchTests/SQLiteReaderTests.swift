@@ -405,24 +405,81 @@ struct SessionsPollTests {
 
 // MARK: Letting go, and hearing the daemon go
 
+/// Stands in for the clock the reader's idle close waits on: an item runs, on the
+/// reader's own queue, only when the test moves the time on past it, and one that
+/// was cancelled never runs, as with `asyncAfter`.
+private final class IdleClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var now: TimeInterval = 0
+    private var waiting: [(due: TimeInterval, queue: DispatchQueue, item: DispatchWorkItem)] = []
+    private var asked: [TimeInterval] = []
+
+    /// The delay of every let-go the reader scheduled, in order.
+    var delays: [TimeInterval] { lock.withLock { asked } }
+
+    func schedule(_ queue: DispatchQueue, _ delay: TimeInterval, _ item: DispatchWorkItem) {
+        lock.withLock {
+            asked.append(delay)
+            waiting.append((now + delay, queue, item))
+        }
+    }
+
+    func advance(by seconds: TimeInterval) {
+        let due = lock.withLock {
+            now += seconds
+            let due = waiting.filter { $0.due <= now }.sorted { $0.due < $1.due }
+            waiting.removeAll { $0.due <= now }
+            return due
+        }
+        for entry in due where !entry.item.isCancelled { entry.queue.sync { entry.item.perform() } }
+    }
+}
+
 @Suite(.serialized)
 struct LettingGoTests {
-    @Test func theConnectionIsLetGoWhenNoReadComes() async throws {
+    private func scratchDatabase() throws -> (URL, URL) {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bench-idle-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
         let db = dir.appendingPathComponent("made-up.db")
         try tinyDatabase("one", at: db)
-        // Generous times: the suite runs in parallel, and a loaded machine stretches sleeps.
-        let reader = SQLiteReader(idleClose: 1.5)
-        // Reads that keep coming keep it.
+        return (dir, db)
+    }
+
+    @Test func theConnectionIsLetGoWhenNoReadComes() throws {
+        let (dir, db) = try scratchDatabase()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // The clock is the test's: a stretched sleep on a loaded Mac can't let it go early.
+        let clock = IdleClock()
+        let reader = SQLiteReader(idleClose: 1.5, schedule: clock.schedule)
+        // Reads that keep coming keep it: three seconds in all, each a second after the last.
         for _ in 0..<4 {
             #expect(try reader.rows(db: db, sql: "SELECT v FROM t;") == [["one"]])
-            try await Task.sleep(for: .milliseconds(50))
+            clock.advance(by: 1)
         }
         #expect(reader.openCount == 1)
+        #expect(reader.isOpen)
+        #expect(clock.delays == [1.5, 1.5, 1.5, 1.5])
+        // Just short of the idle time after the last read, it is still there.
+        clock.advance(by: 0.4)
+        #expect(reader.isOpen)
         // A pause longer than the idle time lets it go; the next read opens it again.
-        try await Task.sleep(for: .milliseconds(3_500))
+        clock.advance(by: 0.1)
+        #expect(!reader.isOpen)
+        #expect(try reader.rows(db: db, sql: "SELECT v FROM t;") == [["one"]])
+        #expect(reader.openCount == 2)
+    }
+
+    /// The same on the app's own timer, which is the one place the stand-in clock isn't used.
+    /// It waits for the connection to go and not for a time: the ceiling is only a safety net.
+    @Test func theConnectionIsLetGoByTheRealTimerToo() async throws {
+        let (dir, db) = try scratchDatabase()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let reader = SQLiteReader(idleClose: 0.2)
+        #expect(try reader.rows(db: db, sql: "SELECT v FROM t;") == [["one"]])
+        #expect(reader.isOpen)
+        let limit = ContinuousClock.now + .seconds(60)
+        while reader.isOpen, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(!reader.isOpen)
         #expect(try reader.rows(db: db, sql: "SELECT v FROM t;") == [["one"]])
         #expect(reader.openCount == 2)
     }

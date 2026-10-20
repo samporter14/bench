@@ -920,6 +920,9 @@ struct RemotePhotosDemoTests {
 
 // MARK: The server, taking a body slowly
 
+/// The server is real and so are its sockets; its time limits wait on a
+/// `ServerClock` (RemoteServerLiveTests.swift), so how long a body takes is the
+/// test's to say and not the Mac's.
 @MainActor
 struct RemotePhotoLiveTests {
     private static let host = "studio-mac.example-tailnet.ts.net"
@@ -929,7 +932,7 @@ struct RemotePhotoLiveTests {
         var bytes = 0
     }
 
-    private func server(seen: Seen) async throws -> (RemoteServer, UInt16, String) {
+    private func server(seen: Seen, clock: ServerClock) async throws -> (RemoteServer, UInt16, String) {
         let auth = RemoteAuth(store: MemoryDeviceStore(), fixedCode: "000000")
         guard case .paired(let token, _) = auth.pair(code: "000000", name: "Phone") else {
             Issue.record("not paired")
@@ -940,46 +943,9 @@ struct RemotePhotoLiveTests {
                                                          version: "test", photo: { _, _, body in
             seen.bytes = body.count
             return RemoteActionReply(status: 200, body: Data(#"{"result":"sent","sentence":"Sent."}"#.utf8))
-        }))
+        }), now: { clock.date }, sleep: { await clock.sleep($0) })
         let port = try await server.start(candidates: Array(47371...47379))
         return (server, port, token)
-    }
-
-    /// Sends the head and the first chunk, then the rest `pause` seconds apart; reads
-    /// what the server answers, for up to `limit` seconds.
-    private nonisolated static func dribble(port: UInt16, head: String, body: [UInt8], chunks: Int, pause: TimeInterval,
-                                            limit: TimeInterval) -> (String, TimeInterval) {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return ("", 0) }
-        defer { close(fd) }
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = port.bigEndian
-        address.sin_addr.s_addr = inet_addr("127.0.0.1")
-        let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-        }
-        guard connected == 0 else { return ("", 0) }
-        var quiet: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &quiet, socklen_t(MemoryLayout<Int32>.size))
-        var wait = timeval(tv_sec: Int(limit), tv_usec: 0)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
-        let started = Date()
-        let size = (body.count + chunks - 1) / chunks
-        for index in 0..<chunks {
-            let part = Array(body[(index * size)..<min(body.count, (index + 1) * size)])
-            let bytes = index == 0 ? Array(head.utf8) + part : part
-            _ = bytes.withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
-            if index < chunks - 1 { Thread.sleep(forTimeInterval: pause) }
-        }
-        var answer = Data()
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while Date().timeIntervalSince(started) < limit {
-            let count = recv(fd, &buffer, buffer.count, 0)
-            if count <= 0 { break }
-            answer.append(contentsOf: buffer[0..<count])
-        }
-        return (String(decoding: answer, as: UTF8.self), Date().timeIntervalSince(started))
     }
 
     private func head(_ path: String, token: String, length: Int) -> String {
@@ -987,44 +953,87 @@ struct RemotePhotoLiveTests {
             + "Content-Type: application/json\r\nOrigin: https://\(Self.host):8443\r\nX-Bench: 1\r\nContent-Length: \(length)\r\n\r\n"
     }
 
-    @Test func aPhotoBodyThatKeepsArrivingIsNotCutOffAtThreeSeconds() async throws {
+    /// `body` cut into `count` pieces.
+    private func pieces(of body: [UInt8], _ count: Int) -> [[UInt8]] {
+        let size = (body.count + count - 1) / count
+        return (0..<count).map { Array(body[($0 * size)..<min(body.count, ($0 + 1) * size)]) }
+    }
+
+    /// The photo route's body, in five pieces `pause` milliseconds apart on the clock: the head
+    /// comes with the first, and each piece waits until the server has taken the one before.
+    @Test(arguments: [1_200, 4_000])
+    func aPhotoBodyThatKeepsArrivingIsNotCutOffAtThreeSeconds(pause: Int) async throws {
         let seen = Seen()
-        let (server, port, token) = try await server(seen: seen)
+        let clock = ServerClock()
+        let (server, port, token) = try await server(seen: seen, clock: clock)
         defer { server.stop() }
         let body = [UInt8](repeating: 0x41, count: 30_000)
         let text = head("/api/sessions/\(root)/photo", token: token, length: body.count)
-        // Five pieces 1.2 s apart: nearly five seconds in all, never ten quiet.
-        let (answer, seconds) = await Task.detached {
-            Self.dribble(port: port, head: text, body: body, chunks: 5, pause: 1.2, limit: 12)
-        }.value
+        let parts = pieces(of: body, 5)
+        let connection = try #require(LoopbackConnection(port: port))
+        connection.send(Array(text.utf8) + parts[0])
+        // The head's own wait, the body's, and the first piece starting it again.
+        await eventually { clock.asked.count >= 3 }
+        for (index, part) in parts.enumerated().dropFirst() {
+            clock.advance(by: .milliseconds(pause))
+            let asked = clock.asked.count
+            connection.send(part)
+            // A piece that arrives starts the wait again; the last one completes the request instead.
+            if index < parts.count - 1 { await eventually { clock.asked.count > asked } }
+        }
+        let answer = await connection.answer(limit: 30)
         #expect(answer.hasPrefix("HTTP/1.1 200 "), "\(answer.prefix(40))")
         #expect(answer.hasSuffix(#"{"result":"sent","sentence":"Sent."}"#))
-        #expect(seconds > 4.5 && seconds < 9)
+        // Four pauses, each past the flat 3 s the other routes have in all (the
+        // slower ones past the 10 s a body may go quiet, too): a 200 means the
+        // waiting began again with every piece.
+        #expect(clock.elapsed == .milliseconds(4 * pause))
         #expect(seen.bytes == 30_000)
     }
 
     @Test func everyOtherRouteStillHasTheFlatThreeSeconds() async throws {
         let seen = Seen()
-        let (server, port, token) = try await server(seen: seen)
+        let clock = ServerClock()
+        let (server, port, token) = try await server(seen: seen, clock: clock)
         defer { server.stop() }
         let body = [UInt8](repeating: 0x41, count: 40)
         let text = head("/api/sessions/\(root)/message", token: token, length: body.count)
-        let (answer, _) = await Task.detached {
-            Self.dribble(port: port, head: text, body: body, chunks: 4, pause: 1.2, limit: 12)
-        }.value
+        let parts = pieces(of: body, 4)
+        let connection = try #require(LoopbackConnection(port: port))
+        connection.send(Array(text.utf8) + parts[0])
+        // The head's own wait is let go once it passes its checks; the body has 3 s.
+        await eventually { clock.asked.count == 2 && clock.pending == 1 }
+        // Pieces keep coming 1.2 s apart, and the third second still ends it: the
+        // body is never complete. Nothing is asked of the clock when a piece arrives
+        // here, so there is nothing to wait on; the server is given a moment for each.
+        // (A stall can only let a server that starts the wait again pass, never fail
+        // this one.)
+        for part in parts[1...2] {
+            clock.advance(by: .milliseconds(1_200))
+            connection.send(part)
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        clock.advance(by: .milliseconds(1_200))
+        let answer = await connection.answer(limit: 30)
         #expect(answer.hasPrefix("HTTP/1.1 408 "), "\(answer.prefix(40))")
+        #expect(clock.asked == [RemoteServer.readTimeout, .seconds(3)], "no piece started the wait again")
         #expect(seen.bytes == 0)
     }
 
     @Test func aPhotoOverSixMegabytesIsRefusedAtItsHead() async throws {
         let seen = Seen()
-        let (server, port, token) = try await server(seen: seen)
+        let clock = ServerClock()
+        let (server, port, token) = try await server(seen: seen, clock: clock)
         defer { server.stop() }
         let text = head("/api/projects/proj_a/photo", token: token, length: 6 * 1024 * 1024 + 1)
-        let (answer, seconds) = await Task.detached {
-            Self.dribble(port: port, head: text, body: [], chunks: 1, pause: 0, limit: 8)
-        }.value
+        let connection = try #require(LoopbackConnection(port: port))
+        connection.send(text)
+        let answer = await connection.answer(limit: 30)
         #expect(answer.hasPrefix("HTTP/1.1 413 "))
-        #expect(seconds < 2)
+        // At the head, not after waiting for the body: the clock never moved, no
+        // wait for a body was begun, and a server that waited would not have answered.
+        #expect(clock.elapsed == .zero)
+        #expect(clock.asked == [RemoteServer.readTimeout])
+        #expect(seen.bytes == 0)
     }
 }
