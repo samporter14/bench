@@ -213,8 +213,9 @@ final class WebContainer: ObservableObject, WebPageWindow {
                 PlanUsageModel.shared.refresh()
                 return
             }
+            // A designed branch, not a change (DESIGN.md, Daemon and sign-in):
+            // nothing is noted for Diagnostics.
             Logger.web.info("An API read was refused and no Sign in button showed; signing in again")
-            CompatBreadcrumbs.shared.record(.signInButtonNotFound)
             guard let nonce = await DaemonController.freshNonce() else { return }
             webView.load(URLRequest(url: addingLoginNonce(nonce, to: Self.canonical(url))))
         }

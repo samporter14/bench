@@ -589,8 +589,14 @@ struct CompatWiringTests {
         #expect(contains("Usage/PlanUsageModel.swift", "try Self.parseNoting(data)"))
         #expect(contains("Context/ContextModel.swift", "try TokenSeries.decodeNoting(data)"))
         #expect(contains("Web/PageTabs.swift", "PageTabsOutcome.read(value)"))
-        #expect(contains("Web/WebContainer.swift", "CompatBreadcrumbs.shared.record(.signInButtonNotFound)"))
         #expect(contains("Lab/PlanApproval.swift", "dependencies.breadcrumbs.record(.planFrameNotUnderstood)"))
+    }
+
+    @Test func theSignInFallbackNotesNothing() {
+        // A 401 with no Sign in card falls back to a fresh code by design
+        // (DESIGN.md, Daemon and sign-in): an ordinary event, not a change.
+        #expect(!contains("Web/WebContainer.swift", "CompatBreadcrumbs"))
+        #expect(!CompatMiss.allCases.contains { $0.feature == .signIn })
     }
 
     @Test func theSignInRecoveryAndTheLookShareOneFinder() {

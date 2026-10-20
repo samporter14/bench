@@ -84,7 +84,6 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .context: "The context ring"
         case .planCard: "The plan on a card"
         case .approve: "Approve"
-        case .signIn: "Signing back in"
         default: title
         }
     }

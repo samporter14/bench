@@ -1701,15 +1701,18 @@ an ordinary state.
 
 **Last problem** (`CompatBreadcrumbs`). Where a feature looks for something in Claude Science and finds it
 changed, it records the miss in memory (the latest only; gone when Capsid quits), logs it at notice level
-(subsystem `local.sam.bench`, category `compat`; the same miss once per 10 minutes at most) and Diagnostics
-says "Last problem: Close Other Tabs, 12 minutes ago: the tab strip has no toolbar of open panels". A miss is
-one of a fixed set of phrases (`CompatMiss`), so nothing read from the page can reach the log. Recorded: a tab
+(subsystem `local.sam.bench`, category `compat`) and Diagnostics says "Last problem: Close Other Tabs, 12 minutes ago: the tab strip has no toolbar of open panels". A repeat of
+the same miss within 10 minutes is ignored by the log and by this line alike, so a usage read every five
+minutes that keeps missing is one log line per 10 minutes and a "Last problem" whose time is the first
+miss's, not one that restarts at "just now". A miss is one of a fixed set of phrases (`CompatMiss`), so
+nothing read from the page can reach the log. Recorded: a tab
 strip that is wrong (more than one, no toolbar), a tab with no close button, no single tab marked shown, or the
 script's answer not understood; a usage answer that can't be decoded or has none of the limits; a context answer
 that can't be decoded or has no window or no turns with a size; a shallow frame with no status, a plan waiting
 with no plan file named, a plan file that isn't an object or has no summary; an Approve answered 404, 405 or a
-200 that isn't `accepted`; no Sign in button after a refused read. Never recorded, because they are ordinary: no
-tab strip (no tab is open), a signed-out 401, a page that isn't up, a slow or failed read, `ok: false` from
+200 that isn't `accepted`. Never recorded, because they are ordinary: no tab strip (no tab is open), a
+signed-out 401 (and a 401 with no Sign in card on the page, which falls back to a fresh sign-in code by design,
+Daemon and sign-in; the probe says the button is not on screen now), a page that isn't up, a slow or failed read, `ok: false` from
 usage, a session with no turns yet, a sub-agent waiting rather than the root, the daemon refusing an Approve in
 its own words (`plan_already_approved`, `plan_frame_processing`, no plan awaiting).
 

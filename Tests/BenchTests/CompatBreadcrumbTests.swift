@@ -84,15 +84,53 @@ struct CompatBreadcrumbTests {
 
     @Test func aMissIsLoggedOnceWhateverTheReadsKeepSaying() {
         let store = harness.makeStore()
+        let start = harness.now
         for _ in 0..<5 {
             store.record(.usageWithoutLimits)
             harness.advance(300)
         }
-        // Five reads, five minutes apart: logged at the start, then at ten and at twenty minutes.
+        // Five reads, five minutes apart: noted at the start, then at ten and at twenty minutes.
         #expect(harness.logged.count == 3)
         #expect(harness.logged.allSatisfy { $0 == "Claude Science may have changed: The usage readout: the usage answer has none of the limits Capsid reads" })
-        // The latest is still the latest.
-        #expect(store.last?.at == harness.now.addingTimeInterval(-300))
+        #expect(store.last?.at == start.addingTimeInterval(1200))
+    }
+
+    @Test func aRepeatKeepsTheFirstTimeSoTheLineDoesntRestartEveryRead() {
+        let store = harness.makeStore()
+        store.record(.usageWithoutLimits)
+        harness.advance(300)
+        store.record(.usageWithoutLimits)
+        // Five minutes on, still the first miss's time, not "just now".
+        #expect(store.line() == "Last problem: The usage readout, 5 minutes ago: the usage answer has none of the limits Capsid reads")
+        harness.advance(299)
+        store.record(.usageWithoutLimits)
+        #expect(store.line()?.contains("9 minutes ago") == true)
+        // Ten minutes after the first, a repeat is noted again.
+        harness.advance(1)
+        store.record(.usageWithoutLimits)
+        #expect(store.line()?.contains("just now") == true)
+        #expect(harness.logged.count == 2)
+    }
+
+    @Test func aMissThatComesBackAfterAnotherIsNotAStaleRepeat() {
+        let store = harness.makeStore()
+        store.record(.usageWithoutLimits)
+        harness.advance(60)
+        store.record(.contextWithoutWindow)
+        harness.advance(60)
+        store.record(.usageWithoutLimits)
+        #expect(store.last?.miss == .usageWithoutLimits)
+        #expect(harness.logged.count == 3)
+    }
+
+    @Test func aUsageAnswerWithNoLimitsReadEveryFiveMinutesIsOneProblem() throws {
+        let store = harness.makeStore()
+        let empty = Data(#"{"ok":true,"data":{}}"#.utf8)
+        _ = try PlanUsageModel.parseNoting(empty, breadcrumbs: store)
+        harness.advance(300)
+        _ = try PlanUsageModel.parseNoting(empty, breadcrumbs: store)
+        #expect(store.line()?.contains("5 minutes ago") == true)
+        #expect(harness.logged.count == 1)
     }
 
     @Test func aDifferentMissIsLoggedAtOnce() {

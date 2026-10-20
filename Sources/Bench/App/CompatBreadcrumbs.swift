@@ -5,7 +5,8 @@
 // and lets Diagnostics say "Last problem: …".
 //
 // Only misses that mean the markup or an answer changed are recorded, never
-// ordinary states: no tab strip because no panel is open, a signed-out page, a
+// ordinary states: no tab strip because no panel is open, a signed-out page
+// with or without its Sign in card (the sign-in has a fallback of its own), a
 // refused or slow read, a session with no turns yet. Every miss is a case of
 // `CompatMiss`, a fixed phrase, so nothing read from the page (a name, an id)
 // can reach the log or the report.
@@ -37,8 +38,6 @@ enum CompatMiss: String, CaseIterable, Sendable {
     case planFileWithoutSummary
     case approveRouteGone
     case approveAnswerNotUnderstood
-    // Signing back in (Web/WebContainer.swift)
-    case signInButtonNotFound
 
     var feature: CompatFeature {
         switch self {
@@ -52,8 +51,6 @@ enum CompatMiss: String, CaseIterable, Sendable {
             .planCard
         case .approveRouteGone, .approveAnswerNotUnderstood:
             .approve
-        case .signInButtonNotFound:
-            .signIn
         }
     }
 
@@ -76,7 +73,6 @@ enum CompatMiss: String, CaseIterable, Sendable {
         case .planFileWithoutSummary: "the plan file has no summary"
         case .approveRouteGone: "the Approve route wasn't found"
         case .approveAnswerNotUnderstood: "the Approve answer wasn't what Capsid expects"
-        case .signInButtonNotFound: "no Sign in button appeared after a refused read"
         }
     }
 }
@@ -90,13 +86,13 @@ final class CompatBreadcrumbs: @unchecked Sendable {
         let at: Date
     }
 
-    /// How long the same miss is kept out of the log: a read every five
-    /// minutes that keeps missing would otherwise fill it.
+    /// How long a repeat of the same miss is ignored, by the log and by "Last
+    /// problem" alike: a read every five minutes that keeps missing would
+    /// otherwise fill the log and keep the line forever "just now".
     static let quietFor: TimeInterval = 600
 
     private let lock = NSLock()
     private var entry: Entry?
-    private var lastLogged: Entry?
     private let now: @Sendable () -> Date
     private let emit: @Sendable (String) -> Void
 
@@ -113,14 +109,16 @@ final class CompatBreadcrumbs: @unchecked Sendable {
         return entry
     }
 
-    /// Keeps `miss` as the latest, and logs it at notice level unless the same
-    /// one was logged in the last ten minutes.
+    /// Keeps `miss` as the latest and logs it at notice level, unless it is
+    /// the same miss as the latest and that was less than ten minutes ago: then
+    /// neither happens, so a read that keeps missing is one line in the log and
+    /// one "Last problem" whose time is the first miss's, not a line that
+    /// restarts every five minutes.
     func record(_ miss: CompatMiss) {
         let moment = now()
         lock.lock()
-        entry = Entry(miss: miss, at: moment)
-        let repeated = lastLogged.map { $0.miss == miss && moment.timeIntervalSince($0.at) < Self.quietFor } ?? false
-        if !repeated { lastLogged = entry }
+        let repeated = entry.map { $0.miss == miss && moment.timeIntervalSince($0.at) < Self.quietFor } ?? false
+        if !repeated { entry = Entry(miss: miss, at: moment) }
         lock.unlock()
         if !repeated {
             emit("Claude Science may have changed: \(miss.feature.shortTitle): \(miss.phrase)")
