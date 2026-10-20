@@ -50,6 +50,15 @@ enum CardAction: Equatable, Sendable {
         }
     }
 
+    /// The answers the card makes its primary (in the clay): Deny and Request
+    /// changes… are plain beside them, and alone.
+    var isPrimary: Bool {
+        switch self {
+        case .approve, .reply, .review, .allowOnce: true
+        default: false
+        }
+    }
+
     /// Whether it opens a window of its own (the reply window), which is
     /// where a row's popover steps aside; the others show their outcome in place.
     var opensWindow: Bool {

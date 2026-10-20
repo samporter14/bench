@@ -121,6 +121,11 @@ struct ActivityList: View {
         .frame(width: ActivitySizing.width)
         .frame(maxHeight: height)
         .fixedSize(horizontal: false, vertical: true)
+        // A list too tall for the screen scrolls: a soft edge says there is more below.
+        .scrollEdgeEffectStyle(.soft, for: .bottom)
+        // A popover that nothing has made key draws a prominent button dimmed (as the
+        // panel's, which never is key, would): the row's buttons are meant to look live.
+        .environment(\.appearsActive, true)
         // What each shown ask's card would offer is read as the list opens (once per card:
         // a card on top has it already), so a row's buttons are there when the pointer is.
         .onAppear { shown.asks.forEach(cardActions.prepare) }
@@ -192,6 +197,7 @@ struct ActivityList: View {
                         Text(line)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(accent ? AnyShapeStyle(Theme.clayText) : AnyShapeStyle(.secondary))
+                            .lineLimit(1)
                     }
                     Text(session.displayTitle)
                         .lineLimit(1)
@@ -225,7 +231,9 @@ struct ActivityList: View {
         let reason = session.waitingReason ?? .other
         let offer = cardActions.offer(for: session)
         let actions = offer.rowActions.map { action in
-            RowAction(title: action.rowTitle, help: action.help) { perform(action, for: session) }
+            RowAction(title: action.rowTitle, help: action.help, prominent: action.isPrimary) {
+                perform(action, for: session)
+            }
         }
         return row(session, line: reason.sentence, accent: true, note: offer.problem, actions: actions,
                    engaged: { cardActions.prepare(session) },
@@ -416,6 +424,8 @@ struct ActivityList: View {
 private struct RowAction: Identifiable {
     let title: String
     let help: String?
+    /// The one the card makes its primary: in the clay. The others are plain.
+    let prominent: Bool
     let perform: () -> Void
 
     var id: String { title }
@@ -434,6 +444,7 @@ private struct ActivityRow<Label: View>: View {
     var showsActions = false
     @ViewBuilder let label: Label
     @State private var hovering = false
+    @State private var actionsWidth: CGFloat = 0
     @FocusState private var focus: Focus?
     @Environment(\.isEnabled) private var isEnabled
 
@@ -452,6 +463,8 @@ private struct ActivityRow<Label: View>: View {
         ZStack(alignment: .trailing) {
             Button(action: action) {
                 label
+                    // The text gives way to the buttons rather than going under them.
+                    .padding(.trailing, offersActions ? actionsWidth + 6 : 0)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 5)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -480,18 +493,20 @@ private struct ActivityRow<Label: View>: View {
         (hovering || showsActions) && isEnabled
     }
 
-    /// The first, the one the card would make its primary, in the clay; the rest plain.
+    /// A small column at the row's right end: the answer the card would make its primary
+    /// in the clay, the rest plain, all as wide as the widest. A column, so the row's own
+    /// lines keep most of their width.
     private var buttons: some View {
-        HStack(spacing: 4) {
-            ForEach(Array(actions.enumerated()), id: \.element.id) { index, item in
-                if index == 0 {
-                    Button(item.title, action: item.perform)
+        VStack(spacing: 3) {
+            ForEach(actions) { item in
+                if item.prominent {
+                    Button(action: item.perform) { Text(item.title).frame(maxWidth: .infinity) }
                         .buttonStyle(.borderedProminent)
                         .tint(Theme.clay)
                         .help(item.help ?? "")
                         .focused($focus, equals: .action(item.id))
                 } else {
-                    Button(item.title, action: item.perform)
+                    Button(action: item.perform) { Text(item.title).frame(maxWidth: .infinity) }
                         .buttonStyle(.bordered)
                         .help(item.help ?? "")
                         .focused($focus, equals: .action(item.id))
@@ -499,8 +514,8 @@ private struct ActivityRow<Label: View>: View {
             }
         }
         .controlSize(.small)
-        .padding(3)
-        .background(.regularMaterial, in: .rect(cornerRadius: 9))
+        .fixedSize()
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { actionsWidth = $0 }
     }
 }
 

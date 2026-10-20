@@ -136,6 +136,19 @@ struct CardOfferTests {
         #expect(other.lead == .button(.open))
     }
 
+    /// Only an answer is in the clay, on a row as on the card: Deny, alone or beside one, is plain.
+    @Test func onlyTheAnswerTheCardMakesItsPrimaryIsInTheClay() {
+        #expect([CardAction.approve, .reply, .review, .allowOnce].allSatisfy { $0.isPrimary })
+        #expect(![CardAction.deny, .requestChanges, .open, .openInCapsid].contains { $0.isPrimary })
+        let offers = [question(.permission(site(first)), reason: .web), question(.permission(readOnlyTool(first)), reason: .tool),
+                      plan(.ready(planPreview)), plan(.problem("x", planPreview)), question(.ready(ask))]
+        for offer in offers {
+            #expect(offer.rowActions.filter(\.isPrimary).count <= 1)
+            // It comes first, as the card puts it.
+            if let index = offer.rowActions.firstIndex(where: { $0.isPrimary }) { #expect(index == 0) }
+        }
+    }
+
     @Test func rowTitlesSayWhenAButtonOpensAWindow() {
         #expect(CardAction.reply.rowTitle == "Reply…" && CardAction.reply.title == "Reply")
         #expect(CardAction.review.rowTitle == "Review…" && CardAction.review.title == "Review")
