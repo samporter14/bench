@@ -53,7 +53,6 @@ struct SceneSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             header
-            categories
             controls
             grid
         }
@@ -69,7 +68,7 @@ struct SceneSettingsView: View {
     // MARK: Heading, size and preview
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 28) {
+        HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("What plays while you work")
@@ -97,12 +96,14 @@ struct SceneSettingsView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+                categories
             }
             .padding(.top, 4)
-            Spacer(minLength: 0)
+            Spacer(minLength: 28)
+            // The switch sits right under the well it changes, ahead of the
+            // text, whose reserved lines run on below it.
             VStack(spacing: 10) {
                 PreviewWell(size: settings.size, rotation: auditioning.map { Rotation([$0]) } ?? settings.rotation, spring: spring)
-                PreviewText(scene: auditioning, resting: settings.playsFavorites ? "Playing your favorites" : "Playing what’s on")
                 Picker("Show this tab in", selection: Binding(get: { shownScheme }, set: { previewScheme = $0 })) {
                     Image(systemName: "sun.max").accessibilityLabel("Ivory").tag(ColorScheme.light)
                     Image(systemName: "moon").accessibilityLabel("Slate").tag(ColorScheme.dark)
@@ -111,6 +112,7 @@ struct SceneSettingsView: View {
                 .labelsHidden()
                 .fixedSize()
                 .help("Show this tab in Ivory or Slate")
+                PreviewText(scene: auditioning, resting: settings.playsFavorites ? "Playing your favorites" : "Playing what’s on")
             }
         }
     }
@@ -128,11 +130,15 @@ struct SceneSettingsView: View {
 
     // MARK: Categories
 
+    /// Two columns of three, under the Play row: the left of the header is
+    /// 420 pt wide (the 696 pt of the tab, less the 248 pt preview column and a
+    /// 28 pt gap), which fits two of the 200 pt checkboxes and not three. Their
+    /// 412 pt must not pass it, or the whole tab widens past its window.
     private var categories: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Categories")
                 .font(.headline)
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(200), spacing: 12, alignment: .leading), count: 3),
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(200), spacing: 12, alignment: .leading), count: 2),
                       alignment: .leading, spacing: 6) {
                 ForEach(SceneGroup.allCases, id: \.self) { group in
                     CategoryChip(group: group)
@@ -469,7 +475,9 @@ private struct SceneCell: View, Equatable {
     }
 }
 
-/// A scene drawn live, frame by frame. Nothing is kept between frames, so a
+/// A scene drawn live, frame by frame, round and round and at full strength
+/// (`drawLooping`: the fade the rotation adds would leave a cell pale for a
+/// moment every loop). Nothing is kept between frames, so a
 /// grid of these costs a little CPU while on screen and no memory: the
 /// panel's player renders a second and more ahead, which a few dozen cells
 /// at once would turn into hundreds of megabytes.
@@ -482,17 +490,29 @@ private struct SceneLive: View {
         TimelineView(.animation(minimumInterval: 1 / fps)) { timeline in
             Canvas { context, size in
                 let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: scene.duration)
-                LabScenes.draw(scene, in: &context, size: size, local: t, tint: ink)
+                SpecimenPoster.drawLooping(scene, in: &context, size: size, local: t, tint: ink)
             }
         }
     }
 }
 
-/// A scene's still, drawn well into it (three fifths of the way, past the
-/// fade-in) with a Canvas: no timers, and no frames kept.
+/// A scene's still, drawn at its poster time (`SpecimenPoster`: the frame with
+/// the most ink) with a Canvas: no timers, and no frames kept. Until the
+/// choice is made, which is a moment the first time, the old time shows, three
+/// fifths of the way in, past the fade-in.
 private struct SceneStill: View, Equatable {
     let scene: LabScene
     let ink: Color
+    @State private var poster: Double?
+    /// A cell plays live unless this is on, so only then is a still on screen
+    /// long enough to be worth choosing a poster for.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(scene: LabScene, ink: Color) {
+        self.scene = scene
+        self.ink = ink
+        _poster = State(initialValue: SpecimenPosters.shared.cached(scene))
+    }
 
     nonisolated static func == (a: SceneStill, b: SceneStill) -> Bool {
         a.scene.name == b.scene.name && a.ink == b.ink
@@ -500,7 +520,10 @@ private struct SceneStill: View, Equatable {
 
     var body: some View {
         Canvas { context, size in
-            LabScenes.draw(scene, in: &context, size: size, local: scene.duration * 0.6, tint: ink)
+            LabScenes.draw(scene, in: &context, size: size, local: poster ?? SpecimenPoster.fallback(scene), tint: ink)
+        }
+        .task(id: reduceMotion) {
+            if reduceMotion, poster == nil { poster = await SpecimenPosters.shared.time(for: scene) }
         }
     }
 }

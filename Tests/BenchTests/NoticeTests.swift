@@ -15,6 +15,8 @@ struct PlanNoticeTests {
         let first = NoticeRules.plan(limits: [limit(.session, used: 92, resetsIn: 47)], announced: [:], now: now)
         #expect(first.notices.count == 1)
         #expect(first.notices.first?.title == "8% of your 5-hour limit left")
+        // The toolbar's and the popover's way of writing a countdown.
+        #expect(first.notices.first?.detail == "Resets in 47m")
         // The next read, its reset time a few seconds off: the same window.
         let wobble = PlanLimit(kind: .session, usedPercent: 95, resetsAt: now.addingTimeInterval(47 * 60 + 8))
         #expect(NoticeRules.plan(limits: [wobble], announced: first.announced, now: now).notices.isEmpty)

@@ -20,16 +20,20 @@ struct WorkingGlyph: View {
     }
 }
 
-/// The first specimen (the flask), drawn once, well into its loop.
+/// The first specimen (the flask), drawn once, at its poster time.
 private struct StillSpecimen: View {
     let tint: Color
+    @State private var poster = WorkingGlyph.still.flatMap { SpecimenPosters.shared.cached($0) }
 
     var body: some View {
         Canvas { context, size in
             guard let scene = WorkingGlyph.still else { return }
-            LabScenes.draw(scene, in: &context, size: size, local: scene.duration * 0.6, tint: tint)
+            LabScenes.draw(scene, in: &context, size: size, local: poster ?? SpecimenPoster.fallback(scene), tint: tint)
         }
         .accessibilityHidden(true)
+        .task {
+            if poster == nil, let scene = WorkingGlyph.still { poster = await SpecimenPosters.shared.time(for: scene) }
+        }
     }
 }
 

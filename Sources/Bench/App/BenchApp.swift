@@ -12,6 +12,7 @@ struct BenchApp: App {
     init() {
         SheetCost.runIfAsked()
         SceneReel.runIfAsked()
+        PosterCost.runIfAsked()
         Diagnose.runIfAsked()
         Demo.validate()
         SettingsKey.register()

@@ -10,6 +10,23 @@ enum Theme {
     static let slate = Color(red: 20 / 255, green: 20 / 255, blue: 19 / 255)
     static let ivory = Color(red: 240 / 255, green: 238 / 255, blue: 230 / 255)
 
+    /// Clay for WORDS. The fill above is about 3:1 on ivory, too faint for
+    /// small text, so anything read in clay (a card's heading, "6 need you",
+    /// a low figure) uses Solanum's clay-text instead: #9C4221 on light
+    /// grounds, #E4927A on dark ones. Fills, rings, bars, switches, the
+    /// prominent buttons' tint and glyphs that only decorate stay `clay`.
+    static let clayText = Color(nsColor: clayTextColor)
+
+    /// `clayText` as a dynamic colour: it follows the appearance it is drawn
+    /// in, so the Ivory and Slate setting (which sets the app's appearance)
+    /// and the Specimens tab's own light/dark switch (the window's) both
+    /// reach it with nothing passed down.
+    static let clayTextColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? clayTextDark : clayTextLight
+    }
+    static let clayTextLight = NSColor(srgbRed: 0x9C / 255, green: 0x42 / 255, blue: 0x21 / 255, alpha: 1)
+    static let clayTextDark = NSColor(srgbRed: 0xE4 / 255, green: 0x92 / 255, blue: 0x7A / 255, alpha: 1)
+
     /// The panel's glass shape.
     static let panelCorner: CGFloat = 26
     static let panelPadding: CGFloat = 16

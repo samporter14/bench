@@ -182,7 +182,7 @@ private struct QuickOpenRow: View {
         case .needsInput:
             Text("Needs you")
                 .fontWeight(.medium)
-                .foregroundStyle(Theme.clay)
+                .foregroundStyle(Theme.clayText)
         case .running:
             if let since = session.startedAt {
                 TimelineView(.periodic(from: since, by: 1)) { context in

@@ -38,7 +38,7 @@ private struct ContextButton: View {
                 Text("\(figures.percent)%")
                     .font(.system(size: 12, weight: .medium))
                     .monospacedDigit()
-                    .foregroundStyle(figures.isHigh ? Theme.clay : Color.secondary)
+                    .foregroundStyle(figures.isHigh ? Theme.clayText : Color.secondary)
             }
         }
         .buttonStyle(ReadoutButtonStyle())

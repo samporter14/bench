@@ -104,7 +104,7 @@ enum NoticeRules {
 
     private static func runningOut(_ limit: PlanLimit, around time: Date, resetsAt: Date, now: Date, key: String) -> LabNotice {
         let which = limit.kind == .session ? "5-hour limit" : "weekly limit"
-        let resets = resetsAt.formatted(.relative(presentation: .named, unitsStyle: .wide))
+        let resets = TimeSpan.reset(resetsAt, now: now, withTime: true)
         return LabNotice(
             id: "plan-forecast-\(key)", symbol: "chart.line.uptrend.xyaxis", caption: "Plan",
             title: "At this pace your \(which) runs out around \(UsageForecast.clock(time, now: now))",
@@ -112,11 +112,7 @@ enum NoticeRules {
     }
 
     private static func nearLimit(_ limit: PlanLimit, now: Date) -> LabNotice {
-        let resets = limit.resetsAt.map { date -> String in
-            limit.kind == .session
-                ? "Resets \(date.formatted(.relative(presentation: .named, unitsStyle: .wide)))"
-                : "Resets \(date.formatted(.dateTime.weekday(.wide).hour().minute()))"
-        } ?? ""
+        let resets = limit.resetsAt.map { "Resets " + TimeSpan.reset($0, now: now, withTime: true) } ?? ""
         let which = limit.kind == .session ? "5-hour limit" : "weekly limit"
         return LabNotice(
             id: "plan-near-\(windowKey(limit) ?? "")", symbol: "gauge.with.dots.needle.67percent", caption: "Plan",

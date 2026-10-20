@@ -284,7 +284,7 @@ struct LabPanelView: View {
             // Any other wait's (a question, a permission request), under the same setting.
             let question = QuestionCardState.reads(reason) ? questions.cardState(for: session.id) : nil
             Row(side: wellSide, well: PlayedLoop(glyph: reason.glyph, tint: colorScheme.sceneInk)) {
-                caption(reason.sentence, style: Theme.clay, weight: .semibold, trailing: position)
+                caption(reason.sentence, style: Theme.clayText, weight: .semibold, trailing: position)
                 title(session.displayTitle)
                 detail(session.projectName)
                 if let plan { planLines(plan, sessionID: session.id) }
@@ -297,7 +297,7 @@ struct LabPanelView: View {
             }
         case .failed(let session):
             Row(side: wellSide, well: symbol("exclamationmark.triangle")) {
-                caption("Stopped with an error", style: Theme.clay, weight: .semibold, trailing: position)
+                caption("Stopped with an error", style: Theme.clayText, weight: .semibold, trailing: position)
                 title(session.displayTitle)
                 detail(session.projectName)
                 buttons {
@@ -431,7 +431,7 @@ struct LabPanelView: View {
             planSummary(words.title)
             switch questions.permissionReplies[sessionID]?.phase {
             case .changed(let sentence)?, .failed(let sentence)?, .closed(let sentence)?:
-                note(sentence, tint: Theme.clay)
+                note(sentence, tint: Theme.clayText)
             default:
                 if decision.canAllow || decision.canDeny, !words.detail.isEmpty {
                     note(words.detail)
@@ -479,7 +479,7 @@ struct LabPanelView: View {
                 Image(systemName: "checkmark")
             }
             .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Theme.clay)
+            .foregroundStyle(Theme.clayText)
             .padding(.top, 8)
             .accessibilityElement(children: .combine)
         case (.ready, _):
@@ -531,7 +531,7 @@ struct LabPanelView: View {
                 Image(systemName: "checkmark")
             }
             .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Theme.clay)
+            .foregroundStyle(Theme.clayText)
             .padding(.top, 8)
             .accessibilityElement(children: .combine)
         case .closed?:
@@ -660,7 +660,7 @@ struct LabPanelView: View {
                 Image(systemName: "checkmark")
             }
             .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Theme.clay)
+            .foregroundStyle(Theme.clayText)
             .padding(.top, 8)
             .accessibilityElement(children: .combine)
         case .ready?:
@@ -823,20 +823,12 @@ struct LabPanelView: View {
             .padding(.top, 8)
     }
 
-    /// "12 min · 1.2M tokens": what the turn took, when known.
+    /// "12m · 1.2M tokens": what the turn took, when known.
     private static func summary(of session: SessionStatus) -> String {
         let parts = [
-            session.duration.map(spoken),
+            session.duration.map(TimeSpan.short),
             session.tokens.flatMap { $0 > 0 ? ActivityMetric.tokens.describe($0) : nil },
         ].compactMap { $0 }
         return parts.isEmpty ? session.projectName : parts.joined(separator: " · ")
-    }
-
-    /// Whole minutes and hours, but seconds under a minute, which would
-    /// otherwise read "0 min".
-    private static func spoken(_ duration: TimeInterval) -> String {
-        let units: Set<Duration.UnitsFormatStyle.Unit> = duration < 60 ? [.seconds] : [.hours, .minutes]
-        return Duration.seconds(max(0, duration)).formatted(
-            .units(allowed: units, width: .abbreviated, maximumUnitCount: 2))
     }
 }
