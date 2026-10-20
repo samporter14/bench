@@ -4,7 +4,7 @@
 import AppKit
 
 @MainActor
-final class ActivityMenu: NSObject {
+final class ActivityMenu: NSObject, NSMenuItemValidation {
     static let shared = ActivityMenu()
 
     /// How many Recent events the Dock menu lists; the popover has them all.
@@ -15,9 +15,6 @@ final class ActivityMenu: NSObject {
     /// Tests pass their own model.
     func make(model: LabModel = .shared) -> NSMenu {
         let menu = NSMenu()
-        // Items are enabled as set below, not by what responds: the idle line and
-        // Next Waiting Session are dim on purpose.
-        menu.autoenablesItems = false
         let needs = NeedsYou(model: model)
 
         if !needs.asks.isEmpty || !needs.failed.isEmpty {
@@ -72,6 +69,8 @@ final class ActivityMenu: NSObject {
         let next = NSMenuItem(title: NextWaiting.title, action: #selector(openNext(_:)), keyEquivalent: String(Character(UnicodeScalar(NSDownArrowFunctionKey)!)))
         next.keyEquivalentModifierMask = [.command, .option]
         next.target = self
+        // The menu validates its items (an item with a target is on): `tag` says whether this one is.
+        next.tag = needs.asks.isEmpty ? 0 : 1
         next.isEnabled = !needs.asks.isEmpty
         menu.insertItem(next, at: 0)
         menu.insertItem(.separator(), at: 1)
@@ -84,6 +83,11 @@ final class ActivityMenu: NSObject {
         item.target = self
         item.representedObject = session.id
         return item
+    }
+
+    /// Every item opens a session and is on, but Next Waiting Session while nothing asks.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        item.action == #selector(openNext(_:)) ? item.tag == 1 : true
     }
 
     @objc private func openNext(_ item: NSMenuItem) {

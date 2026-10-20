@@ -144,11 +144,14 @@ struct NextWaitingTests {
         let idle = ActivityMenu.shared.make(model: model).items
         #expect(idle.first?.title == NextWaiting.title)
         #expect(idle.first?.isEnabled == false)
+        // The menu validates its items when it opens: this one is off, the rest are on.
+        #expect(idle.first.map(ActivityMenu.shared.validateMenuItem) == false)
         #expect(idle.dropFirst().first?.isSeparatorItem == true)
         threeWaiting()
         let items = ActivityMenu.shared.make(model: model).items
         let item = try #require(items.first)
-        #expect(item.title == NextWaiting.title && item.isEnabled)
+        #expect(item.title == NextWaiting.title && item.isEnabled && ActivityMenu.shared.validateMenuItem(item))
+        #expect(items.dropFirst(2).allSatisfy { $0.isSectionHeader || ActivityMenu.shared.validateMenuItem($0) })
         #expect(item.keyEquivalentModifierMask == [.command, .option])
         #expect(item.keyEquivalent == String(Character(UnicodeScalar(NSDownArrowFunctionKey)!)))
         #expect(item.action != nil && item.target != nil)

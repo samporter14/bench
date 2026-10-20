@@ -691,9 +691,12 @@ hover. The list's content says it appears active
 (`.environment(\.appearsActive, true)`, as the panel's does): a popover nothing has
 made key would draw the clay button dimmed. Allow
 Once, Deny and Approve leave the list open, so the row shows how the send goes:
-a spinner while it is sent, then "Approved ✓", "Allowed once ✓" or "Denied ✓"
-in clay-text, and a failed or changed one says why in a line under the project,
-as the card does.
+a spinner while it is sent, then, as the card does, a failed or changed one says why
+in a line under the project (clay-text), with its buttons still there to try
+again. "Approved ✓" stays for a moment, as on the card (`PlanApprover` holds the
+card for it). A request or question that went has no such moment: its card goes
+with the send (`settleCard`), so its row turns plain until the next read takes the
+session off the list.
 
 - **Reuse, not a copy.** What a card offers is decided in one place,
   `CardOffer.of` (Lab/CardActions.swift), from the states the card reads
@@ -1371,7 +1374,9 @@ card offers is one pure decision, from the states it has read: the primary
 button (Approve, Reply, Review, Allow Once, else Open or Open in Capsid), whether
 a plain Open follows, Deny, what Later's menu carries, Request changes…, the line
 for an answer on its way ("Sending…" spinner) or one sent ("Sent ✓", "Approved ✓",
-"Allowed once ✓", "Denied ✓"), and the sentence for a send that didn't go. The card
+"Allowed once ✓", "Denied ✓"; a card whose send went is dismissed with it, so these
+show only for a moment, or while the reply window keeps the reply), and the sentence for
+a send that didn't go. The card
 draws it, and the activity list's rows draw the same (Activity list → Acting from a
 row); both call `CardActions.perform`, which calls the replier, the approver or the
 reply window as the card's buttons always did. `QuestionReplier.prepare` reads a card
