@@ -398,6 +398,21 @@ struct PresentingHoldTests {
         #expect(model.cards.isEmpty)
     }
 
+    @Test func aModelAsTheAppMakesItAsksTheSharedState() {
+        // The app's model and notifier read `PresentingMode.shared`. Set and
+        // cleared with nothing awaited in between, so no other test sees it.
+        let shared = PresentingMode.shared
+        shared.setManual(true)
+        defer { shared.setManual(false) }
+        let model = LabModel()
+        model.holdsFinishes = { false } // Nidus has its own say
+        finish(model, "a")
+        #expect(model.cards.isEmpty && model.heldFinishes.map(\.id) == ["a"])
+        #expect(MacNotifications.settings(authorized: true).presenting)
+        shared.setManual(false)
+        #expect(!MacNotifications.settings(authorized: true).presenting)
+    }
+
     @Test func theModelAndTheStateWorkTogether() throws {
         // As the app wires them: the state tells the model, the model asks the state.
         let mode = PresentingMode()

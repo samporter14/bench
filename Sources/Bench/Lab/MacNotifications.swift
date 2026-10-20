@@ -360,7 +360,8 @@ final class MacNotifications: NSObject, ObservableObject {
         center?.setNotificationCategories([])
     }
 
-    private static func settings(authorized: Bool) -> NotificationRules.Settings {
+    /// What the rules decide by now; internal so a test can read what the app would pass.
+    static func settings(authorized: Bool) -> NotificationRules.Settings {
         NotificationRules.Settings(authorized: authorized, holdingFinishes: NidusFocus.shared.holding,
                                    presenting: PresentingMode.shared.isQuiet)
     }
