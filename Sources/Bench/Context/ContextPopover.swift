@@ -29,7 +29,7 @@ struct ContextPopover: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("\(figures.percent)%")
                         .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(figures.isHigh ? Theme.clay : Color.primary)
+                        .foregroundStyle(figures.isHigh ? Theme.clayText : Color.primary)
                     Text("\(figures.usedOfWindow) tokens")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)

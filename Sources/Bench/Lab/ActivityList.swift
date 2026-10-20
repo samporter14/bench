@@ -139,7 +139,7 @@ struct ActivityList: View {
                     if let line {
                         Text(line)
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(accent ? AnyShapeStyle(Theme.clay) : AnyShapeStyle(.secondary))
+                            .foregroundStyle(accent ? AnyShapeStyle(Theme.clayText) : AnyShapeStyle(.secondary))
                     }
                     Text(session.displayTitle)
                         .lineLimit(1)

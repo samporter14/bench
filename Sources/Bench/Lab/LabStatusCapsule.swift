@@ -64,7 +64,7 @@ struct LabStatusCapsule: View {
         if !model.waiting.isEmpty {
             let count = model.waiting.count
             Text(count == 1 ? "1 needs you" : "\(count) need you")
-                .foregroundStyle(Theme.clay)
+                .foregroundStyle(Theme.clayText)
         } else if usagePause.holdsAll(model.working) {
             Text("Paused · usage limit")
                 .foregroundStyle(.secondary)

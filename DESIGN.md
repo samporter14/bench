@@ -29,6 +29,20 @@ third-party dependencies.
   (`.primary`, `.secondary`) so light and dark both work. There are no
   gradients, no drop shadows of our own, and no second accent hue. Clay marks
   only the primary action, the live dot and "needs you".
+- **Clay for words is clay-text** (after 0.8.0; `Theme.clayText`). The fill
+  `#D97757` is about 3:1 on ivory, too faint for small text. Words drawn in
+  clay (a card's heading "Asked you a question", "6 need you", a low "% left",
+  "Approved ✓", a problem's sentence) use Solanum's clay-text, `#9C4221` on
+  light grounds (6.2:1 on ivory, 5.6:1 on the scenes' ivory) and `#E4927A` on
+  dark (7.6:1 on slate). It is one
+  dynamic colour, so it follows the appearance it is drawn in: the Ivory and
+  Slate setting (the app's appearance) and the Specimens tab's own light/dark
+  switch (its window's) both reach it with nothing passed down. Fills, rings,
+  bars, graph steps, switches, the prominent buttons' tint, the live dot and
+  glyphs that only mark something (a warning triangle, a favourite's star, a
+  choice's radio) stay `Theme.clay`. A test (`ClayTextTests`) lists every
+  line that colours something with the fill through `foregroundStyle`, so a new
+  one is a decision.
 - Liquid Glass (macOS 26 SDK; these are the exact APIs):
   - `.glassEffect(_ glass: Glass = .regular, in shape: some Shape)`
   - `Glass.regular`, `Glass.clear`, `Glass.identity`, `.tint(Color?)`, `.interactive(Bool)`
@@ -79,7 +93,8 @@ Group neighbouring glass (a row of chips, the stat tiles) in one
 only for the one primary action in view.
 
 **Colour:** clay stays the only accent: the on-state, the live dot, "needs
-you", and the graph's steps. No other hues, no gradients.
+you", and the graph's steps. No other hues, no gradients. Its words are
+clay-text (Look).
 
 ## Main window
 
@@ -473,6 +488,19 @@ The window:
 - `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]`.
 - `hidesOnDeactivate = false`, `isOpaque = false`, `backgroundColor = .clear`,
   `hasShadow = false` (the glass carries its own).
+- **Controls look live.** The panel is never key (`canBecomeKey` is false, or
+  it would take the keyboard from whatever you type in), and SwiftUI draws a
+  prominent or glass button dimmed in a window that is not: labels pale, as if
+  disabled. So the content is told it appears active
+  (`.environment(\.appearsActive, true)` on `LabPanelView`, held by
+  `PanelActiveControlsTests`). Checked 2026-10-20 by quiet captures with and
+  without it: without, Reply and Open read as disabled; with it, the active
+  look (`.key` and `.active` draw the same). What a capture cannot show is
+  the clay tint of `.glassProminent`: a window capture draws glass flat grey,
+  and a red-tinted glass button comes out the same grey as the clay one, so
+  Reply and Approve look grey in every demo capture. The tint is judged on a
+  real screen (a card, with Capsid in the background), and a custom clay
+  capsule is the fallback if it is grey there too.
 
 Position:
 
@@ -519,7 +547,7 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     shown under "Not updating", where the well is a warning symbol.
 - **Needs input (card, about 360×170).**
   - Left well: the reason's waiting glyph (`PlayedLoop`) at 88pt.
-  - Caption in clay: `reason.sentence`.
+  - Caption in clay-text: `reason.sentence`.
   - Title and project.
   - Buttons: **Open** (`.glassProminent`, clay tint) and **Later** (`.glass`),
     a split pull-down `Menu(primaryAction:)`: a click on Later is "In 5
@@ -535,7 +563,7 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     line each, cut at the end), then "and N more…" when there are more.
     When it is ready the buttons are **Approve** (`.glassProminent`, clay,
     the primary action), **Open** (`.glass`) and Later. Pressed, Approve is a
-    small spinner; approved, the row reads "Approved ✓" in clay. The card
+    small spinner; approved, the row reads "Approved ✓" in clay-text. The card
     keeps its width and grows taller; the panel measures its content, so the
     window follows. See Approving a plan from its card. Beside Show steps,
     **Request changes…** (since 0.7.0).
@@ -544,7 +572,8 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     Answering from the card.
 - **Finished.**
   - Left well: the flask, still.
-  - Caption: "Finished", then the duration and the tokens.
+  - Caption: "Finished", then the duration and the tokens ("12m · 1.2M
+    tokens"; times are written one way, below).
   - Open, and **Results** (`.glass`, since 0.7.0): the Results window on this
     session's files (Results → Opening on one session).
 - **Web notification.** Claude Science's title as the caption, then the body,
@@ -563,7 +592,7 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
 
 ### Lab status capsule (toolbar)
 
-A 18pt live scene plus a short text: "Working · 4:12", "2 need you" (in clay),
+A 18pt live scene plus a short text: "Working · 4:12", "2 need you" (in clay-text),
 "Recent" once something has happened, or a quiet "Activity" before then. It is
 always in the toolbar since 0.3.1 (it used to vanish when nothing worked or
 waited), so the list stays one click away. Clicking it opens the activity
@@ -714,8 +743,8 @@ play a sound, always time out on top, and respect "Show a card". When each is
 due is `NoticeRules`, pure and tested on made-up data.
 
 - **Plan:** one card per window when the 5-hour or the all-models weekly
-  limit has 10% or less left ("9% of your 5-hour limit left · Resets in 47
-  minutes"), keyed by the window's reset time to the minute; and "has reset"
+  limit has 10% or less left ("9% of your 5-hour limit left · Resets in
+  47m"), keyed by the window's reset time to the minute; and "has reset"
   only when Capsid saw an announced window end in the last 10 minutes.
 - **Plan forecast:** one card per window, "At this pace your 5-hour limit
   runs out around 3:40 PM" (the weekly limit likewise), when the forecast
@@ -1411,14 +1440,20 @@ just Remove from Favorites and Choose Specimens…. The toolbar popover has an
 "Only favorites" switch (off and greyed until something is starred), and
 its categories grey while favourites play.
 
-The Settings **Scenes** tab (760×776) has:
-- a Size segmented picker, and a Play picker: "What's on" or "Only
-  favorites", with a live well beside them ("Playing what's on" or "Playing
-  your favorites" under it, or, under the pointer, what the field guide says
-  about that specimen) and a line saying what a click does: switch on or
-  off, or, while only favourites play, star;
-- category checkboxes with counts (mixed when some are on), greyed while
-  favourites play;
+The Settings **Scenes** tab (760×776) has, in a header of two columns:
+- on the left: the heading and what a click does (switch on or off, or,
+  while only favourites play, star), a Size segmented picker, a Play picker
+  ("What's on" or "Only favorites"), and under them the category checkboxes
+  with counts (mixed when some are on), greyed while favourites play, in two
+  columns of three after 0.8.0. The left is 420 pt wide, which holds two of
+  the 200 pt checkboxes and not three; a header wider than the tab's 696 pt
+  would widen the whole tab past its window, so the columns are sized to fit.
+  Categories used to sit in a band of their own below the header, with a big
+  empty gap where the taller preview column ended;
+- on the right, the live well ("Playing what's on" or "Playing your
+  favorites" under it, or, under the pointer, what the field guide says about
+  that specimen), with the light/dark switch directly under the well and the
+  text (name, caption, note, their lines reserved) below the switch;
 - a search field with a Topics menu (a tag button) beside it, an All / On /
   Off / ☆ filter (☆ shows the favourites; On and Off mean in or out of what
   plays), "N of M on" with All and None (None keeps one on), or "N favorites"
@@ -1440,12 +1475,17 @@ The Settings **Scenes** tab (760×776) has:
   on" otherwise; leaving goes back to the rotation after 250 ms, so crossing
   between cells doesn't flash it.
   Cells on screen PLAY, drawn live by `SceneLive` (a TimelineView plus a
-  Canvas at 20 fps, 30 under the pointer, keeping no frames). The panel's
+  Canvas at 20 fps, 30 under the pointer, keeping no frames, at full strength
+  with no fade, see Poster stills). The panel's
   `PlayedGlyph` pre-renders about 1.5 s per scene, and 40 cells of that cost
   about 320 MB more; live drawing costs about 11% of one core with no extra
   memory. Off screen (the lazy grid's onDisappear), or with Reduce Motion
-  except under the pointer, a cell is a Canvas still at 60% of its duration.
-- the ☀️/🌙 switch under the preview well sets the WHOLE tab light or dark
+  except under the pointer, a cell is a Canvas still at the specimen's
+  **poster time** (below). With Reduce Motion that is what nearly every cell
+  shows, so a still that shows nothing would be a grid of nothing.
+- the ☀️/🌙 switch under the preview well (above the preview's text after
+  0.8.0; it used to float below the text's reserved lines) sets the WHOLE tab
+  light or dark
   (`.preferredColorScheme` on the tab, which sets its window's scheme while
   the tab shows); it starts on the app's. No boards inside the tab (Sam: "the
   entire panel should match… not a square around the glyphs").
@@ -1453,6 +1493,50 @@ The Settings **Scenes** tab (760×776) has:
   SwiftUI's `Toggle(sources:isOn:)` over two bindings (any on, all on) draws
   the mixed dash; each binding writes the whole category, so a click changes
   it once. The popover's way into the tab is "Choose specimens one by one…".
+
+### Poster stills (Lab/SpecimenPoster.swift, after 0.8.0)
+
+A specimen's still used to be the scene 60% in. A few specimens draw
+themselves up over the loop, so a thin moment of them is nearly nothing. The
+**poster time** of each is chosen once: `SpecimenPoster.times` gives the
+candidates (the old 60%, then ten spread between the fade-in and the
+fade-out, since a scene is half there inside `LabScenes.fade`), `ink`
+draws them all onto one small sheet (40 pt cells, `ImageRenderer`) and sums
+each cell's opacity, and `choose` takes the one with the most. The sum of
+opacity, not a pixel count, so a faint wash counts for less than a solid
+line. One rule softens it: **the old still keeps its place while it already
+has 60% of the best frame's ink** (`keepsOldStill`). Ink is a rough measure
+(a closed black door has more than an open one with things in it), and a
+still that is good enough should not move for a few percent. Measured on the
+catalogue, that moves 21 of 528 (Lithography, Tardigrade, Cryo-EM, Aspirator
+among them); the rest keep their old still.
+
+- **Where it is used** (Capsid's own code): the grid's still (`SceneStill`,
+  with Reduce Motion, and the moment before a cell plays) and the flask under
+  Reduce Motion (`StillSpecimen`). **Not** the panel's covered-screen still:
+  `PlayedGlyphView` in Shared/ draws the middle frame of the scene it is on
+  when its window is covered or the screen sleeps, and Shared/ is the
+  droplet's. A poster there is a change to make in the droplet.
+- **Lazily, and in line.** `ImageRenderer` and `GraphicsContext` need the
+  main actor, so the choosing cannot go off the main thread. It costs
+  0.7 ms a specimen (release; 0.4 s for all 528, `Capsid --measure-posters`),
+  so it is asked for only when a still is first drawn, answered one at a time
+  with a 2 ms breath between (`SpecimenPosters`), and kept for the run. Nothing
+  is asked while every cell plays live, which is nearly always. Until the
+  answer comes the old time shows.
+- **The pale tiles were live cells, not stills.** A cell on screen plays from
+  the clock, and it drew the scene with `LabScenes.draw`, which fades and
+  grows a scene in over its first 0.3 s and out over its last 0.3 s: the
+  rotation's hand-over to the next scene. A cell plays one scene round and
+  round, so it was pale at the start and end of every loop (nearly a fifth of
+  a three-second scene), and a screenshot caught ECL detection, Streak plate,
+  Column and Flow cytometry that way. Live cells now draw with
+  `SpecimenPoster.drawLooping`: the scene's own loop at full strength, clipped
+  to its square. The preview well and the panel still fade between scenes, as
+  they play. A scene that builds up (ECL starts with a bare plate) still has
+  thin moments of its own; the poster is for stills.
+- `Capsid --measure-posters [sheet.png]` prints the cost and how many moved,
+  and writes a sheet of old and new stills.
 
 ### Field guide (Lab/SpecimenNotes.swift, Lab/SpecimenGuide.swift)
 
@@ -1609,14 +1693,33 @@ Approving a plan from its card).
   the tightest limit as what's left and when it resets, e.g. "66% left ·
   resets in 1h 12m" or "Week 12% left · resets Thu". The session limit goes
   unnamed: "5h" read as five hours to go. The countdown ticks each minute
-  and is tertiary; the figure is secondary and turns clay under 20% left.
+  and is tertiary; the figure is secondary and turns clay-text under 20% left.
   `chart.bar.xaxis` shows until the first read lands.
 - Popover (glass): a **Plan limits** section with a row per limit ("Current
   session", "Weekly · all models", "Weekly · Opus", "Weekly · Sonnet"), each
-  with a bar, "% left" and "Resets in 2 h 14 m" (and the forecast line and
+  with a bar, "% left" and "Resets in 2h 14m" (and the forecast line and
   sparkline below), plus extra usage when enabled. Then the **Activity** section (the graph from Claude Science's launch on June 30, 2026, a column per week up to a year; 14 pt squares while it spans 30 weeks or fewer, the days before launch blank; the popover is as wide as the graph needs, 600 pt at least), and a Refresh
   button (`.glass`).
 - One Usage control, not two.
+
+**One way to write times (`TimeSpan`, after 0.8.0).** The toolbar said "resets
+in 1h 28m" while the Usage popover said "Resets in 1 h 28 m", and the plan
+notices said "in 47 minutes". One formatter now, in the compact style:
+- a length: "45s" under a minute, then "12m", "1h 5m", and "2h" for an exact
+  hour (never "1h 0m"); `short`, to the nearest minute (the finished card's
+  "12m · 1.2M tokens");
+- a countdown: `countdown`, minutes rounded up so it never reads "0m" while
+  time is left;
+- a reset: `reset`, "in 1h 28m" within a day, "now" once over, past a day the
+  weekday. The toolbar writes "Thu"; the popover and the notices have room
+  for the time, "Thu 11:27 PM" (`withTime`), in the Mac's own format;
+- for VoiceOver, `spokenReset` spells the units out ("in 1 hour, 28 minutes"),
+  since "1h 28m" is read letter by letter.
+Not in it: the running turn clock ("4:12", `ElapsedClock`) and the pairing
+code's countdown, which are clocks, and times of day ("Resumes at 3:40 PM",
+"limit around 3:40 PM"), which are not lengths. "5 min. ago" and "2 minutes
+ago" (Quick Open, the activity list, Diagnostics) say when something
+happened, in the system's relative style, and are left to it.
 
 **Usage forecast (the popover, under each limit's bar).** "At this pace:
 limit around 3:40 PM", "At this pace: lasts until it resets", or, while it
@@ -2049,7 +2152,7 @@ main Claude Science window opens behind it as usual.
 
 ```
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
-Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo, Settings, Welcome, Diagnose and Compat* (inventory, probes, breadcrumbs)   (planner)
+Sources/Bench/App/        BenchApp, Router, Theme, TimeSpan, SharedShims, SheetCost, PosterCost, Demo, Settings, Welcome, Diagnose and Compat* (inventory, probes, breadcrumbs)   (planner)
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge, page tabs (Close Other Tabs, Close All Tabs), LastSession (reopen where you were)   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule,
                           QuestionReply and ReplyWindow (a question, a permission request or a plan's

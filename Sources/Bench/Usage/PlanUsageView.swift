@@ -24,9 +24,9 @@ struct PlanUsageLabel: View {
                     .accessibilityHidden(true)
                 HStack(spacing: 0) {
                     Text(name + "\(limit.leftPercent)% left")
-                        .foregroundStyle(limit.isLow ? Theme.clay : Color.secondary)
+                        .foregroundStyle(limit.isLow ? Theme.clayText : Color.secondary)
                     if let resetsAt = limit.resetsAt {
-                        Text(" · resets " + resetPhrase(resetsAt, now: context.date, compact: true))
+                        Text(" · resets " + TimeSpan.reset(resetsAt, now: context.date))
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -48,7 +48,7 @@ struct PlanUsageLabel: View {
     private func spoken(now: Date) -> String {
         var text = "Usage. \(limit.kind.title): \(limit.leftPercent)% left"
         if let resetsAt = limit.resetsAt {
-            text += ". " + resets(resetsAt, now: now)
+            text += ". Resets " + TimeSpan.spokenReset(resetsAt, now: now)
         }
         return text
     }
@@ -122,7 +122,7 @@ struct PlanLimitsSection: View {
                             PlanLimitRow(
                                 title: limit.kind.title,
                                 usedPercent: limit.usedPercent,
-                                detail: limit.resetsAt.map { resets($0, now: context.date) },
+                                detail: limit.resetsAt.map { "Resets " + TimeSpan.reset($0, now: context.date, withTime: true) },
                                 forecast: (plan.forecasts[limit.kind] ?? .tooEarly).line(
                                     now: context.date, reads: reads, usedPercent: limit.usedPercent),
                                 trail: UsageSparkline.points(reads))
@@ -248,26 +248,4 @@ private struct PlanSparkline: View {
         .frame(width: Self.size.width, height: Self.size.height)
         .accessibilityHidden(true)
     }
-}
-
-/// "Resets in 2 h 14 m", or the day and time once it is over a day away.
-private func resets(_ date: Date, now: Date) -> String {
-    "Resets " + resetPhrase(date, now: now, compact: false)
-}
-
-/// "in 2 h 14 m", "now", or "Thu 9:00 AM" past a day. Compact, for the
-/// toolbar: "in 2h 14m", or just the day.
-private func resetPhrase(_ date: Date, now: Date, compact: Bool) -> String {
-    let seconds = date.timeIntervalSince(now)
-    guard seconds > 0 else { return "now" }
-    guard seconds < 24 * 3600 else {
-        return compact
-            ? date.formatted(.dateTime.weekday(.abbreviated))
-            : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
-    }
-    let (hours, minutes) = Int((seconds / 60).rounded(.up)).quotientAndRemainder(dividingBy: 60)
-    let space = compact ? "" : " "
-    return hours > 0
-        ? "in \(hours)\(space)h \(minutes)\(space)m"
-        : "in \(minutes)\(space)m"
 }

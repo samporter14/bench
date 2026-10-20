@@ -143,7 +143,7 @@ struct ResultsView: View {
             if !shelf.isReady {
                 Label(ShelfFailure.notReady.sentence, systemImage: "exclamationmark.triangle")
                     .font(.system(size: 12))
-                    .foregroundStyle(Theme.clay)
+                    .foregroundStyle(Theme.clayText)
             }
         }
         .padding(.horizontal, 16)
@@ -407,7 +407,7 @@ struct ResultFileRow: View {
                 if let problem = shelf.fileProblems[entry.version] {
                     Text(problem)
                         .font(.system(size: 11))
-                        .foregroundStyle(Theme.clay)
+                        .foregroundStyle(Theme.clayText)
                 }
             }
             .accessibilityElement(children: .combine)

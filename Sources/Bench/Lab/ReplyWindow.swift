@@ -569,7 +569,7 @@ struct ReplyView: View {
             Button(contextOpen ? "Show less" : "Show more") { contextOpen.toggle() }
                 .buttonStyle(.plain)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Theme.clay)
+                .foregroundStyle(Theme.clayText)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
