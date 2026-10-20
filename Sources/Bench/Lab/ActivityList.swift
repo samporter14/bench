@@ -9,7 +9,13 @@ struct ActivityList: View {
     let close: () -> Void
     @ObservedObject private var model = LabModel.shared
     @ObservedObject private var usagePause = UsagePauseModel.shared
+    /// What a card has read of a plan or a question: a row offers what its card would.
+    @ObservedObject private var plans = PlanApprover.shared
+    @ObservedObject private var questions = QuestionReplier.shared
     @Environment(\.colorScheme) private var colorScheme
+
+    /// What a card offers and does (Lab/CardActions.swift), over the same model and states.
+    private var cardActions: CardActions { CardActions(model: model, plans: plans, questions: questions) }
 
     /// Whether "N more" under Needs you has been pressed: all of its rows show.
     @State private var showsAllNeeds = false
@@ -41,11 +47,7 @@ struct ActivityList: View {
                     // error; then, under their own title, what is put off with Later.
                     VStack(alignment: .leading, spacing: 2) {
                         needsYouTitle(hasAsks: !needs.asks.isEmpty)
-                        ForEach(shown.asks) { session in
-                            row(session, line: (session.waitingReason ?? .other).sentence, accent: true) {
-                                PlayedLoop(glyph: (session.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
-                            }
-                        }
+                        ForEach(shown.asks) { askRow($0) }
                         ForEach(shown.failed) { session in
                             row(session, line: "Stopped with an error", accent: true) {
                                 symbol("exclamationmark.triangle")
@@ -119,6 +121,9 @@ struct ActivityList: View {
         .frame(width: ActivitySizing.width)
         .frame(maxHeight: height)
         .fixedSize(horizontal: false, vertical: true)
+        // What each shown ask's card would offer is read as the list opens (once per card:
+        // a card on top has it already), so a row's buttons are there when the pointer is.
+        .onAppear { shown.asks.forEach(cardActions.prepare) }
     }
 
     // MARK: Parts
@@ -171,12 +176,14 @@ struct ActivityList: View {
     }
 
     private func row<Glyph: View, Trailing: View>(_ session: SessionStatus, line: String?, accent: Bool,
+                                                  note: String? = nil, actions: [RowAction] = [],
+                                                  engaged: @escaping () -> Void = {}, showsActions: Bool = false,
                                                   @ViewBuilder glyph: () -> Glyph,
                                                   @ViewBuilder trailing: () -> Trailing) -> some View {
         ActivityRow(action: {
             model.open(session)
             close()
-        }) {
+        }, actions: actions, engaged: engaged, showsActions: showsActions) {
             HStack(spacing: 10) {
                 glyph()
                     .frame(width: 26, height: 26)
@@ -192,13 +199,64 @@ struct ActivityList: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    // Why a send didn't go, as the card says it.
+                    if let note {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(Theme.clayText)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer(minLength: 8)
                 trailing()
             }
         }
-        .accessibilityLabel([line, session.displayTitle, session.projectName].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel([line, session.displayTitle, session.projectName, note].compactMap { $0 }.joined(separator: ", "))
         .accessibilityHint("Opens the session")
+    }
+
+    /// A session that waits for you now. On hover or keyboard focus its row offers what
+    /// its card would (`CardOffer`: Reply…, Approve, Request changes…, Allow Once, Deny,
+    /// Review…), by the card's own calls (`CardActions`); sending shows a spinner and a
+    /// send that went its line, as on the card. A session whose card isn't in the queue
+    /// (put off, or dismissed) has no state to offer from, and its row only opens it.
+    private func askRow(_ session: SessionStatus) -> some View {
+        let reason = session.waitingReason ?? .other
+        let offer = cardActions.offer(for: session)
+        let actions = offer.rowActions.map { action in
+            RowAction(title: action.rowTitle, help: action.help) { perform(action, for: session) }
+        }
+        return row(session, line: reason.sentence, accent: true, note: offer.problem, actions: actions,
+                   engaged: { cardActions.prepare(session) },
+                   showsActions: Demo.showsActions(for: session)) {
+            PlayedLoop(glyph: reason.glyph, tint: colorScheme.sceneInk)
+        } trailing: {
+            switch offer.lead {
+            case .sending(let label):
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(label)
+            case .done(let text):
+                HStack(spacing: 4) {
+                    Text(text)
+                    Image(systemName: "checkmark")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.clayText)
+                .accessibilityElement(children: .combine)
+            case .button:
+                EmptyView()
+            }
+        }
+    }
+
+    /// What a row's button does. Those that open the reply window close the list first,
+    /// as that window opens beside the panel; Approve, Allow Once and Deny leave it open,
+    /// so the row shows how the send goes.
+    private func perform(_ action: CardAction, for session: SessionStatus) {
+        if action.opensWindow { close() }
+        cardActions.perform(action, for: session)
     }
 
     /// "3 more" at the end of a long Needs you: a press shows the rest.
@@ -354,25 +412,118 @@ struct ActivityList: View {
     }
 }
 
+/// One of the answers a row offers on hover: its title and tooltip, and what it does.
+private struct RowAction: Identifiable {
+    let title: String
+    let help: String?
+    let perform: () -> Void
+
+    var id: String { title }
+}
+
 /// A row that highlights under the pointer, as a menu's items do, and opens
-/// on click or Return.
+/// on click or Return. A row with `actions` also shows them, over its right
+/// end, while the pointer or the keyboard focus is on it, and offers them in
+/// its context menu and to VoiceOver, so they are there without hovering.
 private struct ActivityRow<Label: View>: View {
     let action: () -> Void
+    var actions: [RowAction] = []
+    /// The pointer or the focus came to the row: a chance to read what its actions need.
+    var engaged: () -> Void = {}
+    /// Shows the actions as if the pointer were there (a demo's capture).
+    var showsActions = false
     @ViewBuilder let label: Label
     @State private var hovering = false
+    @FocusState private var focus: Focus?
     @Environment(\.isEnabled) private var isEnabled
 
+    private enum Focus: Hashable {
+        case row
+        case action(String)
+    }
+
+    private var offersActions: Bool {
+        !actions.isEmpty && (hovering || focus != nil || showsActions)
+    }
+
     var body: some View {
-        Button(action: action) {
-            label
-                .padding(.horizontal, 6)
-                .padding(.vertical, 5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(hovering && isEnabled ? Color.primary.opacity(0.08) : .clear, in: .rect(cornerRadius: 8))
-                .contentShape(.rect(cornerRadius: 8))
+        // The buttons are the row's siblings, not inside its button, and the pointer's
+        // tracking covers both, so moving onto them leaves the row hovered.
+        ZStack(alignment: .trailing) {
+            Button(action: action) {
+                label
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(highlighted ? Color.primary.opacity(0.08) : .clear, in: .rect(cornerRadius: 8))
+                    .contentShape(.rect(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .focused($focus, equals: .row)
+            if offersActions {
+                buttons
+                    .padding(.trailing, 6)
+            }
         }
-        .buttonStyle(.plain)
         .opacity(isEnabled ? 1 : 0.5)
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            if inside { engaged() }
+        }
+        .onChange(of: focus) { _, now in
+            if now != nil { engaged() }
+        }
+        .modifier(RowActionsMenu(actions: actions))
+    }
+
+    private var highlighted: Bool {
+        (hovering || showsActions) && isEnabled
+    }
+
+    /// The first, the one the card would make its primary, in the clay; the rest plain.
+    private var buttons: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(actions.enumerated()), id: \.element.id) { index, item in
+                if index == 0 {
+                    Button(item.title, action: item.perform)
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.clay)
+                        .help(item.help ?? "")
+                        .focused($focus, equals: .action(item.id))
+                } else {
+                    Button(item.title, action: item.perform)
+                        .buttonStyle(.bordered)
+                        .help(item.help ?? "")
+                        .focused($focus, equals: .action(item.id))
+                }
+            }
+        }
+        .controlSize(.small)
+        .padding(3)
+        .background(.regularMaterial, in: .rect(cornerRadius: 9))
+    }
+}
+
+/// The same actions in a row's context menu and as VoiceOver's actions, for a row that has any.
+private struct RowActionsMenu: ViewModifier {
+    let actions: [RowAction]
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if actions.isEmpty {
+            content
+        } else {
+            content
+                .contextMenu {
+                    ForEach(actions) { item in
+                        Button(item.title, action: item.perform)
+                    }
+                }
+                .accessibilityActions {
+                    ForEach(actions) { item in
+                        Button(item.title, action: item.perform)
+                    }
+                }
+        }
     }
 }

@@ -119,6 +119,22 @@ enum Demo {
     /// itself, filled with made-up sessions.
     static let opensActivity = mode == .toolbar && CommandLine.arguments.contains("--open-activity")
 
+    /// `--hover-row "<title>"` with `--demo toolbar --open-activity`: that row of
+    /// Needs you shows its actions as if the pointer were on it (a capture can't
+    /// hover), and the list gains what showing every kind needs: the plan not put off
+    /// and a session asking to use a read-only tool, "Literature lookup". Their
+    /// answers send nothing anywhere.
+    static let hoveredRow: String? = {
+        let arguments = CommandLine.arguments
+        guard mode == .toolbar, let flag = arguments.firstIndex(of: "--hover-row") else { return nil }
+        return arguments.dropFirst(flag + 1).first
+    }()
+
+    /// Whether the activity list shows this row's actions as if hovered.
+    static func showsActions(for session: SessionStatus) -> Bool {
+        hoveredRow != nil && hoveredRow == session.displayTitle
+    }
+
     /// Held so the windows stay up.
     private static var windows: [NSWindow] = []
 
@@ -279,13 +295,18 @@ enum Demo {
         ].sorted { $0.at > $1.at }
         // The plan and the gel question were put off with Later. Their cards
         // stay in the queue only because showDemo reads `waiting` from it.
-        let snoozed = [SnoozedReminder(session: plan, due: Date().addingTimeInterval(11 * 60)),
-                       SnoozedReminder(session: afterFocus, due: nil)]
+        // (`--hover-row` leaves the plan on, so its Approve can show.)
+        var snoozed = [SnoozedReminder(session: afterFocus, due: nil)]
+        if hoveredRow == nil { snoozed.insert(SnoozedReminder(session: plan, due: Date().addingTimeInterval(11 * 60)), at: 0) }
+        var asking = [exec, network, helper]
+        if hoveredRow != nil {
+            asking.append(make("dc", "Literature lookup", "Reading group", .needsInput, .tool, minutes: 1))
+        }
         LabModel.shared.showDemo(working: working,
-                                 cards: [.needsInput(question), .needsInput(plan), .needsInput(afterFocus), .failed(failed),
-                                         .needsInput(exec), .needsInput(network), .needsInput(helper)],
+                                 cards: [.needsInput(question), .needsInput(plan), .needsInput(afterFocus), .failed(failed)]
+                                     + asking.map(LabCard.needsInput),
                                  recent: recent, snoozed: snoozed)
-        return [question, plan, failed, afterFocus] + working + [finished, exec, network, helper]
+        return [question, plan, failed, afterFocus] + working + [finished] + asking
     }
 
     // MARK: The modes
@@ -335,7 +356,7 @@ enum Demo {
             PlanLimit(kind: .week, usedPercent: 32, resetsAt: Date(timeIntervalSinceNow: 3 * 24 * 3600)),
         ])
         if opensActivity {
-            showActivity()
+            showRowDemos(showActivity())
         } else {
             LabModel.shared.showDemo(working: [session(.running)], cards: [])
         }
@@ -357,6 +378,39 @@ enum Demo {
         windows.append(window)
         activateUnlessQuiet()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// What each Needs-you row of the activity list would offer, as its card
+    /// would read it: a question, a plan, and permission requests (the Mac's table
+    /// says what each may do). Made up, and answering sends nothing anywhere.
+    private static func showRowDemos(_ sessions: [SessionStatus]) {
+        let now = Date()
+        for session in sessions where session.state == .needsInput {
+            switch session.title {
+            case "Protein stability screen":
+                QuestionReplier.shared.showDemo(sessionID: session.id, ask: QuestionAsk(toolID: "demo", items: [
+                    .init(question: "Which buffer should the screen use for the first plate?", header: "Buffer", multi: false,
+                          options: [.init(label: "HEPES", detail: nil), .init(label: "Tris", detail: nil)]),
+                ]))
+            case "Batch effect check":
+                PlanApprover.shared.showDemo(sessionID: session.id, preview: PlanPreview(
+                    summary: "Check the sequencing pilot for batch effects", steps: 4, confidence: "high",
+                    stepTitles: ["Load the count tables", "Plot the samples by run date",
+                                 "Fit a model with run as a covariate", "Write up what changes"],
+                    versionID: "demo", artifactID: nil))
+                QuestionReplier.shared.markDemo(session.id)
+            case "Peak calling script", "Reference genome download", "Citation check":
+                if let request = DemoLive.read(title: session.title, id: session.id, now: now)?.permission {
+                    QuestionReplier.shared.showDemo(sessionID: session.id, request: request)
+                }
+            case "Literature lookup":
+                QuestionReplier.shared.showDemo(sessionID: session.id, request: PermissionRequest(
+                    requestID: "demo-request-lookup", toolID: "demo-tool-lookup", mode: "parked", kind: "mcp_tool",
+                    frame: session.id, tool: "search_papers", server: "Paper search", source: "directory", readOnly: true))
+            default:
+                break
+            }
+        }
     }
 
     private static func showUsage() {
