@@ -414,7 +414,8 @@ Position:
 
 When it shows:
 
-- Whenever something works or a card is up, and the panel isn't turned off.
+- Whenever something works or a card is up, and the panel isn't turned off,
+  and Capsid isn't quiet for a presentation (Quiet while presenting).
 - Otherwise it fades out and is ordered out: no window at all while idle.
 
 Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
@@ -524,7 +525,9 @@ The Dock menu is never empty: with nothing working or waiting it says
 "Nothing working right now", and while Recent is still empty (right after a
 start) it lists **Latest**, the five sessions active most recently that
 neither work nor wait, from the last read. The popover lists Latest the same
-way since 0.3.1.
+way since 0.3.1. Below a divider it ends with **Quiet While Presenting**
+(Quiet while presenting); `applicationDockMenu` adds it, so the list is the
+same whatever the switch says.
 
 Recent is kept in memory only, so Capsid still writes nothing about sessions to
 disk; it lasts until Capsid quits. An event is the kind, the session and its
@@ -590,7 +593,8 @@ due is `NoticeRules`, pure and tested on made-up data.
 - **Week in review:** once a new week starts (the activity graph's calendar),
   last week's sessions, messages and busiest day, read off the main thread
   at launch and just after each midnight.
-- **While you focused:** see Nidus below.
+- **While you focused:** see Nidus below. **While you presented:** the same
+  card, for Quiet while presenting.
 
 What has been announced (plan windows, context sessions, the reviewed week)
 is kept in Capsid's settings so an update doesn't repeat it; demos keep
@@ -643,13 +647,108 @@ Claude Science task you spent the time in, not just "Capsid".
   starts it, so its Settings switch and its quit leave a running Capsid's
   file alone.
 
+### Quiet while presenting (Lab/PresentingMode.swift, App/PresentingFocusFilter.swift, since 0.7.4)
+
+The panel and its cards are drawn by Capsid itself, so macOS's "no
+notifications while sharing" does not cover them, and they name sessions and
+projects. While the user presents (Keynote, a Zoom or Teams screen share, a
+projector) Capsid stays out of sight, then catches up.
+
+**Two ways in, one state.** `PresentingMode` holds `focusFilterOn` and
+`manualOn`; `isQuiet` is either. With both on, quiet lasts until both are off.
+
+- **A Focus filter** (`QuietWhilePresentingFilter`, a `SetFocusFilterIntent`).
+  In System Settings → Focus → (a Focus kept for presenting) → Focus filters →
+  Add Filter → Capsid, with one switch, "Keep Capsid quiet". While that Focus
+  is on, Capsid is quiet. How the system runs it, from the SDK's doc comments
+  (the `.swiftdoc` beside `AppIntents.swiftinterface`) and Apple's article
+  "Defining your app's Focus filter":
+  - `perform()` runs when the Focus turns on, with the parameters as the user
+    set them, and again when it turns off, with each non-optional
+    parameter's `default`. So the parameter is `quiet`, default `false`; a
+    filter with no parameter could not tell on from off.
+  - `suggestedFocusFilters(for:)` exists for when the suggested configuration
+    differs from the one used when the Focus is turned off, which is this
+    case: the filter is suggested with `quiet` already on, so adding it does
+    something.
+  - At launch while a Focus is already on, neither the SDK nor the article
+    says the filter runs again. `static var current` is the SDK's way to
+    retrieve the current Focus configuration (its error type is
+    `SetFocusFilterIntentError`), so `PresentingMode.start()` reads it once;
+    a throw (no filter configured) is off. A `perform()` that has already run
+    is newer than that read and wins (`catchUp`).
+  - SwiftPM does not extract App Intents metadata, so System Settings only
+    knows the filter if `Scripts/appintents-metadata.sh` (ported from Nidus's)
+    has put `Contents/Resources/Metadata.appintents` into the bundle. It runs
+    from `Scripts/build-app.sh`, before signing.
+- **A switch.** "Quiet While Presenting" with a checkmark, in the app menu
+  (after Settings…) and in the Dock menu (after the activity list), for when
+  the Focus filter never shows up in System Settings (a self-signed app built
+  by SwiftPM can't be sure of it), or no Focus is kept for presenting. It
+  stays on until turned off. It is **not saved**: a quit turns it off, so
+  Capsid never comes back from a launch silent without anyone saying so. The
+  Dock item says "A Focus is keeping Capsid quiet" when the Focus is why,
+  and the switch is separate from it: turning the switch off does not end a
+  Focus's quiet.
+- **Never in a demo.** `PresentingMode.start()` is not called and refuses in
+  a demo, the filter's `perform()` does nothing in one, and the menu items
+  are disabled.
+
+**While quiet:**
+
+- **The panel** (working specimen and cards) is not shown: `LabPanelController`
+  folds `isQuiet` into the rule that orders it front or out
+  (`shouldShow(cards:working:preferences:active:quiet:)`). Quiet wins over
+  every setting. Nothing is dropped: the sessions and the cards stay in
+  `LabModel` as ever, so a session still waiting shows its card the moment
+  quiet ends, through the normal logic.
+- **"Finished" cards are held**, the way a Nidus focus session holds them
+  (`LabModel.holdsFinishes`, `heldFinishes`; they still go to Recent), and come
+  as one card when quiet ends, worded for it: caption "While you presented",
+  the session's title or "3 sessions finished", "Finished" or "Title and 2
+  more". The Nidus card keeps "While you focused". The two are told apart
+  by `LabNotice.heldFor` (`NoticeRules.HoldReason`), and have their own id
+  prefix (`presenting-held-`, `focus-held-`).
+- **Both holds on at once:** the finishes stay held until neither holds, and
+  the card is worded for the one that lifted last (a Nidus focus session that
+  ends mid-presentation brings nothing, and nor does a presentation that ends
+  mid-focus). `releaseHeldFinishes` waits while either holds, so turning off
+  Settings → Alerts → Hold finishes during a presentation brings nothing
+  either. A Later "After My Focus Session" reminder still comes back when its
+  focus session ends, as a card the panel isn't showing yet.
+- **No Mac notification:** `NotificationRules.content` returns nothing while
+  `Settings.presenting` is set, for every card, so none is posted, and one
+  waiting on macOS's answer when quiet begins is dropped. A needs-input card
+  raised meanwhile is not notified when quiet ends (its card shows); the
+  held finishes' one notification is, as for a Nidus focus session, and only
+  with "When a session finishes too".
+- **No sound:** `LabModel.chime()` plays nothing, for a new question, a Later
+  reminder coming back or the end of a Nidus focus session.
+- **Timed cards wait.** A card that times out (a page's notification, a saved
+  file, a notice) does not count down while the panel isn't shown: its time
+  starts when quiet ends, so it isn't lost unseen. Questions, plans and errors
+  never time out.
+- **The phone is not the Mac's screen.** Pushes to a paired phone
+  (Capsid on your phone) are unchanged, except that a finish is held with the
+  rest and its one push is worded "Finished while you presented". The
+  menu bar specimen (Lab/MenuBarSpecimen.swift) keeps its glyph and its count,
+  which name nothing; the list behind a click on it, the Dock menu and the
+  main window are the user's own doing and are not hidden.
+
+**Not done:** a Settings page for this (the app menu and the Focus filter are
+the controls); catching up with a notification for a question raised while
+quiet. The Focus filter's launch read, and the filter appearing in System
+Settings at all for a self-signed app, rest on the SDK's types and docs and
+had not been seen working when this was written; the switch is the sure way.
+
 ### Menu bar specimen (Lab/MenuBarSpecimen.swift, since 0.3.0)
 
 Off by default. While a session works, the specimen plays in the menu bar;
 while any waits, the waiting glyph and a count. Clicking it opens the
 activity list in a popover. Its ink follows the menu bar's appearance (the
 wallpaper's), not Capsid's Ivory or Slate. Hidden, not removed, while nothing
-works, so it keeps its place. Measured at about 0–2% CPU while playing.
+works, so it keeps its place. Measured at about 0–2% CPU while playing. It
+shows the glyph and a count and no names, so Quiet while presenting leaves it.
 
 ### Mac notifications (since 0.3.3)
 
@@ -702,6 +801,8 @@ The poster, `MacNotifications`, is thin: it speaks to the system only through
 - **Never** for a page's own notification (`LabCard.web`), a saved file or
   a notice (but for the one below); on the first read after launch (as `chime` is not played);
   in a `--demo` mode; or in tests.
+- **While Capsid is quiet for a presentation** (Quiet while presenting),
+  nothing is sent at all; see that section for what comes after.
 - **A finish held for a Nidus focus session** is not sent then: its card
   waits, so does its notification. When the session ends, what finished
   comes as one notification, as its "While you focused" card does, and only

@@ -1,8 +1,8 @@
 // LabNotice.swift — a card that tells rather than asks (DESIGN.md, Notices):
 // the plan nearly used up, on course to run out, or reset, a session's
 // context filling up, the week in review, what finished during a Nidus focus
-// session. Notices queue after the cards about sessions, never play a sound,
-// and always time out.
+// session or while presenting. Notices queue after the cards about sessions,
+// never play a sound, and always time out.
 //
 // `NoticeRules` decides when each one is due. It is pure, so the tests run it
 // on made-up limits, histories and focus states.
@@ -24,6 +24,9 @@ struct LabNotice: Identifiable, Equatable {
     /// panel up while nobody is there.
     let lifetime: Duration
     var action: Action = .none
+    /// Set on the one card for what finished while finishes were held, and
+    /// saying which hold it was (`NoticeRules.held`).
+    var heldFor: NoticeRules.HoldReason? = nil
 }
 
 enum NoticeRules {
@@ -195,15 +198,51 @@ enum NoticeRules {
         return true
     }
 
-    /// The one card for what finished during a focus session.
-    static func held(_ sessions: [SessionStatus]) -> LabNotice? {
+    /// Why "Finished" cards were held, and so how the card that lifts the hold
+    /// is worded: a Nidus focus session, or a Focus or the switch that keeps
+    /// Capsid quiet while presenting (PresentingMode.swift). When both were on,
+    /// it is the one that lifted last.
+    enum HoldReason: Equatable, Sendable {
+        case focus
+        case presenting
+
+        /// The card's caption.
+        var caption: String {
+            switch self {
+            case .focus: "While you focused"
+            case .presenting: "While you presented"
+            }
+        }
+
+        /// The same in the middle of a sentence: "A session finished while
+        /// you focused", in a notification that hides names.
+        var whileYou: String {
+            switch self {
+            case .focus: "while you focused"
+            case .presenting: "while you presented"
+            }
+        }
+
+        /// Starts the id, so a card for one hold is never taken for the other.
+        fileprivate var idPrefix: String {
+            switch self {
+            case .focus: "focus-held-"
+            case .presenting: "presenting-held-"
+            }
+        }
+    }
+
+    /// The one card for what finished during a focus session, or while
+    /// presenting.
+    static func held(_ sessions: [SessionStatus], reason: HoldReason = .focus) -> LabNotice? {
         guard let first = sessions.first else { return nil }
         let others = sessions.count - 1
         return LabNotice(
-            id: "focus-held-\(sessions.map(\.id).joined(separator: "-"))", symbol: "checkmark.circle",
-            caption: "While you focused",
+            id: "\(reason.idPrefix)\(sessions.map(\.id).joined(separator: "-"))", symbol: "checkmark.circle",
+            caption: reason.caption,
             title: sessions.count == 1 ? first.displayTitle : "\(sessions.count) sessions finished",
             detail: others == 0 ? "Finished" : "\(first.displayTitle) and \(others) more",
-            lifetime: .seconds(15), action: sessions.count == 1 ? .openSession(first) : .none)
+            lifetime: .seconds(15), action: sessions.count == 1 ? .openSession(first) : .none,
+            heldFor: reason)
     }
 }

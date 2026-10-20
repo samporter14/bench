@@ -59,7 +59,7 @@ final class LabPanelController {
 
     /// The settings that decide whether the panel may show: the working
     /// specimen and the cards are separate choices since 0.2.0.
-    private struct Preferences: Equatable {
+    struct Preferences: Equatable {
         let showPanel: Bool
         let showCards: Bool
         let whileFront: Bool
@@ -76,29 +76,52 @@ final class LabPanelController {
     /// (Lab/ReplyWindow.swift) opens beside it.
     var panelFrame: NSRect? { panel?.isVisible == true ? panel?.frame : nil }
 
+    /// Whether the panel should be up: something to show, the settings allow
+    /// it, and Capsid isn't quiet for a presentation (`PresentingMode`).
+    /// Quiet wins over everything, and what waits (a question's card, the
+    /// working sessions) stays in the model, so the panel is back with it the
+    /// moment quiet ends.
+    static func shouldShow(cards: Bool, working: Bool, preferences: Preferences, active: Bool, quiet: Bool) -> Bool {
+        guard !quiet else { return false }
+        let has = (preferences.showCards && cards) || (preferences.showPanel && working)
+        return has && (preferences.whileFront || !active)
+    }
+
+    /// The panel's wanted state over time, from the model, the settings, whether
+    /// Capsid is in front and whether it is quiet. Apart from `start()` so the
+    /// tests can feed it their own.
+    static func visibility(model: LabModel, preferences: AnyPublisher<Preferences, Never>,
+                           active: AnyPublisher<Bool, Never>, quiet: AnyPublisher<Bool, Never>) -> AnyPublisher<Bool, Never> {
+        let content = Publishers.CombineLatest3(model.$working, model.$cards, model.$workingHidden)
+            .map { working, cards, hidden in (cards: !cards.isEmpty, working: !working.isEmpty && !hidden) }
+        return Publishers.CombineLatest4(content, preferences, active, quiet)
+            .map { content, preferences, active, quiet in
+                shouldShow(cards: content.cards, working: content.working, preferences: preferences,
+                           active: active, quiet: quiet)
+            }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
     /// Starts observing; the panel comes and goes with the model and the settings.
     func start() {
         guard subscriptions.isEmpty else { return }
         let center = NotificationCenter.default
 
-        let content = Publishers.CombineLatest3(model.$working, model.$cards, model.$workingHidden)
-            .map { working, cards, hidden in (cards: !cards.isEmpty, working: !working.isEmpty && !hidden) }
         // Any change to any default posts this, from any thread; the map is cheap.
         let preferences = center.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: DispatchQueue.main)
             .map { _ in Preferences.current() }
             .prepend(Preferences.current())
+            .eraseToAnyPublisher()
         let active = Publishers.Merge(
             center.publisher(for: NSApplication.didBecomeActiveNotification).map { _ in true },
             center.publisher(for: NSApplication.didResignActiveNotification).map { _ in false })
             .prepend(NSApp.isActive)
+            .eraseToAnyPublisher()
 
-        Publishers.CombineLatest3(content, preferences, active)
-            .map { content, preferences, active in
-                let has = (preferences.showCards && content.cards) || (preferences.showPanel && content.working)
-                return has && (preferences.whileFront || !active)
-            }
-            .removeDuplicates()
+        Self.visibility(model: model, preferences: preferences, active: active,
+                        quiet: PresentingMode.shared.$isQuiet.eraseToAnyPublisher())
             // @Published publishes as a value is about to change, not after.
             // A panel built inside that call would read the model's old state
             // and never hear of the change that caused it.

@@ -274,7 +274,19 @@ final class LabModel: ObservableObject {
     /// (`NidusFocus`); tests set their own. Unlike `holdsFinishes`, it doesn't
     /// depend on the setting that holds finishes.
     var isFocusing: () -> Bool = { NidusFocus.shared.focusing }
-    /// Finishes held during a focus session, shown as one card after it.
+    /// Whether Capsid is keeping quiet while the user presents
+    /// (`PresentingMode`); tests set their own. Quiet, the panel isn't shown
+    /// (LabPanelController), finishes are held with a Nidus focus session's,
+    /// and no sound plays or Mac notification is made.
+    var isQuiet: () -> Bool = { PresentingMode.shared.isQuiet }
+    /// Plays the needs-input sound, when the setting is on; tests count it.
+    var playChime: () -> Void = {
+        if UserDefaults.standard.bool(forKey: SettingsKey.soundOnNeedsInput) {
+            NSSound(named: "Glass")?.play()
+        }
+    }
+    /// Finishes held during a focus session or while presenting, shown as one
+    /// card after it.
     private(set) var heldFinishes: [SessionStatus] = []
     /// Mac notifications (MacNotifications.swift): told of each card that
     /// comes, new or asking something new, and of each that goes because it
@@ -676,7 +688,7 @@ final class LabModel: ObservableObject {
             case .finished(let session):
                 supersedePageNotifications(by: session)
                 remember(LabEvent(.finished, session: session))
-                if holdsFinishes() {
+                if holdsFinishes() || isQuiet() {
                     if !heldFinishes.contains(where: { $0.id == session.id }) { heldFinishes.append(session) }
                 } else {
                     raise(.finished(session))
@@ -751,11 +763,10 @@ final class LabModel: ObservableObject {
         }
     }
 
-    /// The needs-input sound, when the setting is on.
+    /// The needs-input sound, when the setting is on and Capsid isn't quiet.
     private func chime() {
-        if UserDefaults.standard.bool(forKey: SettingsKey.soundOnNeedsInput) {
-            NSSound(named: "Glass")?.play()
-        }
+        guard !isQuiet() else { return }
+        playChime()
     }
 
     // MARK: Cards
@@ -791,7 +802,10 @@ final class LabModel: ObservableObject {
     /// behind a question) would otherwise run out without ever being seen;
     /// its time starts when it reaches the top.
     private func armFrontCard() {
-        let front = cards.first
+        // Nothing counts down out of sight: while Capsid is quiet the panel
+        // isn't shown, so a card's time starts when it can be seen
+        // (`quietChanged`).
+        let front = isQuiet() ? nil : cards.first
         for id in Array(expiries.keys) where id != front?.id {
             expiries.removeValue(forKey: id)?.cancel()
         }
@@ -835,8 +849,17 @@ final class LabModel: ObservableObject {
         if snoozed != next { snoozed = next }
     }
 
+    /// `PresentingMode` changed. Quiet, no card counts down; no longer quiet,
+    /// the card on top starts its time, and what finished meanwhile comes as
+    /// one card unless a Nidus focus session still holds it.
+    func quietChanged() {
+        if !isQuiet() { releaseHeldFinishes(reason: .presenting) }
+        armFrontCard()
+    }
+
     /// The focus session ended: the reminders that waited for it come back,
-    /// and what finished during it comes as one card.
+    /// and what finished during it comes as one card (unless a presentation
+    /// still holds it).
     func focusEnded() {
         let due = Set(reminders.filter { $0.value.waitsForFocus }.keys)
         due.forEach(forgetReminder)
@@ -850,9 +873,11 @@ final class LabModel: ObservableObject {
         releaseHeldFinishes()
     }
 
-    /// What finished during the focus session, as one card.
-    func releaseHeldFinishes() {
-        guard let notice = NoticeRules.held(heldFinishes) else { return }
+    /// What finished during the focus session or while presenting, as one
+    /// card worded for `reason`, the hold that lifted. Nothing while either
+    /// still holds: the other one's end brings it.
+    func releaseHeldFinishes(reason: NoticeRules.HoldReason = .focus) {
+        guard !holdsFinishes(), !isQuiet(), let notice = NoticeRules.held(heldFinishes, reason: reason) else { return }
         heldFinishes = []
         post(notice)
     }

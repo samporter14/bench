@@ -167,9 +167,9 @@ enum PushRules {
 
     /// The same cards as `NotificationRules`: a session that needs you, one
     /// that stopped with an error, one that finished (not while a Nidus focus
-    /// session holds finishes) and the "While you focused" notice that
-    /// releases them. Nothing for a page's notification, a saved file or any
-    /// other notice.
+    /// session or a presentation holds finishes) and the "While you focused"
+    /// or "While you presented" notice that releases them. Nothing for a
+    /// page's notification, a saved file or any other notice.
     static func event(for card: LabCard, holdingFinishes: Bool) -> Event? {
         switch card {
         case .needsInput(let s):
@@ -187,15 +187,15 @@ enum PushRules {
                          namedTitle: s.displayTitle, namedBody: "Finished · \(s.projectName)",
                          genericBody: "A session finished")
         case .notice(let notice):
-            guard notice.isHeldFinishes else { return nil }
+            guard let reason = notice.heldFor else { return nil }
             if case .openSession(let s) = notice.action {
                 return Event(kind: .finishes, key: "held-\(notice.id)-\(since(s))", tag: "finished-\(s.id)", url: url(s.id),
-                             namedTitle: s.displayTitle, namedBody: "Finished while you focused · \(s.projectName)",
+                             namedTitle: s.displayTitle, namedBody: "Finished \(reason.whileYou) · \(s.projectName)",
                              genericBody: "A session finished")
             }
             return Event(kind: .finishes, key: "held-\(notice.id)", tag: "finished-held", url: "/",
                          namedTitle: notice.title, namedBody: notice.detail,
-                         genericBody: "Sessions finished while you focused")
+                         genericBody: "Sessions finished \(reason.whileYou)")
         case .web, .saved:
             return nil
         }
@@ -416,7 +416,7 @@ final class PushCenter {
         transport: URLSessionPushTransport(),
         presence: .live,
         enabled: { RemoteController.shared.enabled },
-        holdingFinishes: { NidusFocus.shared.holding },
+        holdingFinishes: { NidusFocus.shared.holding || PresentingMode.shared.isQuiet },
         badge: { RemoteAPI.badge(lab: LabModel.shared) })
 
     /// The file beside the devices that holds the VAPID key.
