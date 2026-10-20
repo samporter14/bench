@@ -647,7 +647,7 @@ Claude Science task you spent the time in, not just "Capsid".
   starts it, so its Settings switch and its quit leave a running Capsid's
   file alone.
 
-### Quiet while presenting (Lab/PresentingMode.swift, App/PresentingFocusFilter.swift, since 0.7.4)
+### Quiet while presenting (Lab/PresentingMode.swift, App/PresentingFocusFilter.swift, since 0.8.0)
 
 The panel and its cards are drawn by Capsid itself, so macOS's "no
 notifications while sharing" does not cover them, and they name sessions and
