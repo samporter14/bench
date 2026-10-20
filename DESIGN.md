@@ -173,7 +173,8 @@ you", and the graph's steps. No other hues, no gradients.
 - URL scheme `bench://open?url=<percent-encoded daemon URL>`, and
   `bench://session?project=<id>&frame=<id>`. Both show the window and
   navigate the one web view. This is for the droplet to hand Open to Capsid
-  later.
+  later. A link that arrives while Capsid is starting wins over reopening the
+  session you were in (Reopen where you were).
 
 ## Daemon and sign-in (Web/DaemonController.swift)
 
@@ -205,6 +206,77 @@ you", and the graph's steps. No other hues, no gradients.
   the daemon origin is HTTP 401, fetch a fresh nonce and reload the same path
   with it, at most once per 30 s.
 - Use `WKWebsiteDataStore.default()` so cookies and localStorage persist.
+- **The launch address** is a link that came with the launch (`bench://`), else
+  the session you were in, else the home page (Reopen where you were, below).
+  The sign-in code is added to whichever it is.
+
+### Reopen where you were (Web/LastSession.swift, since 0.8.1)
+
+Capsid used to open Claude Science's home page at every launch. It now opens
+the session that was on screen when Capsid quit, or crashed.
+
+- **Does the page restore the last session itself? Not known.** Nothing in
+  Capsid's code or in this document says Claude Science sends `/` back to the
+  last session, and Capsid never gave it the chance to: every launch loads `/`
+  (or a link's address) with a fresh sign-in code, in a web view that keeps
+  nothing but cookies and `localStorage` (`WKWebsiteDataStore.default()`; no
+  `interactionState`). Claude Science can't be run to look from here. Reopening
+  does not rely on the page: if the page did its own, loading the session's
+  address would only agree with it. A reload (⌘R, or the one after the web
+  content process ends) reloads the address on screen, so it never lost the
+  place.
+- **What is kept.** One `UserDefaults` value, `lastSession`
+  (`SettingsKey.lastSession`): `<project id>/<session id>`, the two opaque ids of
+  the exact `/projects/<p>/frames/<id>` address the main web view shows. Never a
+  title, a name or a URL. Like the Results folders (project ids, never names),
+  it is a setting-sized value, so README's "saves nothing but its own settings"
+  stands. It is the one thing about a session on disk: the sentences that say
+  Capsid writes nothing about sessions (reminders, Recent, Quick Open,
+  notifications) mean titles, states and times, and say so. It is read back
+  only if it still has that shape (a project id as the database's, a full
+  36-character session id).
+- **Following the user.** `WebContainer` watches the web view's address
+  (`webView.publisher(for: \.url)`) and `LastSession.note` sorts it with
+  `NidusTaskSelection.route(url:daemonPort:)`, the one definition of an exact
+  session route (the daemon's origin, `projects/<id>/frames/<id>`, nothing
+  after). A session's page is kept (a `?nonce=` on the address changes
+  nothing); any other page of Claude Science (home, a project's overview,
+  anything else) forgets it, so quitting from the home page launches at the
+  home page. A page that isn't the daemon's (blank, a preview, a link that went
+  to another window) says nothing about where the user is and changes nothing.
+  It writes only a change, since every write is a
+  `UserDefaults.didChangeNotification` that Nidus's task file answers. In a
+  demo it neither writes nor reads: a demo shares the real app's defaults and
+  has no daemon.
+- **At launch (`WebContainer.signIn`).** With the daemon up, the destination
+  is chosen by `LastSession.launchDestination`: a `bench://` link wins, whether
+  it came before the port was known or while this is being decided (a link
+  that arrives while the sign-in is under way waits in `pendingURL`; before
+  0.8.1 it loaded at once and the sign-in's own load then replaced it). A link
+  that is not a page of Claude Science's opens the home page, as before, never
+  the remembered session. With no link, it is the remembered session if the
+  database still has it, else the home page. "Has it" is `fetchSession`: a
+  root session, not hidden, not a sub-agent, upload or concierge, **in that
+  project**, read off the main actor with a 2 s limit (a locked database sends
+  the launch to the home page, not a wait). The look runs while the sign-in
+  code is fetched, so a launch waits for neither. A database that can't be read, or doesn't have the
+  session (deleted, or another org's), opens the home page, and the home page
+  then forgets the old route.
+- **Signing in is not fought.** The sign-in code goes onto the chosen address as
+  it does for a link: the daemon accepts it on any page, a signed-out browser
+  sees the page's one Sign in button, which lands on the same page, and a 401
+  reloads the same address with a new code (above). So a restored session
+  behind a Sign in card is still that session once signed in.
+- **No Settings switch.** Settings' switches are for what makes noise, shares
+  or sends something (the panel, sounds, Mac notifications, the update check,
+  the phone, Nidus). This changes which page a launch shows, as a browser's
+  "continue where you left off", and a click on Claude Science's home undoes it
+  for the next launch. It is on, and documented here; a switch can be added if
+  it turns out to be unwanted.
+- **Not checked.** The wiring in `WebContainer` (the address watch, the
+  `signIn` ordering, `signingIn`) has no unit test, since `WebContainer` is the
+  real web view; its decisions are `LastSession`'s and are tested. See the
+  checklist.
 
 ## Web routing policy (Web/)
 
@@ -376,9 +448,10 @@ question is still seen.
       not return and the session stays dismissed, as after Dismiss, until it
       asks something new.
   - **In memory only**, like Recent: nothing about sessions is written to
-    disk, due times included. A put-off session stays in the activity list's
-    Needs you and in the Dock badge, which count what waits, not what is on
-    the panel.
+    disk, due times included (the one thing kept is the two ids of the
+    session you were in: Reopen where you were). A put-off session stays in
+    the activity list's Needs you and in the Dock badge, which count what
+    waits, not what is on the panel.
 - `failed` ("Stopped with an error", Open and Dismiss, with the sound) comes
   when a working or waiting session ends in an error, and stays until it is
   opened, dismissed, or the session runs again.
@@ -532,10 +605,11 @@ way since 0.3.1. Below a divider it ends with **Quiet While Presenting**
 (Quiet while presenting); `applicationDockMenu` adds it, so the list is the
 same whatever the switch says.
 
-Recent is kept in memory only, so Capsid still writes nothing about sessions to
-disk; it lasts until Capsid quits. An event is the kind, the session and its
-turn (`startedAt`), so one turn's finish is one entry however often it is
-read. Dismissing a card leaves its event in Recent.
+Recent is kept in memory only, so Capsid still writes no title, state or time
+of a session to disk (the one thing kept is the two ids of the session you
+were in: Reopen where you were); it lasts until Capsid quits. An event is the
+kind, the session and its turn (`startedAt`), so one turn's finish is one
+entry however often it is read. Dismissing a card leaves its event in Recent.
 
 The working specimen and the cards are separate settings since 0.2.0
 (`showLabPanel`, `showLabCards`): the specimen can be off while questions and
@@ -560,10 +634,11 @@ if it is closed or hidden. It is off in a demo, which has no main window.
   id, so a read that reorders the list while you choose does not move it.
   Typing puts it back on the first row.
 - **Which sessions.** Those of the latest read (the ~25 most recently
-  active), as `LabModel.sessions`. It holds every state, where `working`,
-  `waiting` and `latest` split them up, and like Recent it is in memory
-  only: Capsid still writes nothing about sessions to disk, and nothing typed
-  is kept.
+  active), as `LabModel.sessions`, and, once a query is typed, older ones from
+  the database (Older sessions, below). `LabModel.sessions` holds every state,
+  where `working`, `waiting` and `latest` split them up, and like Recent it is
+  in memory only: Capsid still writes no title, state or time of a session to
+  disk, and nothing typed or found is kept.
 - **Ranking (`QuickOpen.rank`, pure).** With nothing typed: the sessions that
   need you, then those that work, then the rest, each by most recent
   activity. With a query, only sessions whose title or project matches,
@@ -575,6 +650,62 @@ if it is closed or hidden. It is off in a demo, which has no main window.
 - **Opening.** `LabModel.open(session)`, as every row does: it navigates the
   one web view, and clears that session's cards and reminder. Then the sheet
   closes.
+- **Older sessions (`QuickOpenSearch`, `fetchSessionsNamed`, since 0.8.1).** The
+  ~25 recent sessions answer a query at once; typing also looks in Claude
+  Science's database for the sessions beyond them.
+  - **When.** A query of at least two characters (all its words together)
+    starts a look 250 ms after the last keystroke, off the main actor
+    (`Task.detached`, the shared `SQLiteReader`). One letter would match nearly
+    every title, so it only narrows the recent sessions. The first six words
+    go, each cut to 64 characters, as the phone's `q` is 2–64. The same words
+    again (a space typed at the end) do not search again; an emptied query
+    clears what was found; closing the sheet cancels.
+  - **The SQL.** Root sessions whose `frames.name` or `projects.name` contains
+    every word: per word `(f.name LIKE ?N ESCAPE '\' OR p.name LIKE ?N ESCAPE
+    '\')`, ANDed, the value bound with `\`, `%` and `_` escaped
+    (`BrowseSQL.containsPattern`, as the phone's search), newest first by
+    `(updated_at, id)`, `LIMIT` 30 (the call may ask 1 to 100). It is the poll's
+    filter, `sessionFilterSQL`, so sub-agents, hidden sessions, uploads and the
+    concierge stay out exactly as in Recent. It has neither the browse lists'
+    `task_summary` test nor their archived-project test, which Recent doesn't
+    have either: a session that shows in Recent is found here too. It reads the
+    columns `fetchSession` reads, so `CompatInventory` is unchanged (its
+    test runs the new read against the inventory's columns alone).
+  - **Why it is cheap.** A `LIKE` that starts with `%` can't use an index, so
+    the roots are looked at once, in whatever order SQLite finds cheapest: with
+    an index on `updated_at` it walks newest first and stops at the limit (a
+    common word is quick), else it reads each root once and keeps the newest
+    few. It never reads a root's blobs or any text column but the two names.
+    Measured on a made-up database of 60,000 frames (6,000 roots, one project
+    per hundred): a word nothing matches took 3 ms with an index on
+    `parent_frame_id`, 26 ms with only one on `updated_at`, 10 ms with none.
+    Not measured on a real database. The read is interrupted at 3 s.
+  - **What it can't match.** SQLite's `LIKE` folds ASCII case only and finds a
+    piece of a name. Accents and widths (which `rank` also ignores) and
+    letters scattered through a name (its fuzzy tier) are left to the recent
+    sessions: an older session whose title has an accent is found when the
+    accent is typed as stored, and one that only a fuzzy match would find is
+    not found at all. Everything the database returns passes `rank`.
+  - **Merging (`QuickOpen.rank(_:plus:query:)`).** The recent sessions and the
+    found ones go through the one ranking above as `recent + older`, so the
+    same rules apply to both: an older word-start match sits above a recent
+    match inside a word. A session in both is listed once, as the recent one
+    (it comes first in the list, and the ranking keeps the first of an id), so
+    it keeps its live state and waiting reason; the database row has a state
+    from `status` alone, as the phone's lists (`BrowseRow.status`). A tie
+    stays with the recent one.
+  - **In the sheet.** The recent matches show at once. While the database is
+    read a small spinner sits at the end of the search field, and when the
+    recent sessions have no match the empty state says "Searching…" instead of
+    "No results". The found sessions rank in when they arrive. Every keystroke
+    that changes the words makes the answer under way stale, and a stale
+    answer is dropped; the answer in hand is kept while the next is awaited,
+    since the sheet ranks it against the current query. A database that can't
+    be read leaves what was found and adds nothing. The highlight does not
+    move when older sessions arrive: if it was on the first row by default it
+    stays on the row it was on, even if a better match now sits above it, so
+    Return opens what was on screen; once you move it with ↑ ↓ it follows its
+    session as before.
 
 ### Notices (Lab/LabNotice.swift, Lab/NoticeWatchers.swift, since 0.3.0)
 
@@ -846,7 +977,8 @@ The poster, `MacNotifications`, is thin: it speaks to the system only through
   `local.sam.bench` and no demo is running (`SystemCenter.live`; tests give
   `MacNotifications` a fake one). `LabModel`'s three hooks do nothing until
   `MacNotifications.start()` sets them at launch.
-- **What stays on the Mac.** Capsid saves nothing about sessions, but
+- **What stays on the Mac.** Capsid saves no name, state or time of a session
+  (only the two ids of the one you were in, Reopen where you were), but
   macOS keeps a delivered notification in Notification Center until it is
   cleared. That is what "Show session and project names" is for; turning
   names, or notifications, off clears the ones already delivered (since
@@ -1760,6 +1892,9 @@ takes `--step 1…7`).
 | Use Capsid from your phone (`remoteEnabled`, since 0.4.0; see Capsid on your phone) | off |
 | Skip "Put Tailscale on your phone" (`remotePhoneSkipped`; see Settings → Phone) | off |
 
+Reopening the session you were in (Daemon and sign-in) has no row: it is on,
+and not a setting.
+
 ## Diagnostics (App/Diagnose.swift, App/Compat*.swift, since 0.8.0)
 
 Help → Capsid Diagnostics… (also Settings → General → Diagnostics…, and the banner that says Capsid
@@ -1915,7 +2050,7 @@ main Claude Science window opens behind it as usual.
 ```
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
 Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo, Settings, Welcome, Diagnose and Compat* (inventory, probes, breadcrumbs)   (planner)
-Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge, page tabs (Close Other Tabs, Close All Tabs)   (web agent)
+Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge, page tabs (Close Other Tabs, Close All Tabs), LastSession (reopen where you were)   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule,
                           QuestionReply and ReplyWindow (a question, a permission request or a plan's
                           changes answered from its card)   (lab agent)
@@ -1964,6 +2099,8 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] update check: with the switch off nothing asks GitHub (no request in Little Snitch or `nettop` for a day); Check Now and Capsid → Check for Updates… do; with it on, a first check comes within a minute and the next a day later, not at the next launch
 - [ ] update check against a real newer release: the card comes once, Settings shows "Capsid 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Capsid in /Applications) quits Capsid, installs it and reopens it. Capsid started from a build folder offers no Install
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption lines (Panel, "Name the specimen that's playing")
+- [ ] Quick Open finds an older session: ⌘⇧O, type a word from the title (or project) of a session older than the ~25 recent ones; it joins the list a moment after the recent matches and opens; a hidden or sub-agent session is never found; Esc closes without leaving anything running
+- [ ] reopen where you were: open a session, ⌘Q, launch: that session; go to the home page, ⌘Q, launch: the home page; `kill -9` Capsid while in a session, launch: that session; launch from a `bench://session?…` link of another session: that one, not the remembered; the remembered session gone (deleted, or another org active): the home page; sign out and back in on a remembered session: still on it
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Capsid settings already stored; Help → Welcome to Capsid shows it again; Return and Esc work; the updates switch stays off until turned on
 
 ## Results (Results/, since 0.7.0)

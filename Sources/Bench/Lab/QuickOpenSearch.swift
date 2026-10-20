@@ -71,18 +71,18 @@ final class QuickOpenSearch: ObservableObject {
     /// whatever was under way for an older query.
     func queryChanged(_ query: String) {
         let words = Self.words(in: query)
-        // The same words (a space typed at the end): the search in hand, or
-        // its answer, stands.
-        guard words != requested else { return }
-        requested = words
-        generation += 1
-        task?.cancel()
-        task = nil
         guard !words.isEmpty else {
-            isSearching = false
+            // Emptied, or too short to look up: nothing is wanted, so what
+            // was found goes and so does any search under way.
+            stop()
             if !found.isEmpty { found = [] }
             return
         }
+        // The same words (a space typed at the end): the search in hand, or
+        // its answer, stands.
+        guard words != requested else { return }
+        stop()
+        requested = words
         isSearching = true
         let mine = generation
         task = Task { [weak self] in
@@ -104,11 +104,17 @@ final class QuickOpenSearch: ObservableObject {
 
     /// The sheet is going: stop, and forget.
     func cancel() {
+        stop()
+        found = []
+    }
+
+    /// Drops the search in hand: its answer, if it comes, is for a query
+    /// nobody wants.
+    private func stop() {
         generation += 1
         task?.cancel()
         task = nil
         requested = []
         isSearching = false
-        found = []
     }
 }

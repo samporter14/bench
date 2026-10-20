@@ -418,6 +418,20 @@ struct QuickOpenSearcherTests {
         #expect(rig.lookups.count == 3)
     }
 
+    @Test func aShortQueryAfterAFailedReadStillClearsWhatWasFound() async {
+        let rig = Rig()
+        let search = rig.search()
+        search.queryChanged("gel")
+        await rig.pauseElapses()
+        await rig.answer(0, [Rig.session("a")])
+        search.queryChanged("gel i")
+        await rig.pauseElapses()
+        await rig.answer(1, nil)
+        #expect(search.found.count == 1)
+        search.queryChanged("g")
+        #expect(search.found.isEmpty && !search.isSearching)
+    }
+
     @Test func cancellingDropsTheAnswerAndForgetsWhatWasFound() async {
         let rig = Rig()
         let search = rig.search()
