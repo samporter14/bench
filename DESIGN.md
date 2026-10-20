@@ -210,7 +210,7 @@ you", and the graph's steps. No other hues, no gradients.
   the session you were in, else the home page (Reopen where you were, below).
   The sign-in code is added to whichever it is.
 
-### Reopen where you were (Web/LastSession.swift, since 0.8.1)
+### Reopen where you were (Web/LastSession.swift, since 0.9.0)
 
 Capsid used to open Claude Science's home page at every launch. It now opens
 the session that was on screen when Capsid quit, or crashed.
@@ -650,7 +650,7 @@ if it is closed or hidden. It is off in a demo, which has no main window.
 - **Opening.** `LabModel.open(session)`, as every row does: it navigates the
   one web view, and clears that session's cards and reminder. Then the sheet
   closes.
-- **Older sessions (`QuickOpenSearch`, `fetchSessionsNamed`, since 0.8.1).** The
+- **Older sessions (`QuickOpenSearch`, `fetchSessionsNamed`, since 0.9.0).** The
   ~25 recent sessions answer a query at once; typing also looks in Claude
   Science's database for the sessions beyond them.
   - **When.** A query of at least two characters (all its words together)
