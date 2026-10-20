@@ -682,8 +682,14 @@ it, a Needs-you row offers what its card would, at its right end:
   and nothing for a request it can't answer (an email, a helper's question),
   exactly the card's rules (`RemotePermission.decideOnMac`).
 
-The first is in the clay, the others plain. They are also in the row's context
-menu and offered to VoiceOver as its actions, so they don't need a hover. Allow
+They stack in a small column at the row's right end, and the row's lines give
+way to it (cut at their ends) rather than going under it. Only the answer the
+card makes its primary (Reply, Approve, Review, Allow Once) is in the clay;
+Deny and Request changes… are plain, alone or beside it. They are also in the
+row's context menu and offered to VoiceOver as its actions, so they don't need a
+hover. The list's content says it appears active
+(`.environment(\.appearsActive, true)`, as the panel's does): a popover nothing has
+made key would draw the clay button dimmed. Allow
 Once, Deny and Approve leave the list open, so the row shows how the send goes:
 a spinner while it is sent, then "Approved ✓", "Allowed once ✓" or "Denied ✓"
 in clay-text, and a failed or changed one says why in a line under the project,
