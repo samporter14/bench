@@ -329,6 +329,13 @@ Five changes, each built by a Sonnet agent on its own branch and worktree,
 reviewed and merged here. Made-up fixtures only; nothing below was tried in
 the real app yet.
 
+- ✅ Released as v0.8.0 (`Bench.zip` with Capsid.app inside) and installed
+  with the README's `install.sh` line, which quit the running copy:
+  /Applications/Capsid.app is 0.8.0 (37), signed by Solanum Code Signing,
+  CDHash `7f4f2d51…`, the same as the release's download and the local
+  build, and running. Phone access came back by itself (loopback 47280,
+  Serve's 8443 route).
+
 **Quiet while presenting** (DESIGN.md, Quiet while presenting).
 
 - `PresentingMode` holds the two sources (a Focus filter, the menu switch);
