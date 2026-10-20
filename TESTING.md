@@ -323,6 +323,84 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-20, Capsid 0.9.0: fifteen quality-of-life changes
+
+Sam said "Do all" to the fifteen ideas in a brainstorm made from background
+demo captures, a CPU sample of the installed app and the code. Six Sonnet
+agents built them in waves of three (two build jobs each, no stress loops), on
+their own branches, merged here. Made-up fixtures only; the live checks are
+listed at the end.
+
+**Efficiency** (DESIGN.md, Holding still; Efficiency).
+
+- The installed 0.8.0 averaged 7.9% CPU (5.5–10.2%, 60 `top` samples) with a
+  session working, footprint 114–257 MB. On a demo copy (no Claude Science
+  page; the screen locked for most runs, so a test-only shim reported the
+  panel visible) a Time Profiler pass put 58% of the playing cost in Core
+  Animation converting each scene's sRGB frames for a Display P3 window. The
+  panel is now an sRGB window: playing cost down 44% (2.12% to 1.18% in
+  interleaved pairs), colours pixel-identical in captures.
+- The specimen holds still after 10 minutes with no input (2 in Low Power
+  Mode): 0.00% CPU and 23 MB flat while held. 14 tests, 11 mutations caught.
+- ⏳ Not reproduced: the 7.9% itself. The demo has no web page, and the
+  screen was locked. Re-measure on the installed app with a live screen.
+
+**Visual polish.**
+
+- `Theme.clayText` (#9C4221 / #E4927A) for words in clay, 15 sites; fills
+  and tints stay clay (6.2:1 on ivory, was 3.0:1). `ClayTextTests` scan for
+  words drawn in the fill.
+- One time format (`TimeSpan`): "1h 28m" everywhere a span is written.
+- Specimens tab: Categories under the controls, the light/dark switch under
+  the preview. Pale grid tiles were live cells caught mid-fade; cells now
+  draw their loop at full strength. Posters (the frame with the most ink,
+  kept unless under 60% of the best) for stills under Reduce Motion: 21 of
+  528 moved, 0.4 s for all, lazily.
+- The card's Reply/Approve: `appearsActive` is already set; a capture can't
+  show glass tint at all. ⏳ Look at a real card.
+
+**Finding and resuming.**
+
+- Quick Open searches the database by name and project for sessions beyond
+  the 25 recent (bounded LIKE, 3–26 ms on a made-up 60,000-frame database),
+  merged after the recent ones. 45 tests with the next item.
+- Capsid reopens the session you had open, an opaque id pair in its own
+  defaults, if the database still knows it; a `bench://` link at launch wins.
+  A link arriving during sign-in is now parked instead of overwritten.
+- ⏳ Not seen: the reopen after a real restart, and ⌘⇧O on a real database.
+
+**Settings.**
+
+- Settings → Alerts → While you present: the switch (not saved), a Focus
+  row and Open Focus Settings… (`com.apple.Focus-Settings.extension`, read
+  from the system's own extension).
+- Descriptions cut to a line or two, the detail in an ⓘ popover; Alerts was
+  already clipped at the bottom and now fits. Phone: Copy Link.
+- ⏳ Not seen: the Focus-on wording, Copied, the Focus button opening.
+
+**The activity list.**
+
+- Needs you: longest wait first, Later underneath; the popover grows to the
+  screen, with "N more" past that. Next Waiting Session (⌥⌘↓, File and Dock
+  menus) cycles the asks. Hovering a row offers the card's own actions
+  through one shared decision (`CardOffer`, `CardActions`). 21 mutations
+  caught.
+- ⏳ Not seen: ⌥⌘↓ with the page focused, live hover, a send from a row.
+
+**Why it stopped.**
+
+- The failure card shows the first line of `output_data.error` from the
+  shallow frame read (the page's own source, from web-dist 0.1.67 and the
+  daemon's strings), with Copy; behind the same setting as plans and
+  questions on the card; never in notifications or on the phone. 37 + 3
+  mutations caught.
+- ⏳ Not seen: a real failure's text; the card's button row by capture (the
+  screen was asleep).
+
+Automated:
+
+- ✅ `swift test`: **1,792 tests in 228 suites, all passing in one run** (202 more than 0.8.0).
+
 ## 2026-10-20, Capsid 0.8.0: quiet while presenting, drift checks, and four fixes
 
 Five changes, each built by a Sonnet agent on its own branch and worktree,

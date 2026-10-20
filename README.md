@@ -31,14 +31,18 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   your device can read them. Capsid reads Claude Science and changes nothing
   in it, except when you press Approve on a plan's card, send an answer from
   a question's reply window, or answer, approve, send a message or start a
-  session from a paired device. It saves nothing but its own settings, and
-  the files you choose to save.
+  session from a paired device. It saves nothing but its own settings
+  (among them which session you had open, as an id, to reopen it), and the
+  files you choose to save.
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
 - **Know when it needs you.** While a session works, one of 528 little
   animated lab specimens plays in a glass panel in the corner of your screen.
   When a session needs your input, a card there takes you straight to it.
   Later can remind you in 5 or 15 minutes, or after a Nidus focus session.
+  When a session stops with an error, the card says why, with **Copy**. If
+  you've been away from the Mac for ten minutes, the specimen holds still
+  until you're back.
 
   <img src="docs/panel-working.png" width="336" alt="The floating panel while a session works: a specimen playing, and the session's name, project and running time"> <img src="docs/panel-card.png" width="360" alt="The panel's card when a session asked a question, with Open and Later buttons">
 - **Approve a plan from its card.** When a session asks you to approve its
@@ -76,9 +80,13 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   macOS asks your permission once, and you can hide the session and project
   names.
 - **Every session in one list.** Click the status in the toolbar, or
-  right-click Capsid in the Dock, for what needs you, what's working and what
-  happened lately, each one click from its session. Press ⌘⇧O to jump to any
-  recent session by typing part of its name. Recent lasts until Capsid quits.
+  right-click Capsid in the Dock, for what needs you (longest waiting first,
+  anything put off with Later underneath), what's working and what happened
+  lately, each one click from its session. Hover a session that needs you to
+  reply, approve or allow right there, as on its card. **⌥⌘↓** (File → Next
+  Waiting Session) opens the next one waiting, and the next. Press ⌘⇧O to
+  jump to any session by typing part of its name or project, however old.
+  Capsid reopens the session you had open when it last quit.
 
   <img src="docs/activity.png" width="390" alt="The activity list under the toolbar's 2 need you: two sessions waiting, one stopped with an error, two working with their clocks, and Recent below">
 - **A heads-up before you hit a wall.** A card when your plan is nearly
@@ -92,8 +100,8 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   Claude Science task's project and title to a small local file for Nidus.
   It clears the file when you leave that task or switch away from Capsid.
   Conversation text is never included.
-- **Quiet while you present.** Turn on **Quiet While Presenting** in the
-  Capsid menu or the Dock menu, or add Capsid's filter to a Focus in System
+- **Quiet while you present.** Turn on **Quiet While Presenting** in
+  Settings → Alerts, the Capsid menu or the Dock menu, or add Capsid's filter to a Focus in System
   Settings → Focus (a "Presenting" Focus, say). Until it ends, the specimen
   and its cards stay out of sight, with no sounds or Mac notifications, so
   nothing pops up over your slides with a project's name on it. Afterwards,
