@@ -15,6 +15,9 @@ final class ActivityMenu: NSObject {
     /// Tests pass their own model.
     func make(model: LabModel = .shared) -> NSMenu {
         let menu = NSMenu()
+        // Items are enabled as set below, not by what responds: the idle line and
+        // Next Waiting Session are dim on purpose.
+        menu.autoenablesItems = false
         let needs = NeedsYou(model: model)
 
         if !needs.asks.isEmpty || !needs.failed.isEmpty {
@@ -64,6 +67,14 @@ final class ActivityMenu: NSObject {
                 menu.addItem(item(session, subtitle: "\(session.state.label) · \(session.projectName)"))
             }
         }
+        // First, with its keys: the session that has waited longest, then the next.
+        // Dim when nothing waits, so the menu keeps its shape.
+        let next = NSMenuItem(title: NextWaiting.title, action: #selector(openNext(_:)), keyEquivalent: String(Character(UnicodeScalar(NSDownArrowFunctionKey)!)))
+        next.keyEquivalentModifierMask = [.command, .option]
+        next.target = self
+        next.isEnabled = !needs.asks.isEmpty
+        menu.insertItem(next, at: 0)
+        menu.insertItem(.separator(), at: 1)
         return menu
     }
 
@@ -73,6 +84,10 @@ final class ActivityMenu: NSObject {
         item.target = self
         item.representedObject = session.id
         return item
+    }
+
+    @objc private func openNext(_ item: NSMenuItem) {
+        NextWaiting.shared.openNext()
     }
 
     @objc private func open(_ item: NSMenuItem) {

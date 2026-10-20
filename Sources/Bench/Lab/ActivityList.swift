@@ -39,7 +39,8 @@ struct ActivityList: View {
                 if !needs.isEmpty {
                     // What asks first, the longest wait on top; then what stopped with an
                     // error; then, under their own title, what is put off with Later.
-                    section("Needs you") {
+                    VStack(alignment: .leading, spacing: 2) {
+                        needsYouTitle(hasAsks: !needs.asks.isEmpty)
                         ForEach(shown.asks) { session in
                             row(session, line: (session.waitingReason ?? .other).sentence, accent: true) {
                                 PlayedLoop(glyph: (session.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
@@ -130,6 +131,38 @@ struct ActivityList: View {
                 .padding(.bottom, 2)
             content()
         }
+    }
+
+    /// Needs you's title, and at its end the way to step through the asks:
+    /// Next Waiting Session and its keys. A press does what the menu item does.
+    private func needsYouTitle(hasAsks: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("Needs you")
+                .font(.headline)
+            Spacer(minLength: 8)
+            if hasAsks {
+                Button {
+                    NextWaiting.shared.openNext()
+                    close()
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(NextWaiting.title)
+                        Text(NextWaiting.keysHint)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Open the session that has waited longest, then the next. Option-Command-Down Arrow.")
+                .accessibilityLabel(NextWaiting.title)
+                .accessibilityHint("Opens the session that has waited longest, then the next")
+            }
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, 6)
+        .padding(.bottom, 2)
     }
 
     private func row<Glyph: View>(_ session: SessionStatus, line: String?, accent: Bool,

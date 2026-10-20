@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// on Claude Science's Sign in card.
     private var terminateSignal: DispatchSourceSignal?
     private var quickOpenKey: Any?
+    private var nextWaitingKey: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         signal(SIGTERM, SIG_IGN)
@@ -91,6 +92,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   !QuickOpenPresenter.shared.isShowing,
                   event.window != nil, event.window === MainWindowController.shared.windowIfLoaded else { return event }
             QuickOpenPresenter.shared.show()
+            return nil
+        }
+        // ⌥⌘↓, Next Waiting Session, the same way and for the same reason. A
+        // repeat of the key does nothing (held down it would go round the
+        // list) but is not passed on either, while something waits; with
+        // nothing waiting the key goes on to the page.
+        nextWaitingKey = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard NextWaiting.isKey(modifiers: event.modifierFlags, keyCode: event.keyCode),
+                  event.window != nil, event.window === MainWindowController.shared.windowIfLoaded,
+                  NextWaiting.shared.isEnabled else { return event }
+            if !event.isARepeat { NextWaiting.shared.openNext() }
             return nil
         }
     }
@@ -235,6 +247,8 @@ struct BenchCommands: Commands {
     @ObservedObject private var tabs = PageTabCommands.shared
     /// Quiet While Presenting's checkmark (Lab/PresentingMode.swift).
     @ObservedObject private var presenting = PresentingMode.shared
+    /// What waits, for Next Waiting Session's dimming (Lab/NextWaiting.swift).
+    @ObservedObject private var lab = LabModel.shared
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
@@ -253,6 +267,13 @@ struct BenchCommands: Commands {
             Button("Open Session…") { QuickOpenPresenter.shared.show() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
                 .disabled(Demo.mode != nil)
+            // The session that has waited longest, then the next. ⌥⌘↓ because no
+            // letter shortcut is safe from the page (it takes ⌘⇧O and its like),
+            // Capsid has none on the arrows, and a text field has none on ⌥⌘↓;
+            // a monitor catches it ahead of the page (above). Dimmed when nothing waits.
+            Button(NextWaiting.title) { NextWaiting.shared.openNext() }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(Demo.mode != nil || !NextWaiting.shared.isEnabled)
             // The files sessions made (Results/ResultsWindow.swift).
             Button("Results…") { ResultsWindowController.shared.show() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])

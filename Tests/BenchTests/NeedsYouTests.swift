@@ -143,14 +143,15 @@ struct DockMenuOrderTests {
                                       Fixture.session("f", .error, title: "Broke")))
         model.remind(try #require(model.cards.first { $0.id == "needs-a" }), .fiveMinutes)
         model.remind(try #require(model.cards.first { $0.id == "needs-c" }), .afterFocus)
-        let items = ActivityMenu.shared.make(model: model).items
+        // Under Next Waiting Session and its separator.
+        let items = Array(ActivityMenu.shared.make(model: model).items.dropFirst(2))
         let layout = items.map { $0.isSectionHeader ? "[\($0.title)]" : $0.title }
         let working = try #require(layout.firstIndex(of: "[Working]"))
         // Real asks, then what failed; Later under its own header; Working after.
         #expect(Array(layout[0...working - 1]) == ["[Needs you]", "Asks", "Broke", "[Later]", "Put off", "After focus"])
         model.cancelReminder("a")
         model.cancelReminder("c")
-        let after = ActivityMenu.shared.make(model: model).items.filter { !$0.isSectionHeader }.map(\.title)
+        let after = ActivityMenu.shared.make(model: model).items.dropFirst(2).filter { !$0.isSectionHeader }.map(\.title)
         #expect(Set(after.prefix(4)) == ["Put off", "Asks", "After focus", "Broke"])
         #expect(!ActivityMenu.shared.make(model: model).items.contains { $0.isSectionHeader && $0.title == "Later" })
     }
@@ -161,7 +162,7 @@ struct DockMenuOrderTests {
         model.ingest(Fixture.snapshot(Fixture.session("a", .running)))
         model.ingest(Fixture.snapshot(Fixture.session("a", .needsInput, reason: .question, title: "Put off")))
         model.remind(try #require(model.cards.first), .fiveMinutes)
-        let layout = ActivityMenu.shared.make(model: model).items.map { $0.isSectionHeader ? "[\($0.title)]" : $0.title }
+        let layout = ActivityMenu.shared.make(model: model).items.dropFirst(2).map { $0.isSectionHeader ? "[\($0.title)]" : $0.title }
         #expect(layout.first == "[Later]")
         #expect(!layout.contains("[Needs you]"))
         #expect(!layout.contains("Nothing working right now"))
