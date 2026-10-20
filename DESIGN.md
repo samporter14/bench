@@ -29,7 +29,7 @@ third-party dependencies.
   (`.primary`, `.secondary`) so light and dark both work. There are no
   gradients, no drop shadows of our own, and no second accent hue. Clay marks
   only the primary action, the live dot and "needs you".
-- **Clay for words is clay-text** (after 0.8.0; `Theme.clayText`). The fill
+- **Clay for words is clay-text** (since 0.9.0; `Theme.clayText`). The fill
   `#D97757` is about 3:1 on ivory, too faint for small text. Words drawn in
   clay (a card's heading "Asked you a question", "6 need you", a low "% left",
   "Approved ✓", a problem's sentence) use Solanum's clay-text, `#9C4221` on
@@ -1445,7 +1445,7 @@ The Settings **Scenes** tab (760×776) has, in a header of two columns:
   while only favourites play, star), a Size segmented picker, a Play picker
   ("What's on" or "Only favorites"), and under them the category checkboxes
   with counts (mixed when some are on), greyed while favourites play, in two
-  columns of three after 0.8.0. The left is 420 pt wide, which holds two of
+  columns of three since 0.9.0. The left is 420 pt wide, which holds two of
   the 200 pt checkboxes and not three; a header wider than the tab's 696 pt
   would widen the whole tab past its window, so the columns are sized to fit.
   Categories used to sit in a band of their own below the header, with a big
@@ -1494,7 +1494,7 @@ The Settings **Scenes** tab (760×776) has, in a header of two columns:
   the mixed dash; each binding writes the whole category, so a click changes
   it once. The popover's way into the tab is "Choose specimens one by one…".
 
-### Poster stills (Lab/SpecimenPoster.swift, after 0.8.0)
+### Poster stills (Lab/SpecimenPoster.swift, since 0.9.0)
 
 A specimen's still used to be the scene 60% in. A few specimens draw
 themselves up over the loop, so a thin moment of them is nearly nothing. The
@@ -1702,7 +1702,7 @@ Approving a plan from its card).
   button (`.glass`).
 - One Usage control, not two.
 
-**One way to write times (`TimeSpan`, after 0.8.0).** The toolbar said "resets
+**One way to write times (`TimeSpan`, since 0.9.0).** The toolbar said "resets
 in 1h 28m" while the Usage popover said "Resets in 1 h 28 m", and the plan
 notices said "in 47 minutes". One formatter now, in the compact style:
 - a length: "45s" under a minute, then "12m", "1h 5m", and "2h" for an exact
