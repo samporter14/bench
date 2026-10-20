@@ -761,8 +761,8 @@ struct MacNotificationsSection: View {
     var body: some View {
         Section {
             Toggle(isOn: $enabled) {
-                Text("Also send a Mac notification")
-                Text("As well as the card: a notification in Notification Center, so you see it in full screen or with the panel off. macOS asks your permission the first time.")
+                InfoTitle("Also send a Mac notification", info: MacNotificationsInfo.alsoSend)
+                Text("As well as the card, so you see it in full screen or with the panel off.")
             }
             Toggle(isOn: $finishes) {
                 Text("When a session finishes too")
@@ -770,8 +770,8 @@ struct MacNotificationsSection: View {
             }
             .disabled(!enabled)
             Toggle(isOn: $names) {
-                Text("Show session and project names")
-                Text("On, a question's notification also offers its answers when it has a few choices or a typed answer (with questions shown on the card). Off, they read \u{201C}A session needs you\u{201D}, and so on, with no answers.")
+                InfoTitle("Show session and project names", info: MacNotificationsInfo.names)
+                Text("Off, they read \u{201C}A session needs you\u{201D}, with no names and no answers.")
             }
             .disabled(!enabled)
             // Those already in Notification Center named their sessions, or
@@ -795,12 +795,30 @@ struct MacNotificationsSection: View {
             }
         } header: {
             Text("Mac notifications")
-        } footer: {
-            Text("Notifications name the session and its project unless you turn names off. To stop them, turn off \u{201C}Also send a Mac notification\u{201D}, or turn Capsid off in System Settings \u{2192} Notifications.")
         }
         .onChange(of: enabled) { _, on in
             if on { notifications.requestAuthorization() }
         }
         .onAppear { notifications.refresh() }
     }
+}
+
+/// Settings → Alerts → Mac notifications: what the line under a switch leaves
+/// out.
+enum MacNotificationsInfo {
+    static let alsoSend = """
+        A notification in Notification Center as well as the card, so you see it in full screen or with the panel \
+        off. macOS asks your permission the first time you turn this on.
+
+        Notifications name the session and its project unless you turn names off. To stop them, turn this off, or \
+        turn Capsid off in System Settings \u{2192} Notifications.
+        """
+
+    static let names = """
+        On, each notification names the session and its project, and a question's notification also offers its \
+        answers when it has a few choices or a typed answer (with questions shown on the card).
+
+        Off, they read \u{201C}A session needs you\u{201D}, \u{201C}A session stopped with an error\u{201D} and \
+        \u{201C}A session finished\u{201D}, with nothing of the session or its project in them, and offer no answers.
+        """
 }

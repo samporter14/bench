@@ -43,10 +43,19 @@ struct RemoteBrowseToggle: View {
 
     var body: some View {
         Toggle(isOn: $browseOn) {
-            Text("Let paired devices browse every project, full conversations and artifacts")
-            Text("They can also start a session when actions are on. Off, paired devices see only what Now shows, with each session's latest replies.")
+            InfoTitle("Let paired devices browse every project, full conversations and artifacts", info: Self.info)
+            Text("Off, paired devices see only what Now shows, with each session's latest replies.")
         }
     }
+
+    /// In the ⓘ: what browsing is, and the other switch it works with.
+    static let info = """
+        On, a paired device can open any project, scroll back through a whole conversation and see the artifacts \
+        older sessions made. When \u{201C}Let paired devices answer, approve and send messages\u{201D} is on too, it \
+        can start a session.
+
+        Off, it sees only what Now shows, with each session's latest replies.
+        """
 }
 
 // MARK: The routes

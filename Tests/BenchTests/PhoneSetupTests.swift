@@ -3,6 +3,7 @@
 // Skip, Pair Another Device, the rule that a pairing code is issued only while
 // "Pair your phone" is the step open, the demo's steps, and the look the tab
 // takes every few seconds. Made-up names throughout; nothing reaches Tailscale.
+import AppKit
 import Foundation
 import Testing
 @testable import Bench
@@ -351,5 +352,48 @@ struct PhoneSetupPollTests {
             await remote.settle()
             #expect(runner.calls.isEmpty)
         }
+    }
+}
+
+/// Copy Link on the ready row: the private address goes to the pasteboard it is
+/// given, as a URL and as plain text. Always a private pasteboard here, never
+/// the general one.
+struct LinkCopyTests {
+    private func privatePasteboard() -> NSPasteboard {
+        NSPasteboard(name: NSPasteboard.Name("capsid-test-\(UUID().uuidString)"))
+    }
+
+    private let address = URL(string: "https://your-mac.your-tailnet.ts.net:8443/")!
+
+    @Test func theAddressIsCopiedAsAURLAndAsText() throws {
+        let pasteboard = privatePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        LinkCopy.copy(address, to: pasteboard)
+        #expect(pasteboard.string(forType: .string) == "https://your-mac.your-tailnet.ts.net:8443/")
+        #expect(pasteboard.string(forType: .URL) == "https://your-mac.your-tailnet.ts.net:8443/")
+        let read = try #require(NSURL(from: pasteboard))
+        #expect(read as URL == address)
+        #expect(pasteboard.types?.contains(.URL) == true && pasteboard.types?.contains(.string) == true)
+    }
+
+    @Test func whatWasOnThePasteboardBeforeIsReplaced() {
+        let pasteboard = privatePasteboard()
+        defer { pasteboard.releaseGlobally() }
+        let stale = NSPasteboard.PasteboardType("com.example.stale")
+        pasteboard.clearContents()
+        pasteboard.setString("something else", forType: .string)
+        pasteboard.setString("older still", forType: stale)
+        LinkCopy.copy(address, to: pasteboard)
+        #expect(pasteboard.string(forType: .string) == address.absoluteString)
+        // Not added to what was there: the old kinds of content are gone.
+        #expect(pasteboard.string(forType: stale) == nil)
+        #expect(pasteboard.types?.contains(stale) == false)
+        // And a second press leaves the same one thing, not two.
+        LinkCopy.copy(address, to: pasteboard)
+        #expect(pasteboard.pasteboardItems?.count == 1)
+    }
+
+    @Test func theConfirmationLastsAMoment() {
+        #expect(LinkCopy.confirmation >= .seconds(1) && LinkCopy.confirmation <= .seconds(3))
     }
 }

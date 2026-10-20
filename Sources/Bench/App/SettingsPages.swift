@@ -165,9 +165,9 @@ struct PanelSettingsView: View {
                         Text("\(panelScreen) (not connected)").tag(panelScreen)
                     }
                 } label: {
-                    Text("Screen")
+                    InfoTitle("Screen", info: PanelInfo.screen)
                     Text(screens.count > 1 || !panelScreen.isEmpty
-                         ? "Which display the panel shows on. One that isn't connected falls back to the menu bar's."
+                         ? "Which display the panel shows on."
                          : "Connect another display to put the panel there.")
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
@@ -189,7 +189,7 @@ struct PanelSettingsView: View {
                 }
             }
         }
-        .settingsPage(height: 540)
+        .settingsPage(height: 504)
     }
 }
 
@@ -206,12 +206,12 @@ struct AlertSettingsView: View {
         Form {
             Section("On the panel") {
                 Toggle(isOn: $showCards) {
-                    Text("Show a card")
-                    Text("In the panel's corner: a question, a plan to approve, an error or a finish. Recent in the toolbar keeps them either way.")
+                    InfoTitle("Show a card", info: AlertsInfo.showCard)
+                    Text("A card in the panel's corner when a session needs you, stops with an error or finishes.")
                 }
                 Toggle(isOn: $plansOnCard) {
-                    Text("Show plans, questions and requests on the card")
-                    Text("A plan shows its summary, Approve and Request changes; a question shows what it asks and Reply; a permission request shows what it wants, with Allow Once or Deny when they can be answered here (code is read in a small window first). Capsid checks it's still the same plan, question or request before sending; anything else opens the session. With names shown, a question's Mac notification offers its answers too.")
+                    InfoTitle("Show plans, questions and requests on the card", info: AlertsInfo.answerOnCard)
+                    Text("Approve a plan, reply to a question or allow a request right on the card.")
                 }
                 .disabled(!showCards)
                 Toggle(isOn: $sound) {
@@ -220,19 +220,21 @@ struct AlertSettingsView: View {
                 }
             }
 
+            QuietWhilePresentingSection()
+
             MacNotificationsSection()
 
             Section("While Nidus is focusing") {
                 Toggle(isOn: $holdDuringFocus) {
-                    Text("Hold finishes")
-                    Text("During a Nidus focus session, \u{201C}Finished\u{201D} cards wait for it to end, then come as one. Questions and errors still come at once.")
+                    InfoTitle("Hold finishes", info: AlertsInfo.holdFinishes)
+                    Text("\u{201C}Finished\u{201D} cards wait for a Nidus focus session to end, then come as one.")
                 }
                 // Off mid-session: what's held comes now, rather than waiting
                 // for a focus session it no longer waits for.
                 .onChange(of: holdDuringFocus) { _, on in if !on { LabModel.shared.releaseHeldFinishes() } }
             }
         }
-        .settingsPage(height: 740)
+        .settingsPage(height: 818)
     }
 }
 
@@ -245,8 +247,8 @@ struct UsageSettingsView: View {
         Form {
             Section("Heads-up") {
                 Toggle(isOn: $headsUp) {
-                    Text("Plan and context")
-                    Text("A card when your 5-hour or weekly limit has 10% left, is on pace to run out within 45 minutes, or resets; and when the session you have open has used 85% of its context.")
+                    InfoTitle("Plan and context", info: UsageInfo.headsUp)
+                    Text("A card when a plan limit runs low or resets, and when a session's context fills up.")
                 }
                 Toggle(isOn: $weekInReview) {
                     Text("Week in review")
@@ -258,6 +260,50 @@ struct UsageSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .settingsPage(height: 300)
+        .settingsPage(height: 238)
     }
+}
+
+// MARK: The fuller explanations (the ⓘ on a row)
+
+/// Settings → Alerts: what the line under a switch leaves out.
+enum AlertsInfo {
+    static let showCard = """
+        Off, the panel shows only the specimen while a session works. Recent in the toolbar still lists everything \
+        that happened, and the heads-up cards from the Usage tab need this on too.
+        """
+
+    static let holdFinishes = """
+        During a Nidus focus session, \u{201C}Finished\u{201D} cards wait for it to end, then come as one card. \
+        Questions and errors still come at once, and everything still goes to Recent in the toolbar.
+
+        Turning this off brings what is waiting right away.
+        """
+
+    static let answerOnCard = """
+        A plan shows its summary, with Approve and Request changes. A question shows what it asks, with Reply. A \
+        permission request shows what it wants, with Allow Once or Deny when they can be answered here (code is \
+        read in a small window first).
+
+        Capsid checks that it's still the same plan, question or request before it sends anything. If it isn't, \
+        or it can't be answered here, the card opens the session instead.
+
+        With names shown in Mac notifications, a question's notification offers its answers too.
+        """
+}
+
+/// Settings → Panel.
+enum PanelInfo {
+    static let screen = """
+        Which display the panel shows on. If the one you chose isn't connected, the panel uses the one with the \
+        menu bar, and goes back to yours when it is.
+        """
+}
+
+/// Settings → Usage.
+enum UsageInfo {
+    static let headsUp = """
+        A card comes when your 5-hour or weekly limit has 10% left, is on pace to run out within 45 minutes, or \
+        has just reset, and when the session you have open has used 85% of its context. Each one comes once.
+        """
 }

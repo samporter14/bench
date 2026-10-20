@@ -2,8 +2,9 @@
 // (DESIGN.md, Quiet while presenting). Two things turn it on, and either is
 // enough: a macOS Focus that has Capsid's filter added to it
 // (App/PresentingFocusFilter.swift), and "Quiet While Presenting" in the app
-// menu and the Dock menu. While it is on the panel is not shown, "Finished"
-// cards wait, and no sound or Mac notification is made.
+// menu, the Dock menu and Settings → Alerts (Lab/PresentingSettings.swift).
+// While it is on the panel is not shown, "Finished" cards wait, and no sound
+// or Mac notification is made.
 //
 // This file is the state and nothing else. The panel, `LabModel` and the
 // notifier each ask it through a closure of their own (as `LabModel.holdsFinishes`
@@ -18,9 +19,9 @@ final class PresentingMode: ObservableObject {
     /// A Focus with Capsid's filter added to it is on, as the system last said.
     /// Never set in a demo.
     @Published private(set) var focusFilterOn = false
-    /// "Quiet While Presenting" in the app menu or the Dock menu. In memory
-    /// only: a quit turns it off, so Capsid never comes back from a launch
-    /// silent without anyone having said so.
+    /// "Quiet While Presenting" in the app menu, the Dock menu or Settings. In
+    /// memory only: a quit turns it off, so Capsid never comes back from a
+    /// launch silent without anyone having said so.
     @Published private(set) var manualOn = false
     /// Either one: Capsid keeps out of sight. Stored, not computed, and
     /// assigned before `changed` is told, so whoever listens reads the new value.
@@ -94,7 +95,7 @@ final class PresentingMenu: NSObject {
         let item = NSMenuItem(title: Self.title, action: #selector(toggle(_:)), keyEquivalent: "")
         item.target = self
         item.state = mode.manualOn ? .on : .off
-        if mode.focusFilterOn { item.subtitle = "A Focus is keeping Capsid quiet" }
+        if mode.focusFilterOn { item.subtitle = PresentingSettings.focusNote }
         item.isEnabled = !inDemo
         return item
     }
