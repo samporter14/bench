@@ -716,7 +716,9 @@ final class LabModel: ObservableObject {
         // Assign only real changes: each one redraws the panel and re-fits the window.
         let quiet = snapshot.sessions.filter { $0.state != .running && $0.state != .needsInput }
         let newest = Array(quiet.sorted(by: recentFirst).prefix(Self.latestLimit))
-        if !daemonDown, latest.map(\.id) != newest.map(\.id) { latest = newest }
+        // What the Dock menu and the lists show of each is the same title, project and state, so a rename in place
+        // publishes too, not only a change of which sessions or in what order (`drawsTheSame`).
+        if !daemonDown, !latest.elementsEqual(newest, by: { $0.drawsTheSame(as: $1) }) { latest = newest }
         if !daemonDown, reads.sessions != snapshot.sessions { reads.sessions = snapshot.sessions }
         if workingHidden, Set(running.map(\.id)) != Set(working.map(\.id)) { workingHidden = false }
         if !working.elementsEqual(running, by: { $0.drawsTheSame(as: $1) }) { working = running }
