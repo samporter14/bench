@@ -41,16 +41,34 @@ enum ShelfFileName {
         return (stem.isEmpty ? "file" : stem) + suffix
     }
 
-    /// "report.md" → "report 2.md", "report 3.md"… until `taken` says no.
-    static func unique(_ name: String, taken: (String) -> Bool) -> String {
-        guard taken(name) else { return name }
+    /// "report.md" → "report 2.md", "report 3.md"…: the name's `n`th try (2 on).
+    static func numbered(_ name: String, _ n: Int) -> String {
         let ns = name as NSString
         let ext = ns.pathExtension
         let stem = ext.isEmpty ? name : ns.deletingPathExtension
+        return ext.isEmpty ? "\(stem) \(n)" : "\(stem) \(n).\(ext)"
+    }
+
+    /// "report.md" → "report 2.md", "report 3.md"… until `taken` says no.
+    static func unique(_ name: String, taken: (String) -> Bool) -> String {
+        guard taken(name) else { return name }
         var n = 2
         while true {
-            let candidate = ext.isEmpty ? "\(stem) \(n)" : "\(stem) \(n).\(ext)"
+            let candidate = numbered(name, n)
             if !taken(candidate) { return candidate }
+            n += 1
+        }
+    }
+
+    /// The same numbering when asking is itself slow or can fail (a name
+    /// asked of a disk): `taken` may suspend, and its error ends the search.
+    @MainActor
+    static func firstFree(_ name: String, taken: @MainActor (String) async throws -> Bool) async throws -> String {
+        guard try await taken(name) else { return name }
+        var n = 2
+        while true {
+            let candidate = numbered(name, n)
+            if try await !taken(candidate) { return candidate }
             n += 1
         }
     }

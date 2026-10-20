@@ -43,7 +43,15 @@ private final class FakeDisk: @unchecked Sendable {
         var realWrites = false
         /// Whether each write ran on the main thread.
         var onMain: [Bool] = []
+        /// What the shelf asked the disk, and whether each ask ran on the main thread.
+        var existsCalls: [String] = []
+        var listCalls: [String] = []
+        var looksOnMain: [Bool] = []
+        /// How the folder listing answers: with the names, with nil (too many), or with an error.
+        var listing: Listing = .names
     }
+
+    enum Listing { case names, tooMany, fails }
 
     private let lock = NSLock()
     private var state = State()
@@ -52,6 +60,31 @@ private final class FakeDisk: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return try body(&state)
+    }
+
+    /// Whether a path is there, as the shelf asks the disk (off the main actor).
+    func exists(_ url: URL) -> Bool {
+        let (found, real) = with { state in
+            state.existsCalls.append(url.path)
+            state.looksOnMain.append(Thread.isMainThread)
+            return (state.existing.contains(url.path), state.realWrites)
+        }
+        return found || (real && FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// The names in a folder, as the shelf asks the disk (off the main actor).
+    func list(_ folder: URL) throws -> [String]? {
+        let (names, listing, real) = with { state in
+            state.listCalls.append(folder.path)
+            state.looksOnMain.append(Thread.isMainThread)
+            let inFolder = state.existing.filter { ($0 as NSString).deletingLastPathComponent == folder.path }
+            return (inFolder.map { ($0 as NSString).lastPathComponent }, state.listing, state.realWrites)
+        }
+        switch listing {
+        case .tooMany: return nil
+        case .fails: throw CocoaError(.fileReadNoPermission)
+        case .names: return names + (real ? ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []) : [])
+        }
     }
 
     /// The saved-file writer the shelf runs off the main actor.
@@ -93,6 +126,15 @@ private final class FakeShelf {
     var realWrites: Bool {
         get { disk.with { $0.realWrites } }
         set { disk.with { $0.realWrites = newValue } }
+    }
+    /// The paths the shelf asked the disk about, and the folders it listed.
+    var existsCalls: [String] { disk.with { $0.existsCalls } }
+    var listCalls: [String] { disk.with { $0.listCalls } }
+    /// Whether any look at the disk ran on the main thread.
+    var anyLookOnMain: Bool { disk.with { $0.looksOnMain.contains(true) } }
+    var listing: FakeDisk.Listing {
+        get { disk.with { $0.listing } }
+        set { disk.with { $0.listing = newValue } }
     }
     var pasteboardFails = false
     var now = start
@@ -151,9 +193,8 @@ private final class FakeShelf {
                 try? await Task.sleep(for: limit)
             },
             temporaryFolder: temporaryFolder,
-            exists: { [unowned self] url in
-                self.existing.contains(url.path) || (self.realWrites && FileManager.default.fileExists(atPath: url.path))
-            },
+            exists: { [disk] url in disk.exists(url) },
+            list: { [disk] folder in try disk.list(folder) },
             defaults: defaults,
             pasteboard: { [unowned self] content in
                 if self.pasteboardFails { return false }
@@ -594,9 +635,10 @@ struct ResultsShelfTests {
         #expect(fake.written == [url] && fake.writtenBytes == [bytes])
         #expect(shelf.saved["v-md"] == url)
         #expect(fake.savedNotices == [url])
-        #expect(shelf.savedCopy("v-md", exists: { _ in true }) == url)
+        #expect(await shelf.savedCopy("v-md") == url, "the writer put it on the fake disk")
         // Moved or deleted since: forgotten, and said so.
-        #expect(shelf.savedCopy("v-md", exists: { _ in false }) == nil)
+        fake.existing.remove(url.path)
+        #expect(await shelf.savedCopy("v-md") == nil)
         #expect(shelf.saved["v-md"] == nil)
         #expect(shelf.fileProblems["v-md"] == "The saved copy was moved or deleted.")
     }
@@ -1130,6 +1172,81 @@ struct ShelfSaveAllTests {
         #expect(fake.written.allSatisfy { $0.deletingLastPathComponent().path == "/made-up/Out" })
     }
 
+    @Test func saveAllAsksTheDiskForOneListingAndNothingOnTheMainThread() async {
+        fake.existing = ["/made-up/Out/report.md", "/made-up/Out/other.txt"]
+        let shelf = await shelf(with: [entry("report.md", version: "v-md"), entry("report.md", version: "v-2"),
+                                       entry("figure.png", version: "v-1", mime: "image/png")])
+        shelf.saveAll(madeUpID(1), into: out)
+        await shelf.settled()
+        #expect(fake.listCalls == ["/made-up/Out"], "one listing of the folder for the whole batch")
+        // The only other look is each write's own, in its own call: no question per name.
+        #expect(fake.existsCalls.count == 3 && Set(fake.existsCalls).count == 3)
+        #expect(fake.existsCalls.allSatisfy { $0.hasPrefix("/made-up/Out/") })
+        #expect(!fake.anyLookOnMain, "no look at the disk ran on the main thread")
+        #expect(fake.disk.with { $0.onMain }.allSatisfy { !$0 })
+        #expect(shelf.saved["v-md"]?.lastPathComponent == "report 2.md")
+        #expect(shelf.saved["v-2"]?.lastPathComponent == "report 3.md")
+        #expect(shelf.saved["v-1"]?.lastPathComponent == "figure.png")
+    }
+
+    @Test func aFolderThatCannotBeListedIsAskedAboutNameByNameWithTheSameNames() async {
+        var plans: [[String]] = []
+        for listing in [FakeDisk.Listing.names, .tooMany, .fails] {
+            let fake = FakeShelf()
+            fake.existing = ["/made-up/Out/report.md", "/made-up/Out/report 2.md"]
+            fake.listing = listing
+            fake.recent = [made(1)]
+            let files = [entry("report.md", version: "v-1"), entry("report.md", version: "v-2"),
+                         entry("Figure.png", version: "v-3"), entry("figure.png", version: "v-4")]
+            fake.lists[madeUpID(1)] = .list(files)
+            for file in files { fake.files[.download(version: file.version)] = .bytes(Data(file.name.utf8)) }
+            let shelf = fake.shelf()
+            shelf.open()
+            await shelf.settled()
+            shelf.saveAll(madeUpID(1), into: out)
+            await shelf.settled()
+            plans.append(files.map { shelf.saved[$0.version]?.lastPathComponent ?? "-" })
+            #expect(fake.listCalls == ["/made-up/Out"], "the listing is tried once, whatever it says")
+            #expect(!fake.anyLookOnMain)
+            // Asked about by name only when it could not be listed.
+            let byName = fake.existsCalls.filter { !$0.contains("Figure") && !$0.contains("figure") }.count
+            #expect((byName > 3) == (listing != .names), "\(listing): \(fake.existsCalls)")
+        }
+        #expect(plans[0] == ["report 3.md", "report 4.md", "Figure.png", "figure 2.png"])
+        #expect(plans[1] == plans[0] && plans[2] == plans[0])
+    }
+
+    @Test func aNameTakenAfterThePlanIsMadeIsNeverOverwrittenAndTheFileTakesTheNextFreeOne() async {
+        let shelf = await shelf(with: [entry("report.md", version: "v-1"), entry("report.md", version: "v-2"),
+                                       entry("figure.png", version: "v-3", mime: "image/png")])
+        fake.hold = true
+        shelf.saveAll(madeUpID(1), into: out)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(fake.inFlight == 2, "the names are settled: the downloads are under way")
+        // A program puts a file at the planned name since the plan was made.
+        fake.existing.insert("/made-up/Out/report.md")
+        fake.hold = false
+        fake.release()
+        await shelf.settled()
+        #expect(!fake.written.map(\.path).contains("/made-up/Out/report.md"), "what was there is untouched")
+        #expect(shelf.saved["v-2"]?.lastPathComponent == "report 2.md", "its planned name was free")
+        #expect(shelf.saved["v-1"]?.lastPathComponent == "report 3.md", "numbered from report.md around what is taken")
+        #expect(Set(fake.written.map(\.path)).count == 3 && fake.written.count == 3)
+        #expect(summary(shelf) == ShelfSaveAllSummary(folder: out, saved: 3))
+    }
+
+    @Test func theRememberedFolderIsReadWithoutAskingTheDisk() {
+        var asked: [String] = []
+        let memory = ShelfFolderMemory(defaults: fake.defaults, exists: { url in
+            asked.append(url.path)
+            return true
+        })
+        #expect(memory.remembered(for: "proj_a") == nil)
+        memory.remember(URL(fileURLWithPath: "/made-up/Remembered", isDirectory: true), for: "proj_a")
+        #expect(memory.remembered(for: "proj_a")?.path == "/made-up/Remembered")
+        #expect(asked.isEmpty, "knowing the path asks nothing of the disk")
+    }
+
     @Test func saveAllKeepsFilesOutOfOtherFoldersAndAwkwardNamesSafe() async {
         let shelf = await shelf(with: [entry("../../etc/passwd", version: "v-1"), entry(".hidden.md", version: "v-2")])
         shelf.saveAll(madeUpID(1), into: out)
@@ -1153,7 +1270,7 @@ struct ShelfSaveAllTests {
         #expect(fake.written.map(\.lastPathComponent).sorted() == ["counts.csv", "plot.png", "report.md"])
         for file in files {
             #expect(shelf.saved[file.version]?.path == "/made-up/Out/\(file.name)", "Open and Reveal in Finder work for each")
-            #expect(shelf.savedCopy(file.version, exists: { _ in true }) != nil)
+            #expect(await shelf.savedCopy(file.version) != nil)
         }
         #expect(fake.writtenBytes.contains(Data("report.md".utf8)))
         #expect(summary(shelf) == ShelfSaveAllSummary(folder: out, saved: 3))
@@ -1325,52 +1442,53 @@ struct ShelfSaveAllTests {
         let report = entry("report.md", version: "v-md")
         fake.files[.download(version: "v-md")] = .bytes(Data("x".utf8))
         let documents = "/made-up/Documents/Data"
-        #expect(shelf.startingFolder(for: "proj_a") == nil)
+        #expect(await shelf.startingFolder(for: "proj_a") == nil)
         // Without a project nothing is remembered; a failed save remembers nothing.
         await shelf.save(report, to: URL(fileURLWithPath: documents + "/report.md"))
         fake.existing.insert(documents)
-        #expect(shelf.startingFolder(for: "proj_a") == nil)
+        #expect(await shelf.startingFolder(for: "proj_a") == nil)
         fake.writeFails = true
         await shelf.save(report, to: URL(fileURLWithPath: documents + "/report.md"), project: "proj_a")
-        #expect(shelf.startingFolder(for: "proj_a") == nil)
+        #expect(await shelf.startingFolder(for: "proj_a") == nil)
         fake.writeFails = false
         await shelf.save(report, to: URL(fileURLWithPath: documents + "/report.md"), project: "proj_a")
-        #expect(shelf.startingFolder(for: "proj_a")?.path == documents)
-        #expect(shelf.startingFolder(for: "proj_b") == nil)
+        #expect(await shelf.startingFolder(for: "proj_a")?.path == documents)
+        #expect(await shelf.startingFolder(for: "proj_b") == nil)
         // Stored by the project's id, never its name, as a path.
         #expect(fake.defaults.dictionary(forKey: ShelfFolderMemory.key) as? [String: String] == ["proj_a": documents])
         // It comes back with the next shelf (the next launch).
-        #expect(fake.shelf().startingFolder(for: "proj_a")?.path == documents)
+        #expect(await fake.shelf().startingFolder(for: "proj_a")?.path == documents)
         // The folder is gone: the panel starts where it would.
         fake.existing.remove(documents)
-        #expect(shelf.startingFolder(for: "proj_a") == nil)
+        #expect(await shelf.startingFolder(for: "proj_a") == nil)
     }
 
     @Test func saveAllRemembersItsFolderToo() async {
         let shelf = await shelf(with: [entry("a.md", version: "v-a")])
         fake.existing.insert(out.path)
-        #expect(shelf.startingFolder(for: "proj_a") == nil)
+        #expect(await shelf.startingFolder(for: "proj_a") == nil)
         shelf.saveAll(madeUpID(1), into: out)
         await shelf.settled()
-        #expect(shelf.startingFolder(for: "proj_a")?.path == out.path)
+        #expect(await shelf.startingFolder(for: "proj_a")?.path == out.path)
         // A batch that saved nothing remembers nothing.
         let other = URL(fileURLWithPath: "/made-up/Elsewhere", isDirectory: true)
         fake.existing.insert(other.path)
         fake.files[.download(version: "v-a")] = .missing
         shelf.saveAll(madeUpID(1), into: other)
         await shelf.settled()
-        #expect(shelf.startingFolder(for: "proj_a")?.path == out.path)
+        #expect(await shelf.startingFolder(for: "proj_a")?.path == out.path)
     }
 
-    @Test func aRememberedFolderThatIsGoneFallsBackOnTheRealDisk() throws {
+    @Test func aRememberedFolderThatIsGoneFallsBackOnTheRealDisk() async throws {
         let folder = fake.scratch.appending(path: "Remembered", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let memory = ShelfFolderMemory(defaults: fake.defaults, exists: { FileManager.default.fileExists(atPath: $0.path) })
         memory.remember(folder, for: "proj_a")
-        #expect(memory.folder(for: "proj_a")?.path == folder.path)
+        #expect(await memory.folder(for: "proj_a")?.path == folder.path)
         try FileManager.default.removeItem(at: folder)
-        #expect(memory.folder(for: "proj_a") == nil)
-        #expect(memory.folder(for: "proj_never") == nil)
+        #expect(await memory.folder(for: "proj_a") == nil)
+        #expect(await memory.folder(for: "proj_never") == nil)
+        #expect(memory.remembered(for: "proj_a")?.path == folder.path, "what is remembered is a path, whatever the disk says")
     }
 }
 

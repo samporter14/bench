@@ -211,9 +211,15 @@ final class ResultsShelf: ObservableObject {
         /// The temporary copies' disk work; nil for `ShelfTemporaryCopies`
         /// under `temporaryFolder`. Tests hold it with a gate.
         var storage: (any ShelfCopyStorage)?
-        /// Whether a file or folder is there: Save All never overwrites, and a
-        /// remembered folder that is gone is forgotten.
-        var exists: @MainActor (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
+        /// Whether a file or folder is there: Save All never overwrites, a
+        /// remembered folder that is gone is ignored, and Open and Reveal in
+        /// Finder forget a copy that is gone. Blocking: the shelf only ever
+        /// calls it off the main actor, through `ShelfSavedFiles`, within a
+        /// time limit.
+        var exists: @Sendable (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
+        /// The names in a folder (nil when it holds more than the listing
+        /// takes), for Save All's names. Blocking, and called as `exists` is.
+        var list: @Sendable (URL) throws -> [String]? = { try ShelfSavedFiles.listFolder($0) }
         /// Where each project's last save folder is remembered.
         var defaults: UserDefaults = .standard
         /// Puts what Copy decided on the pasteboard; false when it couldn't.
@@ -321,7 +327,12 @@ final class ResultsShelf: ObservableObject {
         storage = dependencies.storage ?? ShelfTemporaryCopies(base: dependencies.temporaryFolder)
         savedFiles = dependencies.savedFiles ?? ShelfSavedFiles()
         thumbnailStore = thumbnails
-        folders = ShelfFolderMemory(defaults: dependencies.defaults, exists: dependencies.exists)
+        // Whether a remembered folder is there is asked through the writer's layer:
+        // off the main actor, within its limit, and held off with its destination.
+        let savedFiles = savedFiles, probe = dependencies.exists
+        folders = ShelfFolderMemory(defaults: dependencies.defaults, exists: { folder in
+            (try? await savedFiles.folderExists(folder, using: probe)) ?? false
+        })
     }
 
     var isReady: Bool { dependencies.isReady() }
@@ -895,21 +906,37 @@ final class ResultsShelf: ObservableObject {
     }
 
     /// The folder a save panel starts in for a project: the last one files of
-    /// it were saved to, if that is still there.
-    func startingFolder(for projectID: String) -> URL? {
-        folders.folder(for: projectID)
+    /// it were saved to, if that is still there and answers. It is asked of the
+    /// disk off the main actor, so this waits (the panel opens when it has an
+    /// answer); a folder that doesn't answer within the limit counts as not
+    /// there, and its destination is held off like one a write timed out in.
+    func startingFolder(for projectID: String) async -> URL? {
+        await folders.folder(for: projectID)
     }
 
     /// The saved copy, if it is still where it was saved; a copy that was
-    /// moved or deleted is forgotten, and says so.
-    func savedCopy(_ version: String, exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }) -> URL? {
+    /// moved or deleted is forgotten, and says so. Whether it is there is asked
+    /// of the disk off the main actor, so this waits. A folder that doesn't
+    /// answer within the limit (or is held off) says so on the row with the
+    /// writer's own sentence, and the copy is kept: it may still be there.
+    func savedCopy(_ version: String) async -> URL? {
         guard let url = saved[version] else { return nil }
-        guard exists(url) else {
-            saved[version] = nil
-            fileProblems[version] = "The saved copy was moved or deleted."
+        let there: Bool
+        do {
+            there = try await savedFiles.fileExists(url, using: dependencies.exists)
+        } catch let error as ShelfSaveError {
+            fileProblems[version] = error.localizedDescription
+            return nil
+        } catch {
             return nil
         }
-        return url
+        guard !there else { return url }
+        // Only the copy this answer was about is forgotten: it may have been saved again meanwhile.
+        if saved[version] == url {
+            saved[version] = nil
+            fileProblems[version] = "The saved copy was moved or deleted."
+        }
+        return nil
     }
 
     // MARK: Save All
@@ -923,12 +950,15 @@ final class ResultsShelf: ObservableObject {
     /// person asked for, before lists and thumbnails), each within the time
     /// limit and the 8 MB cap (one over it is skipped without a download).
     /// A name already in the folder, or earlier in the batch, gets " 2",
-    /// " 3"… before its extension: nothing is overwritten. Each file is
-    /// written whole, off the main actor, and recorded like a single Save
+    /// " 3"… before its extension: nothing is overwritten. The names are
+    /// settled first from one listing of the folder, off the main actor
+    /// (`ShelfNamePlan`), and each write looks again in its own call. Each file
+    /// is written whole, off the main actor, and recorded like a single Save
     /// (Open and Reveal in Finder work for it). Progress and then a summary
     /// by count go in `batches`. Closing the window stops what hasn't started.
-    /// A folder that stops answering fails the write that found out after its
-    /// limit and the rest at once, without downloading them (`ShelfSavedFiles`).
+    /// A folder that stops answering, to the listing or to a write, fails the
+    /// call that found out after its limit and the rest at once, without
+    /// downloading them (`ShelfSavedFiles`).
     func saveAll(_ sessionID: String, into folder: URL) {
         guard saveAllTasks.isEmpty,
               let item = sessions.first(where: { $0.id == sessionID }),
@@ -956,20 +986,10 @@ final class ResultsShelf: ObservableObject {
         var summary = ShelfSaveAllSummary(folder: folder)
         var done = 0
         var remembered = false
-        var reserved: Set<String> = []
         // The files of `work` this run has marked saving and not yet let go of.
         var marked: Set<Int> = []
-        // A name is taken when this batch has it, the folder has it, or an
-        // earlier write of it hasn't returned (a save that timed out and may
-        // still land): numbering around it keeps two writes off one file.
-        let isTaken: (String) -> Bool = { [self] candidate in
-            reserved.contains(candidate.lowercased())
-                || dependencies.exists(folder.appending(path: candidate, directoryHint: .notDirectory))
-                || savedFiles.isPending(folder.appending(path: candidate, directoryHint: .notDirectory))
-        }
-        // The names are settled up front, in the session's order, so the first
-        // of two of the same name gets the plain one whatever finishes first.
-        var work: [(entry: ArtifactEntry, name: String)] = []
+        // The files that need a name, in the session's order.
+        var wanted: [(entry: ArtifactEntry, name: String)] = []
         for entry in entries {
             fileProblems[entry.version] = nil
             if ArtifactGate.download(size: entry.size) != nil {
@@ -978,11 +998,34 @@ final class ResultsShelf: ObservableObject {
                 fileProblems[entry.version] = Self.tooBigToSave
                 continue
             }
-            let name = ShelfFileName.unique(ShelfFileName.sanitized(entry.name), taken: isTaken)
-            reserved.insert(name.lowercased())
-            work.append((entry, name))
+            wanted.append((entry, ShelfFileName.sanitized(entry.name)))
         }
         batches[sessionID] = .saving(done: done, total: entries.count)
+        // The names are settled up front, in the session's order, so the first
+        // of two of the same name gets the plain one whatever finishes first.
+        // That asks the disk (one listing of the folder), so it happens off the
+        // main actor and within the writer's limit, and a window closed
+        // meanwhile doesn't wait for it.
+        var work: [(entry: ArtifactEntry, wanted: String, name: String)] = []
+        let plan: ShelfNamePlan
+        do {
+            plan = try await savedFiles.plan(in: folder, exists: dependencies.exists, list: dependencies.list)
+            for item in wanted {
+                work.append((item.entry, item.name, try await plan.claim(item.name)))
+            }
+        } catch {
+            guard !Task.isCancelled, started == generation else { return }
+            // The folder didn't answer: nothing was downloaded, and nothing will be.
+            // The first file says what happened, the rest that it still does.
+            for (position, item) in wanted.enumerated() {
+                summary.failed += 1
+                let reason: any Error = position == 0 || !(error is ShelfSaveError) ? error : ShelfSaveError.folderStillSilent
+                fileProblems[item.entry.version] = Self.couldntSave(reason)
+            }
+            batches[sessionID] = .finished(summary)
+            return
+        }
+        guard !Task.isCancelled, started == generation else { return }
 
         await withTaskGroup(of: (Int, Fetched).self) { group in
             var next = 0
@@ -1022,16 +1065,8 @@ final class ResultsShelf: ObservableObject {
                 done += 1
                 switch fetched {
                 case .bytes(let bytes):
-                    var name = work[index].name
-                    var url = folder.appending(path: name, directoryHint: .notDirectory)
-                    if dependencies.exists(url) || savedFiles.isPending(url) {
-                        // Something took the name since the plan was made.
-                        name = ShelfFileName.unique(name, taken: isTaken)
-                        reserved.insert(name.lowercased())
-                        url = folder.appending(path: name, directoryHint: .notDirectory)
-                    }
                     do {
-                        try await savedFiles.write(bytes, to: url, using: dependencies.write)
+                        let url = try await writeUnused(bytes, planned: work[index], plan: plan)
                         // Written whole: saved, even if the window closed meanwhile.
                         saved[entry.version] = url
                         summary.saved += 1
@@ -1064,6 +1099,31 @@ final class ResultsShelf: ObservableObject {
         for index in marked { endSaving(work[index].entry.version) }
         guard !Task.isCancelled, started == generation else { return }
         batches[sessionID] = .finished(summary)
+    }
+
+    /// Most names a Save All file tries when something keeps taking them.
+    private static let nameTries = 8
+
+    /// Writes a Save All file under its planned name, off the main actor, and
+    /// never over something already there: the look and the write are one call
+    /// (`ShelfSavedFiles.write(unlessExists:)`). If the name was taken after
+    /// the plan was made (a program, a save of that name made meanwhile), it is
+    /// learned as taken and the file takes the next free name, numbered from the
+    /// name it asked for.
+    private func writeUnused(_ bytes: Data, planned: (entry: ArtifactEntry, wanted: String, name: String),
+                             plan: ShelfNamePlan) async throws -> URL {
+        var name = planned.name
+        for _ in 0..<Self.nameTries {
+            let url = plan.url(name)
+            do {
+                try await savedFiles.write(bytes, to: url, using: dependencies.write, unlessExists: dependencies.exists)
+                return url
+            } catch ShelfSaveError.nameTaken, ShelfSaveError.earlierSaveUnfinished {
+                plan.learnedTaken(name)
+                name = try await plan.claim(planned.wanted)
+            }
+        }
+        throw ShelfSaveError.nameTaken
     }
 
     // MARK: Showing one session
