@@ -1,8 +1,10 @@
 // MacNotifications.swift — a Mac notification as well as the card, when the
 // user asks for one (DESIGN.md, Mac notifications). What to send and in what
 // words is `NotificationRules`: pure, and tested on made-up cards. Posting,
-// withdrawing and listening for a click are `MacNotifications`, which is thin
-// and which tests never use. The Settings section is at the bottom.
+// withdrawing, listening for a click and checking, at a launch, the
+// notifications that outlived the last run are `MacNotifications`, which is
+// thin: it speaks to the system only through `SystemCenter`, which tests
+// replace with a fake. The Settings section is at the bottom.
 import AppKit
 import Combine
 import OSLog
@@ -47,6 +49,82 @@ enum NotificationRules {
         /// A question's own answers, offered on the notification
         /// (`questionActions`); its words are then the question's.
         var question: QuestionActions? = nil
+    }
+
+    // MARK: What a notification carries
+
+    /// The keys of what a notification carries besides its words: the
+    /// session and the link to it, opaque ids and no names.
+    static let sessionKey = "session"
+    static let linkKey = "link"
+
+    /// Everything a notification carries besides its words. A question's own
+    /// copy of what it offered comes with it (`QuestionActions.userInfo`).
+    static func userInfo(for content: Content) -> [String: Any] {
+        var info: [String: Any] = [:]
+        if let id = content.sessionID { info[sessionKey] = id }
+        if let link = content.link { info[linkKey] = link.absoluteString }
+        if let question = content.question { info.merge(question.userInfo) { _, new in new } }
+        return info
+    }
+
+    // MARK: Notifications that outlived a quit
+
+    /// A notification Capsid delivered earlier, as read back at a launch:
+    /// what it was about, from its identifier (the card's id) and the session
+    /// id in what it carries. Nil for any other: the "While you focused"
+    /// notice, the test notification, anything not recognised. Those keep
+    /// their own rules and are left alone.
+    struct Delivered: Equatable, Sendable {
+        let identifier: String
+        let kind: LabCard.SessionKind
+        let sessionID: String
+        /// A question's answers, when it offered them.
+        let question: QuestionActions?
+
+        init(identifier: String, kind: LabCard.SessionKind, sessionID: String, question: QuestionActions? = nil) {
+            self.identifier = identifier
+            self.kind = kind
+            self.sessionID = sessionID
+            self.question = question
+        }
+
+        init?(identifier: String, userInfo: [AnyHashable: Any]) {
+            // The identifier must be the very card id of that session, so a
+            // notification that doesn't fit is not guessed at.
+            guard let sessionID = userInfo[NotificationRules.sessionKey] as? String,
+                  let kind = LabCard.SessionKind.allCases.first(where: { identifier == $0.cardID(sessionID) })
+            else { return nil }
+            self.init(identifier: identifier, kind: kind, sessionID: sessionID,
+                      question: kind == .needsInput ? QuestionActions(userInfo: userInfo) : nil)
+        }
+    }
+
+    /// What to do with the notifications delivered before this launch, once a
+    /// read has said how the sessions stand: the rule the running app uses to
+    /// take a card's notification back, `SessionStanding.holds`.
+    struct Sweep: Equatable, Sendable {
+        /// Their reason is gone: a session that no longer waits, or no longer
+        /// failed. They are taken back.
+        var gone: [Delivered] = []
+        /// Their reason stands and can still go: they stay, and are watched
+        /// for the rest of the run, so they are taken back as any other.
+        var adopted: [Delivered] = []
+        // A finish is a record and no reason can take it back: it stays, and
+        // nothing watches it. Neither does a notification that isn't a
+        // session's (`Delivered`).
+    }
+
+    static func sweep(_ delivered: [Delivered], against standing: SessionStanding) -> Sweep {
+        var sweep = Sweep()
+        for note in delivered {
+            if !standing.holds(note.kind, for: note.sessionID) {
+                sweep.gone.append(note)
+            } else if note.kind != .finished {
+                sweep.adopted.append(note)
+            }
+        }
+        return sweep
     }
 
     // MARK: Answering a question from its notification
@@ -216,15 +294,75 @@ extension NotificationRules.Settings {
     }
 }
 
+// MARK: The system's center
+
+/// What `MacNotifications` asks of the system's notification center, and
+/// nothing else, so tests can stand in for it with a fake. The real one,
+/// `live`, exists only in the real app: `UNUserNotificationCenter.current()`
+/// crashes outside an app bundle, as in `swift test`, and a demo starts
+/// nothing real. Its closures are thin on purpose: they only pass on. The
+/// handlers macOS calls back are `@Sendable`, so they run wherever macOS calls
+/// them and never ask to be on the main actor.
+@MainActor
+struct SystemCenter {
+    var setDelegate: (any UNUserNotificationCenterDelegate) -> Void
+    var authorization: () async -> UNAuthorizationStatus
+    var requestAuthorization: () async -> (granted: Bool, failure: String?)
+    /// What it still shows of Capsid's, as `NotificationRules.Delivered` reads
+    /// them: only the notifications about a session.
+    var delivered: () async -> [NotificationRules.Delivered]
+    /// Called at once, not later: a notification withdrawn right after it is
+    /// added must find it there. `completion` says how it ended: a failure's
+    /// words, or nil.
+    var add: (UNNotificationRequest, @escaping @Sendable (String?) -> Void) -> Void
+    var removeDelivered: ([String]) -> Void
+    var removeAllDelivered: () -> Void
+    var setCategories: (Set<UNNotificationCategory>) -> Void
+
+    /// Nil unless this is the real app (its bundle identifier) and no demo
+    /// is running.
+    static func live() -> SystemCenter? {
+        guard Bundle.main.bundleIdentifier == MacNotifications.bundleID, Demo.mode == nil else { return nil }
+        let center = UNUserNotificationCenter.current()
+        return SystemCenter(
+            setDelegate: { center.delegate = $0 },
+            authorization: {
+                await withCheckedContinuation { continuation in
+                    center.getNotificationSettings { @Sendable in continuation.resume(returning: $0.authorizationStatus) }
+                }
+            },
+            requestAuthorization: {
+                await withCheckedContinuation { continuation in
+                    center.requestAuthorization(options: [.alert, .sound]) { @Sendable granted, error in
+                        continuation.resume(returning: (granted, error?.localizedDescription))
+                    }
+                }
+            },
+            delivered: {
+                await withCheckedContinuation { continuation in
+                    center.getDeliveredNotifications { @Sendable notifications in
+                        continuation.resume(returning: notifications.compactMap {
+                            NotificationRules.Delivered(identifier: $0.request.identifier,
+                                                        userInfo: $0.request.content.userInfo)
+                        })
+                    }
+                }
+            },
+            add: { request, completion in center.add(request) { @Sendable in completion($0?.localizedDescription) } },
+            removeDelivered: { center.removeDeliveredNotifications(withIdentifiers: $0) },
+            removeAllDelivered: { center.removeAllDeliveredNotifications() },
+            setCategories: { center.setNotificationCategories($0) })
+    }
+}
+
 // MARK: Posting
 
 /// Posts what the rules say, takes a notification back when its card is dealt
-/// with, and opens the session when one is clicked. It touches
-/// `UNUserNotificationCenter` only in the real app: that call crashes outside
-/// an app bundle, as in `swift test`, and a demo starts nothing real.
+/// with, and opens the session when one is clicked. It speaks to the system
+/// only through `SystemCenter`, which is nil outside the real app.
 @MainActor
 final class MacNotifications: NSObject, ObservableObject {
-    static let shared = MacNotifications()
+    static let shared = MacNotifications(center: { SystemCenter.live() }, lab: .shared)
 
     /// What macOS lets Bench do, as far as it said last.
     enum Authorization: Equatable {
@@ -245,8 +383,6 @@ final class MacNotifications: NSObject, ObservableObject {
     /// The identifier of the test notification, which shows as a banner even
     /// with Bench in front: the Settings window it is sent from is Bench.
     nonisolated static let testID = "bench-test-notification"
-    nonisolated private static let sessionKey = "session"
-    nonisolated private static let linkKey = "link"
     static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(bundleID)")!
 
     private var started = false
@@ -258,12 +394,33 @@ final class MacNotifications: NSObject, ObservableObject {
     /// A question card's answers, by card id: the categories registered with
     /// macOS, one per card, dropped with the card.
     private var categories: [String: UNNotificationCategory] = [:]
+    /// Notifications from before this launch that still tell the truth and
+    /// can still stop doing so, by identifier (Notifications that outlived a
+    /// quit). Taken back as any other, when their reason goes.
+    private var adopted: [String: NotificationRules.Delivered] = [:]
+    /// What the latest read that could be trusted says of the sessions.
+    private var standing: SessionStanding?
+    /// Whether the delivered notifications were checked yet this run: once,
+    /// at the first read that could be trusted.
+    private var swept = false
+    /// Bumped when every notification is cleared, so a check that was waiting
+    /// on macOS when that happened does not bring any of them back.
+    private var cleared = 0
 
-    private override init() { super.init() }
+    private let access: () -> SystemCenter?
+    private let lab: LabModel
+    private let defaults: UserDefaults
 
-    private var center: UNUserNotificationCenter? {
-        Bundle.main.bundleIdentifier == Self.bundleID && Demo.mode == nil ? .current() : nil
+    /// The app uses `shared`; tests make their own, with a fake center, a
+    /// model of their own and defaults of their own.
+    init(center: @escaping () -> SystemCenter?, lab: LabModel, defaults: UserDefaults = .standard) {
+        access = center
+        self.lab = lab
+        self.defaults = defaults
+        super.init()
     }
+
+    private var center: SystemCenter? { access() }
 
     /// Hooks the Lab model up, listens for clicks and reads what macOS allows.
     /// Called at launch, so a click on a notification from an earlier run is
@@ -271,10 +428,10 @@ final class MacNotifications: NSObject, ObservableObject {
     func start() {
         guard !started, let center else { return }
         started = true
-        center.delegate = self
-        let lab = LabModel.shared
+        center.setDelegate(self)
         lab.cardRaised = { [weak self] in self?.raised($0) }
         lab.cardWithdrawn = { [weak self] in self?.withdraw($0) }
+        lab.sessionsRead = { [weak self] in self?.sessionsRead($0) }
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &subscriptions)
@@ -283,20 +440,23 @@ final class MacNotifications: NSObject, ObservableObject {
 
     /// Reads what macOS allows, now.
     func refresh() {
-        center?.getNotificationSettings { [weak self] settings in
-            let status = settings.authorizationStatus
-            Task { @MainActor in self?.authorization = Authorization(status) }
+        guard let center else { return }
+        Task { [weak self] in
+            let status = await center.authorization()
+            self?.authorization = Authorization(status)
         }
     }
 
     /// Asks macOS, which asks the user the first time only.
     func requestAuthorization() {
-        center?.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
-            if let error {
-                log.error("Notification permission request failed: \(error.localizedDescription, privacy: .public)")
+        guard let center else { return }
+        Task { [weak self] in
+            let answer = await center.requestAuthorization()
+            if let failure = answer.failure {
+                log.error("Notification permission request failed: \(failure, privacy: .public)")
             }
-            log.info("Notification permission: \(granted ? "granted" : "not granted", privacy: .public)")
-            Task { @MainActor in self?.refresh() }
+            log.info("Notification permission: \(answer.granted ? "granted" : "not granted", privacy: .public)")
+            self?.refresh()
         }
     }
 
@@ -306,13 +466,13 @@ final class MacNotifications: NSObject, ObservableObject {
     /// the last time it was asked: the user may have changed it since in System
     /// Settings, while Bench was behind.
     func raised(_ card: LabCard) {
-        guard let center, NotificationRules.content(for: card, settings: Self.settings(authorized: true)) != nil
+        guard let center, NotificationRules.content(for: card, settings: settings(authorized: true)) != nil
         else { return }
         waiting[card.id] = card
         let id = card.id
-        center.getNotificationSettings { [weak self] settings in
-            let status = settings.authorizationStatus
-            Task { @MainActor in self?.post(id, status: status) }
+        Task { [weak self] in
+            let status = await center.authorization()
+            self?.post(id, status: status)
         }
     }
 
@@ -321,7 +481,7 @@ final class MacNotifications: NSObject, ObservableObject {
         // The card went, or was dealt with, while macOS answered; or an
         // earlier answer already posted its latest.
         guard let card = waiting.removeValue(forKey: id) else { return }
-        let settings = Self.settings(authorized: authorization == .allowed)
+        let settings = self.settings(authorized: authorization == .allowed)
         guard let content = NotificationRules.content(for: card, settings: settings) else { return }
         // A question's answers come with it: its question is read first (or
         // taken from the card's read), a few seconds at most.
@@ -329,7 +489,7 @@ final class MacNotifications: NSObject, ObservableObject {
             Task {
                 let ask = await QuestionReplier.shared.askForNotification(session.id)
                 // Gone, or dealt with, meanwhile.
-                guard LabModel.shared.cards.contains(where: { $0.id == card.id }) else { return }
+                guard self.lab.cards.contains(where: { $0.id == card.id }) else { return }
                 self.add(NotificationRules.withQuestion(content, ask: ask, settings: settings))
             }
             return
@@ -341,22 +501,96 @@ final class MacNotifications: NSObject, ObservableObject {
     /// goes from Notification Center too.
     func withdraw(_ card: LabCard) {
         guard card.hasNotification else { return }
-        waiting.removeValue(forKey: card.id)
-        center?.removeDeliveredNotifications(withIdentifiers: [card.id])
-        if categories.removeValue(forKey: card.id) != nil { center?.setNotificationCategories(Set(categories.values)) }
+        takeBack([card.id])
+    }
+
+    /// Takes notifications out of Notification Center, with everything kept
+    /// for them: a card waiting to post, an adopted notification, a question's
+    /// answers.
+    private func takeBack(_ ids: [String]) {
+        var droppedAnswers = false
+        for id in ids {
+            waiting.removeValue(forKey: id)
+            adopted.removeValue(forKey: id)
+            if categories.removeValue(forKey: id) != nil { droppedAnswers = true }
+        }
+        center?.removeDelivered(ids)
+        if droppedAnswers { center?.setCategories(Set(categories.values)) }
     }
 
     /// Clears every notification Bench has delivered: when names are turned
     /// off (those already shown named their sessions) or notifications are.
     func clearDelivered() {
         waiting.removeAll()
-        center?.removeAllDeliveredNotifications()
+        adopted.removeAll()
+        cleared += 1
+        center?.removeAllDelivered()
         categories.removeAll()
-        center?.setNotificationCategories([])
+        center?.setCategories([])
     }
 
-    private static func settings(authorized: Bool) -> NotificationRules.Settings {
-        NotificationRules.Settings(authorized: authorized, holdingFinishes: NidusFocus.shared.holding)
+    // MARK: Notifications that outlived a quit
+
+    /// A read that worked and found sessions (`LabModel.sessionsRead`). The
+    /// first of a run checks the notifications macOS still shows from an
+    /// earlier run, which nothing in memory remembers; every later one takes
+    /// back an adopted notification whose reason has gone since.
+    func sessionsRead(_ read: SessionStanding) {
+        standing = read
+        guard center != nil else { return }
+        if swept {
+            retireAdopted()
+        } else {
+            swept = true
+            Task { [weak self] in await self?.sweepDelivered() }
+        }
+    }
+
+    /// Takes back the notifications delivered before this launch whose reason
+    /// has gone, by the rule the running app uses (`NotificationRules.sweep`),
+    /// and adopts the rest. Only with Mac notifications on and allowed; it
+    /// sends nothing and says nothing new, so names stay as they were.
+    private func sweepDelivered() async {
+        guard let center, defaults.bool(forKey: SettingsKey.macNotifications) else { return }
+        let clearedThen = cleared
+        guard Authorization(await center.authorization()) == .allowed else { return }
+        let delivered = await center.delivered()
+        // Switched off, or cleared, while macOS answered: nothing to bring back.
+        guard clearedThen == cleared, defaults.bool(forKey: SettingsKey.macNotifications), let standing else { return }
+        let sweep = NotificationRules.sweep(delivered, against: standing)
+        if !sweep.gone.isEmpty { takeBack(sweep.gone.map(\.identifier)) }
+        let showNames = settings(authorized: true).showNames
+        var answers = false
+        for note in sweep.adopted {
+            adopted[note.identifier] = note
+            // A question's buttons are a category Capsid registers with macOS,
+            // and each registration replaces the whole set. Nothing has
+            // registered these in this run, so the next question posted would
+            // leave them without: register the ones that still stand, as
+            // `add` does, from the notification's own copy of them.
+            if showNames, let question = note.question {
+                categories[note.identifier] = Self.category(note.identifier, question)
+                answers = true
+            }
+        }
+        if answers { center.setCategories(Set(categories.values)) }
+        log.info("Delivered notifications checked: \(sweep.gone.count, privacy: .public) taken back, \(sweep.adopted.count, privacy: .public) watched")
+        // A read may have landed while macOS answered.
+        retireAdopted()
+    }
+
+    /// Takes back the adopted notifications whose reason is gone. A plan held
+    /// for an approval keeps its notification as it keeps its card.
+    private func retireAdopted() {
+        guard let standing else { return }
+        let gone = adopted.values
+            .filter { !standing.holds($0.kind, for: $0.sessionID) && !lab.holdsPlanCard($0.sessionID) }
+            .map(\.identifier).sorted()
+        if !gone.isEmpty { takeBack(gone) }
+    }
+
+    private func settings(authorized: Bool) -> NotificationRules.Settings {
+        NotificationRules.Settings(authorized: authorized, holdingFinishes: NidusFocus.shared.holding, defaults: defaults)
     }
 
     /// A notification with made-up words, to see how they look: no session
@@ -376,25 +610,20 @@ final class MacNotifications: NSObject, ObservableObject {
         note.title = content.title
         note.body = content.body
         if content.sound { note.sound = .default }
-        var info: [String: String] = [:]
-        if let id = content.sessionID { info[Self.sessionKey] = id }
-        if let link = content.link { info[Self.linkKey] = link.absoluteString }
-        var userInfo: [String: Any] = info
         if let question = content.question {
             // Its own category, registered before it is posted, so the
             // buttons are there when it shows.
             let category = Self.category(content.id, question)
             categories[content.id] = category
-            center.setNotificationCategories(Set(categories.values))
+            center.setCategories(Set(categories.values))
             note.categoryIdentifier = category.identifier
-            userInfo.merge(question.userInfo) { _, new in new }
         }
-        note.userInfo = userInfo
+        note.userInfo = NotificationRules.userInfo(for: content)
         // The card's id is the identifier, so a card that asks something new
         // replaces its notification rather than adding another.
-        center.add(UNNotificationRequest(identifier: content.id, content: note, trigger: nil)) { error in
-            if let error {
-                log.error("Couldn't post a notification: \(error.localizedDescription, privacy: .public)")
+        center.add(UNNotificationRequest(identifier: content.id, content: note, trigger: nil)) { failure in
+            if let failure {
+                log.error("Couldn't post a notification: \(failure, privacy: .public)")
             }
         }
     }
@@ -454,8 +683,8 @@ extension MacNotifications: UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
-        let session = info[Self.sessionKey] as? String
-        let link = (info[Self.linkKey] as? String).flatMap { URL(string: $0) }
+        let session = info[NotificationRules.sessionKey] as? String
+        let link = (info[NotificationRules.linkKey] as? String).flatMap { URL(string: $0) }
         let isClick = response.actionIdentifier == UNNotificationDefaultActionIdentifier
             && response.notification.request.identifier != Self.testID
         // A button or Reply…: the answer the notification offered, read back

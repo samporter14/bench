@@ -1,8 +1,9 @@
 // NotificationRuleTests.swift — what gets a Mac notification, and in what
 // words, on made-up cards; and when the Lab model tells the notifier about a
-// card. The notifier itself (MacNotifications) is never used: it touches the
-// system's notification center, which crashes outside an app bundle. The
-// models under test are fresh ones, never `shared`, and are never started.
+// card. The notifier itself (MacNotifications) is not used here: it touches the
+// system's notification center, which crashes outside an app bundle. (Against
+// a fake one, it is in NotificationSweepTests.) The models under test are
+// fresh ones, never `shared`, and are never started.
 import Foundation
 import Testing
 @testable import Bench
