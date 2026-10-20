@@ -331,6 +331,13 @@ agents built them in waves of three (two build jobs each, no stress loops), on
 their own branches, merged here. Made-up fixtures only; the live checks are
 listed at the end.
 
+- ✅ Released as v0.9.0 (`Bench.zip` with Capsid.app inside) and installed
+  with the README's `install.sh` line, which quit the running copy:
+  /Applications/Capsid.app is 0.9.0 (38), signed by Solanum Code Signing,
+  CDHash `fa5d5c34…`, the same as the release's download and the local
+  build, and running. Phone access came back by itself (loopback 47280,
+  Serve's 8443 route).
+
 **Efficiency** (DESIGN.md, Holding still; Efficiency).
 
 - The installed 0.8.0 averaged 7.9% CPU (5.5–10.2%, 60 `top` samples) with a
