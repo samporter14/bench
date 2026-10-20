@@ -1776,10 +1776,26 @@ All, then lists, then thumbnails, oldest first within each; a read that has
 seen eight others start ahead of it goes next, so none waits for ever. Each
 read has 30 s from its start (not its wait in line); the page's own fetch
 gives up at 10 s, or 20 s for a download. Save All keeps two of its downloads
-in the queue at a time, so at most two finished files wait in memory. A
-reader that never returns pins its slot until it does, so two such readers
-stop the shelf; the page's own 10/20 s fetch deadlines make that unlikely
-unless the page's JavaScript is frozen.
+in the queue at a time, so at most two finished files wait in memory.
+
+**The limit on a read** (since this change). The 30 s is one fixed limit for
+every kind of read, and it is also the longest a read can hold its slot,
+whoever still waits for it. It is fixed on purpose: the page already stops a
+slow fetch at its own deadline (10 s, or 20 s for a whole 8 MB file) and
+answers honestly ("Couldn't read this"), so Capsid's 30 s fires only when the
+page's script never answers at all, and a limit scaled by the listing's size,
+or one that counts progress, couldn't do better (the one call into the page
+returns once, with nothing to watch in between). When it passes, every asker
+of that read (a preview and a drop of one file, say) gets "Claude Science
+took too long to answer" at once, with Try Again as for any failed read; the
+page is told to abort the fetch; and the read's slot goes to the next read
+even if its reader never returns. A reader that does return later is counted
+(`ShelfTransfers.lost`) and forgotten: its answer is dropped, it frees no
+slot (the limit freed it once), and it is never handed to an asker of the
+same file who came after, who has a read and a limit of their own. Closing
+the window leaves the limit running for the reads it cancelled, so two
+readers that ignore the abort stop holding their slots 30 s after they
+began, not never.
 
 **Cancellation.** Each asker can stop waiting on its own. A read nobody wants
 any more never starts if it was waiting, and is cancelled if it was running:
@@ -1789,8 +1805,12 @@ so `benchAbortRead(nonce)` aborts that fetch and no other. An aborted read
 answers `cancelled`, never a failure; one stopped by the 10/20 s deadline is
 still "Couldn't read this". Cancelling a Swift task is never taken for proof
 that a fetch stopped: a read cancelled or timed out keeps its place among the
-two until the page has actually answered, so closing and reopening the window
-never runs more than two. Closing the window lets every asker go except a
+two until the page has actually answered or its 30 s limit passes, so closing
+and reopening the window never runs more than two reads that can still
+answer. (The page's own deadline is 20 s at most, so a read still out at 30 s
+has no fetch of its own left running: what the queue stops counting is a
+reader the page was told to abort and never answered, and a page in that state
+could not serve a third read either.) Closing the window lets every asker go except a
 Save (you chose where it goes); a late answer lands nowhere and writes no
 copy. Moving through files in Quick Look withdraws the file left
 (`ShelfPreviewDemand`): its download never starts, or stops unless a drag,
@@ -1803,7 +1823,8 @@ either has in hand answers busy (since 0.7.2).
 
 **Disk.** The temporary copies are written, read, re-checked and deleted by
 an actor (`ShelfTemporaryCopies`), off the main actor; saved files (Save…,
-Save All…) are written by another (`ShelfSavedFiles`), one at a time. Each
+Save All…) are written by another (`ShelfSavedFiles`), one at a time per
+destination and within a time limit (below). Each
 window opening is a run; a write that lands after its run was deleted is
 dropped, so a closed window's folder is never made again, and deleting an old
 run never touches the new one's. Quick Look asks for a copy on the main
@@ -1813,10 +1834,42 @@ from BenchApp) deletes earlier runs' folders off the main actor; this run's
 first copy is written after it, and it never deletes this run's folder. A
 cached copy asked for while its existence is being checked is not handed over
 if the window closes meanwhile: it belongs to the run being deleted (since
-0.7.2). `ShelfSavedFiles` is one serial writer with no time limit, so a save to
-an unresponsive folder delays every later save until macOS fails it. Left
-on the main actor on purpose: the existence checks behind Save All's names
-and the remembered folders (metadata only).
+0.7.2). Left on the main actor on purpose: the existence checks behind Save
+All's names and the remembered folders (metadata only). Documented, not
+fixed: a stat of a name on a volume that has stopped answering blocks the
+main actor in those checks; only the writes have a limit.
+
+**Saved files within a limit** (`ShelfSavedFiles`, since this change). A
+blocking file-system call can't be cancelled, so each write runs on a queue of
+its own and the shelf only waits for it: 15 s, and a second more for each MiB
+of the file (23 s for the 8 MB cap), which leaves room for a disk to spin up
+or a share to take a big file at 1 MB/s. A write that is only slow is not
+stopped; one that makes no sound that long is a folder that isn't there.
+When the limit passes the save fails with "Couldn't save it there: The folder
+didn't respond. If it comes back, the file may still appear there." (a Save
+All counts it with the files that couldn't be saved). The call is left to
+finish, or never to: a file it writes late stays where it lands, and is not
+recorded as saved. Saves go one at a time per destination, which is the
+mounted volume under /Volumes a file is going to, else its folder, told by the
+path alone because resolving a volume is itself a file-system call that
+could be the one that hangs; so a save to another destination never waits
+behind a dead one. The destination whose write timed out then refuses saves
+at once ("The folder still isn't responding.") until its stuck call returns
+(the folder answers again) or 30 s pass, after which one save is let through
+to find out. That is the rule for the saves behind it: a Save All into a dead
+folder costs one limit, not one per file. The write that found out fails
+after its limit, the files already in hand fail at once, and the rest are
+counted as couldn't be saved without being downloaded. Continuing instead
+would cost a limit and a stuck thread for every file. (A second folder on the
+same dead disk outside /Volumes costs one limit of its own before it fails
+fast too.) A file name has at most one write out at a time and stays spoken
+for until its call has returned, late or not. A Save of that name meanwhile
+is refused ("An earlier save of this file hasn't finished."), and Save All
+numbers its names around it (" 2"), as around a file that exists, so a write
+that lands late never races another for one name; a name pinned by a call that
+never returns costs one suffix. The writer's clock, the queue a call runs on
+and the limits are injected, so the tests hold a write as a dropped volume
+would and never sleep.
 
 **Thumbnails** (`ShelfThumbnails`, since 0.7.1). A thumbnail read's WebP is
 decoded once, with ImageIO, off the main actor, to a picture of at most 144 px
@@ -1905,7 +1958,8 @@ with a Reveal in Finder button for the folder. Failures are counted ("2
 couldn't be saved."), never named; each file's own row says why. One Save
 All runs at a time. Closing the window stops what hasn't started; a file is
 written only whole, once its download is complete, so none is left
-half-written.
+half-written. A folder that stops answering fails the rest at once (Disk,
+Saved files within a limit).
 
 **Folder memory.** The folder last saved to is remembered per project, by
 project id and never its name (`UserDefaults` `resultsFolders`,
