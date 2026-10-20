@@ -45,6 +45,15 @@ enum QuickOpen {
             .map(\.session)
     }
 
+    /// The recent sessions with the older ones the database found, ranked as
+    /// `rank` ranks any list. The recent ones come first in the list it ranks,
+    /// so a session in both is listed once as the recent one, which has its
+    /// live state (the database row has only a status), and one that ties
+    /// with an older session in everything stays above it.
+    static func rank(_ recent: [SessionStatus], plus older: [SessionStatus], query: String) -> [SessionStatus] {
+        rank(recent + older, query: query)
+    }
+
     /// Needs you, working, then the rest: each by most recent activity, and
     /// as given when that is the same.
     private static func idleOrder(_ sessions: [SessionStatus]) -> [SessionStatus] {

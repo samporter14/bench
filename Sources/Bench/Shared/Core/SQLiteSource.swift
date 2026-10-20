@@ -654,6 +654,10 @@ enum BrowseSQL {
     static let pageSize = 50
     /// At most this many projects, as Claude Science's own list.
     static let projectLimit = 500
+    /// A name search looks at no more than this many words, each cut to this
+    /// many characters (`fetchSessionsNamed`); the phone's `q` is 2–64 too.
+    static let searchWordLimit = 6
+    static let searchWordLength = 64
 
     /// `^[A-Za-z0-9_-]{1,64}$`: a project id, safe in a path and in SQL.
     static func isProjectID(_ id: some StringProtocol) -> Bool {
@@ -812,10 +816,57 @@ func fetchRecentSessions(db: URL, after cursor: BrowseCursor?) throws -> [Browse
     return try runReadOnlyQuery(db: db, sql: sql, arguments: arguments).compactMap(BrowseSQL.row)
 }
 
+/// Root sessions whose title or project name contains every one of `words`,
+/// newest first by `(updated_at, id)`, at most `limit` (1 to 100): Quick Open's
+/// look beyond the recent sessions (Lab/QuickOpenSearch.swift). The rows are
+/// the ones the session poll can return (`sessionFilterSQL`), so hidden
+/// sessions, sub-agents, uploads and the concierge stay out exactly as they
+/// do there. It leaves out the `task_summary` and archived-project tests the
+/// browse lists add: a session that shows in Recent must be found here too.
+///
+/// The test is `LIKE` with the word's `\`, `%` and `_` escaped, so a word
+/// matches only itself, anywhere in the name, ignoring ASCII case. That is all
+/// SQLite's `LIKE` can fold: accents and letters scattered through a name
+/// (what `QuickOpen.rank` also accepts) are left to the recent sessions, and
+/// everything this returns passes `rank`. A word may match in either name, and
+/// every word must. The words are bound, never written into the SQL; blank
+/// ones are dropped, and so are all past `BrowseSQL.searchWordLimit`. Metadata
+/// only, as every read here.
+///
+/// A `LIKE` that starts with `%` can't use an index, so the roots are looked
+/// at one by one, in whatever order SQLite finds cheapest: newest first
+/// through an index on `updated_at` when it takes that, stopping at `limit`
+/// (a common word is quick), else each root once with the newest few kept. A
+/// rare word costs one pass over the roots, never one per root. On 60,000
+/// made-up frames (6,000 of them roots) a word nothing matches took 3 ms with
+/// an index on `parent_frame_id`, 26 ms with only one on `updated_at` and
+/// 10 ms with neither. The read is interrupted at `timeout` seconds.
+func fetchSessionsNamed(db: URL, words: [String], limit: Int, timeout: TimeInterval = 3) throws -> [BrowseRow] {
+    let words = words.filter { !$0.allSatisfy(\.isWhitespace) }.prefix(BrowseSQL.searchWordLimit)
+        .map { String($0.prefix(BrowseSQL.searchWordLength)) }
+    guard !words.isEmpty else { return [] }
+    var conditions = [sessionFilterSQL("f")]
+    var arguments: [SQLArgument] = []
+    for word in words {
+        arguments.append(.text(BrowseSQL.containsPattern(word)))
+        conditions.append("(f.name LIKE ?\(arguments.count) ESCAPE '\\' OR p.name LIKE ?\(arguments.count) ESCAPE '\\')")
+    }
+    arguments.append(.integer(Int64(max(1, min(limit, 100)))))
+    let sql = """
+        SELECT \(BrowseSQL.rowColumns)
+        FROM frames f LEFT JOIN projects p ON p.id = f.project_id
+        WHERE \(conditions.joined(separator: "\n  AND "))
+        ORDER BY f.updated_at DESC, f.id DESC
+        LIMIT ?\(arguments.count);
+        """
+    return try runReadOnlyQuery(db: db, sql: sql, arguments: arguments, timeout: timeout).compactMap(BrowseSQL.row)
+}
+
 /// One root session by its full id, as the session list's filter counts
 /// sessions (without the `task_summary` test, so any root opens). Nil when
-/// there is none, or for an id out of shape.
-func fetchSession(db: URL, id: String) throws -> BrowseRow? {
+/// there is none, or for an id out of shape. `timeout` is how long the read
+/// may take (seconds).
+func fetchSession(db: URL, id: String, timeout: TimeInterval = 8) throws -> BrowseRow? {
     guard PlanCheck.isFrameID(id) else { return nil }
     let sql = """
         SELECT \(BrowseSQL.rowColumns)
@@ -823,7 +874,7 @@ func fetchSession(db: URL, id: String) throws -> BrowseRow? {
         WHERE \(sessionFilterSQL("f")) AND f.id = ?1
         LIMIT 1;
         """
-    return try runReadOnlyQuery(db: db, sql: sql, arguments: [.text(id)]).compactMap(BrowseSQL.row).first
+    return try runReadOnlyQuery(db: db, sql: sql, arguments: [.text(id)], timeout: timeout).compactMap(BrowseSQL.row).first
 }
 
 /// The root session a new-session request with this intent id made in this

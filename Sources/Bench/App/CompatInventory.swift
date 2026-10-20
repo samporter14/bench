@@ -62,7 +62,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .tabMenu: "The tab right-click menu"
         case .signIn: "Signing back in"
         case .notifications: "Needs-input cards from the page's notifications"
-        case .sessionAddress: "Open on a card, Quick Open and the context ring"
+        case .sessionAddress: "Open on a card, Quick Open, reopening where you were and the context ring"
         case .previews: "HTML previews"
         case .usage: "The usage readout, pause and heads-up cards"
         case .context: "The context ring"
