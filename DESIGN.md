@@ -1625,9 +1625,9 @@ takes `--step 1…7`).
 Help → Capsid Diagnostics… (also Settings → General → Diagnostics…, and the banner that says Capsid
 can't see your sessions) shows what Capsid can and can't see of Claude Science, one line per step, with
 Run Again and Copy. `Capsid --diagnose` prints steps 1 to 5 and the list of what is checked only when
-used, says the page checks need the window, and exits. It names no
-project, session, tab, file or org ID: only yes/no, versions, folders, sizes, ages, counts and fixed
-phrases, so it is safe to paste into a message. ✓ is fine, ✗ a problem, • neither (a note, or something
+used, says the page checks need the window, and exits. It names no project, session, tab, file or org
+ID: only yes/no, versions, folders, sizes, ages, counts and fixed phrases, so it is safe to paste into a
+message. ✓ is fine, ✗ a problem, • neither (a note, or something
 that couldn't be told).
 
 **The steps, in order.**
@@ -1638,7 +1638,8 @@ that couldn't be told).
    for it. `CompatInventory.checkedWith` is the version Capsid was last checked with: 0.1.63, the one whose web
    bundle the tab markup was read from (Main window, above). The versions are compared as numbers
    (`ScienceVersion`: 0.1.9 is older than 0.1.63; a suffix like "-rc1" can't be ordered and reads as
-   different). When they differ, ✓ becomes • and a second line says, in plain words, that this is a newer (or
+   different). If the status can't be read, the line is only "Capsid was last checked with Claude Science
+   0.1.63". When they differ, ✓ becomes • and a second line says, in plain words, that this is a newer (or
    older, or different) Claude Science than Capsid was checked with, so features that depend on its page (the
    tab commands, the readouts, Approve) may need a look. Moving `checkedWith` is a claim: walk the whole
    inventory again first (and the 0.1.63 sentence in the Main window section).
@@ -1694,9 +1695,8 @@ probe starts the same sign-in recovery as any read.
 **Checked only when used.** Listed with the feature that depends on them, never tried from Diagnostics: every
 write (they change things), and the phone's reads (they return what was said or made: `messages`, the
 artifact list and files, `trace-shallow`, `streaming`; `apiGET` has no path for messages, the list,
-`trace-shallow` or `streaming`), the page's
-notifications, previews, the tab right-click, the `?nonce=` sign-in, `/api/csrf` and `claude-science url` and
-`serve`. Their first real use is the check, and a failure there leaves a breadcrumb where it can be told from
+`trace-shallow` or `streaming`), the page's notifications, previews, the tab right-click, the `?nonce=`
+sign-in, `/api/csrf`, `claude-science url` and `serve`. Each line says why. Their first real use is the check, and a failure there leaves a breadcrumb where it can be told from
 an ordinary state.
 
 **Last problem** (`CompatBreadcrumbs`). Where a feature looks for something in Claude Science and finds it
