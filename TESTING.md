@@ -323,6 +323,40 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-20, Capsid 0.9.3: thirteen specimens (541), phone follow-ups
+
+0.9.2 was built and pushed but never published as a release; its changes
+(next entry) ship in 0.9.3 with these.
+
+**Thirteen specimens (541).** Kimwipe, Tally counter, Bench level,
+Glassblowing, Eyewash station, Chloroplast movement, Neighbor exchange, Lumen
+formation, Bone resorption, Proplatelets, Enucleation, Tunneling nanotube and
+Centriole duplication: picked by Sam from a list of twenty, drawn by four
+Sonnet agents in the specimen harness, six of them redrawn once after review
+(a counter that read as a mug, an eyewash as a genie lamp, a chloroplast cell
+as a domino, a bone pit as a jellyfish, an octagon as a stop sign, a
+centriole as an upside-down T). Every loop closes (seam ≤ 0.0001), coverage
+0.17–0.30 at 16 pt, under 0.1 ms a frame; notes checked against what's known
+(Z358.1's 15-minute flush, phototropin avoidance, T1 transitions, pyrenocytes,
+procentrioles). ✅ `LabScene`/notes tests pass; `Capsid --list-scenes` gives 541.
+
+**Phone follow-ups** (DESIGN.md, Capsid on your phone).
+
+- Cache budgets: 8 sessions and 1.5 M characters of session data, 4 files and
+  768 K characters of text, least recently shown first; never the open screen,
+  drafts or anything mid-read. History rows update by key.
+- Reads stop with their screen: a scope per route aborts in-flight GETs and
+  withdraws queued file reads when you leave or hide the page; writes and
+  downloads are never aborted. The server hears a hang-up on read routes and
+  cancels the work (the artifact read is aborted in the page by its nonce).
+- The Dock menu's Latest refreshes on a rename, not only a new session.
+- 36 JS and 7 Swift mutations caught; `embed-remote-web.py --check` passes.
+- ⏳ Not seen: a real iPhone, and Tailscale Serve passing a phone's abort on.
+
+Automated:
+
+- ✅ `swift test`: **1,917 tests in 248 suites, all passing in one run**.
+
 ## 2026-10-20, Capsid 0.9.2: Codex's background-work, card and Settings changes; playback a second at a time
 
 Codex's commit dc52caf (`codex/ui-performance-improvements`), reviewed here
