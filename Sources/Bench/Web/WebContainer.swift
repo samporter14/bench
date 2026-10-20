@@ -49,6 +49,12 @@ final class WebContainer: ObservableObject, WebPageWindow {
     private var pendingURL: URL?
     private var lastSignInRetry: ContinuousClock.Instant?
     private var lastSessionRecovery: ContinuousClock.Instant?
+    /// The sign-in is under way: a link that comes now waits in `pendingURL`
+    /// for it to choose its destination, even though the port is known.
+    private var signingIn = false
+    /// Keeps the session on show for the next launch (Web/LastSession.swift).
+    private let lastSession = LastSession()
+    private var addressWatch: AnyCancellable?
 
     private static let signInRetryInterval = Duration.seconds(30)
 
@@ -82,6 +88,14 @@ final class WebContainer: ObservableObject, WebPageWindow {
             .removeDuplicates()
             .assign(to: &$currentFrameID)
         webView.pageZoom = Self.storedZoom()
+        // Where the user is, for "reopen where you were". Not `currentFrameID`:
+        // it has the session but not its project.
+        addressWatch = webView.publisher(for: \.url).receive(on: DispatchQueue.main).sink { [weak self] url in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.lastSession.note(url: url, daemonPort: self.port)
+            }
+        }
     }
 
     // MARK: Starting
@@ -119,18 +133,28 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// gave none) it loads the page anyway: the cookie from last time may
     /// still work, and if not, the 401 asks for a code again.
     private func signIn(port: Int) async {
+        signingIn = true
+        defer { signingIn = false }
         self.port = port
         guard let root = URL(string: "http://localhost:\(port)/") else {
             status = .failed("Couldn't build Claude Science's address.")
             return
         }
+        // Reopen where the user was (Web/LastSession.swift), unless a link
+        // already asked for somewhere. The database is asked while the
+        // sign-in code is fetched, so a launch waits for neither.
+        async let code = DaemonController.freshNonce()
+        let remembered = pendingURL == nil
+            ? await lastSession.reopenURL(port: port, isKnown: LastSession.databaseKnows) : nil
+        let nonce = await code
         // A link that came before the port was known was built for the usual
-        // one; it belongs on the port the daemon actually uses.
-        let requested = pendingURL.map { Self.canonical(Self.moving($0, toPort: port)) }
+        // one; it belongs on the port the daemon actually uses. One that comes
+        // while the above runs waits for this, and wins over the remembered
+        // session.
+        let link = pendingURL.map { Self.canonical(Self.moving($0, toPort: port)) }
         pendingURL = nil
-        let destination = requested.flatMap { WebRoute.classify($0, daemonPort: port) == .daemon ? $0 : nil } ?? root
+        let destination = LastSession.launchDestination(link: link, remembered: remembered, root: root, port: port)
 
-        let nonce = await DaemonController.freshNonce()
         webView.load(URLRequest(url: nonce.map { addingLoginNonce($0, to: destination) } ?? destination))
     }
 
@@ -147,7 +171,7 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// Loads a daemon URL in the one web view. The navigation delegate still
     /// routes it, so a URL that isn't the daemon's ends up in a Browser window.
     func load(_ url: URL) {
-        guard port != nil else {
+        guard port != nil, !signingIn else {
             pendingURL = url
             return
         }

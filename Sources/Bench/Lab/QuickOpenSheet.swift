@@ -1,6 +1,8 @@
 // QuickOpenSheet.swift — the sheet ⌘⇧O shows on the main window (DESIGN.md,
 // Quick Open): a search field and the recent sessions under it, narrowed and
-// ordered by `QuickOpen.rank`. ↑ ↓ move, Return or a click opens, Esc closes.
+// ordered by `QuickOpen.rank`, with older sessions from the database ranked in
+// when they are found (QuickOpenSearch). ↑ ↓ move, Return or a click opens,
+// Esc closes.
 import SwiftUI
 
 struct QuickOpenSheet: View {
@@ -8,6 +10,8 @@ struct QuickOpenSheet: View {
     /// The last read's sessions, published apart from `LabModel`.
     @ObservedObject private var reads = LabModel.shared.reads
     @Environment(\.dismiss) private var dismiss
+    /// Older sessions, looked up by name once typing pauses.
+    @StateObject private var search = QuickOpenSearch()
     @State private var query = ""
     /// The highlighted session, by id: a read that reorders the list while
     /// you choose must not move the highlight to another one. Nil, or one that
@@ -20,7 +24,7 @@ struct QuickOpenSheet: View {
     private static let listHeight: CGFloat = 366
 
     var body: some View {
-        let results = QuickOpen.rank(reads.sessions, query: query)
+        let results = QuickOpen.rank(reads.sessions, plus: search.found, query: query)
         let selected = results.first { $0.id == selectedID }?.id ?? results.first?.id
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -41,6 +45,11 @@ struct QuickOpenSheet: View {
                         selectedID = neighbour(of: selected, in: results, by: 1)
                         return .handled
                     }
+                if search.isSearching {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Searching older sessions")
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -57,7 +66,19 @@ struct QuickOpenSheet: View {
         .defaultFocus($searching, true)
         .onExitCommand { dismiss() }
         .onAppear { searching = true }
-        .onChange(of: query) { selectedID = nil }
+        .onDisappear { search.cancel() }
+        .onChange(of: query) {
+            selectedID = nil
+            search.queryChanged(query)
+        }
+        // Older sessions arriving must not move the highlight from under
+        // the user: the row it was on stays, even if a better match now sits
+        // above it. (Once they have moved it themselves, it follows its id.)
+        .onChange(of: search.found) { previous, _ in
+            if selectedID == nil {
+                selectedID = QuickOpen.rank(reads.sessions, plus: previous, query: query).first?.id
+            }
+        }
     }
 
     // MARK: Parts
@@ -84,7 +105,10 @@ struct QuickOpenSheet: View {
     @ViewBuilder
     private var nothingToShow: some View {
         Group {
-            if !query.allSatisfy(\.isWhitespace) {
+            if search.isSearching {
+                // The recent sessions had no match; the database may.
+                ProgressView("Searching…")
+            } else if !query.allSatisfy(\.isWhitespace) {
                 ContentUnavailableView.search(text: query)
             } else if let problem = model.problem {
                 ContentUnavailableView("Can't see your sessions", systemImage: "exclamationmark.triangle",

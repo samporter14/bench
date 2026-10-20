@@ -64,6 +64,10 @@ enum SettingsKey {
     /// the menu bar. See `PanelScreen`.
     static let panelScreen = "panelScreen"
     static let pageZoom = "pageZoom"
+    /// The session the main window was showing, as `<project id>/<session id>`
+    /// (opaque ids, never a name), for the next launch to reopen
+    /// (Web/LastSession.swift). Not registered: absent means none.
+    static let lastSession = "lastSession"
     /// Check GitHub once a day for a newer Bench. Off unless the user turns it
     /// on, in Settings or the welcome window: it's the one request Bench makes
     /// beyond this Mac that a click didn't ask for.

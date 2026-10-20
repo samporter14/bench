@@ -489,6 +489,7 @@ private struct InventoryDatabase {
         _ = try fetchRecentSessions(db: url, after: cursor)
         _ = try fetchRecentSessions(db: url, after: nil)
         _ = try fetchSession(db: url, id: frame)
+        _ = try fetchSessionsNamed(db: url, words: ["x", "y"], limit: 5)
         _ = try fetchSessionByIntent(db: url, project: "proj_a", intent: "0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5")
     }
 }
