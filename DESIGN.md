@@ -60,7 +60,10 @@ third-party dependencies.
   rotation and `PlayedLoop(glyph:tint:)` for a waiting reason. They draw in
   `.primary` ink with clay accents built in. The panel shows them at 88pt,
   about five times the Droppy pill. Measured cost is under 6 ms per second of
-  frames at 96pt (`Capsid --measure-sheets 48,72,96`).
+  frames at 96pt (`Capsid --measure-sheets 48,72,96`). The working rotation
+  draws and plays a second of frames at a time, never a whole scene (since
+  0.9.2; Efficiency, Shared changes), at 30 frames a second unless a view is
+  given another (`PlayedGlyph(fps:)`).
 
 ## Where the glass goes
 
@@ -397,6 +400,17 @@ A port of the droplet's watching loop, with no DroppyKit:
   and on a fallback timer (3 s while something works, 30 s otherwise). Only
   one read runs at a time; a change that arrives during a read triggers one
   more read after it.
+- **While the daemon is down** (since 0.9.2). There is no write-ahead log for
+  the watcher to open, so it watches the log's folder for the log to be
+  created, and picks it up at once when it is. As a back-up (the folder
+  missing, an event missed) it looks again after 2 s, then 4, 8, 16, 32 and
+  every 60 s, where it used to look every 2 s for as long as the daemon was
+  down (1800 looks an hour; now about 64). A log that opens starts the
+  sequence over for the next time it goes. What the watcher reports, and when,
+  is unchanged while the log exists, and `isWatching` still means only "the log
+  is open", so the model's fallback timer above is unchanged too. The code is
+  the droplet's (`ScienceCore/DatabaseWatcher.swift`); `DatabaseWatcherTests`
+  fires the retries by hand and uses real temporary folders.
 - **Transitions.** `ScienceEngine(minDuration: 30).advance(to:)` gives the
   `.started`, `.finished` and `.needsInput` transitions.
 - **Published state.** `snapshot`, `working: [SessionStatus]` (running) and
@@ -1138,10 +1152,13 @@ and 23 MB (Efficiency).
 - **Low Power Mode.** The limit is two minutes (`lowPowerIdleLimit`), never
   longer than the limit otherwise in force, and a change of power state
   (`NSProcessInfoPowerStateDidChange`) looks at once. A lower frame rate was
-  considered and left: the rate is `PlayedGlyphView.fps`, a constant of the
-  Shared copy, and 15 fps would need a Capsid-owned player. The measured
-  saving is about 40% of the commit cost, and a hold saves all of it
-  (Efficiency, Shared changes). So Low Power Mode shortens the wait instead.
+  considered and left: the measured saving is about 40% of the commit cost,
+  and a hold saves all of it (Efficiency, Shared changes). Since 0.9.2 the
+  Shared player takes a rate per view (`PlayedGlyph(fps:)`, default 30; a
+  chunk is a second of frames at that rate), so 15 fps no longer needs a
+  Capsid-owned player; Capsid does not use it yet, because no run of a view
+  playing at 15 has been measured here. So Low Power Mode shortens the wait
+  instead.
 - **A hidden default**, not a setting and not in Settings:
   `specimenIdleSeconds`, a number of seconds above zero, replaces the ten
   minutes (anything else is ignored). It is for trying the rule without waiting:
@@ -1864,7 +1881,8 @@ The Settings **Scenes** tab (760×776) has, in a header of two columns:
   Cells on screen PLAY, drawn live by `SceneLive` (a TimelineView plus a
   Canvas at 20 fps, 30 under the pointer, keeping no frames, at full strength
   with no fade, see Poster stills). The panel's
-  `PlayedGlyph` pre-renders about 1.5 s per scene, and 40 cells of that cost
+  `PlayedGlyph` pre-rendered about 1.5 s per scene (before 0.9.2; now a
+  second or two of frames), and 40 cells of that cost
   about 320 MB more; live drawing costs about 11% of one core with no extra
   memory. Off screen (the lazy grid's onDisappear), or with Reduce Motion
   except under the pointer, a cell is a Canvas still at the specimen's
@@ -2660,22 +2678,96 @@ unchanged: the sRGB window does not touch the frames. A harness that commits a
 20 s scene's 600 frames (64 pt at 2x) measured 51.8 ms for the commit in a P3
 window and 11.3 ms in an sRGB one.
 
-**Shared changes that would help, not made here** (`Shared/PlayedViews.swift`
-is the droplet's, and `Scripts/sync-shared.sh` overwrites it):
+**Shared changes, made since 0.9.2** (`Shared/PlayedViews.swift` and
+`Shared/Core/DatabaseWatcher.swift` are the droplet's: written there,
+copied here by `Scripts/sync-shared.sh`):
 
-- **Hold a second of frames at a time, not a scene.** `PlayedGlyphView.restart`
-  draws the whole of a scene's frames, then hands them to one
-  `CAKeyframeAnimation`, so a 20 s scene is 600 images (about 75 MB with Core
-  Animation's copies) committed in one 60 to 150 ms stall of the main thread.
-  Animating a second at a time (30 frames), each chunk begun when the last
-  ends, as scenes already are, and dropping the chunk before the last, measured
-  +38 MB at the peak for the same 54 ms of CPU. It is also what a lower frame
-  rate would be built on.
-- **A lower rate in Low Power Mode**, `PlayedGlyphView.fps` (30, a `static let`)
-  settable, with the frames drawn at that rate: 15 fps committed 33 ms against
-  54 ms, about 40% less. Capsid would then play at 15 in Low Power Mode and
-  could drop its two-minute limit to the ten.
-- **Frames in the screen's own format and colour space** (premultiplied BGRA in
+- **A second of frames at a time, not a scene** (`PlaybackPlan`,
+  `ChunkedPlayback`, `PlayedGlyphView.restart`). Before, `restart` drew all of
+  a scene's frames, then gave them to one `CAKeyframeAnimation`: a 20 s scene
+  was 600 images (about 75 MB with Core Animation's copies) committed in one
+  60 to 150 ms stall of the main thread. Now:
+  - a scene is cut into chunks of at most a second (30 frames); what is left
+    of it is split evenly, so none is a sliver (61 frames are 21, 20 and 20);
+  - each chunk is its own `CAKeyframeAnimation`, due at `sceneStart +
+    firstFrame / fps` on the rotation's clock, worked out from the scene's
+    start every time and never by adding chunks up, so a chunk begins where the
+    last ended (to a microsecond) and a scene begins when the rotation says;
+  - two chunks are held, the one playing and the one after it. A chunk is
+    released 20 ms after the next has begun, and only then is the following one
+    drawn, so a chunk is drawn about a second (0.98 s) before it is due and
+    never three exist. The look-ahead at a scene boundary is therefore that, not the 1.5 s
+    a whole scene needed: the next scene's first chunk is drawn as the last
+    chunk of the scene before begins, and takes about 6 ms;
+  - a restart (resize, new backing scale, occlusion, a new tint) draws only the
+    chunk due now, at once, and the next after 5 ms, so the specimen is back
+    in a few milliseconds, not after the rest of the scene is drawn;
+  - each animation holds its last frame (`fillMode = .forwards`, not removed on
+    completion) until it is released. A scene's frames are `Int(duration *
+    fps)`, so its last can end up to a frame before the next scene is due, and
+    a clock a hair out at any boundary is the same gap: before, that showed the
+    layer's own `contents`, the scene's middle frame, for up to 33 ms.
+    Checked offscreen with `CARenderer` and flat-colour frames (a scratch
+    program, no window): chunks abutting exactly show no gap at the boundary
+    (one frame colour up to 100.999999 s, the next from 101.0 s); a second chunk
+    50 ms late showed the model colour for the 50 ms without the fill and the
+    held last frame with it; a chunk begun 10 ms early takes over at once (a
+    later animation wins); removing the first chunk while the second was
+    waiting shows the model colour, which is why a chunk is released only after
+    the next has begun;
+  - a chunk wholly in the past when its turn comes (the main thread stalled,
+    the clock jumped) is skipped, not drawn late; a draw that makes no frames
+    waits for the chunk's length (50 ms at least) instead of spinning; a view
+    that has gone ends the loop at its next draw;
+  - the rate is a property of the view (`PlayedGlyphView.fps`, `PlayedGlyph(
+    fps:)`, default 30), and `frames(of:from:to:size:scale:tint:fps:)` takes it.
+    A chunk is a second of frames at that rate.
+  - The rules are tested with a clock and waits of the test's own
+    (`PlaybackChunkTests`): chunk boundaries line up, at most two are held, a
+    chunk is released only once the next has begun, a stop or restart leaves
+    nothing drawn or begun, a stall skips what is over.
+
+  **Measured** (demo copies, `top -l 25 -s 5`, first sample dropped,
+  `-specimenIdleSeconds 86400` so the hold does not interfere):
+
+  | | CPU mean (range) | footprint |
+  |---|---|---|
+  | before, awake screen | 1.02% (0.7 to 1.8) | 46 to 127 MB, mean 65 |
+  | before, locked screen, shim (two runs) | 1.20% and 1.19% (0.2 to 2.4) | 42 to 133 and 46 to 128 MB, means 82 and 77 |
+  | after, locked screen, shim (two runs) | 0.81% and 1.09% (0.2 to 1.6) | 36 to 95 and 91 to 97 MB; flat at about 93 to 95 after the first 15 s |
+
+  The screen was locked for all but the first run, so the shim of the earlier
+  runs (a test-only dylib reporting every window visible, never part of the
+  repo) played the panel. The runs were interleaved (before, after, before,
+  after) on a Mac with a load average of 4 to 12, so the CPU figures are the
+  same to within the noise: a commit now covers a second of frames, not a
+  scene's, but nothing here shows a CPU gain. Footprint, however, did
+  not do what was hoped:
+  - the swing is gone (91 to 97 MB once settled, against 42 to 133 MB) and
+    the peak is about 30 MB lower (97 against 128 to 133 MB, or 74 against
+    105 to 110 above the 23 MB of a held panel: a third less, not the half a
+    harness had measured);
+  - but the level is flat at about 95 MB, which is **higher than the old
+    average** (77 to 82 MB; the old app spent most of its time near 45 MB and
+    went to 110 to 120 MB at each scene start);
+  - `footprint` puts 57 MB of it in "Owned physical footprint (unmapped)
+    (graphics)", where the old app had 1 MB between scenes and 49 to 57 MB at
+    its peaks, and `heap` shows what is held in the process is what was asked
+    for (two `CAKeyframeAnimation`s, 71 `CGImage`s). The graphics memory is
+    owned by this process but lives elsewhere, and what keeps it at that size
+    when a frame is drawn every second has **not been found**. Drawing
+    each chunk as 15-frame sheets (an experiment build, not kept) did not
+    change it (96 to 100 MB, one run), so it does not follow the size of the
+    sheet; 10-frame sheets were not finished. Next: a run on an unlocked
+    screen, with Sam's agreement to a demo panel, trying a chunk of 15 frames
+    and releasing the `contents` image per chunk.
+  - Not measured: the commit stall itself (no Time Profiler run) and a view
+    playing at 15 fps.
+- **Back off while the daemon is down** (`DatabaseWatcher`): see LabModel,
+  "While the daemon is down". 1800 looks an hour at the log become about 64
+  (arithmetic, not measured) and a log that appears is picked up when it is
+  created. Behaviour with the log in place is unchanged.
+- **Not made: frames in the screen's own format and colour space** (premultiplied BGRA in
   the display's profile) make the commit nearly free (1.8 ms) but move the
   conversion into drawing (the same total), so the sRGB window is the better
   fix and this one is not worth making.

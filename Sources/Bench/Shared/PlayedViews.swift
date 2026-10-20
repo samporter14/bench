@@ -17,30 +17,202 @@ import SwiftUI
 struct PlayedGlyph: NSViewRepresentable {
     let tint: Color
     var rotation: Rotation = .full
+    /// Frames a second; the scenes are drawn and played at this rate.
+    var fps: Double = PlayedGlyphView.fps
 
     func makeNSView(context: Context) -> PlayedGlyphView { PlayedGlyphView() }
 
     func updateNSView(_ view: PlayedGlyphView, context: Context) {
-        view.configure(tint: tint.resolve(in: context.environment), rotation: rotation)
+        view.configure(tint: tint.resolve(in: context.environment), rotation: rotation, fps: fps)
     }
 }
 
+// MARK: - Playing a second at a time
+
+/// A second of one scene's frames (or less), played as one animation.
+struct PlaybackChunk: Equatable, Sendable {
+    /// Counts up from the start of a playback, so each chunk has a key of its own.
+    let sequence: Int
+    /// Which scene of the rotation, and which of its frames.
+    let scene: Int
+    let frames: Range<Int>
+    /// When the first frame is due, in seconds on the rotation's clock.
+    let begin: Double
+    let fps: Double
+
+    var duration: Double { Double(frames.count) / fps }
+    var end: Double { begin + duration }
+    var key: String { "chunk \(sequence)" }
+}
+
+/// Which chunks play, one after another, from a moment on: the rest of the
+/// scene playing then, in as few seconds-long chunks as it takes, then every
+/// scene after it round the rotation. Pure arithmetic on the rotation's clock.
+///
+/// A chunk is due at `sceneStart + firstFrame / fps`, worked out afresh from
+/// the scene's start and never by adding chunks up, so one chunk's end and the
+/// next one's begin are the same moment and nothing drifts. A scene's frames
+/// are `Int(duration * fps)`, so the last may end up to a frame before the
+/// next scene is due; the next scene begins when the rotation says.
+struct PlaybackPlan {
+    private let durations: [Double]
+    private let fps: Double
+    private let length: Int
+    private var scene: Int
+    private var sceneStart: Double
+    private var frame: Int
+    private var sequence = 0
+
+    /// Begins in `scene`, which began at `sceneStart`, at the frame due at `now`.
+    init(sceneDurations: [Double], fps: Double, scene: Int, sceneStart: Double, now: Double) {
+        precondition(!sceneDurations.isEmpty && fps > 0)
+        durations = sceneDurations
+        self.fps = fps
+        length = max(1, Int(fps.rounded()))
+        self.scene = scene
+        self.sceneStart = sceneStart
+        frame = max(0, Int((now - sceneStart) * fps))
+    }
+
+    private func frameCount(of scene: Int) -> Int { max(1, Int(durations[scene] * fps)) }
+
+    /// The next chunk. What is left of a scene is split evenly into chunks of
+    /// at most a second, so the last is never a sliver.
+    mutating func next() -> PlaybackChunk {
+        while frame >= frameCount(of: scene) {
+            sceneStart += durations[scene]
+            scene = (scene + 1) % durations.count
+            frame = 0
+        }
+        let remaining = frameCount(of: scene) - frame
+        let pieces = (remaining + length - 1) / length
+        let count = (remaining + pieces - 1) / pieces
+        let chunk = PlaybackChunk(sequence: sequence, scene: scene, frames: frame..<(frame + count),
+                                  begin: sceneStart + Double(frame) / fps, fps: fps)
+        frame += count
+        sequence += 1
+        return chunk
+    }
+}
+
+/// Plays a plan two chunks at a time: the one playing, and the one after it,
+/// drawn while the first plays. A finished chunk is released the moment the
+/// next one has begun, and only then is the following chunk drawn, so a scene
+/// of any length costs two seconds of frames, not all of its own, and nothing
+/// is ever committed that is longer than a second. The view supplies the
+/// drawing and the animations; a test supplies a clock and what it likes.
+@MainActor
+final class ChunkedPlayback {
+    /// How long a chunk stays after the next one has begun, so a clock that
+    /// reads a little differently from Core Animation's cannot show a gap.
+    static let margin = 0.02
+
+    private var plan: PlaybackPlan
+    private let clock: @MainActor () -> Double
+    private let wait: @MainActor (Double) async -> Void
+    private let draw: @MainActor (PlaybackChunk) -> [CGImage]?
+    private let begin: @MainActor (PlaybackChunk, [CGImage]) -> Void
+    private let release: @MainActor (PlaybackChunk) -> Void
+    private var held: [PlaybackChunk] = []
+    private var task: Task<Void, Never>?
+
+    /// - Parameters:
+    ///   - now: seconds on the rotation's clock.
+    ///   - wait: suspends for that many seconds, returning early when cancelled.
+    ///   - draw: the chunk's frames, nil when there is nothing left to draw for.
+    ///   - begin: hands the frames to the layer, to play from `chunk.begin`.
+    ///   - release: takes the chunk off the layer.
+    init(plan: PlaybackPlan,
+         now: @escaping @MainActor () -> Double = { Date.timeIntervalSinceReferenceDate },
+         wait: @escaping @MainActor (Double) async -> Void = { try? await Task.sleep(for: .seconds($0)) },
+         draw: @escaping @MainActor (PlaybackChunk) -> [CGImage]?,
+         begin: @escaping @MainActor (PlaybackChunk, [CGImage]) -> Void,
+         release: @escaping @MainActor (PlaybackChunk) -> Void) {
+        self.plan = plan
+        clock = now
+        self.wait = wait
+        self.draw = draw
+        self.begin = begin
+        self.release = release
+    }
+
+    /// Whether it is still going: not stopped, and not ended by `draw`.
+    var isRunning: Bool { task != nil }
+
+    func start() {
+        guard task == nil else { return }
+        task = Task { @MainActor [self] in
+            await run()
+            task = nil
+        }
+    }
+
+    /// Ends it, for good, and releases what it holds. Nothing more is drawn or begun.
+    func stop() {
+        task?.cancel()
+        task = nil
+        let finished = held
+        held = []
+        for chunk in finished { release(chunk) }
+    }
+
+    private func run() async {
+        // After every wait, cancelled or not, check before touching anything.
+        while !Task.isCancelled {
+            // The chunk playing and the one after it, and no more.
+            while held.count < 2 {
+                var chunk = plan.next()
+                // Over already (a long stall, the clock jumped): not worth drawing.
+                while chunk.end <= clock() { chunk = plan.next() }
+                guard let frames = draw(chunk) else { return }
+                guard !frames.isEmpty else {
+                    await wait(max(0.05, chunk.end - clock()))
+                    if Task.isCancelled { return }
+                    continue
+                }
+                begin(chunk, frames)
+                held.append(chunk)
+                if held.count < 2 {
+                    // Let the run loop turn between the first two draws.
+                    await wait(0.005)
+                    if Task.isCancelled { return }
+                }
+            }
+            // The older one is over once the newer has begun.
+            await wait(max(0, held[1].begin + Self.margin - clock()))
+            if Task.isCancelled { return }
+            release(held.removeFirst())
+        }
+    }
+}
+
+// MARK: - Glyph view
+
 final class PlayedGlyphView: NSView {
-    /// Frames a second, as many as the Canvas drew.
+    /// Frames a second, as many as the Canvas drew: the rate a view plays at
+    /// unless it is given another with `fps`.
     static let fps = 30.0
 
     private(set) var tint: Color.Resolved?
     private(set) var rotation = Rotation.full
 
-    func configure(tint: Color.Resolved, rotation: Rotation) {
-        guard tint != self.tint || rotation != self.rotation else { return }
+    /// The rate this view draws and plays at. The scenes are functions of
+    /// time, so a lower one (15 in Low Power Mode, say) looks the same with
+    /// fewer steps, and costs less to draw and to commit.
+    var fps = PlayedGlyphView.fps {
+        didSet { if fps != oldValue { restart() } }
+    }
+
+    func configure(tint: Color.Resolved, rotation: Rotation, fps: Double = PlayedGlyphView.fps) {
+        guard tint != self.tint || rotation != self.rotation || fps != self.fps else { return }
+        let rateChanged = fps != self.fps
         self.tint = tint
         self.rotation = rotation
-        restart()
+        if rateChanged { self.fps = fps } else { restart() }
     }
 
     private let player = CALayer()
-    private var upcoming: Task<Void, Never>?
+    private var playback: ChunkedPlayback?
     private var playedSize: CGSize = .zero
 
     override init(frame: NSRect) {
@@ -82,78 +254,83 @@ final class PlayedGlyphView: NSView {
     /// Out of sight it holds a single still, so a covered or sleeping screen
     /// costs nothing and an offscreen capture still shows the glyph.
     private func restart() {
-        upcoming?.cancel()
-        upcoming = nil
+        playback?.stop()
+        playback = nil
         player.removeAllAnimations()
         playedSize = bounds.size
-        guard let window, let tint, bounds.width >= 1, bounds.height >= 1 else { return }
+        guard let window, let tint, bounds.width >= 1, bounds.height >= 1, fps > 0 else { return }
         let scale = window.backingScaleFactor
         let rotation = self.rotation
+        let fps = self.fps
         let now = Date.timeIntervalSinceReferenceDate
         let (current, local) = rotation.scene(at: now)
         guard window.occlusionState.contains(.visible) else {
-            let middle = Int(rotation.scenes[current].duration * Self.fps / 2)
+            let middle = Int(rotation.scenes[current].duration * fps / 2)
             let still = Self.frames(of: rotation.scenes[current], from: middle, to: middle + 1,
-                                    size: bounds.size, scale: scale, tint: Color(tint))
+                                    size: bounds.size, scale: scale, tint: Color(tint), fps: fps)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             player.contents = still.first
             CATransaction.commit()
             return
         }
-        upcoming = Task { @MainActor [weak self] in
-            var index = current, start = now - local, from = now
-            while !Task.isCancelled {
-                let scene = rotation.scenes[index]
-                let first = max(0, Int((from - start) * Self.fps))
-                let last = Int(scene.duration * Self.fps)
-                // A second of frames at a time, letting the run loop turn in
-                // between, so even the dearest scene never holds up the host
-                // for more than a few milliseconds.
-                var frames: [CGImage] = []
-                var next = first
-                while next < last {
-                    guard let size = self?.bounds.size else { return }
-                    let upTo = min(last, next + Int(Self.fps))
-                    frames += Self.frames(of: scene, from: next, to: upTo, size: size, scale: scale, tint: Color(tint))
-                    next = upTo
-                    try? await Task.sleep(for: .milliseconds(5))
-                    if Task.isCancelled { return }
-                }
-                self?.show(frames, of: index, from: start + Double(first) / Self.fps)
-                // Begin drawing the next scene a second and a half before it is due.
-                start += scene.duration
-                from = start
-                index = (index + 1) % rotation.scenes.count
-                try? await Task.sleep(for: .seconds(max(0, start - 1.5 - Date.timeIntervalSinceReferenceDate)))
-            }
-        }
+        // A second of frames at a time. Each is drawn with the run loop free
+        // between draws, so even the dearest scene never holds up the host
+        // for more than a few milliseconds, and the next scene is drawn as its
+        // first chunk comes due, not a scene ahead.
+        let plan = PlaybackPlan(sceneDurations: rotation.scenes.map(\.duration), fps: fps,
+                                scene: current, sceneStart: now - local, now: now)
+        let playback = ChunkedPlayback(
+            plan: plan,
+            draw: { [weak self] chunk in
+                guard let self else { return nil }
+                return Self.frames(of: rotation.scenes[chunk.scene], from: chunk.frames.lowerBound,
+                                   to: chunk.frames.upperBound, size: self.bounds.size, scale: scale,
+                                   tint: Color(tint), fps: fps)
+            },
+            begin: { [weak self] chunk, frames in self?.show(frames, of: chunk) },
+            release: { [weak self] chunk in self?.player.removeAnimation(forKey: chunk.key) })
+        self.playback = playback
+        playback.start()
     }
 
-    /// Hands the layer a scene's frames, the first shown at `begin` on the
-    /// rotation's clock.
-    private func show(_ frames: [CGImage], of index: Int, from begin: Double) {
+    /// Hands the layer a chunk's frames, the first shown when the chunk is due
+    /// on the rotation's clock.
+    private func show(_ frames: [CGImage], of chunk: PlaybackChunk) {
         guard !frames.isEmpty else { return }
-        // A frame from the middle of the scene as the layer's own contents,
+        // A frame from the middle of the chunk as the layer's own contents,
         // for anything that captures the layer rather than watching it;
-        // while the animation runs, it is never seen.
+        // while the animations run, it is never seen.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         player.contents = frames[frames.count / 2]
         CATransaction.commit()
+        let wait = chunk.begin - Date.timeIntervalSinceReferenceDate
+        let beginTime = player.convertTime(CACurrentMediaTime(), from: nil) + wait
+        player.add(Self.animation(of: frames, fps: chunk.fps, beginTime: beginTime), forKey: chunk.key)
+    }
+
+    /// A chunk's frames as one animation of the layer's contents.
+    static func animation(of frames: [CGImage], fps: Double, beginTime: CFTimeInterval) -> CAKeyframeAnimation {
         let animation = CAKeyframeAnimation(keyPath: "contents")
         animation.values = frames
         animation.calculationMode = .discrete
         animation.keyTimes = (0...frames.count).map { NSNumber(value: Double($0) / Double(frames.count)) }
-        animation.duration = Double(frames.count) / Self.fps
-        let wait = begin - Date.timeIntervalSinceReferenceDate
-        animation.beginTime = player.convertTime(CACurrentMediaTime(), from: nil) + wait
-        player.add(animation, forKey: "scene \(index)")
+        animation.duration = Double(frames.count) / fps
+        animation.beginTime = beginTime
+        // The last frame stays up once the chunk has played, until the chunk is
+        // released. The next is due as this one ends, or up to a frame later
+        // when a scene's frames fall short of its duration; either way what
+        // shows in between is this frame, never the layer's own contents.
+        animation.fillMode = .forwards
+        animation.isRemovedOnCompletion = false
+        return animation
     }
 
     /// Frames `from..<to` of a scene, drawn in one pass onto a sheet and cut
     /// apart. Each cell is a whole number of pixels, so the cuts are clean.
-    static func frames(of scene: LabScene, from: Int, to: Int, size: CGSize, scale: CGFloat, tint: Color) -> [CGImage] {
+    static func frames(of scene: LabScene, from: Int, to: Int, size: CGSize, scale: CGFloat, tint: Color,
+                       fps: Double = PlayedGlyphView.fps) -> [CGImage] {
         let count = to - from
         let pixels = CGSize(width: (size.width * scale).rounded(.up), height: (size.height * scale).rounded(.up))
         let cell = CGSize(width: pixels.width / scale, height: pixels.height / scale)
