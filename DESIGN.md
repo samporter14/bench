@@ -525,7 +525,9 @@ The Dock menu is never empty: with nothing working or waiting it says
 "Nothing working right now", and while Recent is still empty (right after a
 start) it lists **Latest**, the five sessions active most recently that
 neither work nor wait, from the last read. The popover lists Latest the same
-way since 0.3.1.
+way since 0.3.1. Below a divider it ends with **Quiet While Presenting**
+(Quiet while presenting); `applicationDockMenu` adds it, so the list is the
+same whatever the switch says.
 
 Recent is kept in memory only, so Capsid still writes nothing about sessions to
 disk; it lasts until Capsid quits. An event is the kind, the session and its
