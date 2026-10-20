@@ -11,11 +11,15 @@ struct ActivityList: View {
     @ObservedObject private var usagePause = UsagePauseModel.shared
     @Environment(\.colorScheme) private var colorScheme
 
-    private var failed: [SessionStatus] {
-        model.cards.compactMap { if case .failed(let session) = $0 { session } else { nil } }
-    }
+    /// Whether "N more" under Needs you has been pressed: all of its rows show.
+    @State private var showsAllNeeds = false
 
     var body: some View {
+        let height = ActivitySizing.currentHeightLimit()
+        let needs = NeedsYou(model: model)
+        // Working keeps its room: a long Needs you shows what fits, and the rest wait behind "N more".
+        let (shown, hidden) = needs.capped(
+            to: showsAllNeeds ? nil : ActivitySizing.needsRowLimit(height: height, workingRows: model.working.count))
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if let problem = model.problem {
@@ -32,22 +36,30 @@ struct ActivityList: View {
                     }
                     .font(.callout)
                 }
-                if !model.waiting.isEmpty || !failed.isEmpty {
+                if !needs.isEmpty {
+                    // What asks first, the longest wait on top; then what stopped with an
+                    // error; then, under their own title, what is put off with Later.
                     section("Needs you") {
-                        ForEach(model.waiting) { session in
-                            if let snoozed = model.snoozed.first(where: { $0.id == session.id }) {
-                                snoozedRow(snoozed)
-                            } else {
-                                row(session, line: (session.waitingReason ?? .other).sentence, accent: true) {
-                                    PlayedLoop(glyph: (session.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
-                                }
+                        ForEach(shown.asks) { session in
+                            row(session, line: (session.waitingReason ?? .other).sentence, accent: true) {
+                                PlayedLoop(glyph: (session.waitingReason ?? .other).glyph, tint: colorScheme.sceneInk)
                             }
                         }
-                        ForEach(failed) { session in
+                        ForEach(shown.failed) { session in
                             row(session, line: "Stopped with an error", accent: true) {
                                 symbol("exclamationmark.triangle")
                             }
                         }
+                        if !shown.later.isEmpty {
+                            Text("Later")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 6)
+                                .padding(.top, 8)
+                                .accessibilityAddTraits(.isHeader)
+                            ForEach(shown.later) { snoozedRow($0) }
+                        }
+                        if hidden > 0 { moreRow(hidden) }
                     }
                 }
                 if !model.working.isEmpty {
@@ -94,7 +106,7 @@ struct ActivityList: View {
                         }
                     }
                 }
-                if model.waiting.isEmpty, failed.isEmpty, model.working.isEmpty, model.recent.isEmpty, model.latest.isEmpty,
+                if needs.isEmpty, model.working.isEmpty, model.recent.isEmpty, model.latest.isEmpty,
                    model.problem == nil {
                     Text("Nothing yet. Sessions show up here while they work, and what they did stays under Recent.")
                         .foregroundStyle(.secondary)
@@ -103,8 +115,8 @@ struct ActivityList: View {
             }
             .padding(14)
         }
-        .frame(width: 360)
-        .frame(maxHeight: 480)
+        .frame(width: ActivitySizing.width)
+        .frame(maxHeight: height)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -154,6 +166,23 @@ struct ActivityList: View {
         }
         .accessibilityLabel([line, session.displayTitle, session.projectName].compactMap { $0 }.joined(separator: ", "))
         .accessibilityHint("Opens the session")
+    }
+
+    /// "3 more" at the end of a long Needs you: a press shows the rest.
+    private func moreRow(_ count: Int) -> some View {
+        ActivityRow(action: { showsAllNeeds = true }) {
+            HStack(spacing: 4) {
+                Text("\(count) more")
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                Spacer(minLength: 0)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.leading, 36)
+        }
+        .accessibilityLabel("\(count) more that need you")
+        .accessibilityHint("Shows them")
     }
 
     /// A waiting session whose card is put off with Later: the reminder in
