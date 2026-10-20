@@ -68,16 +68,18 @@ struct ScienceVersionTests {
                 == ["✓ Claude Science 0.1.63; Capsid was last checked with 0.1.63"])
     }
 
-    @Test func aDifferentVersionGetsAPlainNoteAboutThePage() {
+    @Test func aDifferentVersionGetsAPlainNoteAboutThePage() throws {
         let newer = ScienceVersion.lines(running: "0.1.65", checkedWith: "0.1.63")
-        #expect(newer.count == 2)
+        try #require(newer.count == 2)
         #expect(newer[0] == "• Claude Science 0.1.65; Capsid was last checked with 0.1.63")
         #expect(newer[1] == "  That is a newer Claude Science than Capsid was checked with, so features that depend on its page (the tab commands, the readouts, Approve) may need a look.")
 
         let older = ScienceVersion.lines(running: "0.1.50", checkedWith: "0.1.63")
+        try #require(older.count == 2)
         #expect(older[1].contains("an older Claude Science than Capsid was checked with"))
 
         let odd = ScienceVersion.lines(running: "0.1.64-rc1", checkedWith: "0.1.63")
+        try #require(odd.count == 2)
         #expect(odd[1].contains("not the Claude Science Capsid was checked with"))
         #expect(odd[1].hasSuffix("may need a look."))
     }

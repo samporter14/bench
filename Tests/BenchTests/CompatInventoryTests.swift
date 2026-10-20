@@ -526,17 +526,18 @@ struct CompatSchemaTests {
         // The optional column missing is a note, not a problem.
         let without = try InventoryDatabase(withOptional: false)
         defer { without.remove() }
-        #expect(Diagnose.schemaLines(db: without.url)[1] == "✓ Table projects: all 2 columns (archived_at is optional and isn't there)")
+        let lines = Diagnose.schemaLines(db: without.url)
+        #expect(lines.count == 4 && lines.dropFirst().first == "✓ Table projects: all 2 columns (archived_at is optional and isn't there)")
     }
 
     @Test func aMissingColumnIsNamedAndSoIsAMissingTable() throws {
         // Columns the old step never looked for.
         let noKind = try InventoryDatabase(omitting: "frames.conversation_type")
         defer { noKind.remove() }
-        #expect(Diagnose.schemaLines(db: noKind.url)[0] == "✗ Table frames: missing conversation_type")
+        #expect(Diagnose.schemaLines(db: noKind.url).first == "✗ Table frames: missing conversation_type")
         let noBody = try InventoryDatabase(omitting: "frame_blobs.body")
         defer { noBody.remove() }
-        #expect(Diagnose.schemaLines(db: noBody.url)[2] == "✗ Table frame_blobs: missing body")
+        #expect(Diagnose.schemaLines(db: noBody.url).dropFirst(2).first == "✗ Table frame_blobs: missing body")
 
         let empty = FileManager.default.temporaryDirectory.appendingPathComponent("bench-compat-\(UUID().uuidString).db")
         defer { try? FileManager.default.removeItem(at: empty) }
