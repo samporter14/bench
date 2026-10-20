@@ -1760,7 +1760,7 @@ takes `--step 1…7`).
 | Use Capsid from your phone (`remoteEnabled`, since 0.4.0; see Capsid on your phone) | off |
 | Skip "Put Tailscale on your phone" (`remotePhoneSkipped`; see Settings → Phone) | off |
 
-## Diagnostics (App/Diagnose.swift, App/Compat*.swift, since 0.7.4)
+## Diagnostics (App/Diagnose.swift, App/Compat*.swift, since 0.8.0)
 
 Help → Capsid Diagnostics… (also Settings → General → Diagnostics…, and the banner that says Capsid
 can't see your sessions) shows what Capsid can and can't see of Claude Science, one line per step, with
