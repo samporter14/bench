@@ -68,6 +68,7 @@ struct PhoneSettingsView: View {
                 NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
             },
             setEnabled: { remote.setEnabled($0) },
+            copyLink: { LinkCopy.copy($0, to: .general) },
             skipPhone: { phoneSkipped = true },
             refresh: { remote.refresh() },
             issueCode: { remote.issueCode() },
@@ -98,6 +99,8 @@ struct PhoneSetupActions {
     var open: @MainActor (URL) -> Void
     var openTailscale: @MainActor () -> Void
     var setEnabled: @MainActor (Bool) -> Void
+    /// Copy Link: the private address, to the pasteboard.
+    var copyLink: @MainActor (URL) -> Void
     var skipPhone: @MainActor () -> Void
     /// Try Again.
     var refresh: @MainActor () -> Void
@@ -109,8 +112,8 @@ struct PhoneSetupActions {
 
     /// A demo's: nothing opens, nothing changes, nothing is saved.
     static var none: PhoneSetupActions {
-        PhoneSetupActions(open: { _ in }, openTailscale: {}, setEnabled: { _ in }, skipPhone: {}, refresh: {},
-                          issueCode: {}, newCode: {}, withdrawCode: {}, remove: { _ in }, removeAll: {})
+        PhoneSetupActions(open: { _ in }, openTailscale: {}, setEnabled: { _ in }, copyLink: { _ in }, skipPhone: {},
+                          refresh: {}, issueCode: {}, newCode: {}, withdrawCode: {}, remove: { _ in }, removeAll: {})
     }
 }
 
@@ -209,26 +212,32 @@ struct PhoneSetupPage: View {
                 Text("Checking Tailscale…").foregroundStyle(.secondary)
             }
         } else if state.isReady {
-            // "Ready · 1 device", and the address under it, whole.
-            StepLine(mark: .done) {
-                VStack(alignment: .leading, spacing: 2) {
+            // "Ready · 1 device", and the address on a line of its own under
+            // it, whole, with Copy Link beside it.
+            VStack(alignment: .leading, spacing: 4) {
+                StepLine(mark: .done) {
                     Text(["Ready", state.facts[.pair]].compactMap { $0 }.joined(separator: " · "))
-                    Text(state.facts[.turnOn] ?? "")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(state.summary ?? "Ready")
-            } trailing: {
-                if state.showsPairing {
-                    Button("Cancel") {
-                        pairingAnotherFrom = nil
-                        actions.withdrawCode()
+                } trailing: {
+                    if state.showsPairing {
+                        Button("Cancel") {
+                            pairingAnotherFrom = nil
+                            actions.withdrawCode()
+                        }
+                    } else {
+                        Button("Pair Another Device") { pairingAnotherFrom = model.devices.count }
                     }
-                } else {
-                    Button("Pair Another Device") { pairingAnotherFrom = model.devices.count }
+                }
+                if let url = input.servingURL {
+                    HStack(spacing: 8) {
+                        Text(state.facts[.turnOn] ?? "")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        CopyLinkButton(url: url, copy: actions.copyLink)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.leading, stepIndent)
                 }
             }
             if state.showsPairing, let url = input.servingURL {
@@ -434,6 +443,48 @@ extension PhoneSetup {
     static let intro = "Use Claude Science from your iPhone or iPad: see what needs you, answer, approve and send messages, over your own private Tailscale network."
     /// Under the App Store's QR code.
     static let phoneMissing = "Don't see it? Make sure Tailscale is on and signed in with the same account on your phone (Apple, Google and GitHub sign-ins are separate accounts)."
+}
+
+// MARK: Copy Link
+
+/// Puts the private address on a pasteboard, as a URL and as plain text, so it
+/// pastes into a browser, a message or a note alike. The pasteboard is the
+/// caller's: Settings passes the general one, tests their own.
+enum LinkCopy {
+    /// How long Copy Link reads "Copied".
+    static let confirmation: Duration = .seconds(1.5)
+
+    static func copy(_ url: URL, to pasteboard: NSPasteboard) {
+        let text = url.absoluteString
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.URL, .string], owner: nil)
+        pasteboard.setString(text, forType: .URL)
+        pasteboard.setString(text, forType: .string)
+    }
+}
+
+/// "Copy Link", which reads "Copied" for a moment afterwards.
+private struct CopyLinkButton: View {
+    let url: URL
+    let copy: @MainActor (URL) -> Void
+    @State private var copied = false
+    /// Counts the presses, so a second one starts the wait again.
+    @State private var presses = 0
+
+    var body: some View {
+        Button(copied ? "Copied" : "Copy Link") {
+            copy(url)
+            copied = true
+            presses += 1
+        }
+        .controlSize(.small)
+        .task(id: presses) {
+            guard presses > 0 else { return }
+            try? await Task.sleep(for: LinkCopy.confirmation)
+            guard !Task.isCancelled else { return }
+            copied = false
+        }
+    }
 }
 
 // MARK: Rows

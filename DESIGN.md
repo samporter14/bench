@@ -845,7 +845,8 @@ projector) Capsid stays out of sight, then catches up.
     has put `Contents/Resources/Metadata.appintents` into the bundle. It runs
     from `Scripts/build-app.sh`, before signing.
 - **A switch.** "Quiet While Presenting" with a checkmark, in the app menu
-  (after Settings…) and in the Dock menu (after the activity list), for when
+  (after Settings…), in the Dock menu (after the activity list) and in
+  Settings → Alerts → While you present (below), for when
   the Focus filter never shows up in System Settings (a self-signed app built
   by SwiftPM can't be sure of it), or no Focus is kept for presenting. It
   stays on until turned off. It is **not saved**: a quit turns it off, so
@@ -854,8 +855,36 @@ projector) Capsid stays out of sight, then catches up.
   and the switch is separate from it: turning the switch off does not end a
   Focus's quiet.
 - **Never in a demo.** `PresentingMode.start()` is not called and refuses in
-  a demo, the filter's `perform()` does nothing in one, and the menu items
-  are disabled.
+  a demo, the filter's `perform()` does nothing in one, and the menu items,
+  and the Settings switch and button, are disabled.
+- **In Settings** (`Lab/PresentingSettings.swift`, since 0.9.0): a section
+  "While you present" on the Alerts tab, between "On the panel" and "Mac
+  notifications".
+  - *Quiet While Presenting*: the same switch, bound to
+    `PresentingMode.shared` (`manualOn`, so the menus' checkmarks follow it).
+    Its line under the title says what it does and, plainly, that it isn't
+    saved ("Hides the panel and mutes sounds and notifications. Not saved: off
+    again after a quit."). When a Focus is what keeps Capsid quiet the line
+    says so, in the Dock item's words ("A Focus is keeping Capsid quiet right
+    now. This switch is separate, and not saved."; with the switch on too, "…
+    too. Not saved: off again after a quit."): `PresentingSettings.rowDetail`,
+    pure and tested. Its ⓘ says what quiet covers (the phone's notifications,
+    the menu bar specimen, the Dock menu and the main window are not part of
+    it; finishes come as one card) and that a Focus and the switch each keep
+    Capsid quiet until both are off.
+  - *Quiet during a Focus*: "Add Capsid's filter to a Focus." with **Open
+    Focus Settings…**, which opens
+    `x-apple.systempreferences:com.apple.Focus-Settings.extension`
+    (`PresentingSettings.focusSettingsURL`). That is the bundle identifier of
+    the system's Focus settings extension
+    (/System/Library/ExtensionKit/Extensions/FocusSettingsExtension.appex,
+    `allowsXAppleSystemPreferencesURLScheme`), the shape Notifications' URL
+    has; a test compares it with that Info.plist where it exists. Its ⓘ gives
+    the path (Focus, the Focus used for presenting, Focus filters, Add Filter,
+    Capsid, "Keep Capsid quiet") and, since the filter might not show up for a
+    self-signed app, "If Capsid isn't in the list of filters, use the switch
+    above instead." The URL was checked by reading that extension, never
+    opened.
 
 **While quiet:**
 
@@ -898,8 +927,7 @@ projector) Capsid stays out of sight, then catches up.
   which name nothing; the list behind a click on it, the Dock menu and the
   main window are the user's own doing and are not hidden.
 
-**Not done:** a Settings page for this (the app menu and the Focus filter are
-the controls); catching up with a notification for a question raised while
+**Not done:** catching up with a notification for a question raised while
 quiet. The Focus filter's launch read, and the filter appearing in System
 Settings at all for a self-signed app, rest on the SDK's types and docs and
 had not been seen working when this was written; the switch is the sure way.
@@ -923,17 +951,23 @@ and project unless told not to, and where to turn it off.
 **Settings → Alerts → Mac notifications**, right after "When a session
 needs you" (`MacNotificationsSection`, in Lab/MacNotifications.swift):
 
-- **Also send a Mac notification.** Off. Its subtitle says it comes as
-  well as the card, shows in full screen and with the panel off, and that
-  macOS asks permission the first time. (Until 0.3.6 it also said "on your
-  iPhone": macOS doesn't send a Mac's notifications to an iPhone, only the
-  other way, so that went.) Turning it on asks macOS for alert and sound at once. If
+- **Also send a Mac notification.** Off. Its line says it comes as well as
+  the card, so you see it in full screen or with the panel off; its ⓘ adds
+  that macOS asks permission the first time, that notifications name the
+  session and its project unless names are off, and how to stop them (turn
+  the switch off, or Capsid off in System Settings → Notifications). (Until
+  0.3.6 it also said "on your iPhone": macOS doesn't send a Mac's
+  notifications to an iPhone, only the other way, so that went.) Turning it
+  on asks macOS for alert and sound at once. If
   the answer is no, the switch stays on and the Permission row says why.
 - **When a session finishes too.** Off. Without it, notifications come only
   when a session needs you or stops with an error.
 - **Show session and project names.** On. Off, they read "A session needs
   you", "A session stopped with an error" and "A session finished", with
-  nothing of the session's or project's in any field.
+  nothing of the session's or project's in any field. Its line says "Off,
+  they read "A session needs you", with no names and no answers."; its ⓘ
+  has the three sentences and that, on, a question's notification also
+  offers its answers.
 - Both switches are disabled while the first is off.
 - **Permission**, read from `UNUserNotificationCenter` when the section
   appears and whenever Capsid becomes active, so a change made in System
@@ -946,9 +980,10 @@ needs you" (`MacNotificationsSection`, in Lab/MacNotifications.swift):
   allowed. Made-up words ("This is how Capsid tells you a session needs
   you."), nothing of the user's. It banners even with Capsid in front, which
   it always is when sent from Settings.
-- A footer says it all again in one place: names are shown unless turned
-  off, and notifications stop by switching the first one off or by turning
-  Capsid off in System Settings → Notifications.
+- There is no footer any more (since 0.9.0): what it said, that names are
+  shown unless turned off and that notifications stop by switching the first
+  one off or by turning Capsid off in System Settings → Notifications, is in
+  the first switch's ⓘ.
 
 **What goes out.** `NotificationRules.content(for:settings:)` is pure and
 decides everything: nothing unless the setting is on and macOS allows it.
@@ -1185,7 +1220,9 @@ with Approve" until the question card, then "Show plans and questions on the
 card"), on by default. Off, a plan's card is Open and Later, and no plan is
 read; the same for every other wait (Answering from the card). A plan's
 card also has **Request changes…** (Answering from the card → What to change
-in a plan).
+in a plan). Its line under the title is "Approve a plan, reply to a question
+or allow a request right on the card."; the longer account of what each card
+shows and the check against the same plan, question or request is in its ⓘ.
 
 **Demo.** `Capsid --demo plan`: a made-up session whose made-up plan is
 ready ("Screen 24 buffer conditions", "10 steps · feasibility: high", with
@@ -1970,7 +2007,8 @@ own height (the window follows the tab):
 - **Panel** (`panel`): the specimen while a session works (show it, name it,
   the menu bar), where the panel sits (corner, screen, while Capsid is in
   front), and a way to the Specimens tab.
-- **Alerts** (`alerts`): on the panel (cards, plans with Approve, sound), Mac
+- **Alerts** (`alerts`): on the panel (cards, plans with Approve, sound),
+  Quiet While Presenting (since 0.9.0; see Quiet while presenting), Mac
   notifications, and what waits while Nidus is focusing.
 - **Usage** (`usage`): heads-up cards (plan and context, week in review).
 - **Specimens** (`scenes`): what plays (above).
@@ -1978,7 +2016,31 @@ own height (the window follows the tab):
 
 `--demo general|panel-settings|alerts|usage-settings|specimens|phone-settings`
 shows each in a plain window that doesn't activate Capsid (`phone-settings`
-takes `--step 1…7`).
+takes `--step 1…7`; `--open-info "<a row's title>"` opens that row's ⓘ by
+itself, for a screenshot of the popover).
+
+**Short descriptions, and the ⓘ (since 0.9.0).** Under a row's title is one
+plain line, or two at most, saying what the switch does for you. What is
+only needed to decide, or only now and then (what a card shows, the numbers
+behind a heads-up, where to turn something off, which switch works with which),
+is in an ⓘ: a small `info.circle` button after the title that opens a popover
+(`InfoButton` and `InfoTitle`, App/SettingsInfo.swift, the one component every
+page uses, with the long texts beside the pages: `AlertsInfo`, `UsageInfo`,
+`PanelInfo`, `MacNotificationsInfo`, `PresentingSettings`). The rows that
+have one: Alerts → Show a card, Show plans, questions and requests on the
+card, Also send a Mac notification, Show session and project names, Hold
+finishes and the two Quiet rows; Panel → Screen; Usage → Plan and context;
+Specimens → the heading; Phone → browsing. General has none: its lines were
+already two at most. Keys and behaviour are unchanged.
+
+**Page heights** (`settingsPage(height:)`, set from a capture so the first
+and last rows have the same margin, about 22 pt): General 634, Panel 504,
+Alerts 818 (it was 740, and already cut off at the bottom), Usage 238,
+Specimens 760×776, Phone 760. Alerts' two new rows (Quiet While Presenting,
+one line each) are mostly paid for by the shorter lines and by the Mac
+notifications footer moving into an ⓘ; the page is 78 pt taller than before. Phone's height is the
+checklist's tallest states (step 4 or 6 open), so in the ready state it has
+more room below; it is not trimmed.
 
 | Setting | Default |
 |---|---|
@@ -2652,9 +2714,15 @@ below are a scroll away.
    has the same `LoginName` (any case); a `UserID` of 0 (tagged) is nobody's.
    An online phone is named before an offline one, then by name.
 3. **Ready.** With all six done the section is one row: "Ready · 1 device"
-   with the address under it in secondary text (the address would otherwise
-   be cut short beside the button), and Pair Another Device. That opens the
-   pairing block under the row (its button becomes Cancel, which also
+   and Pair Another Device, and under it, on a line of its own, the address in
+   secondary text (it would otherwise be cut short beside the button) with
+   **Copy Link** next to it (since 0.9.0). Copy Link puts the address on the
+   pasteboard as a URL and as plain text (`LinkCopy.copy(_:to:)`, the pasteboard
+   given by the caller: the general one from Settings, a private one in tests),
+   and reads "Copied" for 1.5 s; another press starts the wait again. The link
+   is the one the pairing QR code holds, with its closing slash. A demo's
+   Copy Link does nothing (`PhoneSetupActions.none`). Pair Another Device
+   opens the pairing block under the row (its button becomes Cancel, which also
    withdraws the code) until one more device pairs.
 4. **The code** is issued only while "Pair your phone" is the step open
    (first time, or after Pair Another Device), not whenever the tab shows.

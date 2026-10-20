@@ -141,6 +141,71 @@ struct PresentingModeTests {
     }
 }
 
+/// Settings → Alerts → While you present: where its button goes and what its
+/// row says, for the switch alone and for a Focus.
+@MainActor
+struct PresentingSettingsTests {
+    @Test func theButtonOpensTheFocusPaneOfSystemSettings() {
+        let url = PresentingSettings.focusSettingsURL
+        #expect(url.scheme == "x-apple.systempreferences")
+        #expect(url.absoluteString == "x-apple.systempreferences:com.apple.Focus-Settings.extension")
+        // No query: Focus has no per-app page to land on, unlike Notifications.
+        #expect(url.query == nil)
+    }
+
+    @Test func theFocusPaneIsTheOneTheSystemsOwnExtensionNames() throws {
+        // The identifier in the URL is the bundle identifier of the settings
+        // extension System Settings loads for Focus. Read where it is; a Mac
+        // without it has nothing to compare.
+        let plist = URL(fileURLWithPath: "/System/Library/ExtensionKit/Extensions/FocusSettingsExtension.appex/Contents/Info.plist")
+        guard let data = try? Data(contentsOf: plist) else { return }
+        let info = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        let identifier = try #require(info["CFBundleIdentifier"] as? String)
+        #expect(PresentingSettings.focusSettingsURL.absoluteString == "x-apple.systempreferences:\(identifier)")
+    }
+
+    @Test func theRowSaysTheSwitchIsNotSavedWhateverIsKeepingCapsidQuiet() {
+        for (manual, focus) in [(false, false), (true, false), (false, true), (true, true)] {
+            let detail = PresentingSettings.rowDetail(manualOn: manual, focusFilterOn: focus)
+            #expect(detail.contains("Not saved") || detail.contains("not saved"), "\(manual) \(focus)")
+        }
+    }
+
+    @Test func theRowNamesAFocusOnlyWhenAFocusIsWhatKeepsCapsidQuiet() {
+        let manualOnly = PresentingSettings.rowDetail(manualOn: true, focusFilterOn: false)
+        let off = PresentingSettings.rowDetail(manualOn: false, focusFilterOn: false)
+        // The switch's own words, the same whether it is on or off.
+        #expect(manualOnly == off)
+        #expect(!off.contains("Focus"))
+        // A Focus, with the switch off and on: the Dock menu's own words.
+        let focusOnly = PresentingSettings.rowDetail(manualOn: false, focusFilterOn: true)
+        let both = PresentingSettings.rowDetail(manualOn: true, focusFilterOn: true)
+        #expect(focusOnly.hasPrefix("A Focus is keeping Capsid quiet"))
+        #expect(both.hasPrefix("A Focus is keeping Capsid quiet"))
+        #expect(focusOnly != both)
+    }
+
+    @Test func theRowAndTheDockItemSayItTheSameWay() {
+        let mode = PresentingMode()
+        mode.setFocusFilter(true)
+        let dock = PresentingMenu.shared.item(mode: mode, inDemo: false)
+        #expect(dock.subtitle == PresentingSettings.focusNote)
+        #expect(PresentingSettings.rowDetail(manualOn: mode.manualOn, focusFilterOn: mode.focusFilterOn)
+            .hasPrefix(dock.subtitle ?? "no subtitle"))
+    }
+
+    @Test func theSwitchTheSectionDrawsIsTheMenusAndIsNotSaved() {
+        // The row's switch calls `setManual` on `PresentingMode`, as the menu's
+        // does; this is the state it reads, which a new model starts without.
+        let before = PresentingMode()
+        before.setManual(true)
+        #expect(before.manualOn)
+        #expect(!PresentingMode().manualOn)
+        #expect(PresentingSettings.focusInfo.contains("use the switch above"))
+        #expect(PresentingSettings.switchInfo.contains("isn't saved"))
+    }
+}
+
 @MainActor
 struct PresentingPanelTests {
     private let prefs = LabPanelController.Preferences(showPanel: true, showCards: true, whileFront: true)

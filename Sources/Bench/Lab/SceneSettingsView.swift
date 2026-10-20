@@ -71,8 +71,11 @@ struct SceneSettingsView: View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("What plays while you work")
-                        .font(.title2.weight(.semibold))
+                    HStack(spacing: 6) {
+                        Text("What plays while you work")
+                            .font(.title2.weight(.semibold))
+                        InfoButton(title: "What plays while you work", text: Self.info)
+                    }
                     Text(hint)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -117,16 +120,25 @@ struct SceneSettingsView: View {
         }
     }
 
-    /// What a click does, which depends on what plays.
+    /// What a click does, which depends on what plays: two lines at most.
     private var hint: String {
         guard settings.onlyFavorites else {
-            return "One specimen at a time, in the panel at the corner of your screen. Click a specimen below to switch it on or off, or right-click it to play only that one. Star the ones you like best."
+            return "One plays at a time, in the panel. Click a specimen to switch it on or off; star your favorites."
         }
         if settings.favoriteCount == 0 {
-            return "Only your favorites play, and you have none yet: click a specimen below to star it. Until then, what’s on plays."
+            return "Only your favorites play, and you have none yet. Click a specimen to star it; until then, what’s on plays."
         }
-        return "Only your favorites play. Click a specimen below to star it or take its star away. What’s on is kept for when you switch back."
+        return "Only your favorites play. Click a specimen to star it or take its star away. What’s on is kept for later."
     }
+
+    /// In the heading's ⓘ: the rest of what the hint leaves out.
+    static let info = """
+        Click a specimen to switch it on or off, or right-click it for more: play only that one, add it to your \
+        favorites. Hover one to watch it alone in the preview.
+
+        Set Play to Only favorites and a click stars a specimen instead; only the starred ones play, and what’s \
+        on is kept for when you switch back.
+        """
 
     // MARK: Categories
 
