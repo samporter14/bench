@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "5fb21ed6720d",
+        "/app.js": "188865ae7463",
         "/app.css": "16831b9bd96a",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=5fb21ed6720d"></script>
+<script type="module" src="/app.js?v=188865ae7463"></script>
 </body>
 </html>
 """#
@@ -102,6 +102,8 @@ hist: dict(),        // session id -> its history rows, by index
 art: dict(),         // session id -> its artifacts
 files: dict(),       // version id -> { v, a, name, kind, size, mime, at }
 ftext: dict(),       // version id -> the text, markdown or table of a file
+seen: dict(),        // 's:<id>' / 'f:<version>' -> when it was last on screen, as a count (trimCaches)
+clock: 0,
 wrap: false,
 };
 const splitQuery = matchMedia('(min-width: 768px) and (min-height: 500px)');
@@ -204,7 +206,12 @@ class Down extends Error {
 constructor(status = 0) { super('down'); this.status = status; }
 }
 class Unauth extends Error {}
-const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+class Aborted extends Error {}
+const pause = (ms, signal) => new Promise((resolve) => {
+const done = () => { clearTimeout(timer); if (signal) signal.removeEventListener('abort', done); resolve(); };
+const timer = setTimeout(done, ms);
+if (signal) { if (signal.aborted) done(); else signal.addEventListener('abort', done, { once: true }); }
+});
 const retryWait = (res, n) => Math.min(10, Math.max(1, Number(res.headers.get('Retry-After')) || n)) * 1000 + Math.random() * 500;
 const isSlow = (e) => !!e && e.status === 429;
 const slowText = (d) => (d && d.error === 'busy' ? 'Another file is still coming. Try again in a moment.' : 'That’s a lot at once. Try again in a moment.');
@@ -230,17 +237,46 @@ resolve(false);
 return ticket;
 }
 const takeSlot = () => fileSlot().ready;
+async function takeSlotUnless(signal) {
+const ticket = fileSlot();
+if (!signal) return ticket.ready;
+const withdraw = () => ticket.cancel();
+signal.addEventListener('abort', withdraw, { once: true });
+try { return await ticket.ready; } finally { signal.removeEventListener('abort', withdraw); }
+}
 function giveSlot() {
 const next = FQ.wait.shift();
 if (next) next(); else FQ.n = Math.max(0, FQ.n - 1);
 }
 const isFile = (path) => path.startsWith('/api/files/');
-async function api(path, method = 'GET', body) {
+const SCOPES = dict();
+const scopeSignal = (key) => (key && typeof AbortController === 'function' ? (SCOPES[key] ||= new AbortController()).signal : undefined);
+function abortScopes(keep) {
+for (const key of Object.keys(SCOPES)) {
+if (keep && keep.has(key)) continue;
+const controller = SCOPES[key];
+delete SCOPES[key];
+controller.abort();
+}
+}
+function scopesInUse() {
+const keep = new Set();
+if (S.view !== 'app') return keep;
+const r = route();
+if (r.id) keep.add('s:' + r.id);
+if (r.pid) keep.add('p:' + r.pid);
+if (S.split && S.side.pid) keep.add('p:' + S.side.pid);
+return keep;
+}
+const syncScopes = () => abortScopes(scopesInUse());
+async function api(path, method = 'GET', body, scope = '') {
 const post = method === 'POST';
 const file = isFile(path);
+const signal = post ? undefined : scopeSignal(scope);
 for (let n = 1; ; n++) {
 let res;
-if (file) await takeSlot();
+if (signal && signal.aborted) throw new Aborted();
+if (file && !(await takeSlotUnless(signal))) throw new Aborted();
 try {
 try {
 res = await fetch(path, {
@@ -248,9 +284,10 @@ method,
 cache: 'no-store',
 headers: post ? { 'Content-Type': 'application/json', 'X-Bench': '1' } : { Accept: 'application/json' },
 body: post ? JSON.stringify(body ?? {}) : undefined,
+signal,
 });
 } catch {
-throw new Down();
+throw signal && signal.aborted ? new Aborted() : new Down();
 }
 if (!(res.status === 429 && !post && n < 3)) {
 if (res.status === 401) throw new Unauth();
@@ -260,15 +297,16 @@ const e = new Error('http ' + res.status);
 e.status = res.status;
 e.wait = Number(res.headers.get('Retry-After')) || 0;
 try { e.data = await res.json(); } catch { /* not JSON */ }
+if (signal && signal.aborted) throw new Aborted();
 throw e;
 }
-try { return await res.json(); } catch { return null; }
+try { return await res.json(); } catch { if (signal && signal.aborted) throw new Aborted(); return null; }
 }
 try { await res.text(); } catch { /* gone */ }
 } finally {
 if (file) giveSlot();
 }
-await pause(retryWait(res, n));
+await pause(retryWait(res, n), signal);
 }
 }
 async function send(path, body) {
@@ -299,10 +337,11 @@ applyBadge();
 S.sig = '';
 S.sess = dict();
 S.ui = dict();
-Object.assign(S, { projects: { list: [], loaded: false, busy: false, err: false, at: 0 }, proj: dict(), newSess: dict(), hist: dict(), art: dict(), files: dict(), ftext: dict() });
+Object.assign(S, { projects: { list: [], loaded: false, busy: false, err: false, at: 0 }, proj: dict(), newSess: dict(), hist: dict(), art: dict(), files: dict(), ftext: dict(), seen: dict() });
 S.push = { loaded: false, unavailable: false, key: '', on: false, prefs: null, busy: false, msg: '' };
 S.me = null;
 disconnect();
+abortScopes();
 pill();
 render(true);
 }
@@ -311,6 +350,7 @@ if (S.view === 'offline' && S.down.err === err) return;
 S.view = 'offline';
 S.down = { status, err };
 disconnect();
+abortScopes();
 pill();
 render(true);
 }
@@ -372,14 +412,20 @@ async function loadSession(id, fresh = false) {
 const had = S.sess[id];
 S.sessAt[id] = Date.now();
 S.sessSig[id] = JSON.stringify(lookup(id));
-if (!had) S.sess[id] = { phase: 'loading', data: null };
+let placeholder = null;
+if (!had) S.sess[id] = placeholder = { phase: 'loading', data: null };
 try {
-const data = await api('/api/sessions/' + encodeURIComponent(id));
+const data = await api('/api/sessions/' + encodeURIComponent(id), 'GET', undefined, 's:' + id);
 wantHistory(id, data, fresh);
-if (had && had.phase === 'ok' && JSON.stringify(had.data) === JSON.stringify(data)) return true;
+if (had && had.phase === 'ok' && JSON.stringify(had.data) === JSON.stringify(data)) { trimCaches(); return true; }
 S.sess[id] = { phase: 'ok', data };
+trimCaches();
 } catch (e) {
 if (e instanceof Unauth) return showPair();
+if (e instanceof Aborted) { // left or put away while it was coming: nothing was learned, and no "Loading…" is left behind
+if (placeholder && S.sess[id] === placeholder) delete S.sess[id];
+return null;
+}
 if (e.status === 404) S.sess[id] = had && had.data ? { ...had, gone: true } : { phase: 'missing', data: null };
 else if (!had || !had.data) S.sess[id] = { phase: 'error', data: null, down: e instanceof Down };
 else return false; // kept what we had; the caller may try again
@@ -483,8 +529,8 @@ if (S.view === 'app' || S.view === 'offline') {
 refresh(true);
 if (S.view === 'app') {
 connect();
-const r = route();
-if (r.name === 'session') loadSession(r.id);
+enterRoute(); // asks again for what the screen was waiting on when the page was put away (`onHidden` dropped it)
+parkImages(false);
 syncLive();
 }
 }
@@ -492,7 +538,10 @@ syncLive();
 function onHidden() {
 stopTicker();
 disconnect();
+abortScopes();
+parkImages(true);
 syncLive();
+trimCaches();
 }
 const RE = { sid: /^[0-9a-f-]{36}$/, pid: /^[A-Za-z0-9_-]{1,64}$/, vid: /^[A-Za-z0-9_-]{1,128}$/ };
 const browseOn = () => !S.me || S.me.browse !== false;
@@ -540,6 +589,7 @@ if (t.pid && !proj(t.pid).loaded) loadProject(t.pid, false);
 function enterRoute() {
 const r = route();
 syncSide(r);
+syncScopes(); // reads for a screen no longer wanted are dropped before the new one's are asked for
 if (!S.me) loadMe();
 if (r.name === 'settings') { loadMe(); loadPush(); }
 if (r.name === 'session') {
@@ -552,9 +602,10 @@ loadArtifacts(r.id);
 }
 if (r.name === 'file') {
 if (!S.sess[r.id]) loadSession(r.id);
-if (S.files[r.v]) maybeLoadText(r.v); else loadArtifacts(r.id);
+if (S.files[r.v]) maybeLoadText(r.v, r.id); else loadArtifacts(r.id);
 }
 ensureBrowse(r);
+trimCaches();
 }
 addEventListener('hashchange', () => {
 if (!S.split) S.scroll[S.rk] = window.scrollY;
@@ -983,15 +1034,19 @@ const id = LIVE.id;
 LIVE.busy = true;
 let d = null;
 let err = null;
-try { d = await api('/api/sessions/' + encodeURIComponent(id) + '/live'); } catch (e) { err = e; }
+try { d = await api('/api/sessions/' + encodeURIComponent(id) + '/live', 'GET', undefined, 's:' + id); } catch (e) { err = e; }
 LIVE.busy = false;
 if (seq !== LIVE.seq) return; // left, hidden or finished while it was coming
 let wait = LIVE_EVERY;
 if (err || !d || typeof d.working !== 'boolean') {
 if (err instanceof Unauth) return showPair();
+if (err instanceof Aborted) {
+wait = LIVE_EVERY; // dropped with its screen, which is no failure; only if the screen is still wanted does it ask again
+} else {
 if (err && (err.status === 404 || err.status === 405 || err.status === 403)) { LIVE.off[id] = true; return stopLive(); } // an older version on the Mac, or the session is gone
 LIVE.fails++;
 wait = err && isSlow(err) ? Math.min(10, Math.max(2, err.wait || 2)) * 1000 + Math.random() * 500 : Math.min(15000, LIVE_EVERY * 2 ** LIVE.fails);
+}
 } else if (!d.working) {
 return liveDone(id);
 } else {
@@ -1128,21 +1183,26 @@ const sv = inPane
 fillSession(sv, id);
 return sv;
 }
-function setRegion(body, name, sig, build) {
-const el = body.querySelector(`:scope > [data-r="${name}"]`);
-if (!el || el.dataset.sig === sig) return;
+function holdFocus(el) {
 const active = document.activeElement;
 const key = active && el.contains(active) ? active.dataset.key : '';
 const caret = key && active.selectionStart != null ? [active.selectionStart, active.selectionEnd] : null;
-el.dataset.sig = sig;
-replaceContents(el, ...build().filter(Boolean));
-if (key) {
+return () => {
+if (!key) return;
 const again = el.querySelector(`[data-key="${CSS.escape(key)}"]`);
-if (again) {
+if (!again) return;
 again.focus({ preventScroll: true });
 if (caret && again.setSelectionRange) try { again.setSelectionRange(caret[0], caret[1]); } catch { /* not a text field */ }
+};
 }
-}
+function setRegion(body, name, sig, build) {
+const el = body.querySelector(`:scope > [data-r="${name}"]`);
+if (!el || el.dataset.sig === sig) return;
+const restore = holdFocus(el);
+el.dataset.sig = sig;
+el._hist = null; // whatever the conversation kept here (setHistory) goes with the contents
+replaceContents(el, ...build().filter(Boolean));
+restore();
 }
 function fillSession(sv, id) {
 const body = sv.querySelector('.sess-body');
@@ -1183,7 +1243,7 @@ icon('chev', 'sm chev'))))] : []));
 const H = browseOn() ? hist(id) : null;
 const fullHist = !!(H && H.loaded);
 if (fullHist) {
-set('convo', [H.rev, H.from, H.busy, H.err, u.more, Object.keys(H.full).length, H.cutBusy, H.cutErr], () => [histCard(id, H, u)]);
+setHistory(body, id, H, u);
 } else {
 set('convo', d && d.turns && d.turns.length ? [d.turns, u.shown, u.more] : 0, () => (d && d.turns && d.turns.length ? [convo(id, d.turns, u)] : []));
 }
@@ -1745,7 +1805,7 @@ const qs = [];
 if (more) qs.push('before=' + encodeURIComponent(P.next));
 if (q) qs.push('q=' + encodeURIComponent(q));
 try {
-const d = await api(`/api/projects/${pid}/sessions` + (qs.length ? '?' + qs.join('&') : ''));
+const d = await api(`/api/projects/${pid}/sessions` + (qs.length ? '?' + qs.join('&') : ''), 'GET', undefined, 'p:' + pid);
 if (seq !== P.seq) return; // a newer search has taken over
 const rows = Array.isArray(d && d.sessions) ? d.sessions.filter((x) => x && RE.sid.test(x.id)) : [];
 P.items = more ? P.items.concat(rows) : rows;
@@ -1756,7 +1816,7 @@ P.loaded = true;
 if (seq !== P.seq) return;
 if (e instanceof Unauth) { P.busy = false; return showPair(); }
 if (isBrowseOff(e)) { P.busy = false; return setBrowseOff(); }
-P.err = true;
+if (!(e instanceof Aborted)) P.err = true; // left while it was coming: not an error, and the list is asked for again on return
 }
 P.busy = false;
 paintProject(pid);
@@ -1922,11 +1982,22 @@ let tries = 0;
 let disposed = false;
 let slot = null;
 let retryTimer = 0;
+let parked = false;
 img._disposeFileImage = () => {
 disposed = true;
 if (nearScreen) nearScreen.unobserve(img);
 if (slot) slot.cancel();
 clearTimeout(retryTimer);
+};
+img._park = () => {
+if (disposed) return;
+if (slot) { parked = true; slot.cancel(); }
+if (retryTimer) { clearTimeout(retryTimer); retryTimer = 0; parked = true; }
+};
+img._resume = () => {
+if (!parked || disposed) return;
+parked = false;
+img._load();
 };
 img._load = async () => {
 if (disposed || !img.isConnected) return;
@@ -1951,6 +2022,12 @@ else failed(img);
 };
 if (nearScreen) nearScreen.observe(img); else queueMicrotask(img._load);
 return img;
+}
+function parkImages(park) {
+for (const img of root.querySelectorAll('img')) {
+const call = park ? img._park : img._resume;
+if (call) call();
+}
 }
 async function getFile(f) {
 await takeSlot();
@@ -1981,13 +2058,14 @@ const A = art(id);
 if (A.busy) return;
 A.busy = true;
 try {
-const d = await api('/api/sessions/' + id + '/artifacts');
+const d = await api('/api/sessions/' + id + '/artifacts', 'GET', undefined, 's:' + id);
 A.items = (Array.isArray(d && d.artifacts) ? d.artifacts : []).filter((f) => f && RE.vid.test(f.v));
 rememberFiles(A.items);
 A.loaded = true;
 A.err = false;
 } catch (e) {
 A.busy = false;
+if (e instanceof Aborted) return;
 if (e instanceof Unauth) return showPair();
 if (isBrowseOff(e)) return setBrowseOff();
 A.err = true;
@@ -1995,23 +2073,28 @@ return onArtifacts(id);
 }
 A.busy = false;
 onArtifacts(id);
+trimCaches();
 }
 function onArtifacts(id) {
 const r = route();
 if ((r.name === 'artifacts' || r.name === 'file') && r.id === id) {
-if (r.name === 'file') maybeLoadText(r.v);
+if (r.name === 'file') maybeLoadText(r.v, id);
 render(false, true);
 } else if (r.name === 'session' && r.id === id) redrawSession(id);
 }
-function maybeLoadText(v) {
+function maybeLoadText(v, id) {
 const f = S.files[v];
 const had = S.ftext[v];
 if (!f || !['markdown', 'text', 'table'].includes(f.kind) || (had && !(had.phase === 'err' && had.status === 429))) return;
-S.ftext[v] = { phase: 'loading' };
-api('/api/files/' + v + '/text')
-.then((d) => { S.ftext[v] = { phase: 'ok', data: d }; })
+const mine = (S.ftext[v] = { phase: 'loading' });
+api('/api/files/' + v + '/text', 'GET', undefined, 's:' + id)
+.then((d) => { S.ftext[v] = { phase: 'ok', data: d }; trimCaches(); })
 .catch((e) => {
 if (e instanceof Unauth) return showPair();
+if (e instanceof Aborted) { // left while it was coming: it is asked for again when the file is opened, or the page comes back
+if (S.ftext[v] === mine) delete S.ftext[v];
+return;
+}
 if (isBrowseOff(e)) return setBrowseOff();
 S.ftext[v] = { phase: 'err', status: e.status };
 })
@@ -2164,7 +2247,8 @@ const hist = (id) => (S.hist[id] ||= { items: dict(), total: 0, from: null, at: 
 function mergeHist(H, d) {
 for (const it of Array.isArray(d && d.items) ? d.items : []) {
 if (!it || !Number.isInteger(it.i)) continue;
-H.items[it.i] = it;
+const had = H.items[it.i];
+if (!had || JSON.stringify(had) !== JSON.stringify(it)) H.items[it.i] = it;
 rememberFiles(it.files);
 }
 if (Number.isInteger(d && d.total)) H.total = d.total;
@@ -2175,17 +2259,19 @@ async function loadHistory(id, at = '') {
 if (!browseOn()) return;
 const H = hist(id);
 try {
-mergeHist(H, await api(`/api/sessions/${id}/history`));
+mergeHist(H, await api(`/api/sessions/${id}/history`, 'GET', undefined, 's:' + id));
 H.loaded = true;
 H.failed = false;
 H.at = at;
 } catch (e) {
+if (e instanceof Aborted) return;
 if (e instanceof Unauth) return showPair();
 if (isBrowseOff(e)) return setBrowseOff();
 if (!H.loaded) H.failed = true;
 return;
 }
 redrawSession(id);
+trimCaches();
 }
 const scroller = () => (S.split ? root.querySelector('.detail') : document.scrollingElement);
 function captureAnchor() {
@@ -2215,12 +2301,12 @@ H.err = false;
 redrawSession(id);
 let d;
 try {
-d = await api(`/api/sessions/${id}/history?before=${H.from}`);
+d = await api(`/api/sessions/${id}/history?before=${H.from}`, 'GET', undefined, 's:' + id);
 } catch (e) {
 H.busy = false;
 if (e instanceof Unauth) return showPair();
 if (isBrowseOff(e)) return setBrowseOff();
-H.err = true;
+if (!(e instanceof Aborted)) H.err = true; // left while it was coming: not an error; scrolling to the top asks again
 return redrawSession(id);
 }
 const anchor = captureAnchor();
@@ -2228,6 +2314,7 @@ mergeHist(H, d);
 H.busy = false;
 redrawSession(id);
 restoreAnchor(anchor);
+trimCaches();
 requestAnimationFrame(() => requestAnimationFrame(() => restoreAnchor(anchor)));
 }
 async function showAll(id, i) {
@@ -2238,15 +2325,16 @@ H.cutErr[i] = false;
 H.rev++;
 redrawSession(id);
 try {
-const d = await api(`/api/sessions/${id}/turn/${i}`);
+const d = await api(`/api/sessions/${id}/turn/${i}`, 'GET', undefined, 's:' + id);
 if (d && typeof d.text === 'string') H.full[i] = d.text;
 } catch (e) {
 if (e instanceof Unauth) return showPair();
-H.cutErr[i] = true;
+if (!(e instanceof Aborted)) H.cutErr[i] = true; // left while it was coming: not an error; "Show all" is still there
 }
 H.cutBusy[i] = false;
 H.rev++;
 redrawSession(id);
+trimCaches();
 }
 function chips(id, files) {
 const list = (files || []).filter((f) => f && RE.vid.test(f.v));
@@ -2291,15 +2379,62 @@ chips(id, it.files));
 default: return null;
 }
 }
-function histCard(id, H, u) {
-const items = Object.values(H.items).sort((a, b) => a.i - b.i);
-let top;
+function histTop(id, H) {
 if (H.from > 0) {
-if (H.err) top = h('div', { class: 'hist-top' }, h('p', { class: 'quiet', text: 'Couldn’t load earlier messages.' }), h('button', { class: 'btn earlier', type: 'button', text: 'Try again', 'data-key': 'earlier', onclick: () => loadEarlier(id) }));
-else if (H.busy) top = h('div', { class: 'hist-top' }, h('p', { class: 'quiet', text: 'Loading earlier messages…' }));
-else top = h('div', { class: 'hist-top' }, 'IntersectionObserver' in window ? null : h('button', { class: 'btn earlier', type: 'button', text: 'Load earlier messages', 'data-key': 'earlier', onclick: () => loadEarlier(id) }));
-} else top = h('p', { class: 'hist-begin', text: 'Beginning of the conversation' });
-return section('Conversation', 0, [top, h('ul', { class: 'group hist' }, items.map((it) => histRow(id, it, H, u)))]);
+if (H.err) return h('div', { class: 'hist-top' }, h('p', { class: 'quiet', text: 'Couldn’t load earlier messages.' }), h('button', { class: 'btn earlier', type: 'button', text: 'Try again', 'data-key': 'earlier', onclick: () => loadEarlier(id) }));
+if (H.busy) return h('div', { class: 'hist-top' }, h('p', { class: 'quiet', text: 'Loading earlier messages…' }));
+return h('div', { class: 'hist-top' }, 'IntersectionObserver' in window ? null : h('button', { class: 'btn earlier', type: 'button', text: 'Load earlier messages', 'data-key': 'earlier', onclick: () => loadEarlier(id) }));
+}
+return h('p', { class: 'hist-begin', text: 'Beginning of the conversation' });
+}
+function syncChildren(parent, nodes) {
+const wanted = new Set(nodes);
+for (const node of Array.from(parent.childNodes)) if (!wanted.has(node)) node.remove();
+nodes.forEach((node, k) => { if (parent.childNodes[k] !== node) parent.insertBefore(node, parent.childNodes[k] || null); });
+}
+const sameList = (a, b) => a.length === b.length && a.every((x, k) => x === b[k]);
+function setHistory(body, id, H, u) {
+const el = body.querySelector(':scope > [data-r="convo"]');
+if (!el) return;
+const day = dayStart(new Date());
+const sig = JSON.stringify([H.rev, H.from, H.busy, H.err, u.more, Object.keys(H.full).length, H.cutBusy, H.cutErr, day]);
+if (el._hist && el._hist.H === H && el.dataset.sig === sig) return;
+const restore = holdFocus(el);
+el.dataset.sig = sig;
+if (!el._hist || el._hist.H !== H) {
+const ul = h('ul', { class: 'group hist' });
+el._hist = { H, ul, top: null, topKind: '', rows: new Map() };
+replaceContents(el, section('Conversation', 0, [ul]));
+}
+const hs = el._hist;
+const kind = H.from > 0 ? (H.err ? 'err' : H.busy ? 'busy' : 'idle') : 'begin';
+if (kind !== hs.topKind) {
+const top = histTop(id, H);
+if (hs.top) hs.top.replaceWith(top); else hs.ul.before(top);
+hs.top = top;
+hs.topKind = kind;
+}
+const items = Object.values(H.items);
+const rows = new Map();
+const stale = [];
+const nodes = [];
+for (const it of items) {
+const made = [it, !!u.more['h' + it.i], H.full[it.i], !!H.cutBusy[it.i], !!H.cutErr[it.i], it.at ? day : 0];
+const text = typeof H.full[it.i] === 'string' ? H.full[it.i] : it.text;
+let row = hs.rows.get(it.i);
+if (row && !(sameList(row.made, made) && !(typeof text === 'string' && text.includes('![')))) { stale.push(row.el); row = null; }
+if (!row) row = { made, el: histRow(id, it, H, u) };
+rows.set(it.i, row);
+if (row.el) nodes.push(row.el);
+}
+for (const [i, row] of hs.rows) if (!rows.has(i)) stale.push(row.el);
+hs.rows = rows;
+syncChildren(hs.ul, nodes);
+for (const old of stale) {
+if (!old || old.isConnected) continue;
+for (const img of old.querySelectorAll('img')) if (img._disposeFileImage) img._disposeFileImage(); // their images go with them
+}
+restore();
 }
 let histWatcher = null;
 function watchHistTop(sv, id) {
@@ -2311,6 +2446,86 @@ if (!el || !('IntersectionObserver' in window)) return;
 const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadEarlier(id); }, { root: S.split ? sv.closest('.detail') : null, rootMargin: '300px 0px -55% 0px' }); // only the upper part of the screen counts
 io.observe(el);
 histWatcher = { el, io };
+}
+const KEEP = { sessions: 8, sessionChars: 1500000, texts: 4, textChars: 768000 };
+const weights = new WeakMap();
+function weigh(value, measure) {
+if (value === null || typeof value !== 'object') return measure(value);
+let n = weights.get(value);
+if (n === undefined) weights.set(value, (n = measure(value)));
+return n;
+}
+const jsonChars = (value) => JSON.stringify(value).length;
+function histChars(H) {
+let n = 0;
+for (const it of Object.values(H.items)) n += weigh(it, jsonChars);
+for (const i in H.full) n += H.full[i].length;
+return n;
+}
+function sessChars(id) {
+const rec = S.sess[id];
+const H = S.hist[id];
+const A = S.art[id];
+return (rec && rec.data ? weigh(rec.data, jsonChars) : 0) + (H ? histChars(H) : 0) + (A ? weigh(A.items, jsonChars) : 0);
+}
+function sessBusy(id) {
+const rec = S.sess[id];
+const H = S.hist[id];
+const A = S.art[id];
+const u = S.ui[id];
+const o = S.open[id];
+return !!((rec && rec.phase === 'loading') || (A && A.busy) || (H && (H.busy || Object.values(H.cutBusy).some(Boolean)))
+|| (u && (u.sending || Object.values(u.busy).some(Boolean))) || (o && o.phase === 'busy'));
+}
+function dropSession(id) {
+delete S.sess[id];
+delete S.hist[id];
+delete S.art[id];
+delete S.sessAt[id];
+delete S.sessSig[id];
+delete S.seen['s:' + id];
+}
+function trimCaches() {
+if (S.view !== 'app') return;
+const r = route();
+const openSession = r.id || '';
+const openFile = r.name === 'file' ? r.v : '';
+if (openSession) S.seen['s:' + openSession] = ++S.clock;
+if (openFile) S.seen['f:' + openFile] = ++S.clock;
+const others = [];
+let chars = 0;
+for (const id of new Set([...Object.keys(S.sess), ...Object.keys(S.hist), ...Object.keys(S.art)])) {
+if (id === openSession) continue;
+const n = sessChars(id);
+others.push({ id, n, at: S.seen['s:' + id] || 0 });
+chars += n;
+}
+let count = others.length;
+for (const o of others.sort((a, b) => a.at - b.at)) {
+if (count <= KEEP.sessions && chars <= KEEP.sessionChars) break;
+if (sessBusy(o.id)) continue;
+dropSession(o.id);
+count--;
+chars -= o.n;
+}
+const texts = [];
+chars = 0;
+for (const v of Object.keys(S.ftext)) {
+if (v === openFile) continue;
+const entry = S.ftext[v];
+const n = entry.data ? weigh(entry.data, jsonChars) : 0;
+texts.push({ v, n, at: S.seen['f:' + v] || 0, busy: entry.phase === 'loading' });
+chars += n;
+}
+count = texts.length;
+for (const t of texts.sort((a, b) => a.at - b.at)) {
+if (count <= KEEP.texts && chars <= KEEP.textChars) break;
+if (t.busy) continue;
+delete S.ftext[t.v];
+delete S.seen['f:' + t.v];
+count--;
+chars -= t.n;
+}
 }
 function settingsContent() {
 const me = S.me;
@@ -2696,6 +2911,7 @@ visualViewport.addEventListener('resize', () => document.documentElement.classLi
 }
 splitQuery.addEventListener('change', (e) => {
 S.split = e.matches;
+syncScopes();
 if (S.view === 'app') render(true);
 });
 S.rk = routeKey();

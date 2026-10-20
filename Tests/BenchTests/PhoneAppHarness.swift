@@ -77,6 +77,15 @@ final class PhoneAppHarness {
         Int(evaluate("__requests.filter((p) => p === \(Self.quoted(path))).length")?.toInt32() ?? -1)
     }
 
+    /// How many requests to `path` were aborted by their signal, and how many carried one.
+    func aborted(_ path: String) -> Int {
+        Int(evaluate("__inits.filter((r) => r.path === \(Self.quoted(path)) && r.signal && r.signal.aborted).length")?.toInt32() ?? -1)
+    }
+
+    func signalled(_ path: String) -> Int {
+        Int(evaluate("__inits.filter((r) => r.path === \(Self.quoted(path)) && r.signal).length")?.toInt32() ?? -1)
+    }
+
     /// The text of the first element matching `selector` in the page, or nil.
     func text(_ selector: String) -> String? {
         string("(function () { const el = document.getElementById('root').querySelector(\(Self.quoted(selector))); return el ? el.textContent : null; })()")
@@ -96,6 +105,7 @@ final class PhoneAppHarness {
     var __timerSeq = 0;
     var __sources = [];
     var __stateFailures = [];
+    var __inits = [];
     Date.now = function () { return __now; };
     globalThis.window = globalThis;
     globalThis.setTimeout = function (fn, ms) { var id = ++__timerSeq; __timers.push({ id: id, fn: fn, at: __now + Math.max(0, ms || 0), every: 0 }); return id; };
@@ -282,9 +292,29 @@ final class PhoneAppHarness {
         addEventListener: function (type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
         close: function () { this.closed = true; this.readyState = 2; },
     };
-    globalThis.fetch = function (path) {
+    // JavaScriptCore has no AbortController. This one is just enough for the app's reads: a signal that says whether it
+    // aborted, tells its listeners once, and lets one be removed.
+    globalThis.AbortSignal = function AbortSignal() { this.aborted = false; this.__listeners = []; };
+    AbortSignal.prototype.addEventListener = function (type, fn) { if (type === 'abort') this.__listeners.push(fn); };
+    AbortSignal.prototype.removeEventListener = function (type, fn) { this.__listeners = this.__listeners.filter(function (f) { return f !== fn; }); };
+    globalThis.AbortController = function AbortController() { this.signal = new AbortSignal(); };
+    AbortController.prototype.abort = function () {
+        var signal = this.signal;
+        if (signal.aborted) return;
+        signal.aborted = true;
+        signal.__listeners.slice().forEach(function (fn) { fn({ type: 'abort' }); });
+    };
+    // A request is kept with its method and signal (`__inits`). One that is not in the answers table never answers, but
+    // fails as an aborted fetch does once its signal fires.
+    globalThis.fetch = function (path, init) {
         __requests.push(path);
-        if (!(path in __answers)) return new Promise(function () {});
+        var signal = (init && init.signal) || null;
+        __inits.push({ path: path, method: (init && init.method) || 'GET', signal: signal });
+        if (!(path in __answers)) return new Promise(function (resolve, reject) {
+            if (!signal) return;
+            var fail = function () { reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
+            if (signal.aborted) fail(); else signal.addEventListener('abort', fail);
+        });
         var body = __answers[path];
         return Promise.resolve({
             status: 200, ok: true,

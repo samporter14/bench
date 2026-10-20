@@ -792,7 +792,11 @@ The Dock menu is never empty: with nothing working or waiting it says
 "Nothing working right now", and while Recent is still empty (right after a
 start) it lists **Latest**, the five sessions active most recently that
 neither work nor wait, from the last read. The popover lists Latest the same
-way since 0.3.1. It starts with **Next Waiting Session** (⌥⌘↓, dim when
+way since 0.3.1. Latest is published again when anything it shows of a session
+changes (its title, project, state or link, `drawsTheSame`, as for Working),
+not only when the sessions or their order do (since 0.9.2): a session renamed in
+place used to keep its old name in the Dock menu until another session moved. A
+read that moves only a session's tokens or its last write publishes nothing. It starts with **Next Waiting Session** (⌥⌘↓, dim when
 nothing asks) and a separator, then the sessions in the popover's order:
 Needs you, Later, Working, Recent. Below a divider it ends with **Quiet While
 Presenting** (Quiet while presenting); `applicationDockMenu` adds it, so the
@@ -2796,7 +2800,13 @@ Nidus task file has no timer unless a focused, eligible task is shared, and
 does not rewrite for token-only updates; an obsolete Quick Open search is
 cancelled rather than finished; a context read for the session left behind is
 cancelled; and the phone page lets go of the thumbnails and observers of a
-screen it replaced. No CPU or memory figure was taken for any of them.
+screen it replaced. No CPU or memory figure was taken for any of them. Three
+more follow from the code review's follow-on list (Capsid's phone page, not
+measured either): the page keeps a bounded number of left sessions and texts
+instead of every one it visited; the conversation's rows are built one at a time
+rather than all at once; and a read for a screen that was left, or a page put away,
+is cancelled on the phone and, for a file, on the Mac as well (Capsid on your
+phone, above), so the page's fetch for it stops.
 
 ## Files and ownership
 
@@ -3919,6 +3929,27 @@ demo's files). The shared files only gained hooks marked `// Phase 3 files`.
 - **Size**: a response is built whole (the body up to 8 MB) and sent once;
   the phone has 60 s to take it (then the connection goes), and a device has
   at most two files under way at once (Budgets, below).
+- **A phone that hangs up drops its read (since 0.9.2).** After a read's request
+  is in, the server keeps listening on its connection for the end (a FIN or a
+  reset; bytes that arrive are ignored). If it comes before the answer is
+  sent, the task answering is cancelled and the connection closed
+  (`RemoteServer.hungUp`). This holds for the reads (`RemoteRoute.isCancellableRead`: a
+  session, its live text, its artifacts and files, projects, a project's sessions,
+  history and turns), never for a write (an action, a photo, a new session, push,
+  Open on Mac and the rest answer to their end whatever happens to the connection).
+  An artifact read, which is the one that holds a transfer, is made abortable
+  (`ArtifactReadAbort`, the results shelf's own): cancelling its task asks the page
+  to abort that read's fetch by its nonce (`benchAbortRead`), so the Mac stops
+  reading the file, and the read returns as `cancelled` (the route would say 503 to
+  a phone that is no longer there). The transfer is given back once the page's read
+  has actually ended, not when the connection goes, as before. The other readers
+  (session, history, turn, live) have no abort in their page scripts: cancelling only
+  stops one that has not yet started its page read (history and turn check before
+  asking the page) and the encode and send. They are bounded by their own 15 s
+  deadlines. That Tailscale Serve closes its connection to Capsid when the phone
+  aborts is expected of its proxy (it ends the upstream request when the client
+  goes) and was not seen with a real phone; the tests hang up a real loopback
+  socket both ways (FIN and RST).
 - **`--demo remote`**: "Primer design" has one file of every kind (a chart
   drawn with CoreGraphics as a PNG, its WebP thumbnails written by Capsid as
   two-colour lossless VP8L since ImageIO can't write WebP, markdown, a CSV
@@ -4036,6 +4067,70 @@ fetched first and then saved from the bytes, so a refusal is a sentence under th
 still coming. Try again in a moment.") and never a saved file holding Capsid's
 answer. Every map the page keys by an id has no prototype, and an address
 naming a project or file `__proto__`, `constructor` or `prototype` opens Now.
+
+**Reads that belong to a screen stop with it (since 0.9.2).** A read for a
+screen (a session, its history rows, one earlier page of them, a whole turn, its
+live text, its artifact list and its files' texts; a project's sessions) carries
+the signal of a scope named for what it is about: `s:<session id>` for a session
+and everything under it (its artifacts and its files too, so moving among a
+session's own screens aborts nothing), `p:<project id>` for a project's list.
+`/api/state`, `/api/me`, `/api/projects` and `/api/push` are not scoped: they are
+the app's own and small. When a screen is left (`enterRoute`), the layout changes,
+or the page is put away (`onHidden`), every scope no screen needs is aborted
+(`syncScopes`, `abortScopes`): the iPad's sidebar keeps the project list it shows
+beside an open session. An aborted request is cancelled (`AbortController`, where
+the browser has one), and the connection it was on closes, which Capsid hears (How
+the server does it, below); one still waiting for one of the two slots is withdrawn
+without a request, and a 429's wait ends at once. It is `Aborted`, not `Down`, so
+it never shows the offline screen, an error on a list or a "Couldn't load" under
+Conversation; its loader puts back what it had taken (the busy flag, a
+"Loading…" placeholder) so asking again works, and nothing is left looking like
+a read under way. An aborted request keeps its slot until it has ended, so the two
+at a time never rise. When the page comes back, `enterRoute` asks again for what
+the screen was waiting on. Never aborted: any POST (a message, an answer, an
+approval, a photo, Open on Mac, Unpair), `send`, and a download or Share, which
+the person started (`getFile` takes its turn in the queue and keeps it). A page
+put away also withdraws images still queued for a slot (`parkImages`), and asks
+for them again when it is back; images already loading keep their slots.
+
+**What the page keeps of screens left (since 0.9.2).** Reads stay in memory so
+that going back shows them at once, but a Home Screen app lives for days, so what
+is not on screen is kept within a budget, the one shown least recently going
+first (`trimCaches`, on entering a screen, when a read lands and when the page is
+put away; the clock is a count, not a time). The numbers are for bounding growth
+in a long-lived page, not for memory pressure (a character is 2 bytes at most in
+JavaScript, so the sessions' share is about 3 MB and the texts' about 1.5 MB):
+
+| What | Kept besides the one open | Why |
+|---|---|---|
+| A session's read, its history rows (and whole turns from Show all) and its artifact list | 8 sessions and 1,500,000 characters of JSON between them | A history page is under 64 KB, so a dozen pages is about 0.8 MB: one long conversation is most of the budget; 8 is the sessions one goes back and forth among |
+| A file's text, markdown or table | 4 files and 768,000 characters | A text is read up to 256 KB and a table's JSON can reach 1 MB: one big table may push the others out, which is fine |
+
+The open session and file are kept however big. A session or text with a read
+under way (a "Loading…" placeholder, earlier rows coming, a turn, a list, a
+message or answer on its way) is kept until that ends. Never touched, by
+construction: `S.ui` (what the person typed or chose on a session: drafts, a
+photo made ready, answers to a question, a message's retry id) and
+`S.newSess` (a new session's text and photo), which are not reads; and `S.files`
+(a file's name, kind and size, about 200 bytes each), so an address naming a file
+known only from a history row still opens after its session was evicted. Sizes
+are worked out once per object (`weigh`, a `WeakMap`), history rows being
+kept as the same object while a read says the same of them.
+
+**The conversation's rows are made one at a time (since 0.9.2).** The history
+used to sort and build every loaded row whenever anything about it changed (a
+"More" tapped, earlier rows arriving, a whole turn loading). `setHistory` keeps
+the list and each row between updates, by index, with what the row was drawn
+from (its item, whether it is open, its whole text, whether that is loading or
+failed, the day for a row with a time), and builds a row again only when that
+changed, then puts the elements in order without touching the others
+(`syncChildren`); a row whose text has an image link is built each time, so it
+finds files listed since. The top of the list (earlier rows, loading, failed, the
+beginning) is made again only when it changes kind, which is what the intersection
+observer on it waits for. Rows that leave have their images let go
+(`_disposeFileImage`), as `replaceContents` does. Windowing (building only the rows
+near the screen) is not done: it would cost the scroll anchoring and find-in-page,
+and nothing measured says it is needed.
 
 ### Budgets (since the 0.4.0 security review)
 
