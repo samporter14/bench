@@ -328,6 +328,33 @@ enum PlanCheck {
         return true
     }
 
+    /// A waiting plan the frame doesn't point to: it says its root waits for
+    /// approval, and not yet approved, but names no plan file fit for a path.
+    /// That is the frame having changed (CompatBreadcrumbs), not a state.
+    static func frameMiss(_ frame: PlanFrame) -> CompatMiss? {
+        guard frame.status == awaitingStatus, frame.approval == .no else { return nil }
+        guard let versionID = frame.versionID, isVersionID(versionID) else { return .planWithoutVersion }
+        return nil
+    }
+
+    /// A plan file that isn't a JSON object, or has no summary to show.
+    static func planMiss(_ plan: PlanDocument?) -> CompatMiss? {
+        guard let plan else { return .planFileNotUnderstood }
+        return plan.summary == nil ? .planFileWithoutSummary : nil
+    }
+
+    /// An approve answer that means the route changed: not found (the frame
+    /// was read a moment before, so it is the route), a method it doesn't
+    /// take, or a 200 that isn't `{status: accepted}`. The other refusals
+    /// (a stale plan, a busy session, signed out) are the daemon answering.
+    static func writeMiss(_ result: APIWriteResult) -> CompatMiss? {
+        switch result.status {
+        case 404, 405: .approveRouteGone
+        case 200: result.isJSON && result.accepted ? nil : .approveAnswerNotUnderstood
+        default: nil
+        }
+    }
+
     /// What the daemon's answer to the approve POST means.
     static func outcome(_ result: APIWriteResult) -> PlanOutcome {
         switch result.status {
@@ -386,6 +413,8 @@ final class PlanApprover: ObservableObject {
         var post: @MainActor (String) async throws -> APIWriteResult
         /// How long "Approved ✓" stays before the card goes.
         var approvedPause: Duration
+        /// Where a read or an answer that isn't what Capsid expects is noted.
+        var breadcrumbs: CompatBreadcrumbs = .shared
 
         static func live() -> Dependencies {
             Dependencies(
@@ -558,13 +587,22 @@ final class PlanApprover: ObservableObject {
     /// waiting rather than the root.
     private func readPlan(_ id: String) async -> PlanPreview? {
         guard let framePath = PlanCheck.framePath(id),
-              let frameData = try? await dependencies.get(framePath),
-              let frame = PlanFrame(json: frameData),
-              let versionID = PlanCheck.versionToRead(frame),
+              let frameData = try? await dependencies.get(framePath) else { return nil }
+        // An answer that is not a frame, or a waiting plan that names no plan
+        // file, is Claude Science having changed (CompatBreadcrumbs); a read
+        // that failed, or a sub-agent waiting rather than the root, is not.
+        guard let frame = PlanFrame(json: frameData) else {
+            dependencies.breadcrumbs.record(.planFrameNotUnderstood)
+            return nil
+        }
+        if let miss = PlanCheck.frameMiss(frame) { dependencies.breadcrumbs.record(miss) }
+        guard let versionID = PlanCheck.versionToRead(frame),
               let versionPath = PlanCheck.versionPath(versionID),
               !Task.isCancelled,
               let planData = try? await dependencies.get(versionPath) else { return nil }
-        return PlanCheck.preview(frame: frame, plan: PlanDocument(json: planData))
+        let plan = PlanDocument(json: planData)
+        if let miss = PlanCheck.planMiss(plan) { dependencies.breadcrumbs.record(miss) }
+        return PlanCheck.preview(frame: frame, plan: plan)
     }
 
     // MARK: Approving
@@ -579,6 +617,7 @@ final class PlanApprover: ObservableObject {
         // nothing is sent.
         guard !Task.isCancelled, states[id] == .approving(shown) else { return .failed }
         guard let result = try? await dependencies.post(approvePath) else { return .failed }
+        if let miss = PlanCheck.writeMiss(result) { dependencies.breadcrumbs.record(miss) }
         return PlanCheck.outcome(result)
     }
 

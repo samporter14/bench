@@ -223,7 +223,7 @@ final class PlanUsageModel: ObservableObject {
         Task { [weak self] in
             do {
                 let data = try await WebContainer.shared.apiGET(fresh ? "/usage?fresh=1" : "/usage")
-                let parsed = try Self.parse(data)
+                let parsed = try Self.parseNoting(data)
                 self?.apply(parsed)
             } catch WebAPIError.notReady {
                 // Still signing in is not a failure: the status watcher reads
@@ -238,6 +238,23 @@ final class PlanUsageModel: ObservableObject {
                 self?.fail(error)
             }
         }
+    }
+
+    /// `parse`, and a breadcrumb (CompatBreadcrumbs) when the answer isn't the
+    /// shape Capsid reads: it can't be decoded, or it has none of the limits.
+    /// A refusal (`ok: false`) is the daemon saying no, not a change.
+    nonisolated static func parseNoting(_ data: Data, breadcrumbs: CompatBreadcrumbs = .shared) throws -> (limits: [PlanLimit], extra: PlanExtraUsage?) {
+        let parsed: (limits: [PlanLimit], extra: PlanExtraUsage?)
+        do {
+            parsed = try parse(data)
+        } catch PlanUsageError.refused {
+            throw PlanUsageError.refused
+        } catch {
+            breadcrumbs.record(.usageNotDecoded)
+            throw error
+        }
+        if parsed.limits.isEmpty { breadcrumbs.record(.usageWithoutLimits) }
+        return parsed
     }
 
     /// What one read of `GET /api/usage` says: the limits in the order of

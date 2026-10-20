@@ -4,6 +4,10 @@
 // step fails. Two ways in: `Capsid --diagnose` prints it and exits, and
 // Help → Capsid Diagnostics… shows it in a window with a Copy button.
 //
+// The window goes further than the command line: it also looks at the page
+// and the API it reads (Compat*.swift, DESIGN.md → Diagnostics), which need
+// the open window. Both list what is checked only when used.
+//
 // It names no projects, sessions or org IDs: only yes/no, versions, folders,
 // sizes, ages and counts, so it is safe to paste into a message.
 //
@@ -12,21 +16,25 @@ import AppKit
 import SwiftUI
 
 enum Diagnose {
-    /// What the session queries read, by table (Shared/Core/SQLiteSource.swift).
-    private static let expected: [(table: String, columns: [String])] = [
-        ("frames", ["id", "project_id", "name", "status", "created_at", "updated_at", "completed_at",
-                    "last_user_message_at", "root_frame_id", "parent_frame_id", "input_tokens",
-                    "output_tokens", "is_hidden", "output_data"]),
-        ("projects", ["id", "name"]),
-        ("frame_blobs", ["frame_id", "kind", "body"]),
-        ("frame_messages", ["frame_id", "msg_json"]),
-    ]
-
     @MainActor
     static func runIfAsked() {
         guard CommandLine.arguments.contains("--diagnose") else { return }
         report().forEach { print($0) }
+        // No web view exists out here, so the page can't be looked at.
+        ([CompatReport.notFromTheCommandLine, ""] + CompatReport.whenUsedLines()).forEach { print($0) }
         exit(0)
+    }
+
+    /// What the window adds to `report()`: a look at the page and the API it
+    /// reads, what is checked only when used, and the last time a feature
+    /// found something changed. On the main actor, for the page.
+    @MainActor
+    static func pageReport(environment: CompatProbeEnvironment = .live(),
+                           breadcrumbs: CompatBreadcrumbs = .shared) async -> [String] {
+        var out = [""] + CompatReport.probeLines(await CompatProbes.run(environment))
+        out += [""] + CompatReport.whenUsedLines()
+        if let problem = breadcrumbs.line() { out += ["", problem] }
+        return out
     }
 
     /// The whole report, one line per step. Blocking (it runs the CLI and
@@ -49,6 +57,7 @@ enum Diagnose {
             let status = try fetchCLIStatus()
             out.append("✓ Claude Science is running: version \(status.version), port \(status.port)")
             out.append("  its data folder: \(status.dataDir.map(tilde) ?? "not reported")")
+            out.append(contentsOf: ScienceVersion.lines(running: status.version))
         } catch let error as ScienceError {
             out.append("✗ Claude Science status: \(error.label) (\(detail(error)))")
         } catch {
@@ -96,8 +105,10 @@ enum Diagnose {
         }
 
         // 3. Its layout: a table or column the queries need that isn't there
-        // is the likeliest break after a Claude Science update.
-        for (table, columns) in expected {
+        // is the likeliest break after a Claude Science update. The list is the
+        // inventory's (CompatInventory.database), which the tests hold to what
+        // the queries really read.
+        for (table, columns, optional) in CompatInventory.schemaTables {
             switch schema(of: table, in: db) {
             case .failure(let message):
                 out.append("✗ Table \(table): \(message)")
@@ -105,7 +116,9 @@ enum Diagnose {
                 out.append("✗ Table \(table): missing")
             case .success(let present):
                 let missing = columns.filter { !present.contains($0) }
-                out.append(missing.isEmpty ? "✓ Table \(table): all \(columns.count) columns"
+                let absent = optional.filter { !present.contains($0) }
+                let extra = absent.isEmpty ? "" : " (\(absent.joined(separator: ", ")) is optional and isn't there)"
+                out.append(missing.isEmpty ? "✓ Table \(table): all \(columns.count) columns\(extra)"
                                            : "✗ Table \(table): missing \(missing.joined(separator: ", "))")
             }
         }
@@ -235,7 +248,9 @@ private struct DiagnosticsView: View {
         running = true
         Task {
             let report = await Task.detached(priority: .userInitiated) { Diagnose.report() }.value
+            // The first part is on screen while the page is looked at.
             lines = report
+            lines = report + (await Diagnose.pageReport())
             running = false
         }
     }
