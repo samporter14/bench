@@ -325,8 +325,14 @@ yet checked live: a real failed session, and a real notification close.
 
 ## 2026-10-19, Capsid 0.7.3: phone setup sees a connected Tailscale; the task you're viewing, for Nidus
 
-Two changes made in Codex chats, then reviewed here. Not released yet: 0.7.3
-(36) is a local build, installed on this Mac.
+Two changes made in Codex chats, then reviewed here.
+
+- ✅ Released as v0.7.3 (`Bench.zip` with Capsid.app inside) and installed
+  with the README's `install.sh` line, which quit the running copy:
+  /Applications/Capsid.app is 0.7.3 (36), signed by Solanum Code Signing,
+  CDHash `3c83b493…`, the same as the release's download and the local
+  build, and running. Phone access came back by itself: the new copy listens
+  on loopback 47280 and Serve's 8443 route points at it.
 
 **Phone setup detects connected Tailscale.**
 
