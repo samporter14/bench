@@ -874,6 +874,10 @@ final class ResultsShelf: ObservableObject {
         case .failed(let failure)?: return .failed(failure)
         default: break
         }
+        // A folder that stopped answering refuses at once: nothing is downloaded for it.
+        if savedFiles.isHeldOff(url.deletingLastPathComponent()) {
+            return .writeFailed(Self.couldntSave(ShelfSaveError.folderStillSilent))
+        }
         beginSaving(entry.version)
         defer { endSaving(entry.version) }
         switch await fetch(entry, priority: .foreground, keepsOnClose: true) {

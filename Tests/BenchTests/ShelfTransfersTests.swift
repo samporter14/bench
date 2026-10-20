@@ -2036,6 +2036,7 @@ struct ShelfSaveTimeoutTests {
         #expect(await shelf.save(file(3), to: again) == .writeFailed(Self.stillSilent))
         #expect(shelf.fileProblems["v-3"] == Self.stillSilent && shelf.saving.isEmpty)
         #expect(!rig.saved.written.contains(again.path))
+        #expect(!rig.reader.started.contains(download(3)), "and nothing was downloaded for it")
         // The write lands at last, late: the folder answers, and a save there goes through.
         gate.open()
         await until { rig.saved.written.contains(stuck.path) && !rig.writer.isHeldOff(stuck.deletingLastPathComponent()) }

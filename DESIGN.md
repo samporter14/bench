@@ -1823,8 +1823,9 @@ either has in hand answers busy (since 0.7.2).
 
 **Disk.** The temporary copies are written, read, re-checked and deleted by
 an actor (`ShelfTemporaryCopies`), off the main actor; saved files (Save…,
-Save All…) are written by another (`ShelfSavedFiles`), one at a time per
-destination and within a time limit (below). Each
+Save All…) are written through a coordinator on the main actor
+(`ShelfSavedFiles`) that runs each blocking write on a queue of its own, one
+at a time per destination and within a time limit (below). Each
 window opening is a run; a write that lands after its run was deleted is
 dropped, so a closed window's folder is never made again, and deleting an old
 run never touches the new one's. Quick Look asks for a copy on the main
@@ -1859,7 +1860,8 @@ at once ("The folder still isn't responding.") until its stuck call returns
 to find out. That is the rule for the saves behind it: a Save All into a dead
 folder costs one limit, not one per file. The write that found out fails
 after its limit, the files already in hand fail at once, and the rest are
-counted as couldn't be saved without being downloaded. Continuing instead
+counted as couldn't be saved without being downloaded (so is a single Save to
+that folder, refused before it downloads). Continuing instead
 would cost a limit and a stuck thread for every file. (A second folder on the
 same dead disk outside /Volumes costs one limit of its own before it fails
 fast too.) A file name has at most one write out at a time and stays spoken
