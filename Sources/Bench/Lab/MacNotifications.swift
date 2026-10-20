@@ -30,6 +30,9 @@ enum NotificationRules {
         /// A Nidus focus session holds finishes: the cards wait, and so do
         /// their notifications.
         var holdingFinishes = false
+        /// Capsid is quiet while the user presents (PresentingMode.swift):
+        /// nothing is sent, the held finishes' one included, until it ends.
+        var presenting = false
     }
 
     /// What to post for one card.
@@ -140,13 +143,14 @@ enum NotificationRules {
     }
 
     /// Nil when the card gets no notification: the setting is off, macOS
-    /// hasn't allowed it, a finish nobody asked for or one that waits for a
-    /// focus session, or a card that isn't about a session (a page's own
-    /// notification, a saved file, a notice). The one notice that is about
-    /// sessions is what finished during a focus session, which comes as one
-    /// when the session ends, as its card does.
+    /// hasn't allowed it, Capsid is quiet for a presentation, a finish nobody
+    /// asked for or one that waits for a focus session, or a card that isn't
+    /// about a session (a page's own notification, a saved file, a notice).
+    /// The one notice that is about sessions is what finished during a focus
+    /// session or while presenting, which comes as one when that ends, as its
+    /// card does.
     static func content(for card: LabCard, settings: Settings) -> Content? {
-        guard settings.enabled, settings.authorized else { return nil }
+        guard settings.enabled, settings.authorized, !settings.presenting else { return nil }
         if case .notice(let notice) = card { return heldFinishes(notice, cardID: card.id, settings: settings) }
         let session: SessionStatus
         let caption: String
@@ -175,24 +179,25 @@ enum NotificationRules {
                        sessionID: session.id, link: session.deepLink)
     }
 
-    /// The "While you focused" notice (`NoticeRules.held`), as a finish: only
-    /// when finishes are asked for. One session opens it on a click; more than
-    /// one only bring Bench forward.
+    /// The "While you focused" or "While you presented" notice
+    /// (`NoticeRules.held`), as a finish: only when finishes are asked for.
+    /// One session opens it on a click; more than one only bring Bench forward.
     private static func heldFinishes(_ notice: LabNotice, cardID: String, settings: Settings) -> Content? {
-        guard notice.isHeldFinishes, settings.finishes else { return nil }
+        guard let reason = notice.heldFor, settings.finishes else { return nil }
         var session: SessionStatus?
         if case .openSession(let s) = notice.action { session = s }
         let words = settings.showNames
             ? (title: notice.title, body: "\(notice.caption) · \(notice.detail)")
-            : (title: session == nil ? "Sessions finished while you focused" : "A session finished while you focused", body: "")
+            : (title: session == nil ? "Sessions finished \(reason.whileYou)" : "A session finished \(reason.whileYou)", body: "")
         return Content(id: cardID, title: words.title, body: words.body,
                        sound: !settings.benchPlaysSound, sessionID: session?.id, link: session?.deepLink)
     }
 }
 
 extension LabNotice {
-    /// What finished during a focus session, held until it ended.
-    var isHeldFinishes: Bool { id.hasPrefix("focus-held-") }
+    /// What finished during a focus session or while presenting, held until
+    /// that ended.
+    var isHeldFinishes: Bool { heldFor != nil }
 }
 
 private extension LabCard {
@@ -206,13 +211,13 @@ private extension LabCard {
 
 extension NotificationRules.Settings {
     /// What the user chose in Settings, as it is now.
-    init(authorized: Bool, holdingFinishes: Bool, defaults: UserDefaults = .standard) {
+    init(authorized: Bool, holdingFinishes: Bool, presenting: Bool = false, defaults: UserDefaults = .standard) {
         self.init(enabled: defaults.bool(forKey: SettingsKey.macNotifications),
                   authorized: authorized,
                   finishes: defaults.bool(forKey: SettingsKey.macNotifyFinishes),
                   showNames: defaults.bool(forKey: SettingsKey.macNotifyNames),
                   benchPlaysSound: defaults.bool(forKey: SettingsKey.soundOnNeedsInput),
-                  holdingFinishes: holdingFinishes)
+                  holdingFinishes: holdingFinishes, presenting: presenting)
     }
 }
 
@@ -356,7 +361,8 @@ final class MacNotifications: NSObject, ObservableObject {
     }
 
     private static func settings(authorized: Bool) -> NotificationRules.Settings {
-        NotificationRules.Settings(authorized: authorized, holdingFinishes: NidusFocus.shared.holding)
+        NotificationRules.Settings(authorized: authorized, holdingFinishes: NidusFocus.shared.holding,
+                                   presenting: PresentingMode.shared.isQuiet)
     }
 
     /// A notification with made-up words, to see how they look: no session

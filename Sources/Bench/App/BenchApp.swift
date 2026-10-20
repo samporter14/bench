@@ -67,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the main actor; this run's first copy waits for it (Results/ShelfTemporaryCopies.swift).
         ResultsShelf.shared.cleanUpAtLaunch()
         NidusFocus.shared.start()
+        // The Focus filter and the menu switch that keep Capsid quiet while
+        // presenting (Lab/PresentingMode.swift). A demo returned above.
+        PresentingMode.shared.start()
         NidusTaskContext.shared.start()
         NoticeWatchers.shared.start()
         // Running sessions held by a used-up plan limit (Lab/UsagePause.swift).
@@ -119,6 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// opened with the window closed.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = ActivityMenu.shared.make()
+        menu.addItem(.separator())
+        menu.addItem(PresentingMenu.shared.item())
         Logger.app.notice("Dock menu: \(menu.items.count, privacy: .public) items")
         return menu
     }
@@ -227,10 +232,19 @@ struct BenchCommands: Commands {
     /// Whether the main window is in front with its page ready: Close Other
     /// Tabs and Close All Tabs act on that page's tabs only (Web/PageTabs.swift).
     @ObservedObject private var tabs = PageTabCommands.shared
+    /// Quiet While Presenting's checkmark (Lab/PresentingMode.swift).
+    @ObservedObject private var presenting = PresentingMode.shared
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") { UpdatePrompts.checkFromMenu() }
+                .disabled(Demo.mode != nil)
+        }
+        CommandGroup(after: .appSettings) {
+            // The panel, sounds and notifications stay away; what finished
+            // comes as one card afterwards. A Focus filter does the same
+            // (App/PresentingFocusFilter.swift). A demo starts none of it.
+            Toggle(PresentingMenu.title, isOn: Binding(get: { presenting.manualOn }, set: { presenting.setManual($0) }))
                 .disabled(Demo.mode != nil)
         }
         CommandGroup(after: .newItem) {
