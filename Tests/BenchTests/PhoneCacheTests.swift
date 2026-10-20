@@ -304,18 +304,22 @@ struct PhoneHistoryRowsTests {
         #expect(app.string("order()") == "1,3,4,5,6,7,8,9")
     }
 
-    @Test func aHistoryReadAnewAfterEvictionBuildsFreshRows() throws {
+    @Test func aHistoryReadAnewAfterEvictionBuildsFreshRowsEvenWhenItLooksTheSame() throws {
         let app = try app()
         app.evaluate("""
             mergeHist(H, { items: rows(5, 10), total: 10, from: 5 }); H.loaded = true;
             open();
+            // Evicted, and read again: the same revision and the same place to start from, other words.
             delete S.hist['\(Self.a)'];
-            var H2 = hist('\(Self.a)'); mergeHist(H2, { items: rows(8, 10), total: 10, from: 8 }); H2.loaded = true;
+            var H2 = hist('\(Self.a)');
+            mergeHist(H2, { items: [5, 6, 7, 8, 9].map((i) => row(i, 'fresh ' + i)), total: 10, from: 5 }); H2.loaded = true;
             built.length = 0;
             redrawSession('\(Self.a)');
             """)
-        #expect(app.string("built.join()") == "8,9")
-        #expect(app.string("order()") == "8,9")
+        #expect(app.string("H2.rev === H.rev && H2.from === H.from") == "true")
+        #expect(app.string("built.join()") == "5,6,7,8,9")
+        #expect(app.string("byI()[7].textContent.includes('fresh 7')") == "true")
+        #expect(app.string("order()") == "5,6,7,8,9")
         #expect(app.exceptions == [])
     }
 }
