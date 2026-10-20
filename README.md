@@ -109,7 +109,10 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 - **Optional menu bar specimen.** Turn it on in Settings to see a session
   working, or a count of those waiting, from the menu bar.
 - **Usage at a glance.** The title bar shows how full your session's context
-  is and how much of your plan is left, with a countdown to when it resets.
+  is and how much of your 5-hour limit is left, with a countdown to when it
+  resets (or, if you prefer, whichever limit is lowest: Settings → Usage). A
+  weekly limit that's nearly used up shows instead, so it never catches you
+  out.
 
   <img src="docs/toolbar.png" width="418" alt="The title bar: a working session's timer, the context ring at 9%, and 54% of the plan left, resetting in 1 hour 28 minutes">
 

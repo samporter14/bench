@@ -323,6 +323,23 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-20, Capsid 0.9.1: the title bar shows the 5-hour limit
+
+Sam: the usage in the title bar should be the 5-hour limit, not the week. It
+showed whichever limit had the least left, so once the week had less left
+than the 5-hour window, the week.
+
+- Settings → Usage → Title bar shows: **5-hour limit** (the default now) or
+  **Whichever is lowest** (as before). With the 5-hour limit, a limit under a
+  fifth left (where its figure turns clay) with less left than the 5-hour
+  window shows instead, so it can't run out unseen. No 5-hour limit in the
+  answer: the lowest. One pure rule (`PlanUsageModel.shown`), 12 tests, 11
+  mutations caught (two only after the tie test ran both orders).
+- Only the toolbar label read `tightest`; notices, the usage pause and the
+  phone judge each limit themselves and are unchanged.
+- ✅ Quiet capture of Settings → Usage: the row and its ⓘ fit (page 316 pt).
+- ✅ `swift test`: 1,804 tests in 229 suites, all passing.
+
 ## 2026-10-20, Capsid 0.9.0: fifteen quality-of-life changes
 
 Sam said "Do all" to the fifteen ideas in a brainstorm made from background
