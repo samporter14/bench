@@ -196,18 +196,28 @@ private final class Rig {
 
     deinit { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
 
-    /// Long enough for the work started by a read to finish: the fake answers
-    /// at once, but through tasks.
-    func settle() async throws { try await Task.sleep(for: .milliseconds(60)) }
+    /// For an assertion that nothing happened, which a slow machine cannot
+    /// make fail: a short wait for anything wrongly started to show itself.
+    func settle() async throws { try await Task.sleep(for: .milliseconds(30)) }
 
-    func read(_ sessions: SessionStatus...) async throws {
-        model.ingest(ScienceSnapshot(runningCount: sessions.count, daemonVersion: "test", sessions: sessions))
-        try await settle()
+    /// Waits for what a read set going. The check is a task of the notifier's
+    /// (`sweeping`), which a read starts at once or not at all, so awaiting
+    /// it is exact; everything else a read does is done when it returns.
+    func read(_ sessions: SessionStatus...) async {
+        await read(ScienceSnapshot(runningCount: sessions.count, daemonVersion: "test", sessions: sessions))
     }
 
-    func read(_ snapshot: ScienceSnapshot) async throws {
+    func read(_ snapshot: ScienceSnapshot) async {
         model.ingest(snapshot)
-        try await settle()
+        await notifications.sweeping?.value
+    }
+
+    /// Polls for a condition that only a task outside the notifier's own can
+    /// bring about, with a ceiling no loaded machine reaches.
+    func until(_ condition: () -> Bool) async throws {
+        for _ in 0..<1000 where !condition() {
+            try await Task.sleep(for: .milliseconds(5))
+        }
     }
 
     static func question(_ tool: String = "toolu_made_up", _ text: String = "Which baseline?") -> NotificationRules.QuestionActions {
@@ -229,7 +239,7 @@ struct NotificationSweepTests {
         rig.fake.shown = [note(.needsInput, "answered"), note(.needsInput, "waiting"),
                           note(.failed, "rerun"), note(.failed, "broken"),
                           note(.finished, "done"), note(.finished, "done-and-running-again")]
-        try await rig.read(Fixture.session("answered", .running), Fixture.session("waiting", .needsInput, reason: .plan),
+        await rig.read(Fixture.session("answered", .running), Fixture.session("waiting", .needsInput, reason: .plan),
                            Fixture.session("rerun", .running), Fixture.session("broken", .error),
                            Fixture.session("done", .finished), Fixture.session("done-and-running-again", .running))
         #expect(rig.fake.listings == 1)
@@ -240,7 +250,7 @@ struct NotificationSweepTests {
     @Test func aSessionTheReadDoesNotHaveIsNotWaitingOrFailedToo() async throws {
         let rig = Rig()
         rig.fake.shown = [note(.needsInput, "old"), note(.failed, "older"), note(.finished, "oldest")]
-        try await rig.read(Fixture.session("other", .running))
+        await rig.read(Fixture.session("other", .running))
         #expect(rig.fake.removed == ["needs-old", "failed-older"])
     }
 
@@ -248,7 +258,7 @@ struct NotificationSweepTests {
         for names in [true, false] {
             let rig = Rig(finishes: true, names: names)
             rig.fake.shown = [note(.needsInput, "a", question: Rig.question()), note(.needsInput, "b"), note(.failed, "c")]
-            try await rig.read(Fixture.session("a", .needsInput, reason: .question), Fixture.session("b", .running),
+            await rig.read(Fixture.session("a", .needsInput, reason: .question), Fixture.session("b", .running),
                                Fixture.session("c", .error))
             #expect(rig.fake.added.isEmpty)
             #expect(rig.fake.listings == 1)
@@ -267,14 +277,14 @@ struct NotificationSweepTests {
     @Test func aFailedFirstReadTakesNothingBackButTheNextGoodOneDoes() async throws {
         let rig = Rig()
         rig.fake.shown = [note(.needsInput, "a"), note(.failed, "b")]
-        try await rig.read(Fixture.failedRead)
-        try await rig.read(Fixture.daemonDown)
+        await rig.read(Fixture.failedRead)
+        await rig.read(Fixture.daemonDown)
         // Sessions that arrived with an error are not a read that worked either.
-        try await rig.read(ScienceSnapshot(runningCount: 1, daemonVersion: "test",
+        await rig.read(ScienceSnapshot(runningCount: 1, daemonVersion: "test",
                                            sessions: [Fixture.session("z", .running)],
                                            readError: .databaseUnreadable("test")))
         #expect(rig.fake.listings == 0 && rig.fake.removed.isEmpty)
-        try await rig.read(Fixture.session("z", .running))
+        await rig.read(Fixture.session("z", .running))
         #expect(rig.fake.listings == 1)
         #expect(rig.fake.removed == ["needs-a", "failed-b"])
     }
@@ -282,9 +292,9 @@ struct NotificationSweepTests {
     @Test func anEmptyFirstReadTakesNothingBackButTheNextOneWithSessionsDoes() async throws {
         let rig = Rig()
         rig.fake.shown = [note(.needsInput, "a"), note(.failed, "b")]
-        try await rig.read(Fixture.snapshot())
+        await rig.read(Fixture.snapshot())
         #expect(rig.fake.listings == 0 && rig.fake.removed.isEmpty)
-        try await rig.read(Fixture.session("z", .running))
+        await rig.read(Fixture.session("z", .running))
         #expect(rig.fake.listings == 1)
         #expect(rig.fake.removed == ["needs-a", "failed-b"])
     }
@@ -292,9 +302,9 @@ struct NotificationSweepTests {
     @Test func theCheckIsMadeOnceARun() async throws {
         let rig = Rig()
         rig.fake.shown = [note(.needsInput, "a")]
-        try await rig.read(Fixture.session("a", .needsInput, reason: .question))
-        try await rig.read(Fixture.session("a", .needsInput, reason: .question))
-        try await rig.read(Fixture.session("a", .needsInput, reason: .question), Fixture.session("b", .running))
+        await rig.read(Fixture.session("a", .needsInput, reason: .question))
+        await rig.read(Fixture.session("a", .needsInput, reason: .question))
+        await rig.read(Fixture.session("a", .needsInput, reason: .question), Fixture.session("b", .running))
         #expect(rig.fake.listings == 1)
     }
 
@@ -303,8 +313,8 @@ struct NotificationSweepTests {
     @Test func nothingIsTouchedWithMacNotificationsOff() async throws {
         let rig = Rig(on: false)
         rig.fake.shown = [note(.needsInput, "a"), note(.failed, "b")]
-        try await rig.read(Fixture.session("z", .running))
-        try await rig.read(Fixture.session("z", .running))
+        await rig.read(Fixture.session("z", .running))
+        await rig.read(Fixture.session("z", .running))
         #expect(rig.fake.listings == 0 && rig.fake.removed.isEmpty && rig.fake.removedAll == 0)
         #expect(rig.fake.categorySets.isEmpty)
     }
@@ -314,7 +324,7 @@ struct NotificationSweepTests {
         let rig = Rig()
         rig.fake.status = status
         rig.fake.shown = [note(.needsInput, "a"), note(.failed, "b")]
-        try await rig.read(Fixture.session("z", .running))
+        await rig.read(Fixture.session("z", .running))
         #expect(rig.fake.listings == 0 && rig.fake.removed.isEmpty && rig.fake.removedAll == 0)
     }
 
@@ -322,7 +332,7 @@ struct NotificationSweepTests {
         let rig = Rig()
         rig.fake.status = .provisional
         rig.fake.shown = [note(.needsInput, "a")]
-        try await rig.read(Fixture.session("z", .running))
+        await rig.read(Fixture.session("z", .running))
         #expect(rig.fake.removed == ["needs-a"])
     }
 
@@ -330,9 +340,9 @@ struct NotificationSweepTests {
         let rig = Rig(real: false)
         rig.fake.shown = [note(.needsInput, "a")]
         // Cards come and go as ever; nothing reaches any center.
-        try await rig.read(Fixture.session("a", .running))
-        try await rig.read(Fixture.session("a", .needsInput, reason: .question))
-        try await rig.read(Fixture.session("a", .running))
+        await rig.read(Fixture.session("a", .running))
+        await rig.read(Fixture.session("a", .needsInput, reason: .question))
+        await rig.read(Fixture.session("a", .running))
         rig.notifications.sessionsRead(SessionStanding([Fixture.session("z", .running)]))
         rig.notifications.clearDelivered()
         try await rig.settle()
@@ -346,40 +356,40 @@ struct NotificationSweepTests {
     @Test func aFailureStillStandingIsTakenBackWhenItsSessionRunsAgain() async throws {
         let rig = Rig()
         rig.fake.shown = [note(.failed, "broken")]
-        try await rig.read(Fixture.session("broken", .error))
+        await rig.read(Fixture.session("broken", .error))
         // The engine announces no failure for a session it first meets
         // failed: there is no card, so nothing but the adoption can do this.
         #expect(rig.model.cards.isEmpty)
         #expect(rig.fake.removed.isEmpty)
-        try await rig.read(Fixture.session("broken", .running))
+        await rig.read(Fixture.session("broken", .running))
         #expect(rig.fake.removed == ["failed-broken"])
         // And once only.
-        try await rig.read(Fixture.session("broken", .running))
-        try await rig.read(Fixture.session("broken", .finished))
+        await rig.read(Fixture.session("broken", .running))
+        await rig.read(Fixture.session("broken", .finished))
         #expect(rig.fake.removed == ["failed-broken"])
     }
 
     @Test func aWaitingNotificationIsTakenBackOnceWhenItsSessionIsAnswered() async throws {
         let rig = Rig()
         rig.fake.shown = [note(.needsInput, "b")]
-        try await rig.read(Fixture.session("b", .needsInput, reason: .question))
+        await rig.read(Fixture.session("b", .needsInput, reason: .question))
         // Its card is the silent one of the first read.
         #expect(rig.model.cards.map(\.id) == ["needs-b"])
         #expect(rig.fake.removed.isEmpty)
-        try await rig.read(Fixture.session("b", .running))
+        await rig.read(Fixture.session("b", .running))
         #expect(rig.fake.removed == ["needs-b"])
-        try await rig.read(Fixture.session("b", .running))
+        await rig.read(Fixture.session("b", .running))
         #expect(rig.fake.removed == ["needs-b"])
     }
 
     @Test func aFinishNotificationIsNeverTakenBackBySessionsMovingOn() async throws {
         let rig = Rig(finishes: true)
         rig.fake.shown = [note(.finished, "e")]
-        try await rig.read(Fixture.session("e", .finished))
+        await rig.read(Fixture.session("e", .finished))
         for state in [SessionState.running, .needsInput, .error, .finished] {
-            try await rig.read(Fixture.session("e", state, reason: state == .needsInput ? .question : nil))
+            await rig.read(Fixture.session("e", state, reason: state == .needsInput ? .question : nil))
         }
-        try await rig.read(Fixture.session("z", .running))
+        await rig.read(Fixture.session("z", .running))
         // (The session's own waiting and failure notifications of these
         // moves come and go as ever; the finish stays.)
         #expect(!rig.fake.removed.contains("finished-e") && rig.fake.removedAll == 0)
@@ -388,20 +398,20 @@ struct NotificationSweepTests {
     @Test func aCardDealtWithTakesItsAdoptedNotificationBackOnce() async throws {
         let rig = Rig()
         rig.fake.shown = [note(.needsInput, "b")]
-        try await rig.read(Fixture.session("b", .needsInput, reason: .plan))
+        await rig.read(Fixture.session("b", .needsInput, reason: .plan))
         rig.model.dismiss(try #require(rig.model.cards.first))
         #expect(rig.fake.removed == ["needs-b"])
         // The session stops waiting later: nothing is left to take back.
-        try await rig.read(Fixture.session("b", .running))
+        await rig.read(Fixture.session("b", .running))
         #expect(rig.fake.removed == ["needs-b"])
     }
 
     @Test func aPlanHeldForItsApprovalKeepsItsNotificationAsItKeepsItsCard() async throws {
         let rig = Rig()
         rig.fake.shown = [note(.needsInput, "b")]
-        try await rig.read(Fixture.session("b", .needsInput, reason: .plan))
+        await rig.read(Fixture.session("b", .needsInput, reason: .plan))
         rig.model.holdPlanCard("b")
-        try await rig.read(Fixture.session("b", .running))
+        await rig.read(Fixture.session("b", .running))
         #expect(rig.model.cards.map(\.id) == ["needs-b"])
         #expect(rig.fake.removed.isEmpty)
         rig.model.releasePlanCard("b", approved: true)
@@ -411,10 +421,10 @@ struct NotificationSweepTests {
     @Test func clearingEverythingForgetsWhatWasAdopted() async throws {
         let rig = Rig()
         rig.fake.shown = [note(.failed, "broken")]
-        try await rig.read(Fixture.session("broken", .error))
+        await rig.read(Fixture.session("broken", .error))
         rig.notifications.clearDelivered()
         #expect(rig.fake.removedAll == 1)
-        try await rig.read(Fixture.session("broken", .running))
+        await rig.read(Fixture.session("broken", .running))
         #expect(rig.fake.removed.isEmpty)
     }
 
@@ -425,27 +435,27 @@ struct NotificationSweepTests {
         rig.fake.shown = [note(.needsInput, "b", question: Rig.question("toolu_b")),
                           note(.needsInput, "c", question: Rig.question("toolu_c")),
                           note(.needsInput, "stale", question: Rig.question("toolu_s"))]
-        try await rig.read(Fixture.session("b", .needsInput, reason: .question),
+        await rig.read(Fixture.session("b", .needsInput, reason: .question),
                            Fixture.session("c", .needsInput, reason: .question), Fixture.session("stale", .running))
         // Registered for the two that stand, none for the one that went.
         #expect(rig.fake.removed == ["needs-stale"])
         #expect(rig.fake.categorySets.last == ["question.needs-b", "question.needs-c"])
         // One answered: its answers go, the other's stay, as the very next
         // change to the set of categories replaces them all.
-        try await rig.read(Fixture.session("b", .running), Fixture.session("c", .needsInput, reason: .question))
+        await rig.read(Fixture.session("b", .running), Fixture.session("c", .needsInput, reason: .question))
         #expect(rig.fake.removed == ["needs-stale", "needs-b"])
         #expect(rig.fake.categorySets.last == ["question.needs-c"])
-        try await rig.read(Fixture.session("b", .running), Fixture.session("c", .running))
+        await rig.read(Fixture.session("b", .running), Fixture.session("c", .running))
         #expect(rig.fake.categorySets.last == [])
     }
 
     @Test func withNamesHiddenNoAnswersAreRegisteredButTheNotificationIsStillChecked() async throws {
         let rig = Rig(names: false)
         rig.fake.shown = [note(.needsInput, "b", question: Rig.question()), note(.needsInput, "c")]
-        try await rig.read(Fixture.session("b", .needsInput, reason: .question), Fixture.session("c", .running))
+        await rig.read(Fixture.session("b", .needsInput, reason: .question), Fixture.session("c", .running))
         #expect(rig.fake.categorySets.isEmpty)
         #expect(rig.fake.removed == ["needs-c"])
-        try await rig.read(Fixture.session("b", .running))
+        await rig.read(Fixture.session("b", .running))
         #expect(rig.fake.removed == ["needs-c", "needs-b"])
     }
 
@@ -456,7 +466,7 @@ struct NotificationSweepTests {
         rig.fake.shown = [note(.needsInput, "b", question: Rig.question()), note(.needsInput, "stale")]
         let notifications = rig.notifications
         rig.fake.whileListing = { notifications.clearDelivered() }
-        try await rig.read(Fixture.session("b", .needsInput, reason: .question), Fixture.session("stale", .running))
+        await rig.read(Fixture.session("b", .needsInput, reason: .question), Fixture.session("stale", .running))
         #expect(rig.fake.listings == 1)
         #expect(rig.fake.removedAll == 1)
         #expect(rig.fake.removed.isEmpty)
@@ -469,14 +479,16 @@ struct NotificationSweepTests {
     @Test func aCardStillPostsAndWithdrawsThroughTheCenter() async throws {
         let rig = Rig()
         // A first read, then a session that starts to fail.
-        try await rig.read(Fixture.session("a", .running))
-        try await rig.read(Fixture.session("a", .error))
+        await rig.read(Fixture.session("a", .running))
+        await rig.read(Fixture.session("a", .error))
+        // Posted by a task of its own, after macOS says what it allows.
+        try await rig.until { rig.fake.added.count == 1 }
         let request = try #require(rig.fake.added.first)
         #expect(rig.fake.added.count == 1)
         #expect(request.identifier == "failed-a")
         #expect(request.content.userInfo[NotificationRules.sessionKey] as? String == "a")
         // Its card going takes it back.
-        try await rig.read(Fixture.session("a", .running))
+        await rig.read(Fixture.session("a", .running))
         #expect(rig.fake.removed == ["failed-a"])
     }
 }

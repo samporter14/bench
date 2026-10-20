@@ -403,6 +403,8 @@ final class MacNotifications: NSObject, ObservableObject {
     /// Whether the delivered notifications were checked yet this run: once,
     /// at the first read that could be trusted.
     private var swept = false
+    /// The check under way or done, for tests to wait on.
+    private(set) var sweeping: Task<Void, Never>?
     /// Bumped when every notification is cleared, so a check that was waiting
     /// on macOS when that happened does not bring any of them back.
     private var cleared = 0
@@ -542,7 +544,10 @@ final class MacNotifications: NSObject, ObservableObject {
             retireAdopted()
         } else {
             swept = true
-            Task { [weak self] in await self?.sweepDelivered() }
+            sweeping = Task { [weak self] in
+                guard let self else { return }
+                await sweepDelivered()
+            }
         }
     }
 
