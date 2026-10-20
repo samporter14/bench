@@ -328,6 +328,11 @@ yet checked live: a real failed session, and a real notification close.
 0.9.2 was built and pushed but never published as a release; its changes
 (next entry) ship in 0.9.3 with these.
 
+- ✅ Installed from the release zip (`Bench.zip`, the same bytes to be
+  published as v0.9.3), the way `install.sh` does it, since the release
+  wasn't published yet: /Applications/Capsid.app is 0.9.3 (41), CDHash
+  `494a7e3e…`, and running; phone access came back by itself.
+
 **Thirteen specimens (541).** Kimwipe, Tally counter, Bench level,
 Glassblowing, Eyewash station, Chloroplast movement, Neighbor exchange, Lumen
 formation, Bone resorption, Proplatelets, Enucleation, Tunneling nanotube and
