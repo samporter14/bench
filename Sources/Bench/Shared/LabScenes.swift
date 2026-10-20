@@ -502,6 +502,21 @@ enum LabScenes {
         LabScene(name: "Paraffin embedding", theme: .bench, duration: ParaffinEmbedding.duration) { context, size, t, tint in
             ParaffinEmbedding.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Kimwipe", theme: .bench, duration: Kimwipe.duration) { context, size, t, tint in
+            Kimwipe.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Tally counter", theme: .bench, duration: TallyCounter.duration) { context, size, t, tint in
+            TallyCounter.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Bench level", theme: .bench, duration: BenchLevel.duration) { context, size, t, tint in
+            BenchLevel.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Glassblowing", theme: .bench, duration: Glassblowing.duration) { context, size, t, tint in
+            Glassblowing.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Eyewash station", theme: .bench, duration: EyewashStation.duration) { context, size, t, tint in
+            EyewashStation.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Molecular
         LabScene(name: "Chromatin breathing", theme: .molecular, duration: ChromatinBreathing.duration) { context, size, t, tint in
             ChromatinBreathing.draw(in: &context, size: size, time: t, tint: tint)
@@ -827,6 +842,21 @@ enum LabScenes {
         },
         LabScene(name: "Lipid flip", theme: .cell, duration: LipidFlip.duration) { context, size, t, tint in
             LipidFlip.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Neighbor exchange", theme: .cell, duration: NeighborExchange.duration) { context, size, t, tint in
+            NeighborExchange.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Lumen formation", theme: .cell, duration: LumenFormation.duration) { context, size, t, tint in
+            LumenFormation.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Enucleation", theme: .cell, duration: Enucleation.duration) { context, size, t, tint in
+            Enucleation.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Tunneling nanotube", theme: .cell, duration: TunnelingNanotube.duration) { context, size, t, tint in
+            TunnelingNanotube.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Centriole duplication", theme: .cell, duration: CentrioleDuplication.duration) { context, size, t, tint in
+            CentrioleDuplication.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Organisms
         LabScene(name: "Mouse sniff", theme: .organisms, duration: MouseSniff.duration) { context, size, t, tint in
@@ -1219,6 +1249,9 @@ enum LabScenes {
         LabScene(name: "Pollen tube", theme: .plants, duration: PollenTube.duration) { context, size, t, tint in
             PollenTube.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Chloroplast movement", theme: .plants, duration: ChloroplastMovement.duration) { context, size, t, tint in
+            ChloroplastMovement.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Data
         LabScene(name: "Clustered heatmap", theme: .data, duration: ClusteredHeatmap.duration) { context, size, t, tint in
             ClusteredHeatmap.draw(in: &context, size: size, time: t, tint: tint)
@@ -1558,6 +1591,12 @@ enum LabScenes {
         },
         LabScene(name: "Biopsy punch", theme: .medicine, duration: BiopsyPunch.duration) { context, size, t, tint in
             BiopsyPunch.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Bone resorption", theme: .medicine, duration: BoneResorption.duration) { context, size, t, tint in
+            BoneResorption.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Proplatelets", theme: .medicine, duration: Proplatelets.duration) { context, size, t, tint in
+            Proplatelets.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Space
         LabScene(name: "Transit", theme: .space, duration: Transit.duration) { context, size, t, tint in

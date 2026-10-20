@@ -599,6 +599,31 @@ enum SpecimenNotes {
             note: "Fixed, dehydrated tissue is embedded in molten paraffin wax that sets into a block firm enough to cut into thin sections for microscopy.",
             topics: ["sample prep", "microscopy", "medicine"],
             also: ["histology", "FFPE", "microtome", "cassette"]),
+        "Kimwipe": SpecimenNote(
+            caption: "Next wipe rising as one is pulled",
+            note: "Kimwipes are low-lint, interleaved tissues: each sheet pulled out draws up the next, so a fresh one is always ready.",
+            topics: ["lab life", "sample prep"],
+            also: ["Kimwipe", "lint-free wipe", "tissue", "cleaning"]),
+        "Tally counter": SpecimenNote(
+            caption: "Clicking up a count, then resetting",
+            note: "A hand tally counter steps a digit wheel with each press, and a turn of the reset knob returns every wheel to zero.",
+            topics: ["measurement", "lab life"],
+            also: ["clicker", "hand counter", "colony count", "cell count"]),
+        "Bench level": SpecimenNote(
+            caption: "Leveling a bench by its foot",
+            note: "A spirit level's bubble rests between its marks when the surface is level; adjustable feet let you tune benches for balances.",
+            topics: ["measurement", "physics", "lab life"],
+            also: ["spirit level", "bubble level", "leveling foot", "balance table"]),
+        "Glassblowing": SpecimenNote(
+            caption: "A glass tube swelling in the flame",
+            note: "Scientific glassblowers turn borosilicate tubing in a torch flame until it softens, then blow it out into bulbs and other apparatus.",
+            topics: ["lab life", "chemistry"],
+            also: ["borosilicate", "torch", "lathe", "Pyrex"]),
+        "Eyewash station": SpecimenNote(
+            caption: "Two water jets arcing up to meet",
+            note: "An eyewash station flushes both eyes at once with a gentle stream; the standard calls for at least 15 minutes of flow after a splash.",
+            topics: ["safety", "lab life"],
+            also: ["Z358.1", "flush", "emergency shower", "splash"]),
         "Coffee": SpecimenNote(
             caption: "Filling a mug from the pot",
             note: "Coffee is the unofficial fuel of long lab days: caffeine blocks adenosine receptors in the brain, which wards off sleepiness.",
@@ -1234,6 +1259,31 @@ enum SpecimenNotes {
             note: "Flippases spend ATP to push phospholipids from the outer to the inner leaflet, keeping the two faces of a membrane different.",
             topics: ["membranes", "transport", "enzymes"],
             also: ["flippase", "phospholipid", "asymmetry", "P4-ATPase"]),
+        "Neighbor exchange": SpecimenNote(
+            caption: "Four cells swap neighbors",
+            note: "In a T1 transition a junction between two cells shrinks to a point and a new one opens so the other pair touch, letting tissue flow.",
+            topics: ["cell biology", "development"],
+            also: ["T1 transition", "intercalation", "junction remodeling", "convergent extension"]),
+        "Lumen formation": SpecimenNote(
+            caption: "A hollow opens inside a cell rosette",
+            note: "Epithelial cells polarize and secrete fluid at a shared apical point, which swells into a lumen, the hollow of a duct or tubule.",
+            topics: ["cell biology", "development"],
+            also: ["rosette", "apical", "tubulogenesis", "cyst"]),
+        "Enucleation": SpecimenNote(
+            caption: "Erythroblast pushing out its nucleus",
+            note: "A maturing erythroblast extrudes its condensed nucleus in a membrane-wrapped pyrenocyte, which macrophages engulf, leaving a reticulocyte.",
+            topics: ["cell biology", "development"],
+            also: ["erythroblast", "reticulocyte", "pyrenocyte", "red blood cell"]),
+        "Tunneling nanotube": SpecimenNote(
+            caption: "Cargo crossing a nanotube bridge",
+            note: "Tunneling nanotubes are thin membrane tubes between distant cells that pass vesicles, organelles and proteins directly across.",
+            topics: ["cell biology", "signaling", "transport"],
+            also: ["TNT", "intercellular transfer", "cell-cell communication"]),
+        "Centriole duplication": SpecimenNote(
+            caption: "New centriole growing from the old",
+            note: "Once per cell cycle a new procentriole grows at a right angle beside each mother centriole, so the centrosome can double before mitosis.",
+            topics: ["cell division", "cell biology"],
+            also: ["centrosome", "procentriole", "S phase", "mitosis"]),
         "Mouse sniff": SpecimenNote(
             caption: "Mouse sniffing, whiskers twitching",
             note: "Mice sample odors by sniffing in quick bursts while moving their whiskers, behaviors used to study olfaction and sensory processing.",
@@ -1889,6 +1939,16 @@ enum SpecimenNotes {
             note: "A punch biopsy uses a small circular blade to lift a core of skin, from epidermis through dermis to fat, for diagnosis.",
             topics: ["medicine", "sample prep"],
             also: ["skin biopsy", "dermatology", "tissue sample", "histology"]),
+        "Bone resorption": SpecimenNote(
+            caption: "An osteoclast digs into bone",
+            note: "Multinucleated osteoclasts seal onto bone and pump acid and enzymes through a ruffled border, dissolving a pit that osteoblasts later fill.",
+            topics: ["cell biology", "medicine"],
+            also: ["osteoclast", "ruffled border", "Howship lacuna", "remodeling"]),
+        "Proplatelets": SpecimenNote(
+            caption: "Platelets budding off long arms",
+            note: "Megakaryocytes in bone marrow extend long beaded proplatelets into blood vessels, and platelets pinch off from their tips.",
+            topics: ["cell biology", "medicine"],
+            also: ["megakaryocyte", "thrombopoiesis", "platelets", "bone marrow"]),
         "Michaelis–Menten": SpecimenNote(
             caption: "Enzyme rate curve to straight line",
             note: "The Michaelis–Menten curve gives an enzyme's Vmax and Km; the Lineweaver–Burk plot straightens it so its intercepts reveal both.",
@@ -2359,6 +2419,11 @@ enum SpecimenNotes {
             note: "After landing on a stigma, a pollen grain grows a tube down the style that carries sperm cells to the ovule for fertilization.",
             topics: ["plants", "development"],
             also: ["fertilization", "stigma", "style", "pollination"]),
+        "Chloroplast movement": SpecimenNote(
+            caption: "Chloroplasts dodging a bright beam",
+            note: "In strong light chloroplasts move to the cell's side walls to avoid damage; in weak light they spread across the face to catch more.",
+            topics: ["plants", "cell biology", "signaling"],
+            also: ["phototropin", "avoidance response", "photorelocation", "blue light"]),
         "Clustered heatmap": SpecimenNote(
             caption: "Rows sorted into similar groups",
             note: "A clustered heatmap shows a data matrix as color-coded values, with rows and columns ordered by similarity so related groups stand out.",
