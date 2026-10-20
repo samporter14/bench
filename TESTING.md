@@ -339,6 +339,9 @@ than the 5-hour window, the week.
   phone judge each limit themselves and are unchanged.
 - ✅ Quiet capture of Settings → Usage: the row and its ⓘ fit (page 316 pt).
 - ✅ `swift test`: 1,804 tests in 229 suites, all passing.
+- ✅ Released as v0.9.1 and installed with `install.sh`: 0.9.1 (39), CDHash
+  `5943c674…`, the same as the download and the local build, and running;
+  phone access back by itself. `titleBarUsage` unset, so the 5-hour default.
 
 ## 2026-10-20, Capsid 0.9.0: fifteen quality-of-life changes
 
