@@ -10,9 +10,9 @@ struct PhoneRouteCancellationTests {
     private static let a = "00000000-0000-4000-8000-00000000aa01"
     private static let b = "00000000-0000-4000-8000-00000000bb02"
 
-    private func app(beforeApp: String = "") throws -> PhoneAppHarness {
+    private func app(beforeApp: String = "", answers: [String: String] = [:]) throws -> PhoneAppHarness {
         let app = try PhoneAppHarness(hash: "#/", now: Date(timeIntervalSince1970: 1_791_986_400),
-                                      answers: [:], beforeApp: beforeApp)
+                                      answers: answers, beforeApp: beforeApp)
         app.evaluate("""
             S.view = 'app'; S.me = { browse: true };
             S.state = { needsYou: [], failed: [], working: [], recent: [] };
@@ -145,6 +145,25 @@ struct PhoneRouteCancellationTests {
         #expect(app.requests(to: "/api/sessions/\(Self.a)") == 2)
         #expect(app.requests(to: "/api/sessions/\(Self.a)/artifacts") == 2)
         #expect(app.aborted("/api/sessions/\(Self.a)") == 1, "the new reads are live")
+        #expect(app.exceptions == [])
+    }
+
+    @Test func comingBackAsksOnlyForWhatTheScreenStillLacks() throws {
+        // Its artifact list has arrived; the session itself, as ever, is read again when the page returns.
+        let app = try app(answers: ["/api/sessions/\(Self.a)/artifacts": #"{"artifacts":[]}"#])
+        go(app, "#/session/\(Self.a)")
+        #expect(app.string("art('\(Self.a)').loaded") == "true")
+        hide(app)
+        show(app)
+        #expect(app.requests(to: "/api/sessions/\(Self.a)/artifacts") == 1, "not read again: it is in")
+        #expect(app.requests(to: "/api/sessions/\(Self.a)") == 2)
+        // Settings and Now ask for nothing more than the state.
+        go(app, "#/settings")
+        let before = app.string("__requests.length")
+        hide(app)
+        show(app)
+        #expect(app.requests(to: "/api/push") == 1, "once, on opening Settings")
+        #expect(app.string("__requests.slice(\(before ?? "0")).filter((path) => path !== '/api/state').length") == "0")
         #expect(app.exceptions == [])
     }
 

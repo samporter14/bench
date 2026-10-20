@@ -549,11 +549,21 @@ function onVisible() {
     refresh(true);
     if (S.view === 'app') {
       connect();
-      enterRoute(); // asks again for what the screen was waiting on when the page was put away (`onHidden` dropped it)
+      resumeRoute();
       parkImages(false);
       syncLive();
     }
   }
+}
+
+// Asks again for what the screen was waiting on when the page was put away (`onHidden` dropped it), and for nothing it already has.
+function resumeRoute() {
+  const r = route();
+  if (r.id && (r.name === 'session' || !S.sess[r.id])) loadSession(r.id); // a history that never arrived is read again with it (wantHistory)
+  if (r.id && browseOn() && !art(r.id).loaded) loadArtifacts(r.id);
+  if (r.name === 'file') maybeLoadText(r.v, r.id);
+  const pid = S.split ? S.side.pid : r.name === 'project' ? r.pid : null;
+  if (pid && browseOn() && !proj(pid).loaded) loadProject(pid, false);
 }
 function onHidden() {
   stopTicker();

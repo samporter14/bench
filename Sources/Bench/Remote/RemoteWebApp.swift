@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "188865ae7463",
+        "/app.js": "775a29a500b5",
         "/app.css": "16831b9bd96a",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=188865ae7463"></script>
+<script type="module" src="/app.js?v=775a29a500b5"></script>
 </body>
 </html>
 """#
@@ -529,11 +529,19 @@ if (S.view === 'app' || S.view === 'offline') {
 refresh(true);
 if (S.view === 'app') {
 connect();
-enterRoute(); // asks again for what the screen was waiting on when the page was put away (`onHidden` dropped it)
+resumeRoute();
 parkImages(false);
 syncLive();
 }
 }
+}
+function resumeRoute() {
+const r = route();
+if (r.id && (r.name === 'session' || !S.sess[r.id])) loadSession(r.id); // a history that never arrived is read again with it (wantHistory)
+if (r.id && browseOn() && !art(r.id).loaded) loadArtifacts(r.id);
+if (r.name === 'file') maybeLoadText(r.v, r.id);
+const pid = S.split ? S.side.pid : r.name === 'project' ? r.pid : null;
+if (pid && browseOn() && !proj(pid).loaded) loadProject(pid, false);
 }
 function onHidden() {
 stopTicker();

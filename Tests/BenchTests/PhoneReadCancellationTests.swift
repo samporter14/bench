@@ -40,7 +40,7 @@ private final class Probe {
 
 // MARK: The server
 
-@MainActor
+@Suite(.serialized) @MainActor
 struct PhoneHangUpTests {
     private static let host = "studio-mac.example-tailnet.ts.net"
     private static let login = "pat@example.com"
