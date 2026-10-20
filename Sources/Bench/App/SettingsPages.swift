@@ -277,7 +277,7 @@ enum AlertsInfo {
         During a Nidus focus session, \u{201C}Finished\u{201D} cards wait for it to end, then come as one card. \
         Questions and errors still come at once, and everything still goes to Recent in the toolbar.
 
-        Turning this off brings what is waiting right away.
+        Turning this off brings what is waiting, unless Capsid is quiet for a presentation.
         """
 
     static let answerOnCard = """

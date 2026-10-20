@@ -1932,9 +1932,10 @@ already two at most. Keys and behaviour are unchanged.
 
 **Page heights** (`settingsPage(height:)`, set from a capture so the first
 and last rows have the same margin, about 22 pt): General 634, Panel 504,
-Alerts 818, Usage 238, Specimens 760×776, Phone 760. Alerts' extra rows
-(Quiet While Presenting, one line each) are paid for by the shorter lines and
-by the Mac notifications footer moving into an ⓘ. Phone's height is the
+Alerts 818 (it was 740, and already cut off at the bottom), Usage 238,
+Specimens 760×776, Phone 760. Alerts' two new rows (Quiet While Presenting,
+one line each) are mostly paid for by the shorter lines and by the Mac
+notifications footer moving into an ⓘ; the page is 78 pt taller than before. Phone's height is the
 checklist's tallest states (step 4 or 6 open), so in the ready state it has
 more room below; it is not trimmed.
 
