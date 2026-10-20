@@ -559,6 +559,9 @@ final class RemoteServer {
     /// What each device may still ask (RemoteBudget.swift).
     private var budgets = DeviceBudgets()
     private let now: () -> Date
+    /// Waits out a request's time limit; tests stand in for the clock.
+    /// Returns early when its task is cancelled.
+    private let sleep: @MainActor (Duration) async -> Void
 
     private final class Client {
         let connection: NWConnection
@@ -602,11 +605,13 @@ final class RemoteServer {
         }
     }
 
-    init(policy: RemotePolicy, auth: RemoteAuth, backend: RemoteBackend, now: @escaping () -> Date = Date.init) {
+    init(policy: RemotePolicy, auth: RemoteAuth, backend: RemoteBackend, now: @escaping () -> Date = Date.init,
+         sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }) {
         self.policy = policy
         self.auth = auth
         self.backend = backend
         self.now = now
+        self.sleep = sleep
     }
 
     // MARK: Listening
@@ -718,8 +723,9 @@ final class RemoteServer {
 
     /// 408 once `wait` is up, unless the request was answered by then.
     private func timeout(_ id: Int, after wait: Duration) -> Task<Void, Never> {
-        Task { [weak self] in
-            try? await Task.sleep(for: wait)
+        let sleep = sleep
+        return Task { [weak self] in
+            await sleep(wait)
             guard !Task.isCancelled, let self, let client = self.clients[id], !client.answered else { return }
             self.send(id, RemoteResponse.error(408), route: client.admitted?.route, why: "timeout", closing: true)
         }

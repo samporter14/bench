@@ -121,18 +121,27 @@ final class SQLiteReader: @unchecked Sendable {
     private let queue = DispatchQueue(label: "local.sam.bench.sqlite", qos: .utility)
     /// How long the connection stays open after a read.
     private let idleClose: TimeInterval
+    /// Runs the let-go item on the queue after the idle time; tests stand in for the clock.
+    private let schedule: (DispatchQueue, TimeInterval, DispatchWorkItem) -> Void
     // Touched only on `queue`.
     private var connection: Connection?
     private var opens = 0
     private var letGo: DispatchWorkItem?
 
     /// Tests make their own; the app uses `shared`.
-    init(idleClose: TimeInterval = 10) {
+    init(idleClose: TimeInterval = 10,
+         schedule: @escaping (DispatchQueue, TimeInterval, DispatchWorkItem) -> Void = { queue, delay, item in
+             queue.asyncAfter(deadline: .now() + delay, execute: item)
+         }) {
         self.idleClose = idleClose
+        self.schedule = schedule
     }
 
     /// How many connections have been opened: for tests.
     var openCount: Int { queue.sync { opens } }
+
+    /// Whether a connection is open now: for tests.
+    var isOpen: Bool { queue.sync { connection != nil } }
 
     /// The rows of one read; see `runReadOnlyQuery`.
     func rows(db: URL, sql: String, arguments: [SQLArgument] = [], timeout: TimeInterval = 8) throws -> [[String]] {
@@ -148,7 +157,7 @@ final class SQLiteReader: @unchecked Sendable {
         letGo?.cancel()
         let item = DispatchWorkItem { [weak self] in self?.connection = nil }
         letGo = item
-        queue.asyncAfter(deadline: .now() + idleClose, execute: item)
+        schedule(queue, idleClose, item)
     }
 
     /// Lets the connection go; the next read opens it again.
