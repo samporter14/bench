@@ -82,6 +82,49 @@ enum PageTabsOutcome: Equatable, Sendable {
         let count = number.intValue
         return (0...cap).contains(count) && number.doubleValue == Double(count) ? count : nil
     }
+
+    /// What the script answered, as an outcome, noting for Diagnostics what the
+    /// answer says of the page (CompatBreadcrumbs). An answer that isn't
+    /// understood is nil, and noted. A page with no tab open (no strip) is not
+    /// a change; a strip that is wrong, or a tab with no close button, is.
+    static func read(_ value: Any?, breadcrumbs: CompatBreadcrumbs = .shared) -> PageTabsOutcome? {
+        guard let text = value as? String, let outcome = PageTabsOutcome(parsing: text) else {
+            breadcrumbs.record(.tabAnswerNotUnderstood)
+            return nil
+        }
+        if let miss = PageTabsReason(parsing: text)?.miss { breadcrumbs.record(miss) }
+        return outcome
+    }
+}
+
+/// Why a sweep did nothing, when the script says. Most are the page not being
+/// as Capsid reads it; only `noStrip` and `tabMissing` are ordinary (no panel
+/// with tabs is open; the tab right-clicked closed meanwhile).
+enum PageTabsReason: String, Equatable, Sendable {
+    case noStrip = "no-strip"
+    case severalStrips = "several-strips"
+    case noToolbar = "no-toolbar"
+    case noCloseButton = "no-close-button"
+    case noShownTab = "no-shown-tab"
+    case tabMissing = "tab-missing"
+
+    /// The script's `reason`, when it gave one Capsid knows.
+    init?(parsing text: String) {
+        guard let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
+              let reason = object["reason"] as? String else { return nil }
+        self.init(rawValue: reason)
+    }
+
+    /// The breadcrumb it earns (CompatBreadcrumbs), nil for the ordinary states.
+    var miss: CompatMiss? {
+        switch self {
+        case .noStrip, .tabMissing: nil
+        case .severalStrips: .severalTabStrips
+        case .noToolbar: .tabStripWithoutToolbar
+        case .noCloseButton: .tabWithoutCloseButton
+        case .noShownTab: .noTabMarkedShown
+        }
+    }
 }
 
 // MARK: The script
@@ -116,16 +159,24 @@ enum PageTabsScript {
     }
     """#
 
-    /// `benchReadTabs()`: the strip's tabs in order, `[{id, shown, close}]`
-    /// (`close` is the tab's own close button or null), or null when there is
-    /// not exactly one strip with its toolbar. Looks only inside the strip.
+    /// `benchReadStrip()`: `{state, tabs}`. `state` is "ok" with the strip's tabs
+    /// in order, `[{id, shown, button, close}]` (`button` is whether the tab has
+    /// the button that shows it, `close` its own close button or null), or one
+    /// of "none" (no strip: no panel with tabs is open), "several" (more than
+    /// one strip) and "no-toolbar" (a strip without the toolbar the tabs sit
+    /// in), each with `tabs` null. Looks only inside the strip. Diagnostics runs
+    /// this very function (`probe`), so what it reports is what the commands see.
+    ///
+    /// `benchReadTabs()` is its `tabs`: null unless there is exactly one strip
+    /// with its toolbar.
     static let reader = #"""
-    function benchReadTabs() {
+    function benchReadStrip() {
         "use strict";
         const strips = Array.from(document.querySelectorAll('[data-testid="right-tab-strip"]'));
-        if (strips.length !== 1) { return null; }
+        if (strips.length === 0) { return { state: "none", tabs: null }; }
+        if (strips.length !== 1) { return { state: "several", tabs: null }; }
         const bar = strips[0].querySelector('[role="toolbar"][aria-label="Open panels"]');
-        if (!bar) { return null; }
+        if (!bar) { return { state: "no-toolbar", tabs: null }; }
         const tabs = [];
         for (const element of Array.from(bar.querySelectorAll("[data-tab-id]"))) {
             const id = element.getAttribute("data-tab-id");
@@ -133,15 +184,35 @@ enum PageTabsScript {
             const button = element.querySelector("[data-tab-btn]");
             const shown = (button !== null && button.getAttribute("aria-current") === "true")
                 || element.getAttribute("data-shown") !== null;
-            tabs.push({ id: id, shown: shown, close: element.querySelector("button[data-tab-close]") });
+            tabs.push({ id: id, shown: shown, button: button !== null, close: element.querySelector("button[data-tab-close]") });
         }
-        return tabs;
+        return { state: "ok", tabs: tabs };
     }
+    function benchReadTabs() { return benchReadStrip().tabs; }
+    """#
+
+    /// What Diagnostics runs in the page, read-only: how the strip looks, as
+    /// counts only (never an id or a name). `{strip, tabs, withButton,
+    /// withClose, shown}`, `strip` being `benchReadStrip`'s state.
+    static let probe = reader + #"""
+
+    const strip = benchReadStrip();
+    const tabs = strip.tabs === null ? [] : strip.tabs;
+    return JSON.stringify({
+        strip: strip.state,
+        tabs: tabs.length,
+        withButton: tabs.filter(tab => tab.button).length,
+        withClose: tabs.filter(tab => tab.close !== null).length,
+        shown: tabs.filter(tab => tab.shown).length,
+    });
     """#
 
     /// What `callAsyncJavaScript` runs, with the arguments `mode` ("others",
     /// "all" or "one") and `keep` (an id or null). Answers a JSON string:
-    /// `{"status":"done"|"unavailable"|"refused", "closed":n, "stayed":n}`.
+    /// `{"status":"done"|"unavailable"|"refused", "closed":n, "stayed":n}`, and
+    /// for the last two a `reason` (`PageTabsReason`) saying which hook it
+    /// didn't find, so Capsid can tell a page with no tabs open from a page
+    /// that changed.
     ///
     /// Before any press, every tab to close must have its close button: if
     /// one doesn't, nothing is pressed. Then, one tab at a time, in order, it
@@ -170,21 +241,29 @@ enum PageTabsScript {
         return false;
     }
 
-    const reply = (status, closed, stayed) => JSON.stringify({ status: status, closed: closed, stayed: stayed });
-    const first = benchReadTabs();
-    if (first === null) { return reply("unavailable", 0, 0); }
+    const reply = (status, closed, stayed, reason) => JSON.stringify({ status: status, closed: closed, stayed: stayed, reason: reason });
+    const strip = benchReadStrip();
+    const first = strip.tabs;
+    if (first === null) {
+        return reply("unavailable", 0, 0,
+            strip.state === "none" ? "no-strip" : strip.state === "several" ? "several-strips" : "no-toolbar");
+    }
     const targets = benchTabsToClose(mode, first.map(tab => ({ id: tab.id, shown: tab.shown })), keep);
-    if (targets === null) { return reply("refused", 0, 0); }
+    if (targets === null) {
+        const noneShown = mode === "others" && (keep === null || keep === undefined)
+            && first.filter(tab => tab.shown).length !== 1;
+        return reply("refused", 0, 0, noneShown ? "no-shown-tab" : "tab-missing");
+    }
     for (const id of targets) {
         const tab = first.find(item => item.id === id);
-        if (!tab || !tab.close) { return reply("unavailable", 0, 0); }
+        if (!tab || !tab.close) { return reply("unavailable", 0, 0, "no-close-button"); }
     }
     let closed = 0;
     for (const id of targets) {
         const now = benchReadTabs();
         const tab = now === null ? undefined : now.find(item => item.id === id);
         if (tab === undefined) { closed += 1; continue; }
-        if (!tab.close) { return reply("unavailable", closed, targets.length - closed); }
+        if (!tab.close) { return reply("unavailable", closed, targets.length - closed, "no-close-button"); }
         tab.close.click();
         if (!(await benchTabGone(id))) { break; }
         closed += 1;
@@ -227,7 +306,7 @@ extension WebContainer {
         do {
             let value = try await webView.callAsyncJavaScript(PageTabsScript.body, arguments: request.arguments,
                                                               in: nil, contentWorld: .defaultClient)
-            guard let text = value as? String, let parsed = PageTabsOutcome(parsing: text) else {
+            guard let parsed = PageTabsOutcome.read(value) else {
                 Logger.web.error("Close tabs: the page's answer wasn't understood")
                 return .unavailable
             }
@@ -242,6 +321,18 @@ extension WebContainer {
         case .done: break
         }
         return outcome
+    }
+}
+
+extension WebContainer {
+    /// How the page's tab strip looks right now, as the commands would read
+    /// it (`PageTabsScript.probe`): a JSON string of counts. Presses nothing.
+    func readTabStrip() async throws -> String {
+        guard status == .ready else { throw WebAPIError.notReady }
+        let value = try await webView.callAsyncJavaScript(PageTabsScript.probe, arguments: [:],
+                                                          in: nil, contentWorld: .defaultClient)
+        guard let text = value as? String else { throw WebAPIError.badResponse }
+        return text
     }
 }
 

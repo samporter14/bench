@@ -213,6 +213,8 @@ final class WebContainer: ObservableObject, WebPageWindow {
                 PlanUsageModel.shared.refresh()
                 return
             }
+            // A designed branch, not a change (DESIGN.md, Daemon and sign-in):
+            // nothing is noted for Diagnostics.
             Logger.web.info("An API read was refused and no Sign in button showed; signing in again")
             guard let nonce = await DaemonController.freshNonce() else { return }
             webView.load(URLRequest(url: addingLoginNonce(nonce, to: Self.canonical(url))))
@@ -222,19 +224,16 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// Presses the page's visible "Sign in" button, if one appears within six
     /// seconds. Runs in Bench's own script world, which sees the same page.
     private func pressSignIn() async -> Bool {
-        let body = """
-        for (let i = 0; i < 12; i++) {
-            const target = [...document.querySelectorAll("button, a")].find(el => {
-                const box = el.getBoundingClientRect();
-                return (el.textContent || "").trim() === "Sign in" && box.width > 0 && box.height > 0;
-            });
-            if (target) { target.click(); return true; }
-            await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        return false;
-        """
-        let result = try? await webView.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .defaultClient)
+        let result = try? await webView.callAsyncJavaScript(SignInScript.press, arguments: [:], in: nil, contentWorld: .defaultClient)
         return (result as? Bool) == true
+    }
+
+    /// Whether the page shows its "Sign in" button right now (Diagnostics).
+    /// Looks only; it never presses it.
+    func signInButtonIsShowing() async throws -> Bool {
+        guard status == .ready else { throw WebAPIError.notReady }
+        let value = try await webView.callAsyncJavaScript(SignInScript.look, arguments: [:], in: nil, contentWorld: .defaultClient)
+        return (value as? Bool) == true
     }
 
     /// The first daemon page to finish loading means we are in.
@@ -301,4 +300,37 @@ final class WebContainer: ObservableObject, WebPageWindow {
         let stored = UserDefaults.standard.object(forKey: SettingsKey.pageZoom) as? Double ?? PageZoom.actualSize
         return min(max(stored, PageZoom.range.lowerBound), PageZoom.range.upperBound)
     }
+}
+
+/// The page's "Sign in" button, as a script: one finder, shared by the press
+/// and by Diagnostics' look, so the look checks what the press would find.
+enum SignInScript {
+    /// `benchFindSignIn()`: the first visible button or link reading exactly
+    /// "Sign in", or null.
+    static let finder = #"""
+    function benchFindSignIn() {
+        const found = [...document.querySelectorAll("button, a")].find(el => {
+            const box = el.getBoundingClientRect();
+            return (el.textContent || "").trim() === "Sign in" && box.width > 0 && box.height > 0;
+        });
+        return found || null;
+    }
+    """#
+
+    /// Looks for the button every half second for six seconds, and presses it.
+    static let press = finder + #"""
+
+    for (let i = 0; i < 12; i++) {
+        const target = benchFindSignIn();
+        if (target) { target.click(); return true; }
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    return false;
+    """#
+
+    /// Looks once, and presses nothing.
+    static let look = finder + #"""
+
+    return benchFindSignIn() !== null;
+    """#
 }

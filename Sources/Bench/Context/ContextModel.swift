@@ -35,7 +35,7 @@ struct ContextFigures: Equatable {
 /// The parts of `token-series` the ring needs. Everything is optional and the
 /// rest is ignored, so a Claude Science update that adds or drops a field
 /// doesn't fail the read.
-private struct TokenSeries: Decodable, Sendable {
+struct TokenSeries: Decodable, Sendable {
     struct Turn: Decodable, Sendable {
         let ctxTotal: Int?
     }
@@ -43,6 +43,40 @@ private struct TokenSeries: Decodable, Sendable {
     let window: Int?
     let turns: [Turn]?
     let truncated: Bool?
+
+    /// Reads an answer the way the ring does. Throws a `DecodingError` for
+    /// one that isn't JSON of this shape at all.
+    nonisolated static func decode(_ data: Data) throws -> TokenSeries {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(TokenSeries.self, from: data)
+    }
+
+    /// `decode`, with a breadcrumb (CompatBreadcrumbs) when the answer can't be
+    /// decoded or lacks what the ring needs. The ring reads every answer
+    /// through this, so a change in Claude Science is noted once, here.
+    nonisolated static func decodeNoting(_ data: Data, breadcrumbs: CompatBreadcrumbs = .shared) throws -> TokenSeries {
+        let series: TokenSeries
+        do {
+            series = try decode(data)
+        } catch {
+            breadcrumbs.record(.contextNotDecoded)
+            throw error
+        }
+        if let miss = series.shapeMiss { breadcrumbs.record(miss) }
+        return series
+    }
+
+    /// What the ring can't do without that the answer lacks, or nil. A session
+    /// with no turns yet is fine, and so is one whose only turn is still
+    /// under way (it has no size yet); two turns or more and none with a size
+    /// is a change.
+    var shapeMiss: CompatMiss? {
+        guard let window, window > 0 else { return .contextWithoutWindow }
+        guard let turns else { return .contextWithoutTurns }
+        if turns.count >= 2, turns.allSatisfy({ $0.ctxTotal == nil }) { return .contextWithoutTurns }
+        return nil
+    }
 }
 
 @MainActor
@@ -253,16 +287,19 @@ final class ContextModel: ObservableObject {
         }
     }
 
-    private static func fetch(_ frame: String) async throws -> TokenSeries {
-        // The id comes from the page's address, so it is made safe as one path segment.
+    /// `/frames/<id>/token-series`. The id comes from the page's address, so
+    /// it is made safe as one path segment.
+    nonisolated static func seriesPath(for frame: String) -> String {
         let unreserved = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.~"))
         let id = frame.addingPercentEncoding(withAllowedCharacters: unreserved) ?? frame
-        let data = try await WebContainer.shared.apiGET("/frames/\(id)/token-series")
+        return "/frames/\(id)/token-series"
+    }
+
+    private static func fetch(_ frame: String) async throws -> TokenSeries {
+        let data = try await WebContainer.shared.apiGET(seriesPath(for: frame))
         // A long session's series can be large; decode it off the main thread.
         return try await Task.detached(priority: .utility) {
-            let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
-            return try decoder.decode(TokenSeries.self, from: data)
+            try TokenSeries.decodeNoting(data)
         }.value
     }
 }

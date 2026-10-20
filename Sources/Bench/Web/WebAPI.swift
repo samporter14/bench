@@ -37,7 +37,7 @@ struct APIWriteResult: Equatable, Sendable {
 
 extension WebContainer {
     /// The API paths Bench may read in full, under the daemon's `/api`.
-    nonisolated private static let readablePrefixes = ["/usage", "/artifacts/versions/"]
+    nonisolated static let readablePrefixes = ["/usage", "/artifacts/versions/"]
 
     /// What `apiGET` may read: usage and plan files as before, and a frame
     /// exactly as `^/frames/[0-9a-f-]{36}\?shallow=true$` (a plan's card) or

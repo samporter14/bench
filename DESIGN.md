@@ -156,7 +156,10 @@ you", and the graph's steps. No other hues, no gradients.
     close button of a tab to close is missing, or there are two strips, nothing is pressed.
     A tab to keep that is not in the strip also presses nothing. A newer Claude Science that
     changes this markup makes the commands do nothing; the right-click target uses
-    `[data-testid="right-tab-strip"] [data-tab-id]`.
+    `[data-testid="right-tab-strip"] [data-tab-id]`. The script says why it pressed nothing (`reason`), so a
+    page with no tab open (no strip) is told from a strip that is wrong (several, no toolbar, a tab with no
+    close button, no single shown tab): the second is recorded for Diagnostics' "Last problem", the first is
+    not. Diagnostics also looks at the strip with the same reader (Diagnostics, below).
   - **The right-click target** comes from a user script in its own content world
     (`capsid-tabs`, document start, main frame only) with a capturing `contextmenu`
     listener. It posts `{tab: <id>}` when the click is on a tab and `{tab: null}` for
@@ -1757,6 +1760,102 @@ takes `--step 1…7`).
 | Use Capsid from your phone (`remoteEnabled`, since 0.4.0; see Capsid on your phone) | off |
 | Skip "Put Tailscale on your phone" (`remotePhoneSkipped`; see Settings → Phone) | off |
 
+## Diagnostics (App/Diagnose.swift, App/Compat*.swift, since 0.7.4)
+
+Help → Capsid Diagnostics… (also Settings → General → Diagnostics…, and the banner that says Capsid
+can't see your sessions) shows what Capsid can and can't see of Claude Science, one line per step, with
+Run Again and Copy. `Capsid --diagnose` prints steps 1 to 5 and the list of what is checked only when
+used, says the page checks need the window, and exits. It names no project, session, tab, file or org
+ID: only yes/no, versions, folders, sizes, ages, counts and fixed phrases, so it is safe to paste into a
+message. ✓ is fine, ✗ a problem, • neither (a note, or something
+that couldn't be told).
+
+**The steps, in order.**
+1. The `claude-science` tool and its `status`: running, version, port, data folder.
+2. **The version line.** "Claude Science 0.1.65; Capsid was last checked with 0.1.63". The running version is
+   `status.version` from the same `claude-science status` the app already runs to find the daemon (a CLI
+   that omits it reads "unknown", and the line says Claude Science didn't say). No page or API read is used
+   for it. `CompatInventory.checkedWith` is the version Capsid was last checked with: 0.1.63, the one whose web
+   bundle the tab markup was read from (Main window, above). The versions are compared as numbers
+   (`ScienceVersion`: 0.1.9 is older than 0.1.63; a suffix like "-rc1" can't be ordered and reads as
+   different). If the status can't be read, the line is only "Capsid was last checked with Claude Science
+   0.1.63". When they differ, ✓ becomes • and a second line says, in plain words, that this is a newer (or
+   older, or different) Claude Science than Capsid was checked with, so features that depend on its page (the
+   tab commands, the readouts, Approve) may need a look. Moving `checkedWith` is a claim: walk the whole
+   inventory again first (and the 0.1.63 sentence in the Main window section).
+3. Each data folder and org database, and which was picked.
+4. The database opens read-only, and each table has the columns the queries read. The list is the
+   inventory's (below), so it now includes `conversation_type`, `agent_name`, `task_summary` and `input_data`,
+   which the session filter, the browse lists and the intent lookup read and the step once left out.
+   `projects.archived_at` is optional: Capsid uses it when it is there, and the line only notes if it isn't.
+5. The reads themselves, as the Lab does them: recent sessions, project names.
+6. **The page and the API** (the window only: they need the open page). Below.
+7. **Checked only when used**, and **Last problem**. Below.
+
+**What Capsid relies on** (`CompatInventory.all`). Claude Science never promised to keep any of it, and an
+update that changes it breaks a feature without a word. The list is in code, in five kinds, each entry with
+what is looked for, what is expected, the Capsid feature it serves (`CompatFeature`), the file that relies
+on it, and whether Diagnostics can check it now:
+
+| Kind | What |
+|---|---|
+| Page | the right-hand panel's tab markup (the strip, its toolbar, a tab, the button that shows it, its close button, how the shown tab is marked); the visible "Sign in" button; the page's own `Notification`; a session's address `/projects/<project>/frames/<session>`; the `?nonce=` sign-in; previews on another port |
+| Reads | `/api/usage`, `/api/frames/<id>/token-series`, `?shallow=true`, `/api/artifacts/versions/<v>`, and for the phone the thumbnails, the artifact list, `messages`, `trace-shallow`, `streaming`; `/api/csrf`; a 401 when signed out |
+| Writes | `approve-plan`, `resolve-input`, `/api/request`, `/api/projects/<p>/request`, `/api/projects/<p>/attachments`; the `operon_csrf` cookie sent back as `x-operon-csrf` |
+| Command line | the tool's place; `status` (`running`, `version`, `port`, `pid`, `daemon.data_dir`, `active_frames`, `active_conversations`); `url`; `serve --no-browser --detached` |
+| Database | `active-org.json`, `orgs/<org>/operon-cli.db`; the tables and columns above; the words and JSON keys stored inside (the frame statuses, `pending_input_requests`, `msg_json`'s `_ts`, `role`, `_intent_id`, `_tokens`) |
+
+The tests hold the list to the code both ways (`CompatInventoryTests`), so a new dependency can't be added
+silently and a stale one can't stay: every selector in the page scripts (`PageTabs`, `TabContextMenu`, the
+sign-in script) is in the list and every scripted entry is in a script; every read path the allowlists let
+through, and every write the builders make, is in the list and passes the real gate; every key the status
+parser takes is listed; no other file reads the page's markup or runs a script in it, and no other `/api/`
+resource is named, without a test failing; and a made-up database holding exactly the listed columns runs
+every query the app makes, while leaving out any one required column makes one of them fail.
+
+**The page and the API, live** (`CompatProbes`). Run only when the window opens or Run Again is pressed, one
+after another, each given 6 s. Each says one of four things: ✓ it answered as expected; ✗ *not the shape
+Capsid reads* (it answered, but not as Capsid parses it); • *not on screen now* (it only exists in some
+state, and this isn't one: no tab is open, no session is shown, the page isn't up, the Sign in button shows
+only while signed out; never a fault); ✗ *couldn't be checked* (refused, signed out, gone, no answer). What
+is looked at:
+- **The tab strip**: the very reader the commands use (`benchReadStrip`, run as `PageTabsScript.probe`)
+  reports, as counts only, whether there is one strip with its toolbar, and whether each tab has its button
+  and close button and exactly one is marked shown. It presses nothing.
+- **The Sign in button**, with the finder the sign-in recovery uses, looked for and never pressed.
+- **The session address**: whether the page is on a session.
+- **`GET /api/usage`**, **`token-series`**, **`?shallow=true`** and, if the shown session names a plan,
+  **`/api/artifacts/versions/<v>`**: each through `WebContainer.apiGET` (so Capsid never handles the
+  cookie), answered through the real parsers: `PlanUsageModel.parse`, `TokenSeries.decode`, `PlanFrame`,
+  `PlanDocument`, and the shape rules the readouts use. The session is the one the page shows; with none,
+  these are not on screen now.
+The probes' environment holds a read and two looks and no write, so a probe can't send one. A 401 during a
+probe starts the same sign-in recovery as any read.
+
+**Checked only when used.** Listed with the feature that depends on them, never tried from Diagnostics: every
+write (they change things), and the phone's reads (they return what was said or made: `messages`, the
+artifact list and files, `trace-shallow`, `streaming`; `apiGET` has no path for messages, the list,
+`trace-shallow` or `streaming`), the page's notifications, previews, the tab right-click, the `?nonce=`
+sign-in, `/api/csrf`, `claude-science url` and `serve`. Each line says why. Their first real use is the check, and a failure there leaves a breadcrumb where it can be told from
+an ordinary state.
+
+**Last problem** (`CompatBreadcrumbs`). Where a feature looks for something in Claude Science and finds it
+changed, it records the miss in memory (the latest only; gone when Capsid quits), logs it at notice level
+(subsystem `local.sam.bench`, category `compat`) and Diagnostics says "Last problem: Close Other Tabs, 12 minutes ago: the tab strip has no toolbar of open panels". A repeat of
+the same miss within 10 minutes is ignored by the log and by this line alike, so a usage read every five
+minutes that keeps missing is one log line per 10 minutes and a "Last problem" whose time is the first
+miss's, not one that restarts at "just now". A miss is one of a fixed set of phrases (`CompatMiss`), so
+nothing read from the page can reach the log. Recorded: a tab
+strip that is wrong (more than one, no toolbar), a tab with no close button, no single tab marked shown, or the
+script's answer not understood; a usage answer that can't be decoded or has none of the limits; a context answer
+that can't be decoded or has no window or no turns with a size; a shallow frame with no status, a plan waiting
+with no plan file named, a plan file that isn't an object or has no summary; an Approve answered 404, 405 or a
+200 that isn't `accepted`. Never recorded, because they are ordinary: no tab strip (no tab is open), a
+signed-out 401 (and a 401 with no Sign in card on the page, which falls back to a fresh sign-in code by design,
+Daemon and sign-in; the probe says the button is not on screen now), a page that isn't up, a slow or failed read, `ok: false` from
+usage, a session with no turns yet, a sub-agent waiting rather than the root, the daemon refusing an Approve in
+its own words (`plan_already_approved`, `plan_frame_processing`, no plan awaiting).
+
 ## Welcome window (since 0.3.6)
 
 A short welcome for someone who has just installed Capsid (`App/Welcome.swift`),
@@ -1815,7 +1914,7 @@ main Claude Science window opens behind it as usual.
 
 ```
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
-Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo, Settings, Welcome   (planner)
+Sources/Bench/App/        BenchApp, Router, Theme, SharedShims, SheetCost, Demo, Settings, Welcome, Diagnose and Compat* (inventory, probes, breadcrumbs)   (planner)
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge, page tabs (Close Other Tabs, Close All Tabs)   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule,
                           QuestionReply and ReplyWindow (a question, a permission request or a plan's
