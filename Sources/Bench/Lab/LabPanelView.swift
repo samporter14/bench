@@ -21,20 +21,30 @@ extension ColorScheme {
 }
 
 /// "<prefix> · m:ss" for a turn's running clock, ticking on the turn's own
-/// seconds; the prefix alone when the turn's start is not known.
+/// seconds; the prefix alone when the turn's start is not known. While the Mac
+/// is left alone (SpecimenHold) it ticks on the turn's own minutes: nobody
+/// reads the seconds, and a tick a second keeps the whole panel awake.
 struct TurnClockText: View {
     let prefix: String
     let since: Date?
+    @ObservedObject private var hold = SpecimenHold.shared
 
     var body: some View {
-        if let since {
-            TimelineView(.periodic(from: since, by: 1)) { context in
-                Text("\(prefix) · \(ElapsedClock.format(context.date.timeIntervalSince(since)))")
-                    .monospacedDigit()
+        // The ZStack keeps this view's identity when the timeline below is
+        // swapped, so the watching starts and stops with the clock.
+        ZStack {
+            if let since {
+                TimelineView(.periodic(from: since, by: hold.holds ? 60 : 1)) { context in
+                    Text("\(prefix) · \(ElapsedClock.format(context.date.timeIntervalSince(since)))")
+                        .monospacedDigit()
+                }
+                // A new timeline, so the clock is right at once when the hold ends.
+                .id(hold.holds)
+            } else {
+                Text(prefix)
             }
-        } else {
-            Text(prefix)
         }
+        .modifier(WatchesHold(active: since != nil))
     }
 }
 
@@ -46,13 +56,15 @@ struct TurnClockText: View {
 struct SpecimenCaptionLine: View {
     let rotation: Rotation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// While the specimen holds a still (SpecimenHold) the line names it.
+    @ObservedObject private var hold = SpecimenHold.shared
 
     var body: some View {
         if reduceMotion {
             line(WorkingGlyph.still)
         } else {
             TimelineView(SceneBoundarySchedule(rotation: rotation)) { timeline in
-                line(rotation.scenes[rotation.scene(at: timeline.date.timeIntervalSinceReferenceDate).index])
+                line(hold.scene(in: rotation, at: timeline.date))
             }
         }
     }
