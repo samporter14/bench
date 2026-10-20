@@ -502,6 +502,16 @@ The window:
   Reply and Approve look grey in every demo capture. The tint is judged on a
   real screen (a card, with Capsid in the background), and a custom clay
   capsule is the fallback if it is grey there too.
+- `colorSpace = .sRGB`. The scenes' frames are drawn in sRGB (`ImageRenderer`).
+  In a window of the display's own colour space (Display P3 on a Mac's screen)
+  Core Animation converts every frame of a scene on the main thread as the
+  scene is committed, about half of what the panel costs to play (Efficiency,
+  below). In an sRGB window it takes the frames as they are and the window
+  server converts the window. The colours on screen are the same: a P3 and an
+  sRGB window showing the same swatches through a keyframed `contents`
+  animation captured pixel for pixel alike, and the panel's caption, title,
+  clock line and glass edges captured identically before and after. Only the
+  panel: the main window's web view is not ours to restyle.
 
 Position:
 
@@ -546,6 +556,9 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     one, and a cut caption says little. Under Reduce
     Motion the well is the still flask, and the line names the flask. Not
     shown under "Not updating", where the well is a warning symbol.
+  - While nobody is at the Mac (Holding still, below) the well holds a still,
+    the caption line names that specimen, and the turn clock moves a minute
+    at a time.
 - **Needs input (card, about 360×170).**
   - Left well: the reason's waiting glyph (`PlayedLoop`) at 88pt.
   - Caption in clay-text: `reason.sentence`.
@@ -1075,6 +1088,58 @@ quiet. The Focus filter's launch read, and the filter appearing in System
 Settings at all for a self-signed app, rest on the SDK's types and docs and
 had not been seen working when this was written; the switch is the sure way.
 
+### Holding still (Lab/SpecimenHold.swift, since 0.9.0)
+
+A session can work for hours with nobody at the Mac, and the specimen plays
+for all of them. After **ten minutes with no key, click or touch** it holds a
+still, as `PlayedGlyphView` already does while its window is covered or the
+screen sleeps, and plays again on the next input. Measured on a demo copy: a
+playing panel costs about 1.2 to 2.1% of a core and 45 to 130 MB; held, 0.00%
+and 23 MB (Efficiency).
+
+- **The idle time** is `CGEventSource.secondsSinceLastEventType(
+  .combinedSessionState, …)` for any input event, read through
+  `MacPresence.live.secondsSinceInput` (the reader "only when away" for the
+  phone already uses). The combined state counts synthetic events too, so an
+  automation tool's click is input.
+- **What holds.** `WorkingGlyph`, which is the panel's well, the toolbar
+  capsule, the menu bar specimen, the activity list, Quick Open and the
+  welcome, shows a still instead of the playing `PlayedGlyph`: the scene the
+  rotation was in when the hold began, drawn once at the middle of it, as a
+  covered window's specimen is. The playing view is removed, so its frames and
+  their memory go with it. `SpecimenHold.heldAt` (on the rotation's clock) is
+  the moment, so every copy holds the same scene, and the panel's caption line
+  and its right-click menu name that scene instead of following the rotation.
+  The turn clock (`TurnClockText`) ticks on the turn's own minutes instead of
+  its seconds. Under Reduce Motion the specimen is already still, the flask,
+  and only the clock slows.
+- **When it looks.** Only while a view shows a specimen or the clock
+  (`WatchesHold`, from `onAppear` to `onDisappear`), so a Capsid with nothing on
+  screen runs no timer (Principle 1). Playing, it looks once a minute: going
+  quiet is slow news next to ten minutes. Holding, every two seconds, so an
+  input brings the specimen back within about two seconds; the look is one
+  call and never per frame. A view that appears looks at once, so a session
+  that begins after an hour away shows the still from its first frame.
+- **Low Power Mode.** The limit is two minutes (`lowPowerIdleLimit`), never
+  longer than the limit otherwise in force, and a change of power state
+  (`NSProcessInfoPowerStateDidChange`) looks at once. A lower frame rate was
+  considered and left: the rate is `PlayedGlyphView.fps`, a constant of the
+  Shared copy, and 15 fps would need a Capsid-owned player. The measured
+  saving is about 40% of the commit cost, and a hold saves all of it
+  (Efficiency, Shared changes). So Low Power Mode shortens the wait instead.
+- **A hidden default**, not a setting and not in Settings:
+  `specimenIdleSeconds`, a number of seconds above zero, replaces the ten
+  minutes (anything else is ignored). It is for trying the rule without waiting:
+  `open -g -n Capsid.app --args --demo working -showLabPanel YES
+  -panelWhileFront YES --quiet -specimenIdleSeconds 20`. A command-line default
+  is never saved.
+- **Not held.** The waiting glyph on a card (`PlayedLoop`) draws its frames
+  once and repeats them with no work from Capsid: a demo card measured 0.00%
+  CPU. Nothing is saved by holding it.
+- **Demo and tests.** A demo holds like the app does (that is how it was
+  checked); the rules are tested with an injected idle reader, clock, power
+  state and wait (`SpecimenHoldTests`), never the real Mac or a real sleep.
+
 ### Menu bar specimen (Lab/MenuBarSpecimen.swift, since 0.3.0)
 
 Off by default. While a session works, the specimen plays in the menu bar;
@@ -1083,6 +1148,7 @@ activity list in a popover. Its ink follows the menu bar's appearance (the
 wallpaper's), not Capsid's Ivory or Slate. Hidden, not removed, while nothing
 works, so it keeps its place. Measured at about 0–2% CPU while playing. It
 shows the glyph and a count and no names, so Quiet while presenting leaves it.
+It holds still with the rest (Holding still).
 
 ### Mac notifications (since 0.3.3)
 
@@ -2372,13 +2438,104 @@ main Claude Science window opens behind it as usual.
   it from activating Capsid, and closing it records nothing: it never writes
   `hasSeenWelcome`. Its switch is the real setting, so don't click it.
 
+## Efficiency (measured 2026-10-20)
+
+Starting point, from the installed app on Sam's Mac while a session worked
+and the panel played: 7.9% CPU on average (5.5 to 10.2 over 60 `top` samples
+in 6 minutes), footprint 114 to 257 MB; 0% and 49 MB with nothing playing.
+**That was not reproduced.** Everything below is a demo copy.
+
+**Method.** `open -g -n Capsid.app --args --demo working -showLabPanel YES
+-panelWhileFront YES --quiet -ApplePersistenceIgnoreState YES`, then
+`top -l N -s 5 -pid <pid> -stats pid,cpu,mem,power` (the first sample dropped,
+20 to 40 samples), `sample` and `xcrun xctrace record --template 'Time
+Profiler' --attach <pid>` on the demo only. The Mac was shared with other
+agents (load average 3 to 14), so runs of the same build differ by about
+0.3 points; the comparisons below are interleaved pairs.
+
+**What the demo is not, and what was not measured.**
+
+- Only the first baseline run (below) had an unlocked, awake screen. The rest
+  were taken with the lock screen in front, where macOS reports the panel
+  occluded and the specimen holds a still. For those, a test-only shim (a
+  dylib loaded with `DYLD_INSERT_LIBRARIES`, never part of the repo) made
+  `NSWindow.occlusionState` read as visible, so the demo played. That
+  measures Capsid's own CPU; it does **not** measure what the window server
+  and the GPU do for a panel that is really on screen, nor the glass over
+  changing content, nor the CVDisplayLink and RenderBox/Metal threads Sam's
+  `sample` saw, which the demo's samples never showed. "No glass cost" below
+  means no cost in Capsid's process, not none.
+- The demo has no main window. Its toolbar capsule is a second playing glyph
+  and a second clock: `--demo toolbar` measured 1.13% playing and 0.24% with
+  the glyph still. It has no web view and no database polling (about 0.3%).
+- The 5.5 to 10.2% was steady, with no quiet samples. The demo's playing cost is
+  mostly bursts, one per scene (0.2% between them on the unlocked run). The gap to 1.2 to 2.4% is
+  unexplained; Sam's `sample` points at rendering work that a live screen
+  would show. Measure the next build as the 7.9% was: the installed app, a
+  session working, `top -l 61 -s 6`, screen unlocked.
+
+**Where the time goes** (Time Profiler, 150 s of the playing demo, 2.65 s of
+CPU, 1.76%; the panel's own SwiftUI content is idle between ticks):
+
+| | before | after the sRGB window |
+|---|---|---|
+| Core Animation commit (before, 1.34 s of it `CAKeyframeAnimation CA_prepareRenderValue` → `CGContextDrawImage`: copy and colour-convert every frame of a scene) | 1.53 s, 58% | 0.32 s |
+| SwiftUI layout and updates (the 1 Hz clock) | 0.25 s | 0.22 s |
+| Drawing the frames (`ImageRenderer`) | 0.21 s | 0.17 s |
+| Everything else (thread start, malloc, RenderBox, …) | 0.62 s | 0.57 s |
+| Total CPU | 2.65 s, 1.76% | 1.31 s, 0.87% |
+
+By switching parts off in the demo (20 samples each, pre-fix): playing 1.83%;
+specimen still, clock running 0.23%; clock off, specimen playing 1.44%;
+specimen still and clock off 0.00%; the glass replaced by a plain material
+1.91%. So the specimen's frames are about 85% of the cost, the clock about
+0.2 to 0.4 points, and the glass nothing in-process. The memory swing is the
+frames: a scene's frames are held as images for as long as it plays, and Core
+Animation keeps its own copy of each (a 20 s scene at 64 pt: +72 to 78 MB in a
+test harness).
+
+**What changed.**
+
+| demo, 20 to 24 samples at 5 s | CPU mean (range) | footprint |
+|---|---|---|
+| before, awake unlocked screen | 1.37% (0.2 to 2.2) | 31 to 141 MB |
+| before, locked screen, shim (two runs) | 2.14% and 2.10% (0.9 to 3.6) | 45 to 138 MB |
+| after, playing (two runs, interleaved with the above) | 1.25% and 1.10% (0.7 to 2.3) | 45 to 127 MB |
+| after, holding still | 0.00% (0.0 to 0.1) | 23 MB flat |
+
+The sRGB panel took playing cost down 44% (2.12% to 1.18%); the hold takes it
+to nothing while nobody is at the Mac. Footprint while playing is
+unchanged: the sRGB window does not touch the frames. A harness that commits a
+20 s scene's 600 frames (64 pt at 2x) measured 51.8 ms for the commit in a P3
+window and 11.3 ms in an sRGB one.
+
+**Shared changes that would help, not made here** (`Shared/PlayedViews.swift`
+is the droplet's, and `Scripts/sync-shared.sh` overwrites it):
+
+- **Hold a second of frames at a time, not a scene.** `PlayedGlyphView.restart`
+  draws the whole of a scene's frames, then hands them to one
+  `CAKeyframeAnimation`, so a 20 s scene is 600 images (about 75 MB with Core
+  Animation's copies) committed in one 60 to 150 ms stall of the main thread.
+  Animating a second at a time (30 frames), each chunk begun when the last
+  ends, as scenes already are, and dropping the chunk before the last, measured
+  +38 MB at the peak for the same 54 ms of CPU. It is also what a lower frame
+  rate would be built on.
+- **A lower rate in Low Power Mode**, `PlayedGlyphView.fps` (30, a `static let`)
+  settable, with the frames drawn at that rate: 15 fps committed 33 ms against
+  54 ms, about 40% less. Capsid would then play at 15 in Low Power Mode and
+  could drop its two-minute limit to the ten.
+- **Frames in the screen's own format and colour space** (premultiplied BGRA in
+  the display's profile) make the commit nearly free (1.8 ms) but move the
+  conversion into drawing (the same total), so the sRGB window is the better
+  fix and this one is not worth making.
+
 ## Files and ownership
 
 ```
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
 Sources/Bench/App/        BenchApp, Router, Theme, TimeSpan, SharedShims, SheetCost, PosterCost, Demo, Settings, Welcome, Diagnose and Compat* (inventory, probes, breadcrumbs)   (planner)
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge, page tabs (Close Other Tabs, Close All Tabs), LastSession (reopen where you were)   (web agent)
-Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule,
+Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule, SpecimenHold,
                           QuestionReply and ReplyWindow (a question, a permission request or a plan's
                           changes answered from its card)   (lab agent)
 Sources/Bench/Results/    ResultsShelf and ResultsWindow: the results shelf (Results)
@@ -2422,7 +2579,8 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] find, zoom and back/forward, in the main window and in a Browser window
 - [ ] with Settings in front, Reload, Zoom, Find and Back/Forward are dimmed
 - [ ] the window closes and reopens without losing state
-- [ ] on-screen CPU with the panel playing
+- [ ] on-screen CPU with the panel playing, on a live unlocked screen (Efficiency's numbers are from a locked one)
+- [ ] the specimen holds a still after ten minutes without input and plays again on a touch (or `-specimenIdleSeconds 20` on a demo; the first look is at once, the next within a minute)
 - [ ] update check: with the switch off nothing asks GitHub (no request in Little Snitch or `nettop` for a day); Check Now and Capsid → Check for Updates… do; with it on, a first check comes within a minute and the next a day later, not at the next launch
 - [ ] update check against a real newer release: the card comes once, Settings shows "Capsid 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Capsid in /Applications) quits Capsid, installs it and reopens it. Capsid started from a build folder offers no Install
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption lines (Panel, "Name the specimen that's playing")

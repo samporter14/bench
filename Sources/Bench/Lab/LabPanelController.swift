@@ -182,6 +182,13 @@ final class LabPanelController {
         panel.backgroundColor = .clear
         // The glass carries its own shadow.
         panel.hasShadow = false
+        // The specimens' frames are drawn in sRGB. In a window of the
+        // display's own colour space (Display P3 on a Mac's screen) Core
+        // Animation converts every frame of a scene on the main thread as it
+        // is committed, about half of what the panel costs to play. In an
+        // sRGB window it hands them over as they are and the window server
+        // converts the window, with the same colours on screen.
+        panel.colorSpace = .sRGB
         panel.animationBehavior = .none
         panel.isExcludedFromWindowsMenu = true
         panel.isReleasedWhenClosed = false

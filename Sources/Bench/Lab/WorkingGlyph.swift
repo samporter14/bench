@@ -1,38 +1,78 @@
 // WorkingGlyph.swift — the working specimen, or under Reduce Motion a still
-// one: the panel and the toolbar capsule say a session works either way.
+// one: the panel and the toolbar capsule say a session works either way. It
+// is also still while nobody is at the Mac (SpecimenHold).
 import SwiftUI
 
 struct WorkingGlyph: View {
     let tint: Color
     var rotation: Rotation = .full
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Nobody has touched the Mac for ten minutes: a still, not the rotation.
+    @ObservedObject private var hold = SpecimenHold.shared
 
     /// The specimen under Reduce Motion: the first one, the flask. The
     /// panel's caption line names it.
     static var still: LabScene? { LabScenes.catalogue.first }
 
     var body: some View {
-        if reduceMotion {
-            StillSpecimen(tint: tint)
-        } else {
-            PlayedGlyph(tint: tint, rotation: rotation)
+        // The ZStack keeps the view's identity across the switch, so the
+        // watching below starts and stops with the glyph, not with each face.
+        ZStack {
+            if reduceMotion {
+                StillSpecimen(tint: tint)
+            } else if hold.holds {
+                // The scene the rotation was in when the hold began, at the
+                // middle of it, as a covered window's specimen is held.
+                StillSpecimen(tint: tint, scene: hold.scene(in: rotation, at: .now), at: 0.5)
+            } else {
+                PlayedGlyph(tint: tint, rotation: rotation)
+            }
         }
+        .modifier(WatchesHold(active: !reduceMotion))
     }
 }
 
-/// The first specimen (the flask), drawn once, at its poster time.
+/// Asks `SpecimenHold` to look for as long as a specimen is on screen that
+/// could be told to hold. Under Reduce Motion none moves, so none looks.
+struct WatchesHold: ViewModifier {
+    let active: Bool
+    @State private var watching = false
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { set(active) }
+            .onDisappear { set(false) }
+            .onChange(of: active) { _, now in set(now) }
+    }
+
+    private func set(_ on: Bool) {
+        guard on != watching else { return }
+        watching = on
+        if on { SpecimenHold.shared.watch() } else { SpecimenHold.shared.unwatch() }
+    }
+}
+
+/// A scene drawn once: the flask under Reduce Motion at its poster time
+/// (SpecimenPoster), or the held specimen `at` this far through it (its
+/// middle, as a covered window's specimen is held).
 private struct StillSpecimen: View {
     let tint: Color
-    @State private var poster = WorkingGlyph.still.flatMap { SpecimenPosters.shared.cached($0) }
+    var scene: LabScene? = WorkingGlyph.still
+    /// How far through the scene; nil is its poster time.
+    var at: Double? = nil
+    @State private var poster: Double?
 
     var body: some View {
         Canvas { context, size in
-            guard let scene = WorkingGlyph.still else { return }
-            LabScenes.draw(scene, in: &context, size: size, local: poster ?? SpecimenPoster.fallback(scene), tint: tint)
+            guard let scene else { return }
+            let local = at.map { scene.duration * $0 }
+                ?? poster ?? SpecimenPosters.shared.cached(scene) ?? SpecimenPoster.fallback(scene)
+            LabScenes.draw(scene, in: &context, size: size, local: local, tint: tint)
         }
         .accessibilityHidden(true)
-        .task {
-            if poster == nil, let scene = WorkingGlyph.still { poster = await SpecimenPosters.shared.time(for: scene) }
+        .task(id: scene?.name) {
+            guard at == nil, let scene, SpecimenPosters.shared.cached(scene) == nil else { return }
+            poster = await SpecimenPosters.shared.time(for: scene)
         }
     }
 }
@@ -45,6 +85,7 @@ struct PlayingSpecimenMenu: ViewModifier {
     let active: Bool
     let rotation: Rotation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject private var hold = SpecimenHold.shared
 
     func body(content: Content) -> some View {
         if !active {
@@ -54,7 +95,7 @@ struct PlayingSpecimenMenu: ViewModifier {
             content.contextMenu { choose }
         } else {
             TimelineView(SceneBoundarySchedule(rotation: rotation)) { timeline in
-                let scene = rotation.scenes[rotation.scene(at: timeline.date.timeIntervalSinceReferenceDate).index]
+                let scene = hold.scene(in: rotation, at: timeline.date)
                 content.contextMenu {
                     let settings = SceneSettings.shared
                     if settings.playsFavorites {
