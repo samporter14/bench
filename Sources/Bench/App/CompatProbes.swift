@@ -147,6 +147,8 @@ enum CompatProbeRules {
             case .notReady: return .notOnScreenNow("the page isn't up yet")
             case .notAllowed: return .failed("Capsid's list of readable paths doesn't allow it")
             case .badResponse: return .unexpectedShape("the page didn't hand back text")
+            case .timedOut: return .failed("no answer in time")
+            case .responseTooLarge: return .failed("the answer exceeded the read limit")
             }
         }
         let message = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? ""

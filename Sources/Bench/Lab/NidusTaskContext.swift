@@ -7,7 +7,7 @@ import Darwin
 
 /// The complete wire format. Keep it small and versioned so another app can
 /// reject a future format rather than guessing about its meaning.
-struct NidusTaskFile: Codable, Equatable {
+struct NidusTaskFile: Codable, Equatable, Sendable {
     let version: Int
     let pid: Int32
     let updatedAt: TimeInterval
@@ -16,7 +16,7 @@ struct NidusTaskFile: Codable, Equatable {
 }
 
 enum NidusTaskSelection {
-    struct Route: Equatable {
+    struct Route: Equatable, Sendable {
         let projectID: String
         let frameID: String
     }
@@ -54,98 +54,259 @@ enum NidusTaskSelection {
     }
 }
 
+/// One utility queue owns the file. Superseded requests are discarded before
+/// doing work and again before committing. A clear is ordered after any write
+/// already in progress, so an old write cannot recreate the file after removal.
+final class NidusTaskWriter: @unchecked Sendable {
+    private let file: URL
+    private let queue: DispatchQueue
+    private let beforeCommit: @Sendable () -> Void
+    private let lock = NSLock()
+    private var generation: UInt64 = 0
+    // Only touched on queue.
+    private var directoryReady = false
+
+    init(file: URL, queue: DispatchQueue = DispatchQueue(label: "local.sam.bench.nidus-context", qos: .utility),
+         beforeCommit: @escaping @Sendable () -> Void = {}) {
+        self.file = file
+        self.queue = queue
+        // Tests can hold a prepared write while focus is lost.
+        self.beforeCommit = beforeCommit
+    }
+
+    func publish(_ context: NidusTaskFile?) {
+        lock.lock()
+        generation &+= 1
+        let mine = generation
+        lock.unlock()
+        queue.async { [self] in
+            guard isCurrent(mine) else { return }
+            guard let context else {
+                try? FileManager.default.removeItem(at: file)
+                return
+            }
+            write(context, generation: mine)
+        }
+    }
+
+    /// The explicit quit path waits for removal; ordinary updates never wait.
+    func flush() {
+        dispatchPrecondition(condition: .notOnQueue(queue))
+        queue.sync {}
+    }
+
+    /// Tests await queued work without blocking their main actor.
+    func settled() async {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume() }
+        }
+    }
+
+    private func isCurrent(_ value: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return generation == value
+    }
+
+    private func write(_ context: NidusTaskFile, generation: UInt64) {
+        let directory = file.deletingLastPathComponent()
+        let temporary = directory.appendingPathComponent(".nidus-context-\(UUID().uuidString)")
+        var moved = false
+        defer { if !moved { try? FileManager.default.removeItem(at: temporary) } }
+        do {
+            let data = try JSONEncoder().encode(context)
+            guard data.count <= 8_192 else { throw CocoaError(.fileWriteUnknown) }
+            if !directoryReady {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                        attributes: [.posixPermissions: 0o700])
+                directoryReady = true
+            }
+            // This unique temporary file is already the staging copy. The
+            // rename below provides atomic publication without a second copy.
+            try data.write(to: temporary, options: .withoutOverwriting)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+            beforeCommit()
+            guard isCurrent(generation) else { return }
+            guard rename(temporary.path, file.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
+            moved = true
+        } catch {
+            directoryReady = false
+            // A failed current write must not leave an old title appearing fresh.
+            if isCurrent(generation) { try? FileManager.default.removeItem(at: file) }
+        }
+    }
+}
+
 @MainActor
 final class NidusTaskContext {
     static let shared = NidusTaskContext()
+    static let heartbeatInterval: TimeInterval = 5
 
-    /// Nidus reads this path. Its 15-second freshness limit protects against
-    /// an app crash or an unexpected loss of focus notifications.
+    /// Nidus rejects a copy older than 15 seconds. Only an eligible, focused
+    /// route needs the five-second heartbeat; disabled sharing has no timer.
     static var fileURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Capsid/nidus-context.json")
     }
 
+    struct Selection {
+        let route: NidusTaskSelection.Route
+        let names: (project: String, task: String)?
+    }
+
+    struct Dependencies {
+        var selection: @MainActor () -> Selection?
+        var lookup: @MainActor (NidusTaskSelection.Route) async -> (project: String, task: String)?
+        var observe: @MainActor (@escaping @MainActor () -> Void) -> [AnyCancellable]
+        var scheduleHeartbeat: @MainActor (@escaping @MainActor () -> Void) -> AnyCancellable
+        var publish: @MainActor (NidusTaskFile?) -> Void
+        var flush: @MainActor () -> Void
+        var now: @MainActor () -> Date = { Date() }
+
+        @MainActor static func live() -> Dependencies {
+            let writer = NidusTaskWriter(file: NidusTaskContext.fileURL)
+            return Dependencies(selection: {
+                guard UserDefaults.standard.bool(forKey: SettingsKey.shareTaskWithNidus), NSApp.isActive,
+                      let window = MainWindowController.shared.windowIfLoaded,
+                      window.isVisible, NSApp.keyWindow === window else { return nil }
+                let web = WebContainer.shared
+                guard let route = NidusTaskSelection.route(url: web.webView.url, daemonPort: web.port) else { return nil }
+                return Selection(route: route,
+                                 names: NidusTaskSelection.names(url: web.webView.url, daemonPort: web.port,
+                                                                sessions: LabModel.shared.sessions))
+            }, lookup: { route in
+                await Task.detached(priority: .utility) {
+                    guard let db = resolveDatabase(), let row = try? fetchSession(db: db, id: route.frameID),
+                          row.projectID == route.projectID else { return nil as (project: String, task: String)? }
+                    return NidusTaskSelection.names(project: row.projectName, task: row.name)
+                }.value
+            }, observe: { changed in
+                var observers: [AnyCancellable] = []
+                let names: [Notification.Name] = [
+                    NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                    NSWindow.willCloseNotification,
+                    NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+                    UserDefaults.didChangeNotification,
+                ]
+                for name in names {
+                    NotificationCenter.default.publisher(for: name)
+                        .receive(on: DispatchQueue.main)
+                        .sink { _ in MainActor.assumeIsolated { changed() } }
+                        .store(in: &observers)
+                }
+                WebContainer.shared.$currentFrameID
+                    .receive(on: DispatchQueue.main)
+                    .sink { _ in MainActor.assumeIsolated { changed() } }
+                    .store(in: &observers)
+                LabModel.shared.reads.$sessions
+                    .receive(on: DispatchQueue.main)
+                    .sink { _ in MainActor.assumeIsolated { changed() } }
+                    .store(in: &observers)
+                return observers
+            }, scheduleHeartbeat: { beat in
+                Timer.publish(every: NidusTaskContext.heartbeatInterval, tolerance: 1, on: .main, in: .common).autoconnect()
+                    .sink { _ in MainActor.assumeIsolated { beat() } }
+            }, publish: { writer.publish($0) }, flush: { writer.flush() })
+        }
+    }
+
+    private struct Publication: Equatable {
+        let route: NidusTaskSelection.Route
+        let project: String
+        let task: String
+    }
+
+    private let dependencies: Dependencies
     private var observers: [AnyCancellable] = []
+    private var heartbeat: AnyCancellable?
+    private var refreshQueued = false
     private var started = false
+    private var cleared = false
+    private var published: Publication?
     private var lookedUpRoute: NidusTaskSelection.Route?
     private var lookup: Task<Void, Never>?
     private var lastLookupAt = Date.distantPast
-    private var fallback: (route: NidusTaskSelection.Route, project: String, task: String)?
+    private var fallback: Publication?
+
+    init(dependencies: Dependencies = .live()) { self.dependencies = dependencies }
 
     func start() {
         guard !started else { return }
         started = true
-
-        let names: [Notification.Name] = [
-            NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
-            NSWindow.willCloseNotification,
-            NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
-            UserDefaults.didChangeNotification,
-        ]
-        // Let AppKit settle on its new key window before deciding whether the
-        // main one still owns focus.
-        for name in names {
-            NotificationCenter.default.publisher(for: name)
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
-                .store(in: &observers)
-        }
-        WebContainer.shared.$currentFrameID
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
-            .store(in: &observers)
-        LabModel.shared.reads.$sessions
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
-            .store(in: &observers)
-        Timer.publish(every: 5, on: .main, in: .common).autoconnect()
-            .sink { [weak self] _ in MainActor.assumeIsolated { self?.refresh() } }
-            .store(in: &observers)
+        observers = dependencies.observe { [weak self] in self?.requestRefresh() }
         refresh()
     }
 
-    func refresh() {
-        guard started else { return }
-        guard UserDefaults.standard.bool(forKey: SettingsKey.shareTaskWithNidus),
-              NSApp.isActive,
-              let window = MainWindowController.shared.windowIfLoaded,
-              window.isVisible, NSApp.keyWindow === window
-        else { forget(); clear(); return }
+    /// A burst of focus, settings and snapshot notifications gets one read of
+    /// the settled selection. Token-only updates then compare equal below.
+    private func requestRefresh() {
+        guard started, !refreshQueued else { return }
+        refreshQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.refreshQueued = false
+            self.refresh()
+        }
+    }
 
-        let web = WebContainer.shared
-        guard let route = NidusTaskSelection.route(url: web.webView.url, daemonPort: web.port)
-        else { forget(); clear(); return }
+    func refresh() { refresh(heartbeat: false) }
+
+    private func refresh(heartbeat isHeartbeat: Bool) {
+        guard started else { return }
+        guard let selection = dependencies.selection() else {
+            heartbeat?.cancel()
+            heartbeat = nil
+            forget()
+            clearPublication()
+            return
+        }
+        if heartbeat == nil {
+            heartbeat = dependencies.scheduleHeartbeat { [weak self] in self?.refresh(heartbeat: true) }
+        }
+        let route = selection.route
         if route != lookedUpRoute {
-            lookup?.cancel()
-            lookup = nil
+            forget()
             lookedUpRoute = route
             lastLookupAt = .distantPast
-            fallback = nil
         }
-        let recentNames = NidusTaskSelection.names(url: web.webView.url, daemonPort: web.port,
-                                                   sessions: LabModel.shared.sessions)
-        let names = recentNames
-            ?? fallback.flatMap { $0.route == route ? (project: $0.project, task: $0.task) : nil }
-        if let names {
-            write(NidusTaskFile(version: 1, pid: getpid(), updatedAt: Date().timeIntervalSince1970,
-                                projectName: names.project, taskName: names.task))
+        let publication = selection.names.map { Publication(route: route, project: $0.project, task: $0.task) }
+            ?? fallback.flatMap { $0.route == route ? $0 : nil }
+        if let publication {
+            if publication != published || isHeartbeat {
+                published = publication
+                cleared = false
+                dependencies.publish(NidusTaskFile(version: 1, pid: getpid(),
+                    updatedAt: dependencies.now().timeIntervalSince1970,
+                    projectName: publication.project, taskName: publication.task))
+            }
         } else {
-            clear()
+            clearPublication()
         }
-        // An older selected session can be beyond LabModel's 25 recent rows.
-        // Query only its exact frame ID off the main thread, at most once per
-        // five seconds, and recheck focus before publishing the answer.
-        if recentNames == nil, lookup == nil, Date().timeIntervalSince(lastLookupAt) >= 5 {
+        // Older sessions can be outside the 25 recent rows. A focused route's
+        // heartbeat also retries this bounded lookup when needed.
+        if selection.names == nil, lookup == nil,
+           dependencies.now().timeIntervalSince(lastLookupAt) >= Self.heartbeatInterval {
             readOlderSession(route)
         }
     }
 
-    /// Only the copy that publishes may remove the file. A demo never starts
-    /// this, but shares the path, so its Settings toggle or quit must not
-    /// delete the running Capsid's file.
+    /// Quit waits for removal before the process exits. A demo never starts
+    /// this object, so its settings or quit cannot remove the real app's file.
     func clear() {
         guard started else { return }
-        try? FileManager.default.removeItem(at: Self.fileURL)
+        started = false
+        observers.removeAll()
+        heartbeat?.cancel()
+        heartbeat = nil
+        forget()
+        clearPublication()
+        dependencies.flush()
+    }
+
+    private func clearPublication() {
+        published = nil
+        guard !cleared else { return }
+        cleared = true
+        dependencies.publish(nil)
     }
 
     private func forget() {
@@ -156,45 +317,14 @@ final class NidusTaskContext {
     }
 
     private func readOlderSession(_ route: NidusTaskSelection.Route) {
-        lastLookupAt = Date()
+        lastLookupAt = dependencies.now()
         lookup = Task { [weak self] in
-            let names = await Task.detached(priority: .utility) {
-                guard let db = resolveDatabase(),
-                      let row = try? fetchSession(db: db, id: route.frameID),
-                      row.projectID == route.projectID else { return nil as (String, String)? }
-                return (row.projectName, row.name)
-            }.value
-            guard let self, !Task.isCancelled, lookedUpRoute == route else { return }
+            guard let self else { return }
+            let names = await dependencies.lookup(route)
+            guard !Task.isCancelled, started, lookedUpRoute == route else { return }
             lookup = nil
-            fallback = names.flatMap { raw in
-                NidusTaskSelection.names(project: raw.0, task: raw.1).map {
-                    (route: route, project: $0.project, task: $0.task)
-                }
-            }
+            fallback = names.map { Publication(route: route, project: $0.project, task: $0.task) }
             refresh()
-        }
-    }
-
-    private func write(_ context: NidusTaskFile) {
-        let file = Self.fileURL
-        let directory = file.deletingLastPathComponent()
-        let temporary = directory.appendingPathComponent(".nidus-context-\(UUID().uuidString)")
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                                                    attributes: [.posixPermissions: 0o700])
-            let data = try JSONEncoder().encode(context)
-            guard data.count <= 8_192 else { clear(); return }
-            try data.write(to: temporary, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporary.path)
-            // POSIX rename replaces the old file in one step, so Nidus never
-            // sees a partially written JSON document.
-            guard rename(temporary.path, file.path) == 0 else {
-                throw CocoaError(.fileWriteUnknown)
-            }
-        } catch {
-            try? FileManager.default.removeItem(at: temporary)
-            // A failed update must not keep an older title appearing current.
-            clear()
         }
     }
 }

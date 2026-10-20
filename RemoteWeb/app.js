@@ -64,6 +64,14 @@ function h(tag, props, ...kids) {
   return el;
 }
 
+// Images outside the viewport may still belong to the lazy-load observer. Dispose only those
+// actually removed by a screen/region replacement; an image reused or moved into the new tree stays live.
+function replaceContents(el, ...kids) {
+  const images = [...el.querySelectorAll('img')].filter((img) => img._disposeFileImage);
+  el.replaceChildren(...kids);
+  for (const img of images) if (!img.isConnected && !el.contains(img)) img._disposeFileImage();
+}
+
 const PATHS = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
@@ -165,7 +173,29 @@ const slowText = (d) => (d && d.error === 'busy' ? 'Another file is still coming
 
 // Two file transfers at a time, as Capsid allows: thumbnails, texts and downloads take turns here.
 const FQ = { n: 0, wait: [] };
-const takeSlot = () => (FQ.n < 2 ? (FQ.n++, Promise.resolve()) : new Promise((r) => FQ.wait.push(r)));
+// A queued image can withdraw without taking a slot. Once started, it keeps its slot until its
+// load completes, just like the other transfers; leaving a screen never increases concurrency.
+function fileSlot() {
+  const ticket = { ready: null, cancel: () => {} };
+  if (FQ.n < 2) {
+    FQ.n++;
+    ticket.ready = Promise.resolve(true);
+  } else {
+    ticket.ready = new Promise((resolve) => {
+      const start = () => { ticket.cancel = () => {}; resolve(true); };
+      FQ.wait.push(start);
+      ticket.cancel = () => {
+        const at = FQ.wait.indexOf(start);
+        if (at < 0) return;
+        FQ.wait.splice(at, 1);
+        ticket.cancel = () => {};
+        resolve(false);
+      };
+    });
+  }
+  return ticket;
+}
+const takeSlot = () => fileSlot().ready;
 function giveSlot() {
   const next = FQ.wait.shift();
   if (next) next(); else FQ.n = Math.max(0, FQ.n - 1);
@@ -570,7 +600,7 @@ function render(fresh = false, force = false) {
   if (S.view === 'pair') tree = pairView();
   else if (S.view === 'offline') tree = offlineView();
   else if (S.view === 'app') tree = S.split ? splitView(r) : singleView(r);
-  root.replaceChildren(...(tree ? [tree] : []));
+  replaceContents(root, ...(tree ? [tree] : []));
   const side = root.querySelector('.side-pane');
   const detail = root.querySelector('.detail');
   if (side) side.scrollTop = sideTop;
@@ -1223,7 +1253,7 @@ function setRegion(body, name, sig, build) {
   const key = active && el.contains(active) ? active.dataset.key : '';
   const caret = key && active.selectionStart != null ? [active.selectionStart, active.selectionEnd] : null;
   el.dataset.sig = sig;
-  el.replaceChildren(...build().filter(Boolean));
+  replaceContents(el, ...build().filter(Boolean));
   if (key) {
     const again = el.querySelector(`[data-key="${CSS.escape(key)}"]`);
     if (again) {
@@ -2119,9 +2149,22 @@ const nearScreen = 'IntersectionObserver' in window
 function fileImg(props, src, failed) {
   const img = h('img', props);
   let tries = 0;
+  let disposed = false;
+  let slot = null;
+  let retryTimer = 0;
+  img._disposeFileImage = () => {
+    disposed = true;
+    if (nearScreen) nearScreen.unobserve(img);
+    if (slot) slot.cancel();
+    clearTimeout(retryTimer);
+  };
   img._load = async () => {
-    await takeSlot();
-    if (tries && !img.isConnected) { giveSlot(); return; } // gone from the screen meanwhile
+    if (disposed || !img.isConnected) return;
+    slot = fileSlot();
+    const started = await slot.ready;
+    slot = null;
+    if (!started) return;
+    if (disposed || !img.isConnected) { giveSlot(); return; } // gone while waiting, even on the first try
     const ok = await new Promise((r) => {
       let t = 0;
       const over = (v) => { clearTimeout(t); img.onload = img.onerror = null; r(v); };
@@ -2132,8 +2175,8 @@ function fileImg(props, src, failed) {
       img.src = src;
     });
     giveSlot();
-    if (ok) return;
-    if (++tries < 3) setTimeout(() => { if (img.isConnected) img._load(); }, tries * 2500 + Math.random() * 1000);
+    if (ok || disposed || !img.isConnected) return;
+    if (++tries < 3) retryTimer = setTimeout(() => { retryTimer = 0; img._load(); }, tries * 2500 + Math.random() * 1000);
     else failed(img);
   };
   if (nearScreen) nearScreen.observe(img); else queueMicrotask(img._load);

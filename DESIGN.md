@@ -59,7 +59,9 @@ third-party dependencies.
 - Scenes: the droplet's own. `PlayedGlyph(tint:rotation:)` for the working
   rotation and `PlayedLoop(glyph:tint:)` for a waiting reason. They draw in
   `.primary` ink with clay accents built in. The panel shows them at 88pt,
-  about five times the Droppy pill. Measured cost is under 6 ms per second of
+  about five times the Droppy pill (the working face and the cards that tell
+  you something; a card that asks has a 24pt status glyph in its header
+  instead, since 0.9.2). Measured cost is under 6 ms per second of
   frames at 96pt (`Capsid --measure-sheets 48,72,96`).
 
 ## Where the glass goes
@@ -341,6 +343,17 @@ Every link goes through one function. The rules:
     `WebContainer.isReadablePath`). A session's messages are read only by the
     phone's session reader, which projects them in the page (Capsid on your
     phone → Reading a session).
+  - **`apiGET`'s limits (since 0.9.2).** One 15 s deadline, kept in the page,
+    covers the headers and the body together (before, `apiGET` had no
+    deadline of its own). The body is streamed and stopped at 8 MiB, and a
+    `Content-Length` over that is refused unread.
+    Every read has a nonce and its own `AbortController` in the script world:
+    when the task that asked is cancelled (the page moved to another session,
+    a window closed) Capsid aborts that read alone and the other reads in the
+    page are not touched. New `WebAPIError` cases: `timedOut` and
+    `responseTooLarge`; a cancelled read ends as a `CancellationError`, and
+    the compatibility probes say "no answer in time" and "the answer exceeded
+    the read limit". The allowed paths and the 401 handling are as they were.
   - `apiPOST` is the **one write** (since 0.3.4). It accepts exactly one
     route, `^/frames/[0-9a-f-]{36}/approve-plan$` (`WebContainer.isWritablePath`),
     and its body is always exactly `{}`. It sends the `operon_csrf` cookie's
@@ -351,7 +364,9 @@ Every link goes through one function. The rules:
     and the JSON `code` (and whether the body says "No plan awaiting"), never
     the body itself. A 401 calls `sessionLost()`, as `apiGET` does. See
     Approving a plan from its card. Since 0.4.0 the phone's writes go through
-    their own writer (Capsid on your phone → Actions); `apiPOST` is unchanged.
+    their own writer (Capsid on your phone → Actions); `apiPOST` is unchanged,
+    and unaffected by the limits above: no deadline, and no retry but the one
+    after a stale CSRF token, so a write is never sent twice blindly.
 - `isInspectable = true` (internal build).
 - `isElementFullscreenEnabled = true`.
 - Find (⌘F): a small find bar under the toolbar that uses
@@ -540,6 +555,16 @@ When it shows:
 Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
 `.glassEffect(.regular, in: .rect(cornerRadius: 26))`, 16pt padding):
 
+Two families of face (since 0.9.2). The working face and the cards that tell
+you something (Finished, a page notification, a notice, Saved) keep the scene
+well at the left, with the text in a column beside it. The cards that ask you
+something (needs input, stopped with an error) have no well: a compact
+status header, then the title, the project and the content across the card's
+whole 360 pt width, which is 328 pt of text inside the 16pt padding, where
+the column beside an 88 pt well had 226. A question, a plan or an error
+reads at that width. The width of the cards that ask does not follow the
+Size setting; the width of the others does (Scenes settings).
+
 - **Working (compact, about 336×120).**
   - Left: an 88×88 scene well playing the rotation.
   - Right column: a caption with a clay live dot and "Working"; the session
@@ -563,16 +588,20 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
   - While nobody is at the Mac (Holding still, below) the well holds a still,
     the caption line names that specimen, and the turn clock moves a minute
     at a time.
-- **Needs input (card, about 360×170).**
-  - Left well: the reason's waiting glyph (`PlayedLoop`) at 88pt.
-  - Caption in clay-text: `reason.sentence`.
-  - Title and project.
+- **Needs input (card, 360 wide, no well since 0.9.2).** Until 0.9.2 it was
+  about 360×170, with the reason's waiting glyph in an 88 pt well at the left.
+  - Status header (`actionCard`): the reason's waiting glyph (`PlayedLoop`)
+    at 24 pt, hidden from VoiceOver, beside the caption in clay-text,
+    `reason.sentence` ("1 of 3" at its end while cards are stacked).
+  - Under it the title and the project, then the plan or question, then the
+    buttons, each across the card's full width.
   - Buttons: **Open** (`.glassProminent`, clay tint) and **Later** (`.glass`),
     a split pull-down `Menu(primaryAction:)`: a click on Later is "In 5
     Minutes"; its menu has In 5 Minutes, In 15 Minutes, After My Focus
     Session (only while Nidus reports a focus session), a divider and Dismiss.
   - A plan to approve (since 0.3.4, with the setting on): under the project,
-    the plan's `task_summary` (12.5 pt, 2 lines, truncated) and "5 steps ·
+    the plan's `task_summary` (12.5 pt, 3 lines since 0.9.2 and 2 before,
+    truncated) and "5 steps ·
     feasibility: high" in secondary (its tooltip: "Claude's own estimate of
     how feasible the plan is"); "Loading the plan…" while it is read.
     Under those, when the plan has step titles, a small chevron
@@ -587,20 +616,24 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
     **Request changes…** (since 0.7.0).
   - Any other wait (since 0.7.0, with the same setting): the question and
     Reply, or a permission request with Allow Once, Review or Deny. See
-    Answering from the card.
-- **Stopped with an error.**
-  - Left well: the warning triangle.
-  - Caption in clay-text: "Stopped with an error", then the title and the
-    project.
+    Answering from the card. The question, and a permission request's title,
+    take the same three lines as a plan's summary (two before 0.9.2).
+- **Stopped with an error (card, 360 wide, no well since 0.9.2).**
+  - Status header: the warning triangle (19 pt, in clay text, in a 24 pt box
+    hidden from VoiceOver) beside the caption in clay-text, "Stopped with an
+    error"; then the title and the project, across the card's full width.
   - Since 0.9.0, once the reason has been read: under the project, its first
-    line (12 pt, plain text, one line, cut at the end of the line; its tooltip
-    shows the first 600 characters). The buttons are **Open**
+    line (12 pt, plain text, up to two lines since 0.9.2 and one before, cut
+    at the end of the second; its tooltip shows the first 600 characters).
+    The buttons are **Open**
     (`.glassProminent`, clay tint), **Dismiss** (`.glass`) and, with a reason,
     **Copy** (`.glass`), which puts all of it on the pasteboard and says
-    "Copied" for 1.5 s. The card keeps its width and grows one line. With no
-    reason it is the card it always was. See Why it stopped.
+    "Copied" for 1.5 s. The card keeps its width and grows by the lines the
+    reason takes. With no reason it is the card it always was. See Why it
+    stopped.
 - **Finished.**
-  - Left well: the flask, still.
+  - Left well: the flask, still (the well stays on the cards that tell you
+    something, 0.9.2).
   - Caption: "Finished", then the duration and the tokens ("12m · 1.2M
     tokens"; times are written one way, below).
   - Open, and **Results** (`.glass`, since 0.7.0): the Results window on this
@@ -614,6 +647,8 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
   - Clicking the panel does what Open does.
   - Hovering shows a small glass × at top-left, which dismisses the current
     card for good (or hides the working panel until the next change).
+    VoiceOver is offered the same as a named **Dismiss** action beside Open
+    (since 0.9.2), so it needs no hover.
 - **Sound.** When a needs-input card arrives, play `NSSound(named: "Glass")`
   (a setting, on by default).
 - **Open.** Activate Capsid, show the window and navigate the web view to the
@@ -860,6 +895,26 @@ if it is closed or hidden. It is off in a demo, which has no main window.
     go, each cut to 64 characters, as the phone's `q` is 2–64. The same words
     again (a space typed at the end) do not search again; an emptied query
     clears what was found; closing the sheet cancels.
+  - **Obsolete searches stop (since 0.9.2).** Each search owns a
+    `SQLiteReadCancellation` that the cancelling of its asking task trips
+    (`QuickOpenSearch.databaseRows`). A keystroke that changes the words, or
+    closing the sheet, cancels the old search: if its read is still queued
+    behind another it never runs and never opens a connection, and if it is
+    running, SQLite's progress or busy callback stops it (the progress one
+    every 10,000 steps), and the caller leaves at once rather than at the
+    limit. Only the newest wanted query stays waiting behind another database
+    read.
+  - **The reader (`SQLiteReader`, one serial queue, since 0.9.2).** `timeout`
+    counts from the moment a read is queued, not from reaching the front, so
+    waiting in line and the one retry share the deadline. A request that is
+    past it, or cancelled, when it reaches the front does no database work.
+    A read that was cancelled stopped at its own request, so the connection
+    stays: the next read, usually the search that replaced it, uses it instead
+    of opening the database again. Any other failure still drops it, and the
+    next read opens afresh. The read runs at the caller's quality of service
+    (a Quick Open search is user-initiated): the caller waits on a semaphore,
+    which hands its priority to nobody, so the block is submitted with the
+    caller's QoS and `.enforceQoS`, which wins over the queue's own utility.
   - **The SQL.** Root sessions whose `frames.name` or `projects.name` contains
     every word: per word `(f.name LIKE ?N ESCAPE '\' OR p.name LIKE ?N ESCAPE
     '\')`, ANDed, the value bound with `\`, `%` and `_` escaped
@@ -971,12 +1026,28 @@ Claude Science task you spent the time in, not just "Capsid".
   Settings or any other window writes nothing. Names come from the 25 recent
   sessions LabModel already has; an older task is looked up by its exact ID
   off the main actor, at most once every five seconds.
-- **Kept fresh:** rewritten on focus, route, session and settings changes and
-  every five seconds, and removed when any condition above stops holding, the
-  setting goes off, or Capsid quits. A crash leaves a file behind; Nidus
-  ignores it because it accepts the file only when `pid` is the frontmost
+- **Kept fresh (since 0.9.2 only as needed):** written when what it says
+  changes, that is on focus, route and settings changes and when the task or
+  project is renamed. A burst of focus, settings and session-snapshot
+  notifications is read once the burst is over, and a snapshot that changes
+  only token counts finds the same project and task and does not rewrite the
+  file (it used to rewrite it at every snapshot). While a focused, eligible
+  task is shared, a five-second heartbeat rewrites it so Nidus's 15 s
+  freshness limit holds, and it is the only timer: with sharing off, Capsid in
+  the background, another window key or a page that is no task, there is none,
+  and it stops with the first of them. The file is removed when any condition
+  above stops holding, the setting goes off, or Capsid quits. A crash leaves a
+  file behind; Nidus ignores it because it accepts the file only when `pid` is the frontmost
   app's, `updatedAt` is at most 15 s old (or 2 s ahead), and its own
   document-names setting is on.
+- **Written off the main actor (since 0.9.2).** One serial utility queue
+  (`NidusTaskWriter`) encodes, writes a unique temporary file and renames it.
+  Each request carries a generation: one that has been superseded is dropped
+  before it does any work and again just before the rename, and a clear is
+  ordered after a write already under way, so a late write cannot restore a
+  file that was cleared (focus lost, the setting off). Quit waits for the
+  removal; ordinary updates never wait. A current write that fails removes the
+  file rather than leave an old title looking fresh.
 - **Only the copy that started it touches the file.** A `--demo` copy never
   starts it, so its Settings switch and its quit leave a running Capsid's
   file alone.
@@ -1423,8 +1494,9 @@ screen: open, the list adds roughly 150 pt. Whether a card's list is open is kep
 (`stepsOpen`, by session id), in memory: closed by default, per card, and
 dropped with the card's plan, so a card that comes back starts closed. The
 label reads "feasibility" rather than "Claude's feasibility estimate"
-because the longer wording is wider than the text column (226 pt at any
-size of the scene well); the tooltip says whose estimate it is.
+because the longer wording was wider than the text column (226 pt at any
+size of the scene well, until 0.9.2; the card's text is now 328 pt wide, and
+the short wording stays); the tooltip says whose estimate it is.
 
 **Privacy.** This widens Capsid's "never read content" rule by exactly the
 plan's summary, its step count, its steps' titles and its confidence word,
@@ -1483,7 +1555,8 @@ read), while the card says "Loading…". It reads nothing while the setting or
 is tried again after 15 s. Then (`QuestionCardState`, pure):
 
 - **Ready**: the root itself is `awaiting_user_response` with its own first
-  `ask` readable. The card shows the first question in two lines and how it
+  `ask` readable. The card shows the first question in three lines (two before
+  0.9.2) and how it
   is answered ("3 choices", "Pick any of 4", "Type an answer", "2
   questions"), never the answer choices themselves, and offers **Reply**
   (primary), **Open** and **Later**.
@@ -1746,7 +1819,8 @@ tested on made-up JSON). Only for a frame whose `status` is `failed` and whose
   arrows, bullets, bold and code marks and `[text](link)` marks taken off,
   white space as one space, and a code fence skipped. A Python traceback
   leads with its own header, so its line is its last. Cut at 160 characters
-  with an ellipsis, then by the card at the end of its one line.
+  with an ellipsis, then by the card at the end of its second line (its one
+  line before 0.9.2).
 - *Copy.* The whole message as plain text (not the line, and not stripped of
   its markdown), cut at 4,000 characters, then a blank line and Claude
   Science's own detail line ("HTTP 400 · Request ID: req_…") when it has
@@ -1818,8 +1892,16 @@ least one favourite, it is the favourites instead, whatever is on or off
 apart from what is on, so switching back finds the choice as it was. With no
 favourites (none yet, or all renamed), what is on plays.
 
-The panel's well, and its width (base + size − 88), follow `size`. The
-panel's and the capsule's scenes play `rotation`. Right-clicking the working
+The panel's well follows `size`, and so does the width of the faces that have
+one: the working face (336 + size − 88) and the cards that tell you something
+(Finished, a page notification, a notice, Saved: 360 + size − 88); likewise
+"Not updating" and a paused session, which keep the well. Since 0.9.2 the cards
+that ask (needs input, stopped with an error) have no well and stay 360 at every
+size. So the family is mixed: at Small the panel is 24 pt narrower on a Finished
+card than on a question, at Large 32 pt wider, and its width changes when the
+queue moves from one to the other (only at the default Medium are they the
+same, 360). The panel's and the capsule's scenes play `rotation`.
+Right-clicking the working
 panel offers Add "Name" to Favorites (or Remove), Don't Play "Name", Play Only
 "Name" (the specimen playing when the menu opens, followed with
 `SceneBoundarySchedule`) and Choose Specimens…; while only favourites play,
@@ -1827,7 +1909,8 @@ just Remove from Favorites and Choose Specimens…. The toolbar popover has an
 "Only favorites" switch (off and greyed until something is starred), and
 its categories grey while favourites play.
 
-The Settings **Scenes** tab (760×776) has, in a header of two columns:
+The Settings **Scenes** tab (760×776, or the screen's height when that is less:
+Settings, Page sizes) has, in a header of two columns:
 - on the left: the heading and what a click does (switch on or off, or,
   while only favourites play, star), a Size segmented picker, a Play picker
   ("What's on" or "Only favorites"), and under them the category checkboxes
@@ -2055,7 +2138,9 @@ Approving a plan from its card).
   "Context usage" view shows.
 - Read it when the shown session changes, when that session finishes a turn
   or starts waiting (LabModel's transitions), and at most once per 15 s. It
-  scans the transcript, so never poll.
+  scans the transcript, so never poll. When the page moves to another session
+  the read under way is cancelled, its fetch aborted in the page, and an answer
+  that still arrives for the old session is ignored (since 0.9.2).
 - Look: a 14 pt ring in `.primary` at 15% for the track and clay for the
   fill, with the percent beside it (12 pt medium, monospaced digits,
   secondary; clay past 80%). Hidden when no session is shown.
@@ -2106,9 +2191,13 @@ native pop-up:
 
 One pure function chooses, `PlanUsageModel.shown(_:choice:)` (`nonisolated
 static`; PlanUsageChoiceTests), and `UsageToolbarButton` reads the setting with
-`@AppStorage`, so the label changes as soon as the pop-up does. The VoiceOver
-label is built from the limit shown ("Usage. Weekly · all models: 12% left.
-Resets …"), so it follows, and the popover lists every limit either way.
+`@AppStorage`, so the label changes as soon as the pop-up does. The toolbar
+button is named "Usage" for VoiceOver, with the limit shown as its value
+("Weekly · all models: 12% left. Resets …"; "Plan usage and activity" before
+the first read), so it follows the pop-up, and the popover lists every limit
+either way. The name is set on the button itself (since 0.9.2), not left to
+its changing label: the Context button beside it shares the native toolbar
+group, and each button must name only its own half.
 Nothing else reads `tightest`, and nothing else draws this label, so these are
 as they were: heads-up notices (each limit against its own thresholds), the
 usage pause (`limitReached`, `nearLimit`), the phone (every limit, with its
@@ -2185,8 +2274,10 @@ menus and Settings to look like the Mac's own, even where that bends the brand, 
 
 - General is a grouped `Form`, as System Settings is: Capsid's icon, name, version and the "Unofficial,
   and not affiliated with Anthropic" line at the top, native switches, a segmented Theme picker, and
-  Diagnostics as a plain button. Its frame is fixed (600 × 640): a grouped form has no height of its
-  own, and the Settings window sizes to each tab.
+  Diagnostics as a plain button. Its frame was fixed (600 × 640) then; each page has its own height now, and
+  since 0.9.2 a width of 760 and a cap by the screen (Settings, Page sizes). A
+  grouped form has no height of its own, and the Settings window sizes to each
+  tab.
 - Specimens keeps its heading, preview and live grid (cells on screen play, the rest hold a still; the
   hovered one lifts to glass), with system controls around them: a segmented Size picker and light/dark
   switch, a rounded search field, plain All/None buttons, and a checkbox per category. Checkboxes,
@@ -2374,7 +2465,8 @@ state in a scratch `UserDefaults` suite.
 ## Settings (⌘,)
 
 Six tabs since 0.4.0 (`App/SettingsPages.swift`), each a grouped form at its
-own height (the window follows the tab):
+own height (the window follows the tab), every one 760 wide and none taller
+than the screen it is on (Page sizes, below):
 
 - **General** (`general`): Capsid's name and version, a banner when it can't see
   your sessions, Appearance, Updates (since 0.3.6), Nidus (since 0.7.3) and
@@ -2419,6 +2511,25 @@ one line each) are mostly paid for by the shorter lines and by the Mac
 notifications footer moving into an ⓘ; the page is 78 pt taller than before. Phone's height is the
 checklist's tallest states (step 4 or 6 open), so in the ready state it has
 more room below; it is not trimmed.
+
+**On a short or scaled screen (`SettingsViewport`, since 0.9.2).** Every form
+was a fixed 600 pt wide and its page height, and Specimens a fixed 760×776, so
+on a laptop display or a scaled one the bottom of a tab, and the controls
+there, could sit under the screen's edge. Now every tab is 760 wide
+(`SettingsSizing.width`); a form keeps its reading width, 600 pt
+(`SettingsSizing.formWidth`), centred in it, and the page heights above are the
+most it takes. `settingsViewport(height:)` caps the height at the usable frame
+(`visibleFrame`) of the screen the Settings window is on, less the window's own
+chrome (title bar and tab toolbar) and 16 pt of margin above and below. It looks again only
+when the window changes screen or size or the screens' parameters change: no
+polling, and it does not depend on which other Capsid window is key; before a
+window exists it assumes 100 pt of chrome on the main screen. A grouped form
+that no longer fits scrolls, as a form does. Specimens (`settingsViewport(776)`)
+reads the height it was given: under 660 pt it is one `ScrollView` holding the
+heading, the controls and the grid, with the grid at its natural height (220 pt
+at least when empty), so the page has one scroll owner and the controls above
+the grid can be reached; at 660 or more the grid scrolls inside the page, as
+before.
 
 | Setting | Default |
 |---|---|
@@ -2680,6 +2791,13 @@ is the droplet's, and `Scripts/sync-shared.sh` overwrites it):
   conversion into drawing (the same total), so the sRGB window is the better
   fix and this one is not worth making.
 
+**Background work, 0.9.2 (not measured).** Four sources of it were cut: the
+Nidus task file has no timer unless a focused, eligible task is shared, and
+does not rewrite for token-only updates; an obsolete Quick Open search is
+cancelled rather than finished; a context read for the session left behind is
+cancelled; and the phone page lets go of the thumbnails and observers of a
+screen it replaced. No CPU or memory figure was taken for any of them.
+
 ## Files and ownership
 
 ```
@@ -2728,6 +2846,8 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] needs-input card appears, Open lands on the session
 - [ ] a plan's card shows its summary, and Approve approves it (a throwaway session)
 - [ ] finished card
+- [ ] a question, a plan and an error card show the status header and the card's full width, with no well, while Finished keeps its well (at Small and Large the panel's width changes between them); VoiceOver offers Open and Dismiss on a card (0.9.2)
+- [ ] Settings on a short or scaled display: every tab fits the screen, and Specimens scrolls as one page when it is short (0.9.2)
 - [ ] find, zoom and back/forward, in the main window and in a Browser window
 - [ ] with Settings in front, Reload, Zoom, Find and Back/Forward are dimmed
 - [ ] the window closes and reopens without losing state
@@ -2753,8 +2873,15 @@ another app, and once saved **Open** and **Reveal in Finder**; **Save All…**
 on a session's row; and **Open Conversation** (the arrow on the session's
 row) for where a file came from. A filter field narrows by file name,
 among the files read so far (it says so: sessions not read yet aren't
-searched). A session's row is open once read with results; one opened by hand
-to load stays open when they arrive (`ShelfDisclosure`).
+searched). Since 0.9.2 the filter takes out the sessions that don't match
+before the project headings are built, so no empty "Recent sessions", "Older
+sessions" or project heading (and no Show Older Sessions footer) is left; with
+no match at all the window says "No matching files" ("Only loaded results are
+searched. Clear the search to open more sessions.") with a **Clear Search**
+button. Opening Results for a card's session clears an old filter first, so it
+cannot hide the session asked for. A session's row is open once read with
+results; one opened by hand to load stays open when they arrive
+(`ShelfDisclosure`).
 
 **Reading** (`ResultsShelf`) goes through the page's own artifact reader
 (`WebContainer.readArtifact`, Remote/ArtifactReader.swift: the three allowed
@@ -3160,7 +3287,9 @@ say-so).
 
 A checklist that walks a first-time user through setup, then gets out of the
 way (`Remote/PhoneSetup.swift`, pure and tested; `Remote/PhoneSettings.swift`
-draws it). A grouped form at a fixed 760 pt (`settingsPage(height:)`): with
+draws it). A grouped form in the 760 pt Settings window
+(`settingsPage(height:)`, no taller than the screen: Settings, On a short or
+scaled screen): with
 steps 1, 2, 3 or 5 open, or ready, everything fits; with step 4 or 6 open, or
 Pair Another Device, the whole checklist shows and the switches and devices
 below are a scroll away.
@@ -3828,7 +3957,9 @@ shared files gained lines marked `// Phase 3 browse`.
   only the sessions Capsid knows, as in Phase 2.
 - **SQL**: since 0.5.1 Capsid reads through one read-only SQLite connection
   (the system library, not the `sqlite3` tool), so values are bound
-  parameters; ids and the cursor are still checked by shape first, and `q`'s
+  parameters (its `timeout` counts from the moment a read is queued, since
+  0.9.2; see Quick Open); ids and the cursor are still checked by shape first,
+  and `q`'s
   `\`, `%` and `_` are escaped for `LIKE … ESCAPE '\'`. `archived_at` is probed
   with `pragma_table_info` (remembered five minutes), for the projects list and
   for a project's sessions (an archived project lists none; the point lookup by
@@ -3895,8 +4026,13 @@ name, a text field, "Plan first" (off), Start → navigates to the new session.
 Thumbnails, texts and downloads take turns, two at a time (Capsid's limit), an
 image loading once it is near the screen. A read Capsid asks to wait (429) is
 tried again quietly after the `Retry-After` it gives, twice; a thumbnail that
-still fails shows its icon. Downloads are fetched first and then saved from
-the bytes, so a refusal is a sentence under the button ("Another file is
+still fails shows its icon. A screen or list that is replaced lets go of the
+thumbnails it removes (`replaceContents`, since 0.9.2): each leaves the
+intersection observer, a load still waiting for one of the two slots is withdrawn
+without taking one, and a retry timer is cleared. A transfer that has started
+keeps its slot until it finishes, so leaving a screen never raises the two at a
+time; an image reused or moved into the new tree stays live. Downloads are
+fetched first and then saved from the bytes, so a refusal is a sentence under the button ("Another file is
 still coming. Try again in a moment.") and never a saved file holding Capsid's
 answer. Every map the page keys by an id has no prototype, and an address
 naming a project or file `__proto__`, `constructor` or `prototype` opens Now.

@@ -24,13 +24,14 @@ struct SettingsView: View {
 }
 
 extension View {
-    /// A Settings page: a grouped form with switches in the one accent, at
-    /// the page's own height (the window follows the tab).
+    /// A Settings page: a grouped, scrollable form at its reading width,
+    /// inside the same screen-bounded viewport as every other tab.
     func settingsPage(height: CGFloat) -> some View {
         formStyle(.grouped)
             .toggleStyle(.switch)
             .tint(Theme.clay)
-            .frame(width: 600, height: height)
+            .frame(maxWidth: SettingsSizing.formWidth)
+            .settingsViewport(height: height)
     }
 }
 

@@ -29,6 +29,8 @@ struct UsageToolbarButton: View {
             }
         }
         .buttonStyle(ReadoutButtonStyle())
+        .accessibilityLabel("Usage")
+        .accessibilityValue(accessibleValue)
         .help("Plan usage and activity")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             UsageView()
@@ -49,6 +51,17 @@ struct UsageToolbarButton: View {
                 activity.stopLiveUpdates()
             }
         }
+    }
+
+    /// Label the button itself, not only its changing label: the neighboring
+    /// Context button must not name both halves of the native toolbar group.
+    private var accessibleValue: String {
+        guard let limit = plan.shown(choice: shows) else { return "Plan usage and activity" }
+        var value = "\(limit.kind.title): \(limit.leftPercent)% left"
+        if let resetsAt = limit.resetsAt {
+            value += ". Resets " + resetsAt.formatted(date: .abbreviated, time: .shortened)
+        }
+        return value
     }
 }
 

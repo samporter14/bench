@@ -17,8 +17,9 @@ final class PhoneAppHarness {
 
     /// Loads the app at `hash` with the clock at `now`; `answers` maps a
     /// path to the JSON it answers with (status 200). Paths not in it never
-    /// answer, which leaves whatever asked waiting.
-    init(hash: String, now: Date, answers: [String: String]) throws {
+    /// answer, which leaves whatever asked waiting. `beforeApp` can install
+    /// a test's additional browser API shims before the served script loads.
+    init(hash: String, now: Date, answers: [String: String], beforeApp: String = "") throws {
         context = JSContext()
         context.exceptionHandler = { [weak self] _, value in
             self?.exceptions.append(value?.toString() ?? "unknown")
@@ -26,6 +27,7 @@ final class PhoneAppHarness {
         set("__answersJSON", String(decoding: try JSONSerialization.data(withJSONObject: answers), as: UTF8.self))
         evaluate("var __now = \(Int(now.timeIntervalSince1970 * 1000)); var __hash = \(Self.quoted(hash));")
         evaluate(Self.page)
+        if !beforeApp.isEmpty { evaluate(beforeApp) }
         guard let app = RemoteWebApp.files["/app.js"]?.body else { throw Missing.app }
         evaluate(app)
     }

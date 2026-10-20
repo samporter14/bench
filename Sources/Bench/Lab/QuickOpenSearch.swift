@@ -31,12 +31,31 @@ final class QuickOpenSearch: ObservableObject {
             Dependencies(lookup: { words in
                 guard Demo.mode == nil else { return nil }
                 let port = WebContainer.shared.port
-                let rows = await Task.detached(priority: .userInitiated) { () -> [BrowseRow]? in
-                    guard let db = resolveDatabase() else { return nil }
-                    return try? fetchSessionsNamed(db: db, words: words, limit: QuickOpenSearch.limit)
-                }.value
+                let rows = await QuickOpenSearch.databaseRows(words)
                 return rows?.map { $0.status(port: port) }
             })
+        }
+    }
+
+    /// The live detached read shares cancellation with its asking task. A new
+    /// query cancels the old task in `stop()`: if it is queued, it never runs;
+    /// if it is running, SQLite's progress/busy handler stops it. Only the
+    /// newest wanted query can remain pending behind another database read.
+    nonisolated static func databaseRows(
+        _ words: [String],
+        resolve: @escaping @Sendable () -> URL? = { resolveDatabase() },
+        read: @escaping @Sendable (URL, [String], SQLiteReadCancellation) throws -> [BrowseRow] = {
+            try fetchSessionsNamed(db: $0, words: $1, limit: QuickOpenSearch.limit, cancellation: $2)
+        }
+    ) async -> [BrowseRow]? {
+        let cancellation = SQLiteReadCancellation()
+        return await withTaskCancellationHandler {
+            await Task.detached(priority: .userInitiated) { () -> [BrowseRow]? in
+                guard !cancellation.isCancelled, let db = resolve(), !cancellation.isCancelled else { return nil }
+                return try? read(db, words, cancellation)
+            }.value
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 

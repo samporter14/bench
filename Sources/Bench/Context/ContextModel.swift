@@ -112,6 +112,10 @@ final class ContextModel: ObservableObject {
     /// predate what it saw, so it is asked again when the read ends.
     private var reading = false
     private var readAgain = false
+    private var readTask: Task<Void, Never>?
+    /// A cancelled read may still finish decoding. Only its own generation
+    /// can publish or clear the next session's loading state.
+    private var readGeneration = 0
     /// When the current session was last read (or tried), for the 15 s gap.
     private var lastAttempt: ContinuousClock.Instant?
     /// The one read put off until the gap is up.
@@ -119,7 +123,17 @@ final class ContextModel: ObservableObject {
 
     private static let minimumGap = Duration.seconds(15)
 
-    private init() {}
+    private let fetchSeries: @MainActor (String) async throws -> TokenSeries
+    private let pageReady: @MainActor () -> Bool
+    private let isDemo: @MainActor () -> Bool
+
+    init(fetchSeries: @escaping @MainActor (String) async throws -> TokenSeries = ContextModel.fetch,
+         pageReady: @escaping @MainActor () -> Bool = { WebContainer.shared.status == .ready },
+         isDemo: @escaping @MainActor () -> Bool = { Demo.mode != nil }) {
+        self.fetchSeries = fetchSeries
+        self.pageReady = pageReady
+        self.isDemo = isDemo
+    }
 
     // MARK: Starting
 
@@ -193,8 +207,14 @@ final class ContextModel: ObservableObject {
 
     /// The page shows another session, or none. What was read belongs to the
     /// old one, so it goes at once and the new one is read without waiting.
-    private func show(_ frame: String?) {
+    func show(_ frame: String?) {
         guard frame != frameID else { return }
+        readTask?.cancel()
+        readTask = nil
+        readGeneration += 1
+        reading = false
+        readAgain = false
+        loading = false
         frameID = frame
         used = nil
         window = nil
@@ -226,7 +246,7 @@ final class ContextModel: ObservableObject {
     /// after) or the last was under 15 s ago (it waits for the gap to be up,
     /// so a turn that ends just after a read still updates the ring).
     private func requestRead(force: Bool = false) {
-        guard Demo.mode == nil, let frame = frameID, WebContainer.shared.status == .ready else { return }
+        guard !isDemo(), let frame = frameID, pageReady() else { return }
         guard !reading else {
             readAgain = true
             return
@@ -244,8 +264,12 @@ final class ContextModel: ObservableObject {
         reading = true
         loading = true
         failure = nil
-        Task {
-            await read(frame)
+        readGeneration += 1
+        let generation = readGeneration
+        readTask = Task {
+            await read(frame, generation: generation)
+            guard generation == readGeneration else { return }
+            readTask = nil
             reading = false
             loading = false
             if readAgain {
@@ -266,11 +290,11 @@ final class ContextModel: ObservableObject {
         }
     }
 
-    private func read(_ frame: String) async {
+    private func read(_ frame: String, generation: Int) async {
         do {
-            let series = try await Self.fetch(frame)
+            let series = try await fetchSeries(frame)
             // The page moved on while this was reading.
-            guard frame == frameID else { return }
+            guard !Task.isCancelled, generation == readGeneration, frame == frameID else { return }
             // A turn with no `ctx_total` (one still in progress, say) is
             // skipped, so the ring, the headline and the chart agree.
             turns = series.turns?.compactMap(\.ctxTotal) ?? []
@@ -279,9 +303,12 @@ final class ContextModel: ObservableObject {
             truncated = series.truncated ?? false
         } catch WebAPIError.notReady {
             // Not signed in yet: the status observer reads once it is.
+            guard generation == readGeneration else { return }
             lastAttempt = nil
+        } catch is CancellationError {
+            // Navigation withdrew this read; the new session owns the UI.
         } catch {
-            guard frame == frameID else { return }
+            guard !Task.isCancelled, generation == readGeneration, frame == frameID else { return }
             log.error("Couldn't read context: \(String(describing: error), privacy: .public)")
             failure = "Couldn't read context"
         }

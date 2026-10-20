@@ -96,6 +96,22 @@ enum ShelfSelection: Hashable {
     case file(String)
 }
 
+/// A search covers only file lists already loaded. Remove unmatched sessions
+/// before building project headings, while keeping the original group/order.
+enum ShelfResultSearch {
+    static func groups(_ groups: [ShelfGroup], matching query: String) -> [ShelfGroup] {
+        guard !query.isEmpty else { return groups }
+        return groups.compactMap { group in
+            let matches = group.sessions.filter { item in
+                (item.results.entries ?? []).contains { $0.name.localizedCaseInsensitiveContains(query) }
+            }
+            guard !matches.isEmpty else { return nil }
+            return ShelfGroup(coverage: group.coverage, projectID: group.projectID,
+                              projectName: group.projectName, sessions: matches)
+        }
+    }
+}
+
 struct ResultsView: View {
     @ObservedObject var shelf: ResultsShelf
     let quickLook: ResultsQuickLook
@@ -103,10 +119,20 @@ struct ResultsView: View {
     @State private var selection: ShelfSelection?
 
     var body: some View {
+        let groups = ShelfResultSearch.groups(shelf.groups, matching: search)
         VStack(spacing: 0) {
             header
             Divider()
-            if shelf.sessions.isEmpty, shelf.older == .hidden {
+            if !search.isEmpty, groups.isEmpty {
+                ContentUnavailableView {
+                    Label("No matching files", systemImage: "magnifyingglass")
+                } description: {
+                    Text("Only loaded results are searched. Clear the search to open more sessions.")
+                } actions: {
+                    Button("Clear Search") { search = ""; selection = nil }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if shelf.sessions.isEmpty, shelf.older == .hidden {
                 ContentUnavailableView {
                     Label("No sessions yet", systemImage: "tray")
                 } description: {
@@ -116,11 +142,16 @@ struct ResultsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                list
+                list(groups)
             }
         }
         .frame(minWidth: 520, minHeight: 360)
         .background(Color(nsColor: .windowBackgroundColor))
+        // Opening Results for a card must reveal its session, even if the
+        // previous visit left a filter that would hide it.
+        .onChange(of: shelf.focused) { _, focus in
+            if focus != nil { search = "" }
+        }
     }
 
     // MARK: The header
@@ -152,20 +183,25 @@ struct ResultsView: View {
 
     // MARK: The list
 
-    private var list: some View {
-        let groups = shelf.groups
+    private func list(_ groups: [ShelfGroup]) -> some View {
+        let recent = groups.filter { $0.coverage == .recent }
+        let older = groups.filter { $0.coverage == .older }
         return ScrollViewReader { proxy in
             List(selection: $selection) {
-                Section("Recent sessions") {
-                    ForEach(groups.filter { $0.coverage == .recent }) { group in
-                        projectRows(group)
+                if !recent.isEmpty {
+                    Section("Recent sessions") {
+                        ForEach(recent) { group in
+                            projectRows(group)
+                        }
                     }
                 }
-                Section("Older sessions") {
-                    ForEach(groups.filter { $0.coverage == .older }) { group in
-                        projectRows(group)
+                if !older.isEmpty || search.isEmpty {
+                    Section("Older sessions") {
+                        ForEach(older) { group in
+                            projectRows(group)
+                        }
+                        if search.isEmpty { olderFooter }
                     }
-                    olderFooter
                 }
             }
             .listStyle(.inset)
@@ -190,16 +226,10 @@ struct ResultsView: View {
             .foregroundStyle(.secondary)
             .accessibilityAddTraits(.isHeader)
         ForEach(group.sessions) { item in
-            if search.isEmpty || matches(item) {
-                sessionRow(item)
-                    .id(item.id)
-                    .tag(ShelfSelection.session(item.id))
-            }
+            sessionRow(item)
+                .id(item.id)
+                .tag(ShelfSelection.session(item.id))
         }
-    }
-
-    private func matches(_ item: ShelfSession) -> Bool {
-        (item.results.entries ?? []).contains { $0.name.localizedCaseInsensitiveContains(search) }
     }
 
     private func isOpen(_ item: ShelfSession) -> Bool {

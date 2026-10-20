@@ -79,8 +79,69 @@ enum SQLArgument: Sendable, Equatable {
 
 /// Run one read-only query and return its rows, every value as text: NULL
 /// as "", numbers as SQLite writes them (as `sqlite3 -list` printed them).
-func runReadOnlyQuery(db: URL, sql: String, arguments: [SQLArgument] = [], timeout: TimeInterval = 8) throws -> [[String]] {
-    try SQLiteReader.shared.rows(db: db, sql: sql, arguments: arguments, timeout: timeout)
+func runReadOnlyQuery(db: URL, sql: String, arguments: [SQLArgument] = [], timeout: TimeInterval = 8,
+                      cancellation: SQLiteReadCancellation? = nil) throws -> [[String]] {
+    try SQLiteReader.shared.rows(db: db, sql: sql, arguments: arguments, timeout: timeout, cancellation: cancellation)
+}
+
+/// Shared by a caller and SQLite's queue. Cancellation wakes a waiting caller
+/// immediately; SQLite notices it at its next progress or busy callback. The
+/// callback never interrupts the connection directly, so it cannot accidentally
+/// interrupt the next request using that connection.
+final class SQLiteReadCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var handlers: [UUID: @Sendable () -> Void] = [:]
+
+    var isCancelled: Bool { lock.withLock { cancelled } }
+
+    func cancel() {
+        let callbacks = lock.withLock { () -> [@Sendable () -> Void] in
+            guard !cancelled else { return [] }
+            cancelled = true
+            let callbacks = Array(handlers.values)
+            handlers = [:]
+            return callbacks
+        }
+        callbacks.forEach { $0() }
+    }
+
+    fileprivate func onCancel(_ callback: @escaping @Sendable () -> Void) -> UUID? {
+        let id = UUID()
+        let registered = lock.withLock {
+            guard !cancelled else { return false }
+            handlers[id] = callback
+            return true
+        }
+        if !registered { callback() }
+        return registered ? id : nil
+    }
+
+    fileprivate func remove(_ id: UUID?) {
+        guard let id else { return }
+        _ = lock.withLock { handlers.removeValue(forKey: id) }
+    }
+}
+
+/// A read, timeout and cancellation can race. Exactly one answer wakes the
+/// caller; a late result is simply discarded.
+private final class SQLiteReadCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<[[String]], any Error>?
+    let ready = DispatchSemaphore(value: 0)
+
+    func finish(_ value: Result<[[String]], any Error>) {
+        let first = lock.withLock {
+            guard result == nil else { return false }
+            result = value
+            return true
+        }
+        if first { ready.signal() }
+    }
+
+    func value() throws -> [[String]] {
+        try lock.withLock { try result!.get() }
+    }
 }
 
 /// Claude Science's database, read through one connection with the system
@@ -104,10 +165,13 @@ func runReadOnlyQuery(db: URL, sql: String, arguments: [SQLArgument] = [], timeo
 ///   open to hold up the daemon's checkpoints.
 /// - It opens again when the path names another file (a new inode: the
 ///   database was replaced), when another database is asked for (the active
-///   org or the daemon's data folder changed), and after any error, retrying
-///   a failed read once on the fresh connection.
-/// - A writer's lock is waited on for 2 s; a statement still running at
-///   `timeout` is interrupted ("query timed out").
+///   org or the daemon's data folder changed), and after any error but a
+///   cancellation (a read stopped at its caller's request leaves it healthy),
+///   retrying a failed read once on the fresh connection.
+/// - A writer's lock is waited on for at most 2 s. `timeout` starts when a
+///   request is enqueued, including queue wait and retries. An expired or
+///   cancelled queued request never opens the database; a running statement
+///   stops at its next progress/busy callback.
 final class SQLiteReader: @unchecked Sendable {
     static let shared = SQLiteReader()
     /// How long a read waits for a lock the daemon holds, in milliseconds.
@@ -118,7 +182,7 @@ final class SQLiteReader: @unchecked Sendable {
     /// The library's version, as `--diagnose` reports it.
     static var libraryVersion: String { String(cString: sqlite3_libversion()) }
 
-    private let queue = DispatchQueue(label: "local.sam.bench.sqlite", qos: .utility)
+    private let queue: DispatchQueue
     /// How long the connection stays open after a read.
     private let idleClose: TimeInterval
     /// Runs the let-go item on the queue after the idle time; tests stand in for the clock.
@@ -132,9 +196,11 @@ final class SQLiteReader: @unchecked Sendable {
     init(idleClose: TimeInterval = 10,
          schedule: @escaping (DispatchQueue, TimeInterval, DispatchWorkItem) -> Void = { queue, delay, item in
              queue.asyncAfter(deadline: .now() + delay, execute: item)
-         }) {
+         },
+         queue: DispatchQueue = DispatchQueue(label: "local.sam.bench.sqlite", qos: .utility)) {
         self.idleClose = idleClose
         self.schedule = schedule
+        self.queue = queue
     }
 
     /// How many connections have been opened: for tests.
@@ -144,12 +210,46 @@ final class SQLiteReader: @unchecked Sendable {
     var isOpen: Bool { queue.sync { connection != nil } }
 
     /// The rows of one read; see `runReadOnlyQuery`.
-    func rows(db: URL, sql: String, arguments: [SQLArgument] = [], timeout: TimeInterval = 8) throws -> [[String]] {
+    func rows(db: URL, sql: String, arguments: [SQLArgument] = [], timeout: TimeInterval = 8,
+              cancellation: SQLiteReadCancellation? = nil) throws -> [[String]] {
         dispatchPrecondition(condition: .notOnQueue(queue))
-        return try queue.sync {
-            defer { letGoLater() }
-            return try read(path: db.path, sql: sql, arguments: arguments, timeout: timeout)
+        let cancellation = cancellation ?? SQLiteReadCancellation()
+        let deadline = DispatchTime.now() + max(0, timeout)
+        let completion = SQLiteReadCompletion()
+        let registration = cancellation.onCancel { completion.finish(.failure(CancellationError())) }
+        defer { cancellation.remove(registration) }
+        guard !cancellation.isCancelled else { throw CancellationError() }
+        // `queue.sync` ran the read at the caller's QoS. A semaphore wait
+        // donates nothing, and a plain `async` would run every read, a Quick
+        // Open search at user-initiated included, at the queue's utility. So
+        // the block carries the caller's QoS, and `.enforceQoS` lets it win
+        // over the queue's (an unspecified one, from a bare thread, leaves the
+        // queue's own).
+        let callerQoS = DispatchQoS.QoSClass(rawValue: qos_class_self()) ?? .unspecified
+        queue.async(qos: DispatchQoS(qosClass: callerQoS, relativePriority: 0),
+                    flags: callerQoS == .unspecified ? [] : .enforceQoS) { [self] in
+            // Cancelled searches queued behind another read do no database work.
+            guard !cancellation.isCancelled else { return }
+            guard DispatchTime.now() < deadline else {
+                completion.finish(.failure(ScienceError.databaseUnreadable("query timed out")))
+                return
+            }
+            let result = Result {
+                try read(path: db.path, sql: sql, arguments: arguments, until: deadline, cancellation: cancellation)
+            }
+            // Normal completion includes scheduling the idle close, as the
+            // former synchronous reader did. A caller can immediately advance
+            // its injected clock without racing that registration.
+            letGoLater()
+            completion.finish(result)
         }
+        // The caller can leave even while another query owns the queue. A
+        // timeout also cancels its queued/running work, without a second budget.
+        guard completion.ready.wait(timeout: deadline) == .success else {
+            cancellation.cancel()
+            throw ScienceError.databaseUnreadable("query timed out")
+        }
+        return try completion.value()
     }
 
     /// After `idleClose` without another read, the connection goes. On the queue.
@@ -165,16 +265,26 @@ final class SQLiteReader: @unchecked Sendable {
         queue.sync { connection = nil }
     }
 
-    private func read(path: String, sql: String, arguments: [SQLArgument], timeout: TimeInterval) throws -> [[String]] {
+    private func read(path: String, sql: String, arguments: [SQLArgument], until deadline: DispatchTime,
+                      cancellation: SQLiteReadCancellation) throws -> [[String]] {
         var retried = false
         while true {
+            guard !cancellation.isCancelled else { throw CancellationError() }
+            guard DispatchTime.now() < deadline else { throw ScienceError.databaseUnreadable("query timed out") }
             let (current, fresh) = try open(path)
             do {
-                return try current.rows(sql, arguments, until: .now() + timeout)
+                return try current.rows(sql, arguments, until: deadline, cancellation: cancellation)
             } catch let failure as SQLiteFailure {
-                // Whatever went wrong, the next read starts on a new connection.
+                // A read that was cancelled stopped at its own request (the
+                // progress or busy callback said so); the connection is healthy
+                // and the next read, often the search that replaced this one,
+                // keeps using it instead of opening afresh.
+                if cancellation.isCancelled { throw CancellationError() }
+                // Whatever else went wrong, the next read starts on a new connection.
                 connection = nil
-                if failure.primary == SQLITE_INTERRUPT { throw ScienceError.databaseUnreadable("query timed out") }
+                if failure.primary == SQLITE_INTERRUPT || DispatchTime.now() >= deadline {
+                    throw ScienceError.databaseUnreadable("query timed out")
+                }
                 // Once more on a fresh connection, unless this one was fresh or
                 // it was a lock that outlasted the 2 s wait.
                 if !fresh, !retried, failure.primary != SQLITE_BUSY, failure.primary != SQLITE_LOCKED {
@@ -224,6 +334,10 @@ private final class Connection {
     private var statements: [String: OpaquePointer] = [:]
     /// When the statement under way must stop; the progress handler reads it.
     fileprivate var deadline = DispatchTime.distantFuture
+    private var cancellation: SQLiteReadCancellation?
+    private var busyDeadline = DispatchTime.distantFuture
+
+    private var shouldStop: Bool { cancellation?.isCancelled == true || DispatchTime.now() >= deadline }
 
     init(path: String, device: dev_t, inode: ino_t) throws {
         self.path = path
@@ -242,12 +356,23 @@ private final class Connection {
         }
         handle = opened
         sqlite3_extended_result_codes(handle, 1)
-        sqlite3_busy_timeout(handle, SQLiteReader.busyTimeout)
-        // Every 10,000 steps of a statement's program: past the deadline, stop.
+        // SQLite's built-in busy timeout does not see task cancellation. Keep
+        // its two-second cap, but stop waiting promptly when this read ends.
+        sqlite3_busy_handler(handle, { context, attempts in
+            guard let context else { return 0 }
+            let connection = Unmanaged<Connection>.fromOpaque(context).takeUnretainedValue()
+            if attempts == 0 {
+                connection.busyDeadline = .now() + .milliseconds(Int(SQLiteReader.busyTimeout))
+            }
+            guard !connection.shouldStop, DispatchTime.now() < connection.busyDeadline else { return 0 }
+            sqlite3_sleep(10)
+            return connection.shouldStop ? 0 : 1
+        }, Unmanaged.passUnretained(self).toOpaque())
+        // Every 10,000 steps of a statement's program: stop if no longer wanted.
         sqlite3_progress_handler(handle, 10_000, { context in
             guard let context else { return 0 }
             let connection = Unmanaged<Connection>.fromOpaque(context).takeUnretainedValue()
-            return DispatchTime.now() > connection.deadline ? 1 : 0
+            return connection.shouldStop ? 1 : 0
         }, Unmanaged.passUnretained(self).toOpaque())
     }
 
@@ -259,13 +384,19 @@ private final class Connection {
     /// SQLite copies a bound value at once.
     private static var transient: sqlite3_destructor_type { unsafeBitCast(-1, to: sqlite3_destructor_type.self) }
 
-    func rows(_ sql: String, _ arguments: [SQLArgument], until deadline: DispatchTime) throws -> [[String]] {
-        let statement = try prepared(sql)
+    func rows(_ sql: String, _ arguments: [SQLArgument], until deadline: DispatchTime,
+              cancellation: SQLiteReadCancellation) throws -> [[String]] {
         self.deadline = deadline
+        self.cancellation = cancellation
+        defer {
+            self.deadline = .distantFuture
+            self.cancellation = nil
+        }
+        guard !shouldStop else { throw SQLiteFailure(code: SQLITE_INTERRUPT, message: "query interrupted") }
+        let statement = try prepared(sql)
         defer {
             sqlite3_reset(statement)
             sqlite3_clear_bindings(statement)
-            self.deadline = .distantFuture
         }
         for (index, argument) in arguments.enumerated() {
             let position = Int32(index + 1)
@@ -278,6 +409,7 @@ private final class Connection {
         let columns = sqlite3_column_count(statement)
         var rows: [[String]] = []
         while true {
+            guard !shouldStop else { throw SQLiteFailure(code: SQLITE_INTERRUPT, message: "query interrupted") }
             let status = sqlite3_step(statement)
             if status == SQLITE_DONE { return rows }
             guard status == SQLITE_ROW else { throw failure(status) }
@@ -841,7 +973,8 @@ func fetchRecentSessions(db: URL, after cursor: BrowseCursor?) throws -> [Browse
 /// made-up frames (6,000 of them roots) a word nothing matches took 3 ms with
 /// an index on `parent_frame_id`, 26 ms with only one on `updated_at` and
 /// 10 ms with neither. The read is interrupted at `timeout` seconds.
-func fetchSessionsNamed(db: URL, words: [String], limit: Int, timeout: TimeInterval = 3) throws -> [BrowseRow] {
+func fetchSessionsNamed(db: URL, words: [String], limit: Int, timeout: TimeInterval = 3,
+                        cancellation: SQLiteReadCancellation? = nil) throws -> [BrowseRow] {
     let words = words.filter { !$0.allSatisfy(\.isWhitespace) }.prefix(BrowseSQL.searchWordLimit)
         .map { String($0.prefix(BrowseSQL.searchWordLength)) }
     guard !words.isEmpty else { return [] }
@@ -859,7 +992,8 @@ func fetchSessionsNamed(db: URL, words: [String], limit: Int, timeout: TimeInter
         ORDER BY f.updated_at DESC, f.id DESC
         LIMIT ?\(arguments.count);
         """
-    return try runReadOnlyQuery(db: db, sql: sql, arguments: arguments, timeout: timeout).compactMap(BrowseSQL.row)
+    return try runReadOnlyQuery(db: db, sql: sql, arguments: arguments, timeout: timeout,
+                                cancellation: cancellation).compactMap(BrowseSQL.row)
 }
 
 /// One root session by its full id, as the session list's filter counts

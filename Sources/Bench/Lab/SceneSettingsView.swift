@@ -51,18 +51,33 @@ struct SceneSettingsView: View {
     private var spring: Animation? { reduceMotion ? nil : Theme.spring }
 
     var body: some View {
+        GeometryReader { viewport in
+            if viewport.size.height < 660 {
+                // A short or scaled display must still reach the controls
+                // above the grid. One scroll view owns the whole page.
+                ScrollView {
+                    pageContents(gridScrolls: false)
+                }
+            } else {
+                pageContents(gridScrolls: true)
+            }
+        }
+        .settingsViewport(height: 776)
+        // The switch under the preview sets the window's scheme, so the whole
+        // tab shows the specimens on light or dark, not a board inside it.
+        .preferredColorScheme(previewScheme)
+    }
+
+    private func pageContents(gridScrolls: Bool) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             header
             controls
-            grid
+            grid(scrolls: gridScrolls)
         }
         .padding(.horizontal, 32)
         .padding(.top, 24)
         .padding(.bottom, 24)
-        .frame(width: 760, height: 776)
-        // The switch under the preview sets the window's scheme, so the whole
-        // tab shows the specimens on light or dark, not a board inside it.
-        .preferredColorScheme(previewScheme)
+        .frame(maxWidth: .infinity, maxHeight: gridScrolls ? .infinity : nil)
     }
 
     // MARK: Heading, size and preview
@@ -249,7 +264,7 @@ struct SceneSettingsView: View {
     }
 
     @ViewBuilder
-    private var grid: some View {
+    private func grid(scrolls: Bool) -> some View {
         let shown = matching
         Group {
             if shown.isEmpty {
@@ -263,44 +278,49 @@ struct SceneSettingsView: View {
                         default: ContentUnavailableView("No specimens are on", systemImage: "flask")
                         }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ContentUnavailableView.search(text: query)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else if scrolls {
+                ScrollView {
+                    specimenGrid(shown)
                 }
             } else {
-                ScrollView {
-                    LazyVGrid(columns: Self.columns, spacing: 12) {
-                        ForEach(shown, id: \.group) { section in
-                            Section {
-                                ForEach(section.scenes, id: \.name) { scene in
-                                    SceneCell(scene: scene, isOn: settings.isPlaying(scene), isFavorite: settings.isFavorite(scene),
-                                              choosesFavorites: settings.onlyFavorites,
-                                              toggle: {
-                                                  if settings.onlyFavorites { settings.toggleFavorite(scene) } else { settings.toggle(scene) }
-                                              },
-                                              star: { settings.toggleFavorite(scene) },
-                                              hovered: { audition(scene, $0) })
-                                        .equatable()
-                                }
-                            } header: {
-                                if let group = section.group {
-                                    sectionHeader(group)
-                                } else {
-                                    resultsHeader(section.scenes.count)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 14)
-                }
+                specimenGrid(shown)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, minHeight: !scrolls && shown.isEmpty ? 220 : nil,
+               maxHeight: scrolls ? .infinity : nil)
         .background(Color(nsColor: .controlBackgroundColor), in: .rect(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: .separatorColor)))
         .clipShape(.rect(cornerRadius: 10))
+    }
+
+    private func specimenGrid(_ shown: [GridSection]) -> some View {
+        LazyVGrid(columns: Self.columns, spacing: 12) {
+            ForEach(shown, id: \.group) { section in
+                Section {
+                    ForEach(section.scenes, id: \.name) { scene in
+                        SceneCell(scene: scene, isOn: settings.isPlaying(scene), isFavorite: settings.isFavorite(scene),
+                                  choosesFavorites: settings.onlyFavorites,
+                                  toggle: {
+                                      if settings.onlyFavorites { settings.toggleFavorite(scene) } else { settings.toggle(scene) }
+                                  },
+                                  star: { settings.toggleFavorite(scene) },
+                                  hovered: { audition(scene, $0) })
+                            .equatable()
+                    }
+                } header: {
+                    if let group = section.group {
+                        sectionHeader(group)
+                    } else {
+                        resultsHeader(section.scenes.count)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
     }
 
     /// The preview takes the hovered specimen at once, and goes back to the

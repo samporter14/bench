@@ -128,14 +128,15 @@ struct LabPanelView: View {
             if case .working = self { true } else { false }
         }
 
-        /// The panel grows and shrinks with the scene well: 336 or 360 at the
-        /// default 88 pt, plus however much larger or smaller the well is.
+        /// Actionable cards use the full width for their question, plan or
+        /// error. Their compact status glyph doesn't follow specimen size.
+        /// Faces with a specimen well still grow and shrink with that well.
         func width(well: CGFloat) -> CGFloat {
-            let base: CGFloat = switch self {
-            case .working: 336
-            case .card: 360
+            switch self {
+            case .working: 336 + (well - Theme.sceneSize)
+            case .card(.needsInput, _), .card(.failed, _): 360
+            case .card: 360 + (well - Theme.sceneSize)
             }
-            return base + (well - Theme.sceneSize)
         }
 
         /// Changes when the panel should move: a different card, a different
@@ -214,6 +215,7 @@ struct LabPanelView: View {
             .contentShape(.rect(cornerRadius: Theme.panelCorner))
             .onTapGesture { open(face) }
             .accessibilityAction(named: "Open") { open(face) }
+            .accessibilityAction(named: "Dismiss") { dismiss(face) }
             .modifier(PlayingSpecimenMenu(active: face.isWorking && model.problem == nil, rotation: settings.rotation))
         }
     }
@@ -225,14 +227,18 @@ struct LabPanelView: View {
         }
     }
 
+    private func dismiss(_ face: Face) {
+        switch face {
+        case .working: model.dismissWorking()
+        case .card(let card, _): model.dismiss(card)
+        }
+    }
+
     /// A small glass × at the top left: dismisses the top card, or hides the
     /// working panel until the set of working sessions changes.
     private func dismissButton(_ face: Face) -> some View {
         Button {
-            switch face {
-            case .working: model.dismissWorking()
-            case .card(let card, _): model.dismiss(card)
-            }
+            dismiss(face)
         } label: {
             Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
         }
@@ -302,10 +308,9 @@ struct LabPanelView: View {
             // What the card offers, from those states: the one rule the activity list's rows
             // read too (Lab/CardActions.swift).
             let offer = actions.offer(for: session)
-            Row(side: wellSide, well: PlayedLoop(glyph: reason.glyph, tint: colorScheme.sceneInk)) {
-                caption(reason.sentence, style: Theme.clayText, weight: .semibold, trailing: position)
-                title(session.displayTitle)
-                detail(session.projectName)
+            actionCard(session, heading: reason.sentence, position: position) {
+                PlayedLoop(glyph: reason.glyph, tint: colorScheme.sceneInk)
+            } content: {
                 if let plan { planLines(plan, session: session) }
                 if let question { questionLines(question, sessionID: session.id, offer: offer) }
                 needsInputButtons(offer, card: card, session: session)
@@ -314,10 +319,11 @@ struct LabPanelView: View {
             // Why it stopped, once it has been read; until then, or when
             // there is none, the card is as it always was.
             let reason = failures.reason(for: session.id)
-            Row(side: wellSide, well: symbol("exclamationmark.triangle")) {
-                caption("Stopped with an error", style: Theme.clayText, weight: .semibold, trailing: position)
-                title(session.displayTitle)
-                detail(session.projectName)
+            actionCard(session, heading: "Stopped with an error", position: position) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 19, weight: .regular))
+                    .foregroundStyle(Theme.clayText)
+            } content: {
                 if let reason { reasonLine(reason) }
                 buttons {
                     Button("Open") { model.open(card) }
@@ -385,18 +391,19 @@ struct LabPanelView: View {
         }
     }
 
-    /// The first line of why a session stopped, plain text on one line and cut
-    /// at its end; the tooltip shows more of it, and Copy all of it.
+    /// The first line of why a session stopped, with room to wrap once;
+    /// the tooltip shows more of it, and Copy all of it.
     private func reasonLine(_ reason: FailureReason) -> some View {
         Text(verbatim: reason.line)
             .font(.system(size: 12))
-            .lineLimit(1)
+            .lineLimit(2)
             .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.top, 4)
             .help(reason.tooltip)
     }
 
-    /// The plan under the title: its summary in two lines, then its steps
+    /// The plan under the title: its summary in three lines, then its steps
     /// and feasibility, with the steps' titles a click away, or why it
     /// couldn't be approved here.
     @ViewBuilder
@@ -445,7 +452,7 @@ struct LabPanelView: View {
         .help(CardAction.requestChanges.help ?? "")
     }
 
-    /// The question under the title: what it asks, in two lines, and how it
+    /// The question under the title: what it asks, in three lines, and how it
     /// is answered ("3 choices"), or that it's one to answer in Capsid. A
     /// permission request: what it wants, then what it is or why it can't be
     /// answered here, or how its answer went.
@@ -562,7 +569,7 @@ struct LabPanelView: View {
     private func planSummary(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 12.5))
-            .lineLimit(2)
+            .lineLimit(3)
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.top, 4)
@@ -652,6 +659,29 @@ struct LabPanelView: View {
     }
 
     // MARK: Parts
+
+    /// Decisions get the card's whole text width. The status stays visible
+    /// beside a small glyph; the large specimen well belongs to the working
+    /// face, where it is the content rather than competing with a question.
+    private func actionCard<Glyph: View, Content: View>(
+        _ session: SessionStatus, heading: String, position: String?,
+        @ViewBuilder glyph: () -> Glyph, @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                glyph()
+                    .frame(width: 24, height: 24)
+                    .accessibilityHidden(true)
+                caption(heading, style: Theme.clayText, weight: .semibold, trailing: position)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                title(session.displayTitle)
+                detail(session.projectName)
+            }
+            VStack(alignment: .leading, spacing: 3, content: content)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
     /// The scene well on the left, `side` points square, and the text column
     /// on the right.

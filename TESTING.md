@@ -323,6 +323,68 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-20, Capsid 0.9.2 (unreleased): Codex's background-work, card and Settings changes
+
+Codex's commit dc52caf (`codex/ui-performance-improvements`), reviewed here
+and merged with two fixes. Sam approved all of it, the card redesign included.
+
+- Nidus task sharing has no heartbeat while disabled or unfocused. Identity
+  changes coalesce, token-only updates do not rewrite the file, and a serial
+  writer keeps disk work off the main actor. Generations prevent a late write
+  from restoring context after sharing stops.
+- Question, plan and error cards use a compact status header and the card's
+  full 360 pt width. Questions/plans have three summary lines, errors two;
+  existing actions remain, with a named accessibility Dismiss action.
+- Removed phone thumbnails leave the intersection observer and withdraw
+  queued thumbnail image loads and retries. Active transfers retain their slots
+  until they finish, preserving the two-transfer limit. Embedded assets
+  regenerated.
+- Quick Open cancels obsolete database reads. SQLite deadlines include queue
+  wait and retries; cancelled queued work never opens a connection. GETs have
+  a 15-second page-side deadline, 8 MiB streamed limit and per-request abort.
+  Context navigation cancels its previous read and rejects late generations.
+- Settings keeps one width and caps its height to the owning screen. Compact
+  Specimens has one scroll owner. Usage has its own accessibility label;
+  Results removes empty search headings and offers a clear no-match state.
+- ✅ Codex's own run: debug app/test build; 243 tests in 37 focused suites
+  passed, including the new lifecycle tests and existing SQLite, Quick Open,
+  plan/card and probe regressions. JavaScript syntax and generated-assets
+  checks passed.
+- ✅ Codex's temporary offscreen captures: compact Settings at 760 × 560 pt has
+  one native scroll owner and reaches the last specimens. Action-card geometry
+  checked in light/dark, including expanded plans and hover dismissal. Glass
+  obscures offscreen bitmap captures, so card text/layout was also checked
+  with a temporary plain-material copy. Capture helpers are not shipped.
+- ✅ **A review here found no high-severity issue**, and two things to fix,
+  both fixed in the merge (`SQLiteSource.swift`):
+  - **M2.** A cancelled SQLite read dropped the shared connection before it
+    checked for cancellation, so the search that replaced a cancelled Quick
+    Open search opened the database again. A cancelled read now leaves the
+    connection alone (any other failure still drops it). New test
+    `aCancelledReadLeavesTheConnectionForTheNextRead` cancels a never-ending
+    statement mid-run and expects the next read to reuse the connection
+    (`openCount` stays 1). Mutation check: putting the `connection = nil` back
+    before the cancellation check fails it on `openCount`.
+  - **M3.** The change moved the reader from `queue.sync` to `queue.async`
+    and a semaphore wait, so the caller's QoS no longer reached the reader's
+    utility queue (a user-initiated search ran at utility). The block is now
+    submitted with the caller's QoS and `.enforceQoS`. New test
+    `aReadRunsAtItsCallersPriority` reads the QoS inside the block from the
+    idle-close scheduler hook and expects user-initiated for a user-initiated
+    caller. Mutation check: a plain `queue.async` runs at utility and fails
+    it. The source file compared identical (`cmp`) after restoring.
+- ✅ `swift test --jobs 2` on this Mac, with the merge and both fixes: 1,841
+  tests in 238 suites, all passing (the review's 1,839 plus the two new
+  ones; one run, two jobs, no stress loops). `Scripts/embed-remote-web.py
+  --check` and `node --check RemoteWeb/app.js` pass; the embedded `app.js`
+  hash (`5fb21ed6720d`) is the one in `RemoteWebApp.swift`.
+- DESIGN.md had not been updated by the change; it now is (the card layouts
+  and width, Settings sizing, the Nidus task file, `apiGET`, Quick Open and the
+  SQLite reader, phone thumbnails, the Usage label, the Results empty state).
+- ⏳ Live Liquid Glass appearance, display switching and an actual iPhone
+  navigation session still need an interactive smoke check. No CPU or memory
+  reduction was measured. Not released or installed.
+
 ## 2026-10-20, Capsid 0.9.1: the title bar shows the 5-hour limit
 
 Sam: the usage in the title bar should be the 5-hour limit, not the week. It

@@ -18,6 +18,92 @@ enum WebAPIError: Error {
     case notReady
     case notAllowed
     case badResponse
+    case timedOut
+    case responseTooLarge
+}
+
+/// The small JSON reads have one deadline, including their response body.
+/// Each read owns its controller in the isolated content world; cancellation
+/// can stop that read without disturbing other consumers of the page.
+enum WebAPIReadScript {
+    static let timeoutMilliseconds = 15_000
+    static let maxBytes = 8 * 1_024 * 1_024
+
+    static let body = #"""
+    const reads = globalThis.__capsidAPIReads || (globalThis.__capsidAPIReads = new Map());
+    const controller = new AbortController();
+    reads.set(nonce, controller);
+    let timedOut = false;
+    let reader = null;
+    let onAbort;
+    const stopped = new Promise((_, reject) => {
+        onAbort = () => reject(new Error(timedOut ? "CAPSID_API_TIMEOUT" : "CAPSID_API_CANCELLED"));
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMS);
+    const read = async () => {
+        // no-store: usage and plans are never kept in WebKit's disk cache.
+        const response = await fetch(path, {
+            credentials: "include", cache: "no-store", signal: controller.signal,
+            headers: { "Accept": "application/json" },
+        });
+        if (controller.signal.aborted) { throw new Error("CAPSID_API_CANCELLED"); }
+        if (!response.ok) { throw new Error("HTTP " + response.status); }
+        const length = Number(response.headers.get("Content-Length"));
+        if (Number.isFinite(length) && length > maxBytes) { throw new Error("CAPSID_API_TOO_LARGE"); }
+        if (!response.body) { return ""; }
+        reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        const parts = [];
+        let size = 0;
+        for (;;) {
+            const chunk = await reader.read();
+            if (controller.signal.aborted) { throw new Error("CAPSID_API_CANCELLED"); }
+            if (chunk.done) { break; }
+            size += chunk.value.byteLength;
+            if (size > maxBytes) { throw new Error("CAPSID_API_TOO_LARGE"); }
+            parts.push(decoder.decode(chunk.value, { stream: true }));
+        }
+        parts.push(decoder.decode());
+        return parts.join("");
+    };
+    try {
+        // The race also settles the bridge if a fetch/stream implementation
+        // does not reject promptly after its signal is aborted.
+        return await Promise.race([read(), stopped]);
+    } finally {
+        clearTimeout(timer);
+        controller.signal.removeEventListener("abort", onAbort);
+        if (reads.get(nonce) === controller) { reads.delete(nonce); }
+        controller.abort();
+        if (reader) { reader.cancel().catch(() => {}); }
+    }
+    """#
+
+    static let abort = #"""
+    const reads = globalThis.__capsidAPIReads;
+    const controller = reads && reads.get(nonce);
+    if (!controller) { return false; }
+    controller.abort();
+    return true;
+    """#
+}
+
+enum WebAPIReadAbort {
+    @MainActor
+    static func run(nonce: String = UUID().uuidString.lowercased(),
+                    read: @MainActor (String) async throws -> Data,
+                    abort: @escaping @Sendable @MainActor (String) async -> Void) async throws -> Data {
+        try Task.checkCancellation()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            let data = try await read(nonce)
+            try Task.checkCancellation()
+            return data
+        } onCancel: {
+            Task { @MainActor in await abort(nonce) }
+        }
+    }
 }
 
 /// What a write answered: the HTTP status, and from a JSON body only its
@@ -59,29 +145,34 @@ extension WebContainer {
         return false
     }
 
-    /// GETs `/api<path>` from the page and returns the body.
+    /// GETs `/api<path>` from the page, within one 15-second / 8 MiB budget.
     func apiGET(_ path: String) async throws -> Data {
         guard status == .ready else { throw WebAPIError.notReady }
         guard Self.isReadablePath(path) else { throw WebAPIError.notAllowed }
-        let body = """
-        // no-store: what's read here (usage, a plan) is never kept in WebKit's
-        // cache on disk.
-        const response = await fetch(path, { credentials: "include", cache: "no-store", headers: { "Accept": "application/json" } });
-        if (!response.ok) { throw new Error("HTTP " + response.status); }
-        return await response.text();
-        """
-        let result: Any?
-        do {
-            result = try await webView.callAsyncJavaScript(body, arguments: ["path": "/api" + path],
-                                                           in: nil, contentWorld: .defaultClient)
-        } catch {
-            // Refused: the page's session didn't take. Sign in again.
-            let message = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String
-            if message?.contains("HTTP 401") == true { sessionLost() }
-            throw error
+        return try await WebAPIReadAbort.run { nonce in
+            let result: Any?
+            do {
+                result = try await webView.callAsyncJavaScript(WebAPIReadScript.body,
+                    arguments: ["path": "/api" + path, "nonce": nonce,
+                                "timeoutMS": WebAPIReadScript.timeoutMilliseconds, "maxBytes": WebAPIReadScript.maxBytes],
+                    in: nil, contentWorld: .defaultClient)
+            } catch {
+                try Task.checkCancellation()
+                let message = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String
+                if message?.contains("CAPSID_API_TIMEOUT") == true { throw WebAPIError.timedOut }
+                if message?.contains("CAPSID_API_TOO_LARGE") == true { throw WebAPIError.responseTooLarge }
+                if message?.contains("CAPSID_API_CANCELLED") == true { throw CancellationError() }
+                // Refused: the page's session didn't take. Sign in again.
+                if message?.contains("HTTP 401") == true { sessionLost() }
+                throw error
+            }
+            guard let text = result as? String else { throw WebAPIError.badResponse }
+            return Data(text.utf8)
+        } abort: { [weak self] nonce in
+            guard let self else { return }
+            _ = try? await webView.callAsyncJavaScript(WebAPIReadScript.abort, arguments: ["nonce": nonce],
+                                                       in: nil, contentWorld: .defaultClient)
         }
-        guard let text = result as? String else { throw WebAPIError.badResponse }
-        return Data(text.utf8)
     }
 
     /// POSTs `{}` to `/api<path>` from the page, the way Claude Science's own

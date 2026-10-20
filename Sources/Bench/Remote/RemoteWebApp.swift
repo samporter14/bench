@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "7c3790ec4f20",
+        "/app.js": "5fb21ed6720d",
         "/app.css": "16831b9bd96a",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=7c3790ec4f20"></script>
+<script type="module" src="/app.js?v=5fb21ed6720d"></script>
 </body>
 </html>
 """#
@@ -119,6 +119,11 @@ else el.setAttribute(k, v === true ? '' : v);
 }
 el.append(...kids.flat(2).filter((x) => x != null && x !== false));
 return el;
+}
+function replaceContents(el, ...kids) {
+const images = [...el.querySelectorAll('img')].filter((img) => img._disposeFileImage);
+el.replaceChildren(...kids);
+for (const img of images) if (!img.isConnected && !el.contains(img)) img._disposeFileImage();
 }
 const PATHS = {
 gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
@@ -204,7 +209,27 @@ const retryWait = (res, n) => Math.min(10, Math.max(1, Number(res.headers.get('R
 const isSlow = (e) => !!e && e.status === 429;
 const slowText = (d) => (d && d.error === 'busy' ? 'Another file is still coming. Try again in a moment.' : 'That’s a lot at once. Try again in a moment.');
 const FQ = { n: 0, wait: [] };
-const takeSlot = () => (FQ.n < 2 ? (FQ.n++, Promise.resolve()) : new Promise((r) => FQ.wait.push(r)));
+function fileSlot() {
+const ticket = { ready: null, cancel: () => {} };
+if (FQ.n < 2) {
+FQ.n++;
+ticket.ready = Promise.resolve(true);
+} else {
+ticket.ready = new Promise((resolve) => {
+const start = () => { ticket.cancel = () => {}; resolve(true); };
+FQ.wait.push(start);
+ticket.cancel = () => {
+const at = FQ.wait.indexOf(start);
+if (at < 0) return;
+FQ.wait.splice(at, 1);
+ticket.cancel = () => {};
+resolve(false);
+};
+});
+}
+return ticket;
+}
+const takeSlot = () => fileSlot().ready;
 function giveSlot() {
 const next = FQ.wait.shift();
 if (next) next(); else FQ.n = Math.max(0, FQ.n - 1);
@@ -553,7 +578,7 @@ let tree = null;
 if (S.view === 'pair') tree = pairView();
 else if (S.view === 'offline') tree = offlineView();
 else if (S.view === 'app') tree = S.split ? splitView(r) : singleView(r);
-root.replaceChildren(...(tree ? [tree] : []));
+replaceContents(root, ...(tree ? [tree] : []));
 const side = root.querySelector('.side-pane');
 const detail = root.querySelector('.detail');
 if (side) side.scrollTop = sideTop;
@@ -1110,7 +1135,7 @@ const active = document.activeElement;
 const key = active && el.contains(active) ? active.dataset.key : '';
 const caret = key && active.selectionStart != null ? [active.selectionStart, active.selectionEnd] : null;
 el.dataset.sig = sig;
-el.replaceChildren(...build().filter(Boolean));
+replaceContents(el, ...build().filter(Boolean));
 if (key) {
 const again = el.querySelector(`[data-key="${CSS.escape(key)}"]`);
 if (again) {
@@ -1894,9 +1919,22 @@ for (const e of es) if (e.isIntersecting) { nearScreen.unobserve(e.target); e.ta
 function fileImg(props, src, failed) {
 const img = h('img', props);
 let tries = 0;
+let disposed = false;
+let slot = null;
+let retryTimer = 0;
+img._disposeFileImage = () => {
+disposed = true;
+if (nearScreen) nearScreen.unobserve(img);
+if (slot) slot.cancel();
+clearTimeout(retryTimer);
+};
 img._load = async () => {
-await takeSlot();
-if (tries && !img.isConnected) { giveSlot(); return; } // gone from the screen meanwhile
+if (disposed || !img.isConnected) return;
+slot = fileSlot();
+const started = await slot.ready;
+slot = null;
+if (!started) return;
+if (disposed || !img.isConnected) { giveSlot(); return; } // gone while waiting, even on the first try
 const ok = await new Promise((r) => {
 let t = 0;
 const over = (v) => { clearTimeout(t); img.onload = img.onerror = null; r(v); };
@@ -1907,8 +1945,8 @@ img.removeAttribute('src');
 img.src = src;
 });
 giveSlot();
-if (ok) return;
-if (++tries < 3) setTimeout(() => { if (img.isConnected) img._load(); }, tries * 2500 + Math.random() * 1000);
+if (ok || disposed || !img.isConnected) return;
+if (++tries < 3) retryTimer = setTimeout(() => { retryTimer = 0; img._load(); }, tries * 2500 + Math.random() * 1000);
 else failed(img);
 };
 if (nearScreen) nearScreen.observe(img); else queueMicrotask(img._load);
