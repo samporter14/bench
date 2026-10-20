@@ -2077,17 +2077,42 @@ Approving a plan from its card).
   turn, just after a limit resets, and when the popover opens (if over 60 s
   old).
 - Label: a 22×5 pt clay meter (what's left, draining like a battery), then
-  the tightest limit as what's left and when it resets, e.g. "66% left ·
-  resets in 1h 12m" or "Week 12% left · resets Thu". The session limit goes
-  unnamed: "5h" read as five hours to go. The countdown ticks each minute
-  and is tertiary; the figure is secondary and turns clay-text under 20% left.
-  `chart.bar.xaxis` shows until the first read lands.
+  one limit as what's left and when it resets, e.g. "66% left · resets in 1h
+  12m" or "Week 12% left · resets Thu". Which limit is the Title bar shows
+  setting's (since 0.9.1, below). The session limit goes unnamed: "5h" read
+  as five hours to go. The countdown ticks each minute and is tertiary; the
+  figure is secondary and turns clay-text under 20% left. `chart.bar.xaxis`
+  shows until the first read lands.
 - Popover (glass): a **Plan limits** section with a row per limit ("Current
   session", "Weekly · all models", "Weekly · Opus", "Weekly · Sonnet"), each
   with a bar, "% left" and "Resets in 2h 14m" (and the forecast line and
   sparkline below), plus extra usage when enabled. Then the **Activity** section (the graph from Claude Science's launch on June 30, 2026, a column per week up to a year; 14 pt squares while it spans 30 weeks or fewer, the days before launch blank; the popover is as wide as the graph needs, 600 pt at least), and a Refresh
   button (`.glass`).
 - One Usage control, not two.
+
+**Which limit the label shows (`TitleBarUsage`, since 0.9.1).** The label
+used to show the limit with the least left, so once the week had less left
+than the 5-hour window it named the week, and the 5-hour figure was gone.
+Settings → Usage → **Title bar shows** (`titleBarUsage`) now picks, in a
+native pop-up:
+- **5-hour limit** (the default): the session limit. The exception, so a
+  limit can't run out unseen: if another limit is low (`PlanLimit.isLow`,
+  under 20% left, where its figure turns clay-text) and has less left than the
+  session, that one shows instead, named as before ("Week 12% left"); of
+  several, the one with the least left. The same left as the session keeps the
+  session. An answer with no session limit (some accounts) shows the lowest.
+- **Whichever is lowest**: the limit with the least left (`tightest`), as the
+  label worked before 0.9.1.
+
+One pure function chooses, `PlanUsageModel.shown(_:choice:)` (`nonisolated
+static`; PlanUsageChoiceTests), and `UsageToolbarButton` reads the setting with
+`@AppStorage`, so the label changes as soon as the pop-up does. The VoiceOver
+label is built from the limit shown ("Usage. Weekly · all models: 12% left.
+Resets …"), so it follows, and the popover lists every limit either way.
+Nothing else reads `tightest`, and nothing else draws this label, so these are
+as they were: heads-up notices (each limit against its own thresholds), the
+usage pause (`limitReached`, `nearLimit`), the phone (every limit, with its
+pace) and the menu bar (the specimen only).
 
 **One way to write times (`TimeSpan`, since 0.9.0).** The toolbar said "resets
 in 1h 28m" while the Usage popover said "Resets in 1 h 28 m", and the plan
@@ -2360,7 +2385,8 @@ own height (the window follows the tab):
 - **Alerts** (`alerts`): on the panel (cards, plans with Approve, sound),
   Quiet While Presenting (since 0.9.0; see Quiet while presenting), Mac
   notifications, and what waits while Nidus is focusing.
-- **Usage** (`usage`): heads-up cards (plan and context, week in review).
+- **Usage** (`usage`): which limit the title bar shows (since 0.9.1) and
+  heads-up cards (plan and context, week in review).
 - **Specimens** (`scenes`): what plays (above).
 - **Phone** (`phone`, since 0.4.0): Capsid on your phone (below).
 
@@ -2379,14 +2405,16 @@ page uses, with the long texts beside the pages: `AlertsInfo`, `UsageInfo`,
 `PanelInfo`, `MacNotificationsInfo`, `PresentingSettings`). The rows that
 have one: Alerts → Show a card, Show plans, questions and requests on the
 card, Also send a Mac notification, Show session and project names, Hold
-finishes and the two Quiet rows; Panel → Screen; Usage → Plan and context;
+finishes and the two Quiet rows; Panel → Screen; Usage → Title bar shows
+(since 0.9.1) and Plan and context;
 Specimens → the heading; Phone → browsing. General has none: its lines were
 already two at most. Keys and behaviour are unchanged.
 
 **Page heights** (`settingsPage(height:)`, set from a capture so the first
 and last rows have the same margin, about 22 pt): General 634, Panel 504,
-Alerts 818 (it was 740, and already cut off at the bottom), Usage 238,
-Specimens 760×776, Phone 760. Alerts' two new rows (Quiet While Presenting,
+Alerts 818 (it was 740, and already cut off at the bottom), Usage 316 (it was
+238 before the Title bar shows row, since 0.9.1; a pop-up row with its line
+and no heading adds 78 pt), Specimens 760×776, Phone 760. Alerts' two new rows (Quiet While Presenting,
 one line each) are mostly paid for by the shorter lines and by the Mac
 notifications footer moving into an ⓘ; the page is 78 pt taller than before. Phone's height is the
 checklist's tallest states (step 4 or 6 open), so in the ready state it has
@@ -2395,6 +2423,7 @@ more room below; it is not trimmed.
 | Setting | Default |
 |---|---|
 | Appearance: Match Mac, Ivory or Slate (the whole app, via `NSApp.appearance`; the page follows while its own theme is System) | Match Mac |
+| Title bar shows: 5-hour limit or Whichever is lowest (`titleBarUsage`, since 0.9.1; see Usage remaining) | 5-hour limit |
 | Show the Lab panel | on |
 | Play a sound when a session needs you | on |
 | Show plans on the card, with Approve (`showPlansOnCard`, since 0.3.4) | on |

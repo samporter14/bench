@@ -242,9 +242,18 @@ struct AlertSettingsView: View {
 struct UsageSettingsView: View {
     @AppStorage(SettingsKey.headsUpNotices) private var headsUp = true
     @AppStorage(SettingsKey.weekInReview) private var weekInReview = true
+    @AppStorage(SettingsKey.titleBarUsage) private var titleBarUsage = TitleBarUsage.fiveHour
 
     var body: some View {
         Form {
+            Section {
+                Picker(selection: $titleBarUsage) {
+                    ForEach(TitleBarUsage.allCases) { Text($0.title).tag($0) }
+                } label: {
+                    InfoTitle("Title bar shows", info: UsageInfo.titleBar)
+                    Text("Which of your plan's limits the usage readout reports.")
+                }
+            }
             Section("Heads-up") {
                 Toggle(isOn: $headsUp) {
                     InfoTitle("Plan and context", info: UsageInfo.headsUp)
@@ -260,7 +269,7 @@ struct UsageSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .settingsPage(height: 238)
+        .settingsPage(height: 316)
     }
 }
 
@@ -305,6 +314,17 @@ enum PanelInfo {
 
 /// Settings → Usage.
 enum UsageInfo {
+    static let titleBar = """
+        5-hour limit shows how much is left of your current 5-hour session, and when it starts over. If another \
+        limit is running low, with under 20% left, and has less left than that, the title bar shows it instead, \
+        with its name (\u{201C}Week\u{201D}, for one), so a limit can't run out unseen.
+
+        Whichever is lowest always shows the limit with the least left.
+
+        If your plan has no 5-hour limit, the title bar shows the lowest. Click the readout to see every limit, \
+        whichever you choose.
+        """
+
     static let headsUp = """
         A card comes when your 5-hour or weekly limit has 10% left, is on pace to run out within 45 minutes, or \
         has just reset, and when the session you have open has used 85% of its context. Each one comes once.

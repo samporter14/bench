@@ -4,10 +4,11 @@
 import SwiftUI
 
 /// The Usage button's label once the plan has been read: a small meter,
-/// then the tightest limit as what is left and when it starts over, on one
-/// line so it sits level with the context ring beside it. The figure is
-/// secondary until under a fifth is left, then clay. The session limit goes
-/// unnamed: "5h" read as five hours to go, whatever the clock said.
+/// then the limit the Title bar shows setting picks (the 5-hour limit, or the
+/// lowest) as what is left and when it starts over, on one line so it sits
+/// level with the context ring beside it. The figure is secondary until under
+/// a fifth is left, then clay. The session limit goes unnamed: "5h" read as
+/// five hours to go, whatever the clock said.
 struct PlanUsageLabel: View {
     let limit: PlanLimit
 

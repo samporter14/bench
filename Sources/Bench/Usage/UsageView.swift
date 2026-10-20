@@ -5,20 +5,22 @@
 import SwiftUI
 
 /// The toolbar's Usage button, the right half of TitleBarReadouts' capsule.
-/// Its label is what is left of the plan's
-/// tightest limit once that has been read. Opening its popover reads the
+/// Its label is what is left of one of
+/// the plan's limits once that has been read: the 5-hour limit, or the lowest
+/// (Settings → Usage). Opening its popover reads the
 /// plan and the activity if the last read is old, and keeps the activity
 /// fresh while the popover stays open.
 struct UsageToolbarButton: View {
     @State private var showing = false
     @ObservedObject private var plan = PlanUsageModel.shared
+    @AppStorage(SettingsKey.titleBarUsage) private var shows = TitleBarUsage.fiveHour
 
     var body: some View {
         Button {
             showing.toggle()
         } label: {
-            if let tightest = plan.tightest {
-                PlanUsageLabel(limit: tightest)
+            if let shown = plan.shown(choice: shows) {
+                PlanUsageLabel(limit: shown)
             } else {
                 Image(systemName: "chart.bar.xaxis")
                     .font(.system(size: 13, weight: .medium))

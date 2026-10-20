@@ -63,6 +63,24 @@ struct PlanLimit: Identifiable, Equatable {
     var isLow: Bool { leftPercent < 20 }
 }
 
+/// Which limit the title bar's readout shows (Settings → Usage → Title bar
+/// shows, since 0.9.1).
+enum TitleBarUsage: String, CaseIterable, Identifiable {
+    /// The 5-hour limit, unless another that is low has less left.
+    case fiveHour
+    /// The limit with the least left, whichever it is.
+    case lowest
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .fiveHour: "5-hour limit"
+        case .lowest: "Whichever is lowest"
+        }
+    }
+}
+
 /// Extra usage, when the plan has it switched on. Its percent is of the
 /// monthly limit; nil when Claude Science doesn't say.
 struct PlanExtraUsage: Equatable {
@@ -95,9 +113,32 @@ final class PlanUsageModel: ObservableObject {
     /// its reads.
     @Published private(set) var samples: [PlanLimit.Kind: UsageSamples] = [:]
 
-    /// The limit with the least left, which is the one the toolbar shows.
+    /// The limit with the least left. With a tie, the first in the order of
+    /// `PlanLimit.Kind`, so the session.
     var tightest: PlanLimit? {
+        Self.tightest(limits)
+    }
+
+    nonisolated static func tightest(_ limits: [PlanLimit]) -> PlanLimit? {
         limits.min { $0.leftPercent < $1.leftPercent }
+    }
+
+    /// The limit the toolbar shows, by the Title bar shows setting.
+    func shown(choice: TitleBarUsage) -> PlanLimit? {
+        Self.shown(limits, choice: choice)
+    }
+
+    /// Whichever is lowest is `tightest`. The 5-hour limit is the session,
+    /// unless a limit that is low (`PlanLimit.isLow`) has less left than it,
+    /// so that one can't run out unseen: then the one with the least left of
+    /// those, which names itself ("Week 12% left"). With the same left, the
+    /// session stays. An answer with no session limit shows `tightest`.
+    nonisolated static func shown(_ limits: [PlanLimit], choice: TitleBarUsage) -> PlanLimit? {
+        guard choice == .fiveHour else { return tightest(limits) }
+        guard let session = limits.first(where: { $0.kind == .session }) else { return tightest(limits) }
+        // The session itself never has less left than itself.
+        let runningOut = limits.filter { $0.isLow && $0.leftPercent < session.leftPercent }
+        return tightest(runningOut) ?? session
     }
 
     /// A limit that holds every session (`Kind.holdsEverySession`), is used

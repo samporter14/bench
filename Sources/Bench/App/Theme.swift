@@ -119,6 +119,9 @@ enum SettingsKey {
     /// someone pairing a computer instead: that step counts as done. Off
     /// unless pressed.
     static let remotePhoneSkipped = "remotePhoneSkipped"
+    /// Which limit the title bar's usage readout shows, a `TitleBarUsage`
+    /// (since 0.9.1).
+    static let titleBarUsage = "titleBarUsage"
 
     static func register() {
         let defaults = UserDefaults.standard
@@ -151,6 +154,7 @@ enum SettingsKey {
             appearance: BenchAppearance.system.rawValue,
             remoteActions: true, // Phase 2 actions
             remoteBrowse: true, // Phase 3 browse
+            titleBarUsage: TitleBarUsage.fiveHour.rawValue,
         ])
     }
 }
