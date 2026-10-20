@@ -39,10 +39,22 @@ private let webp = Data("RIFF\u{4}\0\0\0WEBPVP8L".utf8)
 /// written off the main actor, so a fixed number of turns isn't enough.
 /// A minute's limit is only a safety net for a broken run, never what a test waits for.
 @MainActor
-private func until(_ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async {
-    let limit = ContinuousClock.now + .seconds(60)
+private func until(_ condition: () -> Bool, within net: Duration = .seconds(60),
+                   sourceLocation: SourceLocation = #_sourceLocation) async {
+    let limit = ContinuousClock.now + net
     while !condition(), ContinuousClock.now < limit { await Task.yield() }
     if !condition() { Issue.record("the condition never held", sourceLocation: sourceLocation) }
+}
+
+/// A task's value. A result that never comes is a failure after 20 seconds
+/// (an issue, and nil), not a test that hangs: callers ask only once what
+/// settles it has happened.
+@MainActor
+private func finished<T: Sendable>(_ task: Task<T, Never>, sourceLocation: SourceLocation = #_sourceLocation) async -> T? {
+    let box = Box<[T]>([])
+    Task { box.value = [await task.value] }
+    await until({ !box.value.isEmpty }, within: .seconds(20), sourceLocation: sourceLocation)
+    return box.value.first
 }
 
 /// A few turns of the main actor: enough for work it already has queued to run.
@@ -587,9 +599,9 @@ struct ShelfTransfersTests {
         let waiting = queue.ask(download(3), .foreground)
         await until { queue.transfers.queued == 1 }
         queue.clock.pass()
-        #expect(await slow.value == .timedOut)
-        #expect(await sharing.value == .timedOut)
-        #expect(await other.value == .timedOut)
+        #expect(await finished(slow) == .timedOut)
+        #expect(await finished(sharing) == .timedOut)
+        #expect(await finished(other) == .timedOut)
         await until { queue.reader.cancelled.count == 2 }
         #expect(Set(queue.reader.cancelled) == [download(1), download(2)], "both readers were cancelled, in either order")
         // Neither reader has returned, and both slots are free: the waiting read starts.
@@ -602,7 +614,7 @@ struct ShelfTransfersTests {
         await until { queue.transfers.lost == 0 }
         #expect(queue.transfers.active == 1, "the waiting read still holds its own slot")
         queue.reader.release(download(3))
-        #expect(await waiting.value == .answered(.bytes(Data("bytes of v-3".utf8))))
+        #expect(await finished(waiting) == .answered(.bytes(Data("bytes of v-3".utf8))))
         await until { queue.transfers.active == 0 }
         #expect(queue.reader.started == [download(1), download(2), download(3)], "nothing was read twice")
     }
@@ -616,19 +628,19 @@ struct ShelfTransfersTests {
         await until { queue.transfers.queued == 2 }
         // Two reads wait in line behind two slots nothing will ever give back.
         queue.clock.pass()
-        for task in stuck { #expect(await task.value == .timedOut) }
+        for task in stuck { #expect(await finished(task) == .timedOut) }
         // Neither stuck reader is ever let go; the next two read all the same.
         await until { queue.reader.started.count == 4 }
         #expect(queue.transfers.lost == 2 && queue.transfers.active == 2)
         queue.reader.release(download(3))
         queue.reader.release(download(4))
-        #expect(await third.value == .answered(.bytes(Data("bytes of v-3".utf8))))
-        #expect(await fourth.value == .answered(.bytes(Data("bytes of v-4".utf8))))
+        #expect(await finished(third) == .answered(.bytes(Data("bytes of v-3".utf8))))
+        #expect(await finished(fourth) == .answered(.bytes(Data("bytes of v-4".utf8))))
         // And a fifth, with the two stuck readers still out.
         let fifth = queue.ask(download(5), .foreground)
         await until { queue.reader.started.count == 5 }
         queue.reader.release(download(5))
-        #expect(await fifth.value == .answered(.bytes(Data("bytes of v-5".utf8))))
+        #expect(await finished(fifth) == .answered(.bytes(Data("bytes of v-5".utf8))))
         #expect(queue.transfers.lost == 2 && queue.transfers.active == 0)
         // A stuck reader that comes back at last is forgotten, once.
         queue.reader.releaseAll()
@@ -646,8 +658,8 @@ struct ShelfTransfersTests {
         await until { queue.transfers.queued == 1 }
         // Both askers leave (the window closed, say), and neither reader answers the cancellation.
         queue.transfers.close()
-        #expect(await first.value == .cancelled)
-        #expect(await second.value == .cancelled)
+        #expect(await finished(first) == .cancelled)
+        #expect(await finished(second) == .cancelled)
         await until { queue.reader.cancelled.count == 2 }
         #expect(queue.transfers.active == 2 && queue.transfers.lost == 0, "their slots stay taken within the limit")
         #expect(queue.clock.pending == 2 && queue.clock.released == 0, "their deadlines still stand")
@@ -656,7 +668,7 @@ struct ShelfTransfersTests {
         await until { queue.reader.started.contains(download(3)) }
         #expect(queue.transfers.lost == 2 && queue.transfers.active == 1)
         queue.reader.release(download(3))
-        #expect(await waiting.value == .answered(.bytes(Data("bytes of v-3".utf8))))
+        #expect(await finished(waiting) == .answered(.bytes(Data("bytes of v-3".utf8))))
         queue.reader.releaseAll()
         await until { queue.transfers.lost == 0 }
     }
@@ -667,7 +679,7 @@ struct ShelfTransfersTests {
         let first = queue.ask(download(1), .foreground)
         await until { queue.reader.inFlight == 1 && queue.clock.pending == 1 }
         queue.clock.pass()
-        #expect(await first.value == .timedOut)
+        #expect(await finished(first) == .timedOut)
         // The same file again, with the old reader still out.
         queue.reader.answers[download(1)] = .bytes(Data("new".utf8))
         let second = queue.ask(download(1), .foreground)
@@ -678,7 +690,7 @@ struct ShelfTransfersTests {
         await turns(10)
         #expect(queue.transfers.waiting(for: download(1)) == 1, "the new asker is still waiting for its own read")
         queue.reader.releaseOldest()
-        #expect(await second.value == .answered(.bytes(Data("new".utf8))))
+        #expect(await finished(second) == .answered(.bytes(Data("new".utf8))))
     }
 
     @Test func aReadThatTimedOutIsNotJoinedByTheNextAskerOfTheSameFile() async {
@@ -686,7 +698,7 @@ struct ShelfTransfersTests {
         let first = queue.ask(download(1), .foreground)
         await until { queue.reader.inFlight == 1 && queue.clock.pending == 1 }
         queue.clock.pass()
-        #expect(await first.value == .timedOut)
+        #expect(await finished(first) == .timedOut)
         #expect(queue.transfers.active == 0 && queue.transfers.lost == 1, "its reader hasn't returned, but its slot is free")
         // The same file again while the old reader is still stuck: a read of its
         // own, with a timer of its own, not the dead one.
@@ -702,7 +714,7 @@ struct ShelfTransfersTests {
         #expect(queue.transfers.active == 1 && queue.transfers.running == 1 && queue.transfers.lost == 0)
         // The new read's own time limit passes.
         queue.clock.pass()
-        #expect(await second.value == .timedOut)
+        #expect(await finished(second) == .timedOut)
         queue.reader.releaseAll()
         await until { queue.transfers.active == 0 }
     }
@@ -1376,20 +1388,37 @@ struct ShelfCloseAndReopenTests {
         let storage = GatedStorage(base: rig.base)
         rig.storage = storage
         let shelf = rig.shelf()
+        // The asker's download, another, and a third read that waits for a slot.
         let asker = Task { await shelf.temporaryCopy(of: file(1)) }
-        await until { rig.reader.inFlight == 1 }
-        // The page answers: the reader returns and the asker is handed its bytes,
-        // but its turn is queued behind this test's own (which yielded before the
-        // reader ran), so the window closes before the asker has run again. It has
-        // bytes, and the run they are for is over.
+        let other = Task { await shelf.transfers.read(download(2), priority: .foreground) }
+        await until { rig.reader.inFlight == 2 }
+        // The window closes in the very turn the download lands: the third read
+        // starts as the first one's slot is freed, in the reader's own turn, after
+        // the asker has been handed its bytes and before it has run again. (The
+        // close isn't left to the test's own turn: that would be queued behind
+        // the asker's or ahead of it as the executors happen to schedule it.)
+        // It has bytes, and the run they are for is over.
+        let sawBytesHandedOver = Box(false)
+        let third = Task {
+            await shelf.transfers.read(download(3), priority: .foreground, started: {
+                sawBytesHandedOver.value = shelf.transfers.waiting(for: download(1)) == 0 && shelf.preparing == ["v-1"]
+                shelf.close()
+            })
+        }
+        await until { shelf.transfers.queued == 1 }
         rig.reader.release(download(1))
-        await until { shelf.transfers.active == 0 }
-        shelf.close()
-        #expect(await asker.value == .cancelled)
+        #expect(await finished(asker) == .cancelled)
+        #expect(sawBytesHandedOver.value, "the download had landed and the asker had not run again when the window closed")
         await shelf.settled()
         #expect(await storage.calls.contains("write") == false, "no write was started for the closed run")
         #expect(files(under: rig.base).isEmpty && shelf.cachedCopy("v-1") == nil)
         #expect(shelf.preparing.isEmpty && shelf.fileProblems.isEmpty)
+        // The other reads were let go by the close; their readers are let go here.
+        #expect(await finished(other) == .cancelled)
+        #expect(await finished(third) == .cancelled)
+        rig.reader.hold = false
+        rig.reader.releaseAll()
+        await until { shelf.transfers.active == 0 }
     }
 
     @Test func anAskerThatOutlivedTheWindowDoesNotEndTheNextWindowsSpinner() async throws {
@@ -1751,6 +1780,16 @@ private final class HeldCalls {
     func finishAll() { while !held.isEmpty { held.removeFirst()() } }
 }
 
+/// How a save through the writer ended.
+private enum SaveEnd {
+    case written
+    case failed(any Error)
+
+    var isWritten: Bool { if case .written = self { true } else { false } }
+    var reason: ShelfSaveError? { if case .failed(let error) = self { error as? ShelfSaveError } else { nil } }
+    var cocoaCode: CocoaError.Code? { if case .failed(let error) = self { (error as? CocoaError)?.code } else { nil } }
+}
+
 /// A `ShelfSavedFiles` over a fake clock and held calls, writing to a recorded disk.
 @MainActor
 private final class WriterRig {
@@ -1767,15 +1806,15 @@ private final class WriterRig {
 
     /// A save of four bytes to `path`, writing to the recorded disk.
     func save(_ path: String, bytes: Int = 4,
-              using write: (@Sendable (Data, URL) throws -> Void)? = nil) -> Task<(any Error)?, Never> {
+              using write: (@Sendable (Data, URL) throws -> Void)? = nil) -> Task<SaveEnd, Never> {
         let disk = disk, writer = writer
         return Task {
             do {
                 try await writer.write(Data(count: bytes), to: URL(fileURLWithPath: path),
                                        using: write ?? { data, url in disk.write(data, to: url) })
-                return nil
+                return .written
             } catch {
-                return error
+                return .failed(error)
             }
         }
     }
@@ -1812,7 +1851,7 @@ struct ShelfSavedFilesTests {
         await until { rig.calls.count == 1 && rig.clock.pending == 1 }
         #expect(rig.clock.asked == [.seconds(18)])
         rig.clock.pass()
-        _ = await stuck.value
+        _ = await finished(stuck)
         await until { rig.clock.pending == 1 }
         #expect(rig.clock.asked == [.seconds(18), .seconds(30)], "then the hold-off")
         rig.calls.finishAll()
@@ -1826,7 +1865,7 @@ struct ShelfSavedFilesTests {
         #expect(rig.disk.written.isEmpty, "nothing is written until the call runs")
         #expect(rig.writer.isPending(URL(fileURLWithPath: "/made-up/a/ONE.md")), "a name is spoken for, whatever its case")
         rig.calls.finishOldest()
-        #expect(await save.value == nil)
+        #expect((await finished(save))?.isWritten == true)
         #expect(rig.disk.written == ["/made-up/a/one.md"])
         #expect(rig.writer.isAtRest && rig.clock.pending == 0 && rig.clock.released == 1, "its timer was let go")
     }
@@ -1836,14 +1875,14 @@ struct ShelfSavedFilesTests {
         let stuck = rig.save("/made-up/dropped/one.md")
         await until { rig.calls.count == 1 && rig.clock.pending == 1 }
         rig.clock.pass()
-        #expect(await stuck.value as? ShelfSaveError == .folderDidNotRespond)
+        #expect((await finished(stuck))?.reason == .folderDidNotRespond)
         #expect(rig.writer.isHeldOff(folder("/made-up/dropped")))
         #expect(!rig.writer.isHeldOff(folder("/made-up/elsewhere")))
         // Another folder: its own turn, at once, though the first call is still out.
         let elsewhere = rig.save("/made-up/elsewhere/two.md")
         await until { rig.calls.count == 2 }
         rig.calls.finish(at: 1)
-        #expect(await elsewhere.value == nil)
+        #expect((await finished(elsewhere))?.isWritten == true)
         #expect(rig.disk.written == ["/made-up/elsewhere/two.md"])
         rig.calls.finishAll()
         await until { rig.writer.isAtRest }
@@ -1859,12 +1898,12 @@ struct ShelfSavedFilesTests {
         await turns(10)
         #expect(rig.calls.count == 1, "one at a time per destination")
         rig.clock.pass()
-        #expect(await stuck.value as? ShelfSaveError == .folderDidNotRespond)
-        #expect(await second.value as? ShelfSaveError == .folderStillSilent)
-        #expect(await third.value as? ShelfSaveError == .folderStillSilent)
+        #expect((await finished(stuck))?.reason == .folderDidNotRespond)
+        #expect((await finished(second))?.reason == .folderStillSilent)
+        #expect((await finished(third))?.reason == .folderStillSilent)
         // And one asked later, while it is held off.
         let later = rig.save("/made-up/dropped/four.md")
-        #expect(await later.value as? ShelfSaveError == .folderStillSilent)
+        #expect((await finished(later))?.reason == .folderStillSilent)
         #expect(rig.calls.count == 1, "none of them made a call")
         #expect(!rig.writer.isPending(URL(fileURLWithPath: "/made-up/dropped/two.md")), "a refused save speaks for nothing")
         rig.calls.finishAll()
@@ -1876,7 +1915,7 @@ struct ShelfSavedFilesTests {
         let stuck = rig.save("/made-up/dropped/one.md")
         await until { rig.calls.count == 1 && rig.clock.pending == 1 }
         rig.clock.pass()
-        _ = await stuck.value
+        _ = await finished(stuck)
         await until { rig.clock.pending == 1 }
         #expect(rig.writer.isHeldOff(folder("/made-up/dropped")))
         // The hold-off passes with the first call still out.
@@ -1886,7 +1925,7 @@ struct ShelfSavedFilesTests {
         await until { rig.calls.count == 2 && rig.clock.pending == 1 }
         // The probe is silent too: the folder is held off again, for a hold-off of its own.
         rig.clock.pass()
-        #expect(await probe.value as? ShelfSaveError == .folderDidNotRespond)
+        #expect((await finished(probe))?.reason == .folderDidNotRespond)
         await until { rig.clock.pending == 1 }
         #expect(rig.writer.isHeldOff(folder("/made-up/dropped")))
         // Both stuck calls come back late: the folder answers.
@@ -1901,7 +1940,7 @@ struct ShelfSavedFilesTests {
         let stuck = rig.save("/made-up/dropped/one.md")
         await until { rig.calls.count == 1 && rig.clock.pending == 1 }
         rig.clock.pass()
-        _ = await stuck.value
+        _ = await finished(stuck)
         await until { rig.clock.pending == 1 }
         rig.calls.finishOldest()
         await until { !rig.writer.isHeldOff(folder("/made-up/dropped")) }
@@ -1916,7 +1955,7 @@ struct ShelfSavedFilesTests {
         let next = rig.save("/made-up/dropped/two.md")
         await until { rig.calls.count == 1 }
         rig.calls.finishOldest()
-        #expect(await next.value == nil)
+        #expect((await finished(next))?.isWritten == true)
     }
 
     @Test func aWriteThatFailsLateIsDroppedAndTheFolderCountsAsAnsweringAgain() async {
@@ -1924,7 +1963,7 @@ struct ShelfSavedFilesTests {
         let stuck = rig.save("/made-up/dropped/one.md", using: { _, _ in throw CocoaError(.fileWriteVolumeReadOnly) })
         await until { rig.calls.count == 1 && rig.clock.pending == 1 }
         rig.clock.pass()
-        #expect(await stuck.value as? ShelfSaveError == .folderDidNotRespond)
+        #expect((await finished(stuck))?.reason == .folderDidNotRespond)
         rig.calls.finishOldest()
         await until { rig.writer.isAtRest && rig.clock.pending == 0 }
         #expect(rig.disk.written.isEmpty)
@@ -1936,20 +1975,20 @@ struct ShelfSavedFilesTests {
         let stuck = rig.save("/made-up/dropped/one.md")
         await until { rig.calls.count == 1 && rig.clock.pending == 1 }
         // The same name while its write is out, within the limit.
-        #expect(await rig.save("/made-up/dropped/one.md").value as? ShelfSaveError == .earlierSaveUnfinished)
+        #expect((await finished(rig.save("/made-up/dropped/one.md")))?.reason == .earlierSaveUnfinished)
         #expect(rig.calls.count == 1)
         rig.clock.pass()
-        _ = await stuck.value
+        _ = await finished(stuck)
         #expect(rig.writer.isPending(one), "past its limit, the call is still out")
         // The hold-off passes: other names go through, this one still waits for its call.
         await until { rig.clock.pending == 1 }
         rig.clock.pass()
         await until { !rig.writer.isHeldOff(folder("/made-up/dropped")) }
-        #expect(await rig.save("/made-up/dropped/ONE.md").value as? ShelfSaveError == .earlierSaveUnfinished)
+        #expect((await finished(rig.save("/made-up/dropped/ONE.md")))?.reason == .earlierSaveUnfinished)
         let other = rig.save("/made-up/dropped/two.md")
         await until { rig.calls.count == 2 }
         rig.calls.finish(at: 1)
-        #expect(await other.value == nil)
+        #expect((await finished(other))?.isWritten == true)
         // The late call lands; the name is free (and the file is there, for the next to see).
         rig.calls.finishOldest()
         await until { !rig.writer.isPending(one) }
@@ -1968,15 +2007,15 @@ struct ShelfSavedFilesTests {
         await turns(10)
         #expect(rig.calls.count == 2, "the second and third of a wait for the first; b's goes")
         rig.calls.finish(at: 1)
-        #expect(await elsewhere.value == nil)
+        #expect((await finished(elsewhere))?.isWritten == true)
         rig.calls.finishOldest()
-        #expect(await first.value == nil)
+        #expect((await finished(first))?.isWritten == true)
         await until { rig.calls.count == 1 }
         rig.calls.finishOldest()
-        #expect(await second.value == nil)
+        #expect((await finished(second))?.isWritten == true)
         await until { rig.calls.count == 1 }
         rig.calls.finishOldest()
-        #expect(await third.value == nil)
+        #expect((await finished(third))?.isWritten == true)
         #expect(rig.disk.written == ["/made-up/b/four.md", "/made-up/a/one.md", "/made-up/a/two.md", "/made-up/a/three.md"])
         #expect(rig.writer.isAtRest && rig.clock.pending == 0)
     }
@@ -1987,10 +2026,10 @@ struct ShelfSavedFilesTests {
         let good = rig.save("/made-up/a/two.md")
         await until { rig.calls.count == 1 }
         rig.calls.finishOldest()
-        #expect((await bad.value as? CocoaError)?.code == .fileWriteNoPermission)
+        #expect((await finished(bad))?.cocoaCode == .fileWriteNoPermission)
         await until { rig.calls.count == 1 }
         rig.calls.finishOldest()
-        #expect(await good.value == nil)
+        #expect((await finished(good))?.isWritten == true)
         #expect(rig.writer.isAtRest && !rig.writer.isHeldOff(folder("/made-up/a")), "an ordinary failure holds nothing off")
     }
 
@@ -2024,7 +2063,7 @@ struct ShelfSaveTimeoutTests {
         await until { gate.hasEntered && rig.writeClock.pending == 1 }
         #expect(shelf.saving == ["v-1"])
         rig.writeClock.pass()
-        #expect(await save.value == .writeFailed(Self.silent))
+        #expect(await finished(save) == .writeFailed(Self.silent))
         #expect(shelf.saving.isEmpty && shelf.saved.isEmpty && rig.didSave.isEmpty)
         #expect(shelf.fileProblems["v-1"] == Self.silent)
         #expect(gate.isBlocking, "the write itself is still out")
@@ -2103,7 +2142,7 @@ struct ShelfSaveTimeoutTests {
         #expect(shelf.saving == ["v-1", "v-2"])
         // The Save's write is silent past its limit (the only timer pending).
         rig.writeClock.pass()
-        #expect(await save.value == .writeFailed(Self.silent))
+        #expect(await finished(save) == .writeFailed(Self.silent))
         #expect(shelf.saving == ["v-1", "v-2"], "the Save's end let go of its own hold, not the Save All's")
         // The Save All goes on and finishes by itself.
         rig.reader.hold = false
@@ -2267,7 +2306,7 @@ struct ShelfLimitsFuzzTests {
         var random = SplitMix64(seed: seed &+ 7_000)
         let folders = ["/made-up/a", "/made-up/b", "/Volumes/Disk/c"]
         let names = ["one.md", "two.md", "three.md", "four.md", "five.md"]
-        let outcomes = Box<[(any Error)??]>([])
+        let outcomes = Box<[SaveEnd?]>([])
         var tasks: [Task<Void, Never>] = []
         for _ in 0..<300 {
             switch Int.random(in: 0..<12, using: &random) {
@@ -2276,17 +2315,15 @@ struct ShelfLimitsFuzzTests {
                 let path = place + "/" + names.randomElement(using: &random)!
                 let refused = rig.writer.isPending(URL(fileURLWithPath: path)) || rig.writer.isHeldOff(folder(place))
                 let index = tasks.count
-                outcomes.value.append(.none)
+                outcomes.value.append(nil)
                 let save = rig.save(path, bytes: Int.random(in: 0..<(3 << 20), using: &random))
                 tasks.append(Task {
-                    let error = await save.value
-                    outcomes.value[index] = .some(error)
+                    outcomes.value[index] = await save.value
                 })
                 if refused {
                     // Held off, or the name has a call out: refused before any call.
                     await until { outcomes.value[index] != nil }
-                    let error = outcomes.value[index] ?? nil
-                    let reason = error as? ShelfSaveError
+                    let reason = outcomes.value[index]?.reason
                     #expect(reason == .folderStillSilent || reason == .earlierSaveUnfinished,
                             "a refused save was refused without waiting")
                 }
@@ -2310,8 +2347,7 @@ struct ShelfLimitsFuzzTests {
                 && rig.calls.count == 0
         }
         for task in tasks { await task.value }
-        for outcome in outcomes.value {
-            guard let error = outcome ?? nil else { continue }
+        for case .failed(let error)? in outcomes.value {
             #expect(error is ShelfSaveError, "only the writer's own reasons: \(error)")
         }
         #expect(outcomes.value.count == tasks.count)
