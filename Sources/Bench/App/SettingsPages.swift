@@ -211,7 +211,7 @@ struct AlertSettingsView: View {
                 }
                 Toggle(isOn: $plansOnCard) {
                     InfoTitle("Show plans, questions and requests on the card", info: AlertsInfo.answerOnCard)
-                    Text("Approve a plan, reply to a question or allow a request right on the card.")
+                    Text("Approve, reply or allow on the card, and see why a session stopped.")
                 }
                 .disabled(!showCards)
                 Toggle(isOn: $sound) {
@@ -287,6 +287,9 @@ enum AlertsInfo {
 
         Capsid checks that it's still the same plan, question or request before it sends anything. If it isn't, \
         or it can't be answered here, the card opens the session instead.
+
+        A session that stopped with an error shows the first line of why, with Copy for all of it. That is read \
+        from the session, once, when its card comes up. Mac notifications and your phone never show it.
 
         With names shown in Mac notifications, a question's notification offers its answers too.
         """

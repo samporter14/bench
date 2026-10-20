@@ -38,6 +38,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
     case planFileWithoutSummary
     case approveRouteGone
     case approveAnswerNotUnderstood
+    // The reason on a failure card (Lab/FailureReason.swift)
+    case failedFrameNotUnderstood
 
     var feature: CompatFeature {
         switch self {
@@ -51,6 +53,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
             .planCard
         case .approveRouteGone, .approveAnswerNotUnderstood:
             .approve
+        case .failedFrameNotUnderstood:
+            .errorCard
         }
     }
 
@@ -73,6 +77,7 @@ enum CompatMiss: String, CaseIterable, Sendable {
         case .planFileWithoutSummary: "the plan file has no summary"
         case .approveRouteGone: "the Approve route wasn't found"
         case .approveAnswerNotUnderstood: "the Approve answer wasn't what Capsid expects"
+        case .failedFrameNotUnderstood: "a stopped session's answer has no status"
         }
     }
 }

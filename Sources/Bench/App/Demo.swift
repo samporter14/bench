@@ -44,7 +44,8 @@ enum Demo {
         /// card with Approve and Request changes. Both show their sent state
         /// and send nothing anywhere.
         case plan
-        /// One session that stopped with an error: the failure card.
+        /// One session that stopped with an error: the failure card, with a
+        /// made-up reason on it and Copy.
         case failed
         /// One session working while the reads fail: "Not updating".
         case stale
@@ -198,7 +199,16 @@ enum Demo {
             QuestionReplier.shared.markDemo(waiting.id)
             showPanel(working: [], cards: [.needsInput(waiting)])
         case .failed?:
-            showPanel(working: [], cards: [.failed(session(.error))])
+            let failed = session(.error)
+            // A made-up reason, through the real parser: its first line on the
+            // card, cut at the line's end, and all of it for Copy (the `\n`
+            // in the message is JSON's own line break, as the daemon's text has it).
+            let message = "The example input file has no header row, so the plate columns can't be matched to wells.\\nCheck the first line of plates.csv."
+            let error = #"400 {"type":"error","error":{"type":"invalid_request_error","message":"\#(message)"},"request_id":"req_example0001"}"#
+            if let reason = FailureReason(frame: FailureFrame(status: "failed", error: error, httpStatus: 400)) {
+                FailureReasoner.shared.showDemo(sessionID: failed.id, reason: reason)
+            }
+            showPanel(working: [], cards: [.failed(failed)])
         case .notice?:
             let plan = PlanLimit(kind: .session, usedPercent: 91, resetsAt: Date().addingTimeInterval(47 * 60))
             let week = NoticeRules.Week(key: "demo", sessions: 23, messages: 640, busiestDay: "Wednesday")

@@ -100,6 +100,8 @@ struct LabPanelView: View {
     @ObservedObject private var plans = PlanApprover.shared
     /// A question's card: what it asks, and Reply (Lab/QuestionReply.swift).
     @ObservedObject private var questions = QuestionReplier.shared
+    /// A failure card's reason, and Copy (Lab/FailureReason.swift).
+    @ObservedObject private var failures = FailureReasoner.shared
     @ObservedObject private var usagePause = UsagePauseModel.shared
     /// What a card offers and does (Lab/CardActions.swift), over the same model and states.
     private var actions: CardActions { CardActions(model: model, plans: plans, questions: questions) }
@@ -309,16 +311,23 @@ struct LabPanelView: View {
                 needsInputButtons(offer, card: card, session: session)
             }
         case .failed(let session):
+            // Why it stopped, once it has been read; until then, or when
+            // there is none, the card is as it always was.
+            let reason = failures.reason(for: session.id)
             Row(side: wellSide, well: symbol("exclamationmark.triangle")) {
                 caption("Stopped with an error", style: Theme.clayText, weight: .semibold, trailing: position)
                 title(session.displayTitle)
                 detail(session.projectName)
+                if let reason { reasonLine(reason) }
                 buttons {
                     Button("Open") { model.open(card) }
                         .buttonStyle(.glassProminent)
                         .tint(Theme.clay)
                     Button("Dismiss") { model.dismiss(card) }
                         .buttonStyle(.glass)
+                    if reason != nil {
+                        CopyReasonButton { failures.copy(session.id) }
+                    }
                 }
             }
         case .finished(let session):
@@ -374,6 +383,17 @@ struct LabPanelView: View {
                 }
             }
         }
+    }
+
+    /// The first line of why a session stopped, plain text on one line and cut
+    /// at its end; the tooltip shows more of it, and Copy all of it.
+    private func reasonLine(_ reason: FailureReason) -> some View {
+        Text(verbatim: reason.line)
+            .font(.system(size: 12))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.top, 4)
+            .help(reason.tooltip)
     }
 
     /// The plan under the title: its summary in two lines, then its steps
@@ -733,6 +753,26 @@ struct LabPanelView: View {
         HStack(spacing: 8, content: content)
             .controlSize(.small)
             .padding(.top, 8)
+    }
+
+    /// Copy, on a failure card that has a reason: it says "Copied" for a moment.
+    private struct CopyReasonButton: View {
+        /// Puts the whole reason on the pasteboard; false if there was none.
+        let copy: () -> Bool
+        @State private var copied = false
+
+        var body: some View {
+            Button(copied ? "Copied" : "Copy") {
+                if copy() { copied = true }
+            }
+            .buttonStyle(.glass)
+            .help("Copy the whole error")
+            .task(id: copied) {
+                guard copied else { return }
+                try? await Task.sleep(for: .seconds(1.5))
+                copied = false
+            }
+        }
     }
 
     /// "12m · 1.2M tokens": what the turn took, when known.

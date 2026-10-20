@@ -470,7 +470,11 @@ question is still seen.
     badge, which count what waits, not what is on the panel.
 - `failed` ("Stopped with an error", Open and Dismiss, with the sound) comes
   when a working or waiting session ends in an error, and stays until it is
-  opened, dismissed, or the session runs again.
+  opened, dismissed, or the session runs again. Since 0.9.0 it also says why
+  when Claude Science does: the first line of the reason under the project,
+  and **Copy** for all of it (Why it stopped, on the failure card). Without
+  a reason, or with the setting for plans, questions and requests off, it
+  is Open and Dismiss as before.
 - `finished` lasts 6 s on top.
 - `web` lasts until clicked, dismissed or closed by the page, or 8 s on top
   unless `requireInteraction`.
@@ -584,6 +588,17 @@ Layout (SwiftUI inside `GlassEffectContainer`, one glass shape
   - Any other wait (since 0.7.0, with the same setting): the question and
     Reply, or a permission request with Allow Once, Review or Deny. See
     Answering from the card.
+- **Stopped with an error.**
+  - Left well: the warning triangle.
+  - Caption in clay-text: "Stopped with an error", then the title and the
+    project.
+  - Since 0.9.0, once the reason has been read: under the project, its first
+    line (12 pt, plain text, one line, cut at the end of the line; its tooltip
+    shows the first 600 characters). The buttons are **Open**
+    (`.glassProminent`, clay tint), **Dismiss** (`.glass`) and, with a reason,
+    **Copy** (`.glass`), which puts all of it on the pasteboard and says
+    "Copied" for 1.5 s. The card keeps its width and grows one line. With no
+    reason it is the card it always was. See Why it stopped.
 - **Finished.**
   - Left well: the flask, still.
   - Caption: "Finished", then the duration and the tokens ("12m · 1.2M
@@ -1218,6 +1233,11 @@ The poster, `MacNotifications`, is thin: it speaks to the system only through
   title and "and 2 more". With names off, "A session finished while you
   focused", or "Sessions finished while you focused". A click opens the
   session when there is one, else the window. No other notice is sent.
+- **Never the reason.** A failure's notification stays "Stopped with an
+  error · " and the project. Why a session stopped is session content that
+  can be read away from the card (Notification Center, a lock screen), so it
+  is on the card alone (Why it stopped, on the failure card), and the phone
+  doesn't get it either.
 - **Never with Approve.** A plan's notification only opens its session;
   approving a plan is on the panel's card alone (Approving a plan from its
   card), and so is a permission request's Allow Once or Deny. A question's
@@ -1433,11 +1453,14 @@ sub-agent waiting, a changed plan: each leaves the card as it was before
 questions and requests on the card** (`showPlansOnCard`; it read "Show plans on the card,
 with Approve" until the question card, then "Show plans and questions on the
 card"), on by default. Off, a plan's card is Open and Later, and no plan is
-read; the same for every other wait (Answering from the card). A plan's
+read; the same for every other wait (Answering from the card), and a failure
+card shows no reason (Why it stopped). A plan's
 card also has **Request changes…** (Answering from the card → What to change
-in a plan). Its line under the title is "Approve a plan, reply to a question
-or allow a request right on the card."; the longer account of what each card
-shows and the check against the same plan, question or request is in its ⓘ.
+in a plan). Its line under the title is "Approve, reply or allow on the
+card, and see why a session stopped." (since 0.9.0; it read "Approve a plan,
+reply to a question or allow a request right on the card."); the longer
+account of what each card shows and the check against the same plan, question
+or request is in its ⓘ, with a paragraph on the failure card's reason.
 
 **Demo.** `Capsid --demo plan`: a made-up session whose made-up plan is
 ready ("Screen 24 buffer conditions", "10 steps · feasibility: high", with
@@ -1655,12 +1678,111 @@ What stays on the Mac).
 **Setting.** The plan card's (**Show plans, questions and requests on the
 card**, `showPlansOnCard`): off, every needs-input card is Open and Later
 (with Approve gone from plans), nothing is read, and notifications offer no
-answers.
+answers. A failure card shows no reason then either.
 
 **Demo.** `Capsid --demo card`: the made-up session's made-up question, with
 Reply, and behind it a second card asking to run made-up Python, with
 Review; Next steps from one to the other. `--demo plan` has Request
 changes. Nothing is sent anywhere.
+
+### Why it stopped, on the failure card (Lab/FailureReason.swift, since 0.9.0)
+
+The failure card said "Stopped with an error" and nothing more, so you had to
+open the session to find out why. Now it says the first line of the reason,
+with a Copy button, when Claude Science has one.
+
+**Where the reason lives.** Claude Science writes it. When a frame fails, the
+daemon (`markFrameFailed`) sets its `status` to `failed` and keeps the rest of
+its `output_data`, adding `error` (a string), `error_status` (an HTTP status,
+or null), `error_kind`, `stop_reason` and `failure_ts`. Its own page shows it
+under "Agent Failed": it takes `output_data.error`, drops a leading three-digit
+status before a `{`, parses the rest as JSON, and shows `error.message`, else
+`message`, else the text as it is, with "HTTP <error_status> · Request ID:
+<request_id>" under it (and its own words for a few `error_kind`s and for 529).
+Found in the 0.1.67 release's `web-dist` (the error banner's reader) and in
+the strings of the `claude-science` binary (the schema of `output_data`, and
+`markFrameFailed`), static files only: nothing else under `~/.claude-science`
+was opened, and no daemon was called.
+
+**Which read.** The root frame's shallow read,
+`GET /api/frames/<id>?shallow=true`, the one the plan card makes: the daemon's
+shallow read selects every column of the frame and only takes `_messages`,
+`_system` and `_branch_meta` out of `context_data`, so `output_data` comes
+whole. The database holds the same text (`frames.output_data`), but the page
+gets it from the API, so Capsid does too: no new column, no new query
+(CompatSchemaTests are untouched), and one read for one card.
+
+**When.** `FailureReasoner` follows `LabModel.cards` as `PlanApprover` does.
+When the card on top is a failure, it reads that session's frame once, keyed
+by session id, while the card is drawn as it was. It reads nothing while
+"Show plans, questions and requests on the card" or "Show a card" is off,
+before the page is up, in a demo, or for a session id that isn't a full one.
+A card behind another is read when it reaches the top. The read is given 5 s
+and is not tried again: a failed one leaves the card as it was. A redraw or
+any other change reads nothing; what was read goes when the card goes
+(opened, dismissed, the session ran again, the setting turned off), and a
+session that fails again is read afresh.
+
+**The gate.** The setting that lets Capsid read what a session said, for a
+card, is **Show plans, questions and requests on the card**: a plan's
+summary, a question's text and a request's detail are all session content on
+a card, and the reason is too (it can quote a file name or a prompt). So it
+follows the same setting, on by default, with the names the card already
+shows. Its line and ⓘ say so.
+
+**What the card shows** (`FailureFrame`, `FailureReason`, `ReasonText`: pure,
+tested on made-up JSON). Only for a frame whose `status` is `failed` and whose
+`output_data.error` is a string with something readable in it; the answer's
+`output_data` may be an object or a JSON string.
+- *The message.* As Claude Science's page unwraps it: `error.message`, else
+  `message`, else (beyond the page) an `error` that is a string, else the
+  text as it is.
+- *Plain text.* Any HTML (a proxy's error page) becomes its text: scripts,
+  styles and comments go, the tags go, the common entities decode. Control
+  and invisible characters (zero-width, direction marks) are dropped, line
+  breaks are one kind, and a run of blank lines is one. The card draws it with
+  `Text(verbatim:)`: nothing in it is markdown, HTML or a link.
+- *The line.* The first line with something on it, with heading hashes, quote
+  arrows, bullets, bold and code marks and `[text](link)` marks taken off,
+  white space as one space, and a code fence skipped. A Python traceback
+  leads with its own header, so its line is its last. Cut at 160 characters
+  with an ellipsis, then by the card at the end of its one line.
+- *Copy.* The whole message as plain text (not the line, and not stripped of
+  its markdown), cut at 4,000 characters, then a blank line and Claude
+  Science's own detail line ("HTTP 400 · Request ID: req_…") when it has
+  either. The pasteboard is injected (`Dependencies.pasteboard`): the live one
+  is the general pasteboard, and tests use a private `NSPasteboard(name:)`.
+- *No reason.* A frame that says nothing of why (no `error`, an empty or
+  unreadable one), a read that fails or takes longer than 5 s, a session that
+  is no longer `failed`: the card is as it was, with no placeholder and no
+  retry.
+
+**Privacy.** This widens Capsid's "never read content" rule by exactly a
+failed frame's `status`, `output_data.error` and `error_status`, for the
+card. Only those are picked (not the name, the input, the response or the
+rest of the frame), kept in memory for as long as the card is up, and never
+logged, saved or sent anywhere: the log says only "read" or "none". Copy puts
+the text on the pasteboard only when pressed. **Not in Mac notifications,
+the activity list, the Dock menu, the menu bar or on the phone**: a
+notification can be read away from the card, and the others list sessions
+at a glance. The failure notification stays "Stopped with an error · "
+and the project, and a test holds the reason to the card.
+
+**Diagnostics.** The reason is in the inventory (Diagnostics): a read,
+`output_data.error on GET /api/frames/<session>?shallow=true`, for the
+feature "The reason on a failure card" (`CompatFeature.errorCard`), checked
+only when used (a probe would need a failed session on screen). An answer
+to the read that isn't a frame at all (no `status`) is a breadcrumb,
+`failedFrameNotUnderstood`: "a stopped session's answer has no status". A
+session that gives no reason is ordinary and records nothing. The web bundle
+read is of 0.1.67; `CompatInventory.checkedWith` is not moved, since that
+means walking the whole inventory again.
+
+**Demo.** `Capsid --demo failed`: a made-up API answer in the daemon's shape
+(`400 {"type": "error", "error": {"message": "The example input file has no
+header row, …"}, …}`, two lines long, with a made-up request id), run through
+the real parser. The card shows the first line cut at its end, and Copy puts
+both lines and the detail line on the pasteboard. Nothing is read.
 
 ## Scenes settings (Lab/SceneSettings.swift, Lab/SpecimenChoice.swift)
 
@@ -2328,7 +2450,7 @@ on it, and whether Diagnostics can check it now:
 | Kind | What |
 |---|---|
 | Page | the right-hand panel's tab markup (the strip, its toolbar, a tab, the button that shows it, its close button, how the shown tab is marked); the visible "Sign in" button; the page's own `Notification`; a session's address `/projects/<project>/frames/<session>`; the `?nonce=` sign-in; previews on another port |
-| Reads | `/api/usage`, `/api/frames/<id>/token-series`, `?shallow=true`, `/api/artifacts/versions/<v>`, and for the phone the thumbnails, the artifact list, `messages`, `trace-shallow`, `streaming`; `/api/csrf`; a 401 when signed out |
+| Reads | `/api/usage`, `/api/frames/<id>/token-series`, `?shallow=true` (and a failed session's `output_data.error` in it, since 0.9.0), `/api/artifacts/versions/<v>`, and for the phone the thumbnails, the artifact list, `messages`, `trace-shallow`, `streaming`; `/api/csrf`; a 401 when signed out |
 | Writes | `approve-plan`, `resolve-input`, `/api/request`, `/api/projects/<p>/request`, `/api/projects/<p>/attachments`; the `operon_csrf` cookie sent back as `x-operon-csrf` |
 | Command line | the tool's place; `status` (`running`, `version`, `port`, `pid`, `daemon.data_dir`, `active_frames`, `active_conversations`); `url`; `serve --no-browser --detached` |
 | Database | `active-org.json`, `orgs/<org>/operon-cli.db`; the tables and columns above; the words and JSON keys stored inside (the frame statuses, `pending_input_requests`, `msg_json`'s `_ts`, `role`, `_intent_id`, `_tokens`) |
@@ -2376,13 +2498,13 @@ miss's, not one that restarts at "just now". A miss is one of a fixed set of phr
 nothing read from the page can reach the log. Recorded: a tab
 strip that is wrong (more than one, no toolbar), a tab with no close button, no single tab marked shown, or the
 script's answer not understood; a usage answer that can't be decoded or has none of the limits; a context answer
-that can't be decoded or has no window or no turns with a size; a shallow frame with no status, a plan waiting
+that can't be decoded or has no window or no turns with a size; a shallow frame with no status (a stopped session's too, for its card's reason), a plan waiting
 with no plan file named, a plan file that isn't an object or has no summary; an Approve answered 404, 405 or a
 200 that isn't `accepted`. Never recorded, because they are ordinary: no tab strip (no tab is open), a
 signed-out 401 (and a 401 with no Sign in card on the page, which falls back to a fresh sign-in code by design,
 Daemon and sign-in; the probe says the button is not on screen now), a page that isn't up, a slow or failed read, `ok: false` from
 usage, a session with no turns yet, a sub-agent waiting rather than the root, the daemon refusing an Approve in
-its own words (`plan_already_approved`, `plan_frame_processing`, no plan awaiting).
+its own words (`plan_already_approved`, `plan_frame_processing`, no plan awaiting), a stopped session that gives no reason.
 
 ## Welcome window (since 0.3.6)
 
@@ -2537,7 +2659,8 @@ Sources/Bench/App/        BenchApp, Router, Theme, TimeSpan, SharedShims, SheetC
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge, page tabs (Close Other Tabs, Close All Tabs), LastSession (reopen where you were)   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule, SpecimenHold,
                           QuestionReply and ReplyWindow (a question, a permission request or a plan's
-                          changes answered from its card)   (lab agent)
+                          changes answered from its card), FailureReason (why a session stopped, on its
+                          failure card)   (lab agent)
 Sources/Bench/Results/    ResultsShelf and ResultsWindow: the results shelf (Results)
 Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and ScienceCore. Don't edit here:
                           change them in the droplet, then run Scripts/sync-shared.sh. Except
