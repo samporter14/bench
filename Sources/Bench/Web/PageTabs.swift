@@ -82,6 +82,19 @@ enum PageTabsOutcome: Equatable, Sendable {
         let count = number.intValue
         return (0...cap).contains(count) && number.doubleValue == Double(count) ? count : nil
     }
+
+    /// What the script answered, as an outcome, noting for Diagnostics what the
+    /// answer says of the page (CompatBreadcrumbs). An answer that isn't
+    /// understood is nil, and noted. A page with no tab open (no strip) is not
+    /// a change; a strip that is wrong, or a tab with no close button, is.
+    static func read(_ value: Any?, breadcrumbs: CompatBreadcrumbs = .shared) -> PageTabsOutcome? {
+        guard let text = value as? String, let outcome = PageTabsOutcome(parsing: text) else {
+            breadcrumbs.record(.tabAnswerNotUnderstood)
+            return nil
+        }
+        if let miss = PageTabsReason(parsing: text)?.miss { breadcrumbs.record(miss) }
+        return outcome
+    }
 }
 
 /// Why a sweep did nothing, when the script says. Most are the page not being
@@ -293,15 +306,11 @@ extension WebContainer {
         do {
             let value = try await webView.callAsyncJavaScript(PageTabsScript.body, arguments: request.arguments,
                                                               in: nil, contentWorld: .defaultClient)
-            guard let text = value as? String, let parsed = PageTabsOutcome(parsing: text) else {
+            guard let parsed = PageTabsOutcome.read(value) else {
                 Logger.web.error("Close tabs: the page's answer wasn't understood")
-                CompatBreadcrumbs.shared.record(.tabAnswerNotUnderstood)
                 return .unavailable
             }
             outcome = parsed
-            // A page with no tab open has no strip and is not a change; a strip
-            // that is wrong, or a tab with no close button, is.
-            if let miss = PageTabsReason(parsing: text)?.miss { CompatBreadcrumbs.shared.record(miss) }
         } catch {
             Logger.web.error("Close tabs: the script failed")
             return .unavailable

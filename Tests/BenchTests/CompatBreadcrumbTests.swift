@@ -142,6 +142,28 @@ struct CompatMissRuleTests {
         #expect(PageTabsReason(parsing: "not json") == nil)
     }
 
+    @Test func theSweepsAnswerIsNotedAsTheStateItSays() {
+        func note(_ value: Any?) -> (PageTabsOutcome?, CompatMiss?) {
+            let store = BreadcrumbHarness().makeStore()
+            let outcome = PageTabsOutcome.read(value, breadcrumbs: store)
+            return (outcome, store.last?.miss)
+        }
+        // Done, and the ordinary nothing-to-do states, note nothing.
+        #expect(note(#"{"status":"done","closed":2,"stayed":0}"#).1 == nil)
+        #expect(note(#"{"status":"unavailable","closed":0,"stayed":0,"reason":"no-strip"}"#) == (.unavailable, nil))
+        #expect(note(#"{"status":"refused","closed":0,"stayed":0,"reason":"tab-missing"}"#) == (.refused, nil))
+        // A strip that is wrong is a change.
+        #expect(note(#"{"status":"unavailable","closed":0,"stayed":0,"reason":"no-toolbar"}"#) == (.unavailable, .tabStripWithoutToolbar))
+        #expect(note(#"{"status":"unavailable","closed":0,"stayed":0,"reason":"several-strips"}"#).1 == .severalTabStrips)
+        #expect(note(#"{"status":"unavailable","closed":0,"stayed":0,"reason":"no-close-button"}"#).1 == .tabWithoutCloseButton)
+        #expect(note(#"{"status":"refused","closed":0,"stayed":0,"reason":"no-shown-tab"}"#) == (.refused, .noTabMarkedShown))
+        // An answer that isn't one is a change too, and gives no outcome.
+        #expect(note("not json") == (nil, .tabAnswerNotUnderstood))
+        #expect(note(nil) == (nil, .tabAnswerNotUnderstood))
+        #expect(note(42) == (nil, .tabAnswerNotUnderstood))
+        #expect(note(#"{"status":"done","closed":-1,"stayed":0}"#) == (nil, .tabAnswerNotUnderstood))
+    }
+
     // MARK: The context ring
 
     private func series(_ json: String) throws -> TokenSeries {
@@ -164,6 +186,21 @@ struct CompatMissRuleTests {
         #expect(try series(#"{"window":200000}"#).shapeMiss == .contextWithoutTurns)
         #expect(try series(#"{"window":200000,"turns":[{"tokens":1},{"tokens":2}]}"#).shapeMiss == .contextWithoutTurns)
         #expect(try series("{}").shapeMiss == .contextWithoutWindow)
+    }
+
+    @Test func theRingNotesAnAnswerThatDoesntDecodeOrLacksWhatItNeeds() throws {
+        func note(_ json: String) -> (TokenSeries?, CompatMiss?) {
+            let store = BreadcrumbHarness().makeStore()
+            let series = try? TokenSeries.decodeNoting(Data(json.utf8), breadcrumbs: store)
+            return (series, store.last?.miss)
+        }
+        #expect(note(#"{"window":200000,"turns":[{"ctx_total":5}]}"#).1 == nil)
+        #expect(note(#"{"window":200000,"turns":[]}"#).1 == nil)
+        #expect(note(#"{"turns":[{"ctx_total":5}]}"#).1 == .contextWithoutWindow)
+        #expect(note(#"{"window":200000}"#).1 == .contextWithoutTurns)
+        let broken = note("<html>")
+        #expect(broken.0 == nil)
+        #expect(broken.1 == .contextNotDecoded)
     }
 
     @Test func anAnswerThatIsNotOfThatShapeAtAllDoesntDecode() {

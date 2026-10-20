@@ -470,8 +470,9 @@ struct CompatProbeRunTests {
         let lines = CompatReport.whenUsedLines()
         #expect(lines.first == "Checked only when used:")
         for write in CompatInventory.writeEndpoints {
-            #expect(lines.contains("• \(write.token): \(write.feature.title)"), "\(write.token)")
+            #expect(lines.contains("• \(write.token): \(write.feature.title) (it changes things, so Diagnostics never sends it)"), "\(write.token)")
         }
+        #expect(lines.contains("• GET /api/frames/<session>/messages?from=<n>&limit=<n>: Capsid on your phone (it is what was said, so it is never read from here)"))
         // A read the probes make is not on the list.
         for name in CompatProbes.Name.all where name.hasPrefix("GET ") {
             #expect(!lines.contains { $0.hasPrefix("• \(name):") }, "\(name)")

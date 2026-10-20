@@ -514,6 +514,39 @@ struct CompatSchemaTests {
         }
     }
 
+    @Test func theDiagnosticsStepChecksTheInventorysColumns() throws {
+        let whole = try InventoryDatabase()
+        defer { whole.remove() }
+        #expect(Diagnose.schemaLines(db: whole.url) == [
+            "✓ Table frames: all 18 columns",
+            "✓ Table projects: all 2 columns",
+            "✓ Table frame_blobs: all 3 columns",
+            "✓ Table frame_messages: all 2 columns",
+        ])
+        // The optional column missing is a note, not a problem.
+        let without = try InventoryDatabase(withOptional: false)
+        defer { without.remove() }
+        #expect(Diagnose.schemaLines(db: without.url)[1] == "✓ Table projects: all 2 columns (archived_at is optional and isn't there)")
+    }
+
+    @Test func aMissingColumnIsNamedAndSoIsAMissingTable() throws {
+        // Columns the old step never looked for.
+        let noKind = try InventoryDatabase(omitting: "frames.conversation_type")
+        defer { noKind.remove() }
+        #expect(Diagnose.schemaLines(db: noKind.url)[0] == "✗ Table frames: missing conversation_type")
+        let noBody = try InventoryDatabase(omitting: "frame_blobs.body")
+        defer { noBody.remove() }
+        #expect(Diagnose.schemaLines(db: noBody.url)[2] == "✗ Table frame_blobs: missing body")
+
+        let empty = FileManager.default.temporaryDirectory.appendingPathComponent("bench-compat-\(UUID().uuidString).db")
+        defer { try? FileManager.default.removeItem(at: empty) }
+        FileManager.default.createFile(atPath: empty.path, contents: nil)
+        // A database with no tables at all: every table is missing.
+        #expect(Diagnose.schemaLines(db: empty) == [
+            "✗ Table frames: missing", "✗ Table projects: missing", "✗ Table frame_blobs: missing", "✗ Table frame_messages: missing",
+        ])
+    }
+
     @Test func theOptionalColumnIsNotRequiredAndUsedWhenThere() throws {
         let optional = CompatInventory.schemaTables.flatMap { entry in entry.optional.map { "\(entry.table).\($0)" } }
         #expect(optional == ["projects.archived_at"])
@@ -538,5 +571,46 @@ struct CompatSchemaTests {
         #expect(stored.contains { $0.token.hasPrefix("output_data.pending_input_requests") })
         #expect(stored.contains { $0.token.hasPrefix("msg_json.") })
         #expect(stored.allSatisfy { $0.isWhenUsed })
+    }
+}
+
+// MARK: The call sites
+
+/// The places that note a change, and the places that use the inventory, are
+/// still there. They run against a live web view, which no test loads, so this
+/// reads the source for the call that links each to the pure part tested above.
+struct CompatWiringTests {
+    private func contains(_ file: String, _ text: String) -> Bool {
+        Repo.source(file).contains(text)
+    }
+
+    @Test func theReadersNoteWhatTheyFind() {
+        #expect(contains("Usage/PlanUsageModel.swift", "try Self.parseNoting(data)"))
+        #expect(contains("Context/ContextModel.swift", "try TokenSeries.decodeNoting(data)"))
+        #expect(contains("Web/PageTabs.swift", "PageTabsOutcome.read(value)"))
+        #expect(contains("Web/WebContainer.swift", "CompatBreadcrumbs.shared.record(.signInButtonNotFound)"))
+        #expect(contains("Lab/PlanApproval.swift", "dependencies.breadcrumbs.record(.planFrameNotUnderstood)"))
+    }
+
+    @Test func theSignInRecoveryAndTheLookShareOneFinder() {
+        #expect(SignInScript.press.contains("benchFindSignIn()") && SignInScript.look.contains("benchFindSignIn()"))
+        #expect(SignInScript.press.contains(SignInScript.finder) && SignInScript.look.contains(SignInScript.finder))
+        #expect(contains("Web/WebContainer.swift", "SignInScript.press"))
+    }
+
+    @Test func theTabLookAndTheCommandsShareOneReader() {
+        #expect(PageTabsScript.probe.contains(PageTabsScript.reader))
+        #expect(PageTabsScript.body.contains(PageTabsScript.reader))
+    }
+
+    @Test func diagnosticsUsesTheInventoryTheVersionAndTheProbes() {
+        let diagnose = Repo.source("App/Diagnose.swift")
+        #expect(diagnose.contains("CompatInventory.schemaTables"))
+        #expect(diagnose.contains("ScienceVersion.lines(running: status.version)"))
+        #expect(diagnose.contains("CompatProbes.run("))
+        #expect(diagnose.contains("CompatReport.whenUsedLines()"))
+        #expect(diagnose.contains("breadcrumbs.line()"))
+        // And the window runs the page part after the first.
+        #expect(diagnose.contains("await Diagnose.pageReport()"))
     }
 }

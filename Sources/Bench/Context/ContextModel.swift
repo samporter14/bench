@@ -52,6 +52,21 @@ struct TokenSeries: Decodable, Sendable {
         return try decoder.decode(TokenSeries.self, from: data)
     }
 
+    /// `decode`, with a breadcrumb (CompatBreadcrumbs) when the answer can't be
+    /// decoded or lacks what the ring needs. The ring reads every answer
+    /// through this, so a change in Claude Science is noted once, here.
+    nonisolated static func decodeNoting(_ data: Data, breadcrumbs: CompatBreadcrumbs = .shared) throws -> TokenSeries {
+        let series: TokenSeries
+        do {
+            series = try decode(data)
+        } catch {
+            breadcrumbs.record(.contextNotDecoded)
+            throw error
+        }
+        if let miss = series.shapeMiss { breadcrumbs.record(miss) }
+        return series
+    }
+
     /// What the ring can't do without that the answer lacks, or nil. A session
     /// with no turns yet is fine, and so is one whose only turn is still
     /// under way (it has no size yet); two turns or more and none with a size
@@ -256,7 +271,6 @@ final class ContextModel: ObservableObject {
             let series = try await Self.fetch(frame)
             // The page moved on while this was reading.
             guard frame == frameID else { return }
-            if let miss = series.shapeMiss { CompatBreadcrumbs.shared.record(miss) }
             // A turn with no `ctx_total` (one still in progress, say) is
             // skipped, so the ring, the headline and the chart agree.
             turns = series.turns?.compactMap(\.ctxTotal) ?? []
@@ -269,7 +283,6 @@ final class ContextModel: ObservableObject {
         } catch {
             guard frame == frameID else { return }
             log.error("Couldn't read context: \(String(describing: error), privacy: .public)")
-            if error is DecodingError { CompatBreadcrumbs.shared.record(.contextNotDecoded) }
             failure = "Couldn't read context"
         }
     }
@@ -286,7 +299,7 @@ final class ContextModel: ObservableObject {
         let data = try await WebContainer.shared.apiGET(seriesPath(for: frame))
         // A long session's series can be large; decode it off the main thread.
         return try await Task.detached(priority: .utility) {
-            try TokenSeries.decode(data)
+            try TokenSeries.decodeNoting(data)
         }.value
     }
 }

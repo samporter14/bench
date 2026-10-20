@@ -105,23 +105,8 @@ enum Diagnose {
         }
 
         // 3. Its layout: a table or column the queries need that isn't there
-        // is the likeliest break after a Claude Science update. The list is the
-        // inventory's (CompatInventory.database), which the tests hold to what
-        // the queries really read.
-        for (table, columns, optional) in CompatInventory.schemaTables {
-            switch schema(of: table, in: db) {
-            case .failure(let message):
-                out.append("✗ Table \(table): \(message)")
-            case .success(let present) where present.isEmpty:
-                out.append("✗ Table \(table): missing")
-            case .success(let present):
-                let missing = columns.filter { !present.contains($0) }
-                let absent = optional.filter { !present.contains($0) }
-                let extra = absent.isEmpty ? "" : " (\(absent.joined(separator: ", ")) is optional and isn't there)"
-                out.append(missing.isEmpty ? "✓ Table \(table): all \(columns.count) columns\(extra)"
-                                           : "✗ Table \(table): missing \(missing.joined(separator: ", "))")
-            }
-        }
+        // is the likeliest break after a Claude Science update.
+        out.append(contentsOf: schemaLines(db: db))
 
         // 4. The reads themselves, as the Lab does them.
         do {
@@ -143,6 +128,26 @@ enum Diagnose {
             out.append("✗ Project names: \(error)")
         }
         return out
+    }
+
+    /// The layout step, one line per table. The list is the inventory's
+    /// (`CompatInventory.database`), which the tests hold to what the queries
+    /// really read.
+    static func schemaLines(db: URL) -> [String] {
+        CompatInventory.schemaTables.map { table, columns, optional in
+            switch schema(of: table, in: db) {
+            case .failure(let message):
+                return "✗ Table \(table): \(message)"
+            case .success(let present) where present.isEmpty:
+                return "✗ Table \(table): missing"
+            case .success(let present):
+                let missing = columns.filter { !present.contains($0) }
+                let absent = optional.filter { !present.contains($0) }
+                let extra = absent.isEmpty ? "" : " (\(absent.joined(separator: ", ")) is optional and isn't there)"
+                return missing.isEmpty ? "✓ Table \(table): all \(columns.count) columns\(extra)"
+                                       : "✗ Table \(table): missing \(missing.joined(separator: ", "))"
+            }
+        }
     }
 
     private enum Columns {

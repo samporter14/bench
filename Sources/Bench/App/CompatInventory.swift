@@ -156,7 +156,7 @@ extension CompatInventory {
              .closeTabs, "Web/PageTabs.swift", literal: true),
         hook(#"[data-testid="right-tab-strip"] [data-tab-id]"#, "the tab under a right-click",
              .tabMenu, "Web/TabContextMenu.swift",
-             check: .whenUsed("seen only when a tab is right-clicked"), literal: true),
+             check: .whenUsed("seen only on a right-click"), literal: true),
         hook("button, a", "the elements searched for the sign-in button",
              .signIn, "Web/WebContainer.swift", literal: true),
         hook("Sign in", #"a visible button or link reading exactly "Sign in" on the signed-out page"#,
@@ -178,8 +178,6 @@ extension CompatInventory {
         CompatDependency(kind: .readEndpoint, token: token, detail: detail, feature: feature, file: file, check: check)
     }
 
-    private static let phoneOnly = "the phone's readers, which return what was said or made, are not run from here"
-
     static let readEndpoints: [CompatDependency] = [
         read("GET /api/usage", "{ok, data: {five_hour, seven_day, seven_day_opus, seven_day_sonnet: {utilization, resets_at}, extra_usage}}; also ?fresh=1",
              .usage, "Usage/PlanUsageModel.swift"),
@@ -190,13 +188,13 @@ extension CompatInventory {
         read("GET /api/artifacts/versions/<version>", "a plan file: task_summary, phases[].delegations[].steps[], feasibility.confidence; the phone reads artifacts here too",
              .planCard, "Lab/PlanApproval.swift"),
         read("GET /api/artifacts/versions/<version>?thumbnail=<width>", "a WebP thumbnail, 120 or 800 wide",
-             .phone, "Remote/ArtifactReader.swift", check: .whenUsed(phoneOnly)),
+             .phone, "Remote/ArtifactReader.swift", check: .whenUsed("it is an image of a file, so it is not read from here")),
         read("GET /api/frames/<session>/artifacts", "a session's list of artifacts",
-             .phone, "Remote/ArtifactReader.swift", check: .whenUsed("it lists file names, which are not read from here")),
+             .phone, "Remote/ArtifactReader.swift", check: .whenUsed("it lists file names, so it is not read from here")),
         read("GET /api/frames/<session>/messages?from=<n>&limit=<n>", "a page of the session's messages",
-             .phone, "Remote/SessionReader.swift", check: .whenUsed("it is what was said, which Diagnostics never reads")),
+             .phone, "Remote/SessionReader.swift", check: .whenUsed("it is what was said, so it is never read from here")),
         read("GET /api/frames/<session>/trace-shallow?include_messages=false", "the helpers' pending requests",
-             .phone, "Remote/RemotePermissions.swift", check: .whenUsed(phoneOnly)),
+             .phone, "Remote/RemotePermissions.swift", check: .whenUsed("it reads what the helpers are asking, so it is not read from here")),
         read("GET /api/frames/<session>/streaming", "the text being written now; Capsid copes if the daemon has no such route",
              .phone, "Remote/RemoteLive.swift", check: .whenUsed("it exists only while a session works")),
         read("GET /api/csrf", "sets the cookie that writes send back",
@@ -301,7 +299,7 @@ extension CompatInventory {
         stored("frames.conversation_type (uploads)", "uploads marks a project's hidden uploads frame", .sessions),
         stored("frames.agent_name (concierges)", "CONCIERGE and CANVAS_CONCIERGE are not sessions", .sessions),
         stored("projects.id (concierge prefix)", "the concierge's own project starts proj_concierge_sys_", .browse),
-        stored("frame_blobs.kind (output)", "output holds an output too big for the frame", .sessions),
+        stored("frame_blobs.kind (output)", "a frame's output is read from the row of this kind when the frame holds none", .sessions),
         stored("output_data.pending_input_requests", "a list of pending requests, each with a kind", .sessions),
         stored("msg_json._ts, role, _intent_id, _tokens", "when, who, the intent id, and input and output tokens of a message", .activity),
         stored("input_data._intent_id", "finds the session a lost reply made", .browse),

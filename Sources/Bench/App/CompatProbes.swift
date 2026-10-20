@@ -322,8 +322,14 @@ enum CompatReport {
     }
 
     /// The writes, the reads that return what was said or made, and the page
-    /// hooks seen only in some states: each with the feature that depends on it.
+    /// hooks seen only in some states: each with the feature that depends on
+    /// it, and why it can't be tried from here.
     static func whenUsedLines(_ items: [CompatDependency] = CompatInventory.whenUsed) -> [String] {
-        [whenUsedHeading] + items.map { "• \($0.token): \($0.feature.title)" }
+        [whenUsedHeading] + items.map(whenUsedLine)
+    }
+
+    static func whenUsedLine(_ item: CompatDependency) -> String {
+        guard case .whenUsed(let why) = item.check else { return "• \(item.token): \(item.feature.title)" }
+        return "• \(item.token): \(item.feature.title) (\(why))"
     }
 }
