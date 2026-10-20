@@ -195,10 +195,14 @@ final class ResultsShelf: ObservableObject {
         /// A file was saved: the panel's Saved card (`Router.downloadSaved`).
         var didSave: @MainActor (URL) -> Void = { _ in }
         /// Writes a saved file's bytes. Always run off the main actor, one at
-        /// a time (`ShelfSavedFiles`).
+        /// a time per destination, within a time limit (`ShelfSavedFiles`).
         var write: @Sendable (Data, URL) throws -> Void = { data, url in try data.write(to: url, options: .atomic) }
+        /// The writer that runs `write`; nil for a `ShelfSavedFiles` with the
+        /// real limits. Tests hand in one with a clock and a queue they hold.
+        var savedFiles: ShelfSavedFiles?
         var now: @MainActor () -> Date = { Date() }
-        /// How long one read may take, from its start, before it counts as failed.
+        /// How long one read may take, from its start, before it counts as failed
+        /// and its reader, if it hasn't returned, gives up its slot.
         var timeout: Duration = .seconds(30)
         /// Waits out the time limit; tests stand in for the clock.
         var wait: @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
@@ -287,7 +291,7 @@ final class ResultsShelf: ObservableObject {
     private var generation = 0
     private var olderTask: Task<Void, Never>?
     private let storage: any ShelfCopyStorage
-    private let savedFiles = ShelfSavedFiles()
+    private let savedFiles: ShelfSavedFiles
     private let folders: ShelfFolderMemory
     /// This window's run of temporary copies; a new one each time it closes.
     private var runID = UUID()
@@ -315,6 +319,7 @@ final class ResultsShelf: ObservableObject {
         transfers = ShelfTransfers(limit: Self.concurrency, read: dependencies.read, isReady: dependencies.isReady,
                                    timeout: dependencies.timeout, wait: dependencies.wait)
         storage = dependencies.storage ?? ShelfTemporaryCopies(base: dependencies.temporaryFolder)
+        savedFiles = dependencies.savedFiles ?? ShelfSavedFiles()
         thumbnailStore = thumbnails
         folders = ShelfFolderMemory(defaults: dependencies.defaults, exists: dependencies.exists)
     }
@@ -385,7 +390,7 @@ final class ResultsShelf: ObservableObject {
 
     /// The window closed: every read stops (one under way is cancelled, down
     /// to the page's fetch, and keeps its place among the two until it has
-    /// returned), and what was waiting is let go. What was read stays, in
+    /// returned or its time limit passes), and what was waiting is let go. What was read stays, in
     /// memory, but for the decoded thumbnails, which are let go. A Save All
     /// that hasn't finished stops (files already saved stay saved; none is
     /// left half-written), and the temporary copies are deleted, off the main
@@ -858,11 +863,20 @@ final class ResultsShelf: ObservableObject {
 
     private static let tooBigToSave = "Over 8 MB: open the session to download it there."
 
+    /// A write that failed, on the row: what the system or the writer said.
+    private static func couldntSave(_ error: any Error) -> String {
+        "Couldn't save it there: \(error.localizedDescription)"
+    }
+
     private func download(_ entry: ArtifactEntry, to url: URL) async -> ShelfSaveOutcome {
         switch refusal(for: entry) {
         case .tooBig?: return .tooBig
         case .failed(let failure)?: return .failed(failure)
         default: break
+        }
+        // A folder that stopped answering refuses at once: nothing is downloaded for it.
+        if savedFiles.isHeldOff(url.deletingLastPathComponent()) {
+            return .writeFailed(Self.couldntSave(ShelfSaveError.folderStillSilent))
         }
         beginSaving(entry.version)
         defer { endSaving(entry.version) }
@@ -872,7 +886,7 @@ final class ResultsShelf: ObservableObject {
                 try await savedFiles.write(bytes, to: url, using: dependencies.write)
                 return .saved(url)
             } catch {
-                return .writeFailed("Couldn't save it there: \(error.localizedDescription)")
+                return .writeFailed(Self.couldntSave(error))
             }
         case .tooBig: return .tooBig
         case .failed(let failure): return .failed(failure)
@@ -913,6 +927,8 @@ final class ResultsShelf: ObservableObject {
     /// written whole, off the main actor, and recorded like a single Save
     /// (Open and Reveal in Finder work for it). Progress and then a summary
     /// by count go in `batches`. Closing the window stops what hasn't started.
+    /// A folder that stops answering fails the write that found out after its
+    /// limit and the rest at once, without downloading them (`ShelfSavedFiles`).
     func saveAll(_ sessionID: String, into folder: URL) {
         guard saveAllTasks.isEmpty,
               let item = sessions.first(where: { $0.id == sessionID }),
@@ -943,6 +959,14 @@ final class ResultsShelf: ObservableObject {
         var reserved: Set<String> = []
         // The files of `work` this run has marked saving and not yet let go of.
         var marked: Set<Int> = []
+        // A name is taken when this batch has it, the folder has it, or an
+        // earlier write of it hasn't returned (a save that timed out and may
+        // still land): numbering around it keeps two writes off one file.
+        let isTaken: (String) -> Bool = { [self] candidate in
+            reserved.contains(candidate.lowercased())
+                || dependencies.exists(folder.appending(path: candidate, directoryHint: .notDirectory))
+                || savedFiles.isPending(folder.appending(path: candidate, directoryHint: .notDirectory))
+        }
         // The names are settled up front, in the session's order, so the first
         // of two of the same name gets the plain one whatever finishes first.
         var work: [(entry: ArtifactEntry, name: String)] = []
@@ -954,10 +978,7 @@ final class ResultsShelf: ObservableObject {
                 fileProblems[entry.version] = Self.tooBigToSave
                 continue
             }
-            let name = ShelfFileName.unique(ShelfFileName.sanitized(entry.name)) { candidate in
-                reserved.contains(candidate.lowercased())
-                    || dependencies.exists(folder.appending(path: candidate, directoryHint: .notDirectory))
-            }
+            let name = ShelfFileName.unique(ShelfFileName.sanitized(entry.name), taken: isTaken)
             reserved.insert(name.lowercased())
             work.append((entry, name))
         }
@@ -973,6 +994,15 @@ final class ResultsShelf: ObservableObject {
                     let index = next
                     let entry = work[index].entry
                     next += 1
+                    // A folder that stopped answering refuses the rest at once
+                    // (ShelfSavedFiles): nothing more is downloaded for it.
+                    if savedFiles.isHeldOff(folder) {
+                        done += 1
+                        summary.failed += 1
+                        fileProblems[entry.version] = Self.couldntSave(ShelfSaveError.folderStillSilent)
+                        batches[sessionID] = .saving(done: done, total: entries.count)
+                        continue
+                    }
                     active += 1
                     beginSaving(entry.version)
                     marked.insert(index)
@@ -994,12 +1024,9 @@ final class ResultsShelf: ObservableObject {
                 case .bytes(let bytes):
                     var name = work[index].name
                     var url = folder.appending(path: name, directoryHint: .notDirectory)
-                    if dependencies.exists(url) {
+                    if dependencies.exists(url) || savedFiles.isPending(url) {
                         // Something took the name since the plan was made.
-                        name = ShelfFileName.unique(name) { candidate in
-                            reserved.contains(candidate.lowercased())
-                                || dependencies.exists(folder.appending(path: candidate, directoryHint: .notDirectory))
-                        }
+                        name = ShelfFileName.unique(name, taken: isTaken)
                         reserved.insert(name.lowercased())
                         url = folder.appending(path: name, directoryHint: .notDirectory)
                     }
@@ -1014,7 +1041,7 @@ final class ResultsShelf: ObservableObject {
                         }
                     } catch {
                         summary.failed += 1
-                        fileProblems[entry.version] = "Couldn't save it there: \(error.localizedDescription)"
+                        fileProblems[entry.version] = Self.couldntSave(error)
                     }
                 case .tooBig:
                     summary.tooBig += 1

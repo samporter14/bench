@@ -9,17 +9,22 @@
 // operation nobody waits for any more never starts if it was queued, and is
 // cancelled if it was running: its reader's task is cancelled, which for the
 // page's reader also aborts the fetch (ArtifactReadAbort). Its slot stays
-// taken until the reader has actually returned: a slot is held from a read's
-// start until its reader comes back, never only until its waiters stop.
+// taken until the reader has actually returned, or its time limit passes:
+// a slot is held from a read's start until its reader comes back, never only
+// until its waiters stop.
 //
 // Which goes next: what the person asked for (Quick Look, a drag, Copy,
 // Save) before Save All, Save All before lists, lists before thumbnails, the
 // oldest first within each. A queued read that has seen `promotion` others
 // start ahead of it goes next whatever it is, so none waits for ever.
 //
-// The time limit counts from a read's start, not its wait in line. When it
-// passes, every consumer gets `.timedOut` at once and the reader is
-// cancelled; its slot is held until it returns.
+// The time limit counts from a read's start, not its wait in line, and it
+// is the longest a read can hold its slot, whoever waits for it. When it
+// passes, every consumer gets `.timedOut` at once, the reader is cancelled
+// (the page is told to abort the fetch) and the slot is freed for the next
+// read, even if the reader never returns: a page whose script never settles
+// would otherwise pin its two slots for ever. The reader is then "lost":
+// counted in `lost` until it comes back, and whatever it answers is dropped.
 import Foundation
 
 /// What a shelf read came to, for one consumer.
@@ -73,9 +78,14 @@ final class ShelfTransfers {
         var consumers: [Int: Consumer] = [:]
         /// Reads started while this one waited.
         var passedOver = 0
-        /// From its start until its reader returns.
+        /// From its start until its reader returns or its time limit passes.
         var running = false
+        /// Its time limit passed with the reader still out: the slot was freed,
+        /// and the reader's answer, if one ever comes, is dropped.
+        var lost = false
         var reader: Task<Void, Never>?
+        /// Its time limit. Kept when nobody waits any more: it frees the slot
+        /// of a reader that never comes back.
         var timer: Task<Void, Never>?
 
         init(key: ArtifactRead, order: Int) {
@@ -96,7 +106,8 @@ final class ShelfTransfers {
     private var live: [ArtifactRead: Operation] = [:]
     /// Waiting their turn.
     private var queue: [Operation] = []
-    /// Every operation whose reader hasn't returned, wanted or not: the slots.
+    /// Every operation within its time limit whose reader hasn't returned,
+    /// wanted or not: the slots.
     private var readers: [ObjectIdentifier: Operation] = [:]
     /// Which operation each consumer's token is in.
     private var owners: [Int: Operation] = [:]
@@ -115,6 +126,9 @@ final class ShelfTransfers {
 
     /// Reads under way, wanted or not: never more than `limit`.
     var active: Int { readers.count }
+    /// Readers given up on after their time limit that haven't returned yet.
+    /// They hold no slot and nobody waits for them; for tests.
+    private(set) var lost = 0
     /// The most that were ever under way at once.
     private(set) var mostActive = 0
     /// Reads under way that someone still waits for.
@@ -150,7 +164,7 @@ final class ShelfTransfers {
 
     /// The window closed: every consumer but a Save's gets `.cancelled` now.
     /// What nobody waits for any more never starts, or is cancelled; its slot
-    /// stays held until its reader returns.
+    /// stays held until its reader returns or its time limit passes.
     func close() {
         for operation in live.values.sorted(by: { $0.order < $1.order }) {
             let leaving = operation.consumers.filter { !$0.value.keepsOnClose }.sorted { $0.key < $1.key }
@@ -190,12 +204,11 @@ final class ShelfTransfers {
     }
 
     /// Nobody waits for it: a queued one never starts; a running one is
-    /// cancelled and keeps its slot until its reader returns.
+    /// cancelled and keeps its slot until its reader returns or its time
+    /// limit passes (its timer is left running for that).
     private func abandon(_ operation: Operation) {
         if live[operation.key] === operation { live[operation.key] = nil }
         queue.removeAll { $0 === operation }
-        operation.timer?.cancel()
-        operation.timer = nil
         operation.reader?.cancel()
         operation.reader = nil
     }
@@ -241,10 +254,16 @@ final class ShelfTransfers {
     }
 
     /// The reader returned: its slot is free, and whoever still waits gets the answer.
+    /// One whose time limit passed first was given up on already: it is only forgotten.
     private func finished(_ operation: Operation, _ outcome: ArtifactReadOutcome) {
+        operation.reader = nil
+        if operation.lost {
+            operation.lost = false
+            lost -= 1
+            return
+        }
         readers[ObjectIdentifier(operation)] = nil
         operation.running = false
-        operation.reader = nil
         operation.timer?.cancel()
         operation.timer = nil
         if live[operation.key] === operation { live[operation.key] = nil }
@@ -252,15 +271,22 @@ final class ShelfTransfers {
         pump()
     }
 
-    /// The time limit passed: everyone waiting gets `.timedOut` now, and the
-    /// reader is cancelled. Its slot is freed only when it returns.
+    /// The time limit passed: everyone waiting gets `.timedOut` now, the
+    /// reader is cancelled (the page aborts the fetch), and its slot is freed
+    /// whether or not the reader ever returns. An operation that already ended
+    /// ignores a limit that passes late.
     private func timedOut(_ operation: Operation) {
-        guard operation.running, operation.timer != nil else { return }
+        guard operation.running, readers[ObjectIdentifier(operation)] === operation else { return }
         operation.timer = nil
+        operation.running = false
         if live[operation.key] === operation { live[operation.key] = nil }
         resumeAll(operation, .timedOut)
         operation.reader?.cancel()
         operation.reader = nil
+        readers[ObjectIdentifier(operation)] = nil
+        operation.lost = true
+        lost += 1
+        pump()
     }
 
     /// Each consumer is resumed once, in the order it came, and forgotten.

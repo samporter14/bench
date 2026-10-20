@@ -573,7 +573,8 @@ extension WebContainer {
 /// own; cancelling the task asks the page to abort that read's fetch
 /// (`benchAbortRead`). Swift's cancellation alone never reaches a fetch, and
 /// is never taken for proof that one stopped: the read still returns when
-/// the page answers.
+/// the page answers, and the queue keeps its slot until then, or until the
+/// read's time limit passes (ShelfTransfers).
 enum ArtifactReadAbort {
     /// A fresh nonce, as the script accepts it.
     static func makeNonce() -> String { UUID().uuidString.lowercased() }
