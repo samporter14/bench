@@ -83,6 +83,7 @@ func eventually(_ condition: () -> Bool, sourceLocation: SourceLocation = #_sour
 /// once, and `answer` reads whatever the server says until it hangs up.
 final class LoopbackConnection: @unchecked Sendable {
     private let fd: Int32
+    private var closed = false
 
     init?(port: UInt16) {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -105,6 +106,20 @@ final class LoopbackConnection: @unchecked Sendable {
     }
 
     deinit {
+        if !closed { close(fd) }
+    }
+
+    /// The phone going: the connection is shut down both ways (a FIN), as a page that aborts a fetch or a
+    /// proxy that drops its upstream does. The socket itself closes when this object goes.
+    func hangUp() {
+        shutdown(fd, SHUT_RDWR)
+    }
+
+    /// The same, abruptly (a RST): closed with nothing lingering.
+    func reset() {
+        var option = linger(l_onoff: 1, l_linger: 0)
+        setsockopt(fd, SOL_SOCKET, SO_LINGER, &option, socklen_t(MemoryLayout<linger>.size))
+        closed = true
         close(fd)
     }
 

@@ -518,18 +518,26 @@ final class RemoteArtifacts {
         /// A root session the phone may open: one Bench knows now, or, while
         /// browse is on, any in the database (`RemoteSessions.admitted`).
         var isSession: @MainActor (String) async -> Bool
-        /// The page's read, checked (`WebContainer.readArtifact`).
+        /// The page's read, checked (`WebContainer.readArtifact`). The live one is abortable: cancelling the task
+        /// awaiting it (the phone hung up, `RemoteServer.hungUp`) stops the page's fetch too (`ArtifactReadAbort`).
         var read: @MainActor (ArtifactRead) async -> ArtifactReadOutcome
         var listed: ListedFiles
         var info: ListedFileInfo
 
-        @MainActor static func live() -> Dependencies {
+        /// `perform` reads under a nonce and `abort` stops the fetch filed under one; tests stand in for the page.
+        @MainActor static func live(
+            perform: @escaping @MainActor (ArtifactRead, String) async -> ArtifactReadOutcome = { read, nonce in
+                (try? await WebContainer.shared.readArtifact(read, nonce: nonce)) ?? .unreadable
+            },
+            abort: @escaping @Sendable @MainActor (String) async -> Void = { nonce in
+                await WebContainer.shared.abortArtifactRead(nonce)
+            }) -> Dependencies {
             Dependencies(
                 browseOn: { RemoteBrowse.isOn },
                 isSession: { id in await RemoteSessions.shared.admitted(id) != nil },
                 read: { read in
                     guard Demo.mode == nil else { return .unreadable }
-                    return (try? await WebContainer.shared.readArtifact(read)) ?? .unreadable
+                    return await ArtifactReadAbort.abortable(read, perform: perform, abort: abort)
                 },
                 listed: .shared,
                 info: .shared)

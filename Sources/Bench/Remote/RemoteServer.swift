@@ -238,6 +238,16 @@ enum RemoteRoute: Equatable, Sendable {
         }
     }
 
+    /// A read the server drops when the phone hangs up before the answer (`RemoteServer.hungUp`): it changes
+    /// nothing, so nobody is owed its end. Never a write: an action, a photo or a new session goes on to its end
+    /// whether or not anyone is still listening, and what became of it is the phone's to look up.
+    var isCancellableRead: Bool {
+        switch self {
+        case .session, .files, .live, .projects, .projectSessions, .history, .turn: true
+        default: false
+        }
+    }
+
     /// What the log names: the table's own pattern, never an id.
     var pattern: String {
         switch self {
@@ -576,6 +586,10 @@ final class RemoteServer {
         var timer: Task<Void, Never>?
         /// A file transfer this connection counts as, until it goes.
         var transfer: Transfer?
+        /// The task answering a read (`isCancellableRead`), dropped if the phone hangs up first. Nil for a write.
+        var work: Task<Void, Never>?
+        /// The response has been handed to the connection.
+        var sent = false
         /// When the head passed its checks, for a body that may take a while. // Phase 4 photos
         var bodyStart: Date?
         /// Writes to an events stream, made and taken: one not taken within
@@ -781,6 +795,34 @@ final class RemoteServer {
         client.timer?.cancel()
         client.buffer = Data()
         respond(admitted.route, request: request, device: admitted.device, client: id)
+        // A read's answer can take a while (the page fetches for it): keep listening for the phone to go.
+        if admitted.route.isCancellableRead { watchForHangUp(id) }
+    }
+
+    /// Reads on, after the request, only to hear the phone hang up (an aborted fetch, a screen left, a page put
+    /// away) while its read is still under way. What arrives meanwhile is ignored.
+    private func watchForHangUp(_ id: Int) {
+        guard let client = clients[id], client.work != nil, !client.sent else { return }
+        client.connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] _, _, isComplete, error in
+            MainActor.assumeIsolated {
+                guard let self, let client = self.clients[id], client.work != nil, !client.sent else { return }
+                if isComplete || error != nil { self.hungUp(id) } else { self.watchForHangUp(id) }
+            }
+        }
+    }
+
+    /// The phone went before its read was answered: the read's task is cancelled (`close`), and with it the
+    /// page's fetch where the read can stop one (an artifact read).
+    private func hungUp(_ id: Int) {
+        guard let client = clients[id] else { return }
+        log.info("\(client.admitted?.route.pattern ?? "-", privacy: .public) hung up")
+        close(id)
+    }
+
+    /// Starts the work that answers a request. A read's task is kept so that `hungUp` can drop it; a write's never is.
+    private func answer(_ id: Int, _ route: RemoteRoute, _ work: @escaping @MainActor () async -> Void) {
+        let task = Task { await work() }
+        if route.isCancellableRead { clients[id]?.work = task }
     }
 
     /// The checks (`RemoteCheck`), the device a route needs, and that
@@ -857,7 +899,7 @@ final class RemoteServer {
         case .events:
             openStream(id, device: device?.id ?? "")
         case .session(let sessionID):
-            Task { [weak self] in
+            answer(id, route) { [weak self] in
                 guard let self else { return }
                 guard let json = await self.backend.session(sessionID) else {
                     return self.send(id, RemoteResponse.error(404), route: route, closing: true)
@@ -874,7 +916,7 @@ final class RemoteServer {
             send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.json), route: route, closing: true)
         case .action(let action, let sessionID): // Phase 2 actions
             let deviceID = device?.id ?? "", body = request.body
-            Task { [weak self] in
+            answer(id, route) { [weak self] in
                 guard let self else { return }
                 let reply = await self.backend.act(action, sessionID, deviceID, body)
                 self.send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.body),
@@ -885,7 +927,7 @@ final class RemoteServer {
             // The page's read holds the transfer too, until it is done.
             let transfer = clients[id]?.transfer
             transfer?.holds += 1
-            Task { [weak self] in
+            answer(id, route) { [weak self] in
                 guard let self else { return }
                 let response = await self.backend.files(filesRoute, target, deviceID)
                 self.release(transfer)
@@ -893,14 +935,14 @@ final class RemoteServer {
             }
         case .photo(let photoRoute): // Phase 4 photos
             let deviceID = device?.id ?? "", body = request.body
-            Task { [weak self] in
+            answer(id, route) { [weak self] in
                 guard let self else { return }
                 let reply = await self.backend.photo(photoRoute, deviceID, body)
                 self.send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.body),
                           route: route, closing: true)
             }
         case .live(let sessionID): // Phase 4 live
-            Task { [weak self] in
+            answer(id, route) { [weak self] in
                 guard let self else { return }
                 guard let json = await self.backend.live(sessionID) else {
                     return self.send(id, RemoteResponse.error(404), route: route, closing: true)
@@ -909,7 +951,7 @@ final class RemoteServer {
             }
         case .projects, .projectSessions, .newSession, .history, .turn: // Phase 3 browse
             let deviceID = device?.id ?? "", target = request.target, body = request.body
-            Task { [weak self] in
+            answer(id, route) { [weak self] in
                 guard let self else { return }
                 let reply = await self.backend.browse(route, target, deviceID, body)
                 self.send(id, RemoteResponse.make(status: reply.status, contentType: RemoteResponse.json, body: reply.body),
@@ -967,6 +1009,7 @@ final class RemoteServer {
     private func send(_ id: Int, _ response: Data, route: RemoteRoute?, why: String? = nil, closing: Bool) {
         guard let client = clients[id] else { return }
         client.answered = true
+        client.sent = true
         client.timer?.cancel()
         log.info("\(route?.pattern ?? "-", privacy: .public) \(Self.status(of: response), privacy: .public) \(why ?? "", privacy: .public)")
         let connection = client.connection
@@ -1005,6 +1048,7 @@ final class RemoteServer {
     private func close(_ id: Int) {
         guard let client = clients.removeValue(forKey: id) else { return }
         client.timer?.cancel()
+        client.work?.cancel()
         client.connection.cancel()
         release(client.transfer)
     }
@@ -1012,6 +1056,7 @@ final class RemoteServer {
     private func forget(_ id: Int) {
         guard let client = clients.removeValue(forKey: id) else { return }
         client.timer?.cancel()
+        client.work?.cancel()
         release(client.transfer)
     }
 
