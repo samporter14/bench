@@ -690,7 +690,8 @@ needs you" (`MacNotificationsSection`, in Lab/MacNotifications.swift):
 
 **What goes out.** `NotificationRules.content(for:settings:)` is pure and
 decides everything: nothing unless the setting is on and macOS allows it.
-The poster, `MacNotifications`, is thin and tests never use it.
+The poster, `MacNotifications`, is thin: it speaks to the system only through
+`SystemCenter`, which tests replace with a fake.
 
 | Card | Title | Body |
 |---|---|---|
@@ -738,8 +739,9 @@ The poster, `MacNotifications`, is thin and tests never use it.
   only: no banner and no sound, since the user is already here.
 - **Safety.** `UNUserNotificationCenter.current()` crashes outside an app
   bundle, so it is touched only when the bundle identifier is
-  `local.sam.bench` and no demo is running. `LabModel`'s two hooks do
-  nothing until `MacNotifications.start()` sets them at launch.
+  `local.sam.bench` and no demo is running (`SystemCenter.live`; tests give
+  `MacNotifications` a fake one). `LabModel`'s three hooks do nothing until
+  `MacNotifications.start()` sets them at launch.
 - **What stays on the Mac.** Capsid saves nothing about sessions, but
   macOS keeps a delivered notification in Notification Center until it is
   cleared. That is what "Show session and project names" is for; turning
@@ -747,9 +749,46 @@ The poster, `MacNotifications`, is thin and tests never use it.
   0.3.6). A notification also
   carries the session's id and its link, opaque ids and no names, to open
   it on a click.
-- Not done: notifications that outlive a quit are not checked against the
-  sessions at the next launch, so one for a session answered meanwhile
-  stays until it is clicked or cleared.
+- **Notifications that outlive a quit.** macOS keeps a delivered
+  notification through a quit or a crash, and what Capsid remembers of them
+  is in memory, so a launch checks them against the sessions once, at the
+  first read that can be trusted: one that worked (no read error, so not a
+  failed read and not "Claude Science isn't running") and found sessions (a
+  read that finds none is not believed that nothing waits, and the check
+  waits for the next). Before that nothing is listed or taken back. It runs
+  only with Mac notifications on and macOS allowing them, in the real app,
+  and sends nothing: no new notification, no new words, no names. Its inputs
+  are what Notification Center lists (`getDeliveredNotifications`): a
+  notification's kind comes from its identifier, which is its card's id, and
+  its session from the id it carries, and one that doesn't fit (the test
+  notification, the "While you focused" notice) is left alone. The rule is
+  the running app's own: `SessionStanding.holds`, which `LabModel` also asks
+  of every needs-input and failure card on each read, so the two cannot
+  differ.
+
+  | Delivered notification | Taken back at the check when |
+  |---|---|
+  | Needs input | its session no longer waits. A session the read doesn't have (it holds the ~25 most recent) counts as no longer waiting, as it does for a card. |
+  | Error | its session is not in error any more: running again, waiting, finished or not in the read. |
+  | Finished | never. A finish is a record, as when its card only times out: it stays until clicked or cleared. |
+
+  Needs-input and error notifications that stay are adopted: kept in memory
+  for the rest of the run and checked by the same rule on every later read
+  that can be trusted, besides their card's own withdrawal. That matters for
+  an error, which has no card after a launch (the read announces no failure
+  for a session it first meets failed), so nothing else would take its
+  notification back when the session runs again. A plan held for its
+  approval keeps its notification as it keeps its card. Clearing (names or
+  notifications turned off) forgets them, and a check still waiting on macOS
+  when that happens brings nothing back. A question's notification that
+  stays keeps its answers: with names shown, its buttons are registered with
+  macOS again from the notification's own copy of them, so the next question
+  posted, which replaces the registered set, doesn't leave it without; an
+  answer is still checked against the question's id and words afresh. Not
+  done: a needs-input notification whose session still waits but for
+  something else now (a question that became a plan) stays as it was, since
+  nothing at a first read is news and the running app's re-post is not
+  repeated.
 
 ### Approving a plan from its card (since 0.3.4)
 

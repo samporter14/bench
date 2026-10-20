@@ -19,12 +19,50 @@ enum LabCard: Identifiable, Equatable {
 
     var id: String {
         switch self {
-        case .needsInput(let s): "needs-\(s.id)"
-        case .failed(let s): "failed-\(s.id)"
-        case .finished(let s): "finished-\(s.id)"
+        case .needsInput(let s): SessionKind.needsInput.cardID(s.id)
+        case .failed(let s): SessionKind.failed.cardID(s.id)
+        case .finished(let s): SessionKind.finished.cardID(s.id)
         case .web(let n): "web-\(n.id)"
         case .saved(let url): "saved-\(url.path)"
         case .notice(let n): "notice-\(n.id)"
+        }
+    }
+
+    /// What a card about one session says of it. The raw value is the start
+    /// of the card's id, which is also the identifier of its Mac
+    /// notification: how a notification that outlived a launch is told what
+    /// it was about (`NotificationRules.Delivered`).
+    enum SessionKind: String, CaseIterable, Sendable {
+        case needsInput = "needs-"
+        case failed = "failed-"
+        case finished = "finished-"
+
+        func cardID(_ sessionID: String) -> String { rawValue + sessionID }
+    }
+}
+
+/// What one read says of the sessions, in the terms a card's reason is told
+/// in: which wait for the user and which stopped with an error. The one test
+/// of whether a card still tells the truth, for a card on the panel and for
+/// the Mac notification of a card that outlived a launch (DESIGN.md, Mac
+/// notifications → Taken back).
+struct SessionStanding: Equatable, Sendable {
+    let waiting: Set<String>
+    let failed: Set<String>
+
+    init(_ sessions: [SessionStatus]) {
+        waiting = Set(sessions.filter { $0.state == .needsInput }.map(\.id))
+        failed = Set(sessions.filter { $0.state == .error }.map(\.id))
+    }
+
+    /// Whether a card of this kind about this session is still true. A
+    /// session the read doesn't have is neither waiting nor failed. A finish
+    /// is a record: it stays true.
+    func holds(_ kind: LabCard.SessionKind, for sessionID: String) -> Bool {
+        switch kind {
+        case .needsInput: waiting.contains(sessionID)
+        case .failed: failed.contains(sessionID)
+        case .finished: true
         }
     }
 }
@@ -245,6 +283,13 @@ final class LabModel: ObservableObject {
     /// `MacNotifications.start()` sets them, so tests and demos never notify.
     var cardRaised: (LabCard) -> Void = { _ in }
     var cardWithdrawn: (LabCard) -> Void = { _ in }
+    /// Mac notifications: told what each read that worked and found sessions
+    /// says of them, the first of a run included. That first one is when the
+    /// notifications that outlived a quit are checked (MacNotifications.swift,
+    /// Notifications that outlived a quit); a failed read, a daemon that isn't
+    /// running and a read with no sessions at all are never told, so none of
+    /// them can take a notification back.
+    var sessionsRead: (SessionStanding) -> Void = { _ in }
     /// Phase 2 push: the same moments, for paired devices (PushCenter.swift).
     var pushRaised: (LabCard) -> Void = { _ in }
 
@@ -672,13 +717,14 @@ final class LabModel: ObservableObject {
         // what it waits for now: a question can become a plan to approve. One
         // held for a plan approved from it stays until the approval lets it go.
         let parkedByID = Dictionary(parked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let standing = SessionStanding(snapshot.sessions)
         if daemonDown {
             if alert, !firstRead { chime() }
             return
         }
         for case .needsInput(let session) in cards {
-            if let now = parkedByID[session.id] {
-                if now != session { raise(.needsInput(now)) }
+            if standing.holds(.needsInput, for: session.id) {
+                if let now = parkedByID[session.id], now != session { raise(.needsInput(now)) }
             } else if !planHolds.contains(session.id) {
                 dismiss(.needsInput(session))
             }
@@ -689,15 +735,20 @@ final class LabModel: ObservableObject {
         }
         syncSnoozed()
         // A failure card goes once its session runs or waits again.
-        let failedIDs = Set(snapshot.sessions.filter { $0.state == .error }.map(\.id))
-        for case .failed(let session) in cards where !failedIDs.contains(session.id) {
+        for case .failed(let session) in cards where !standing.holds(.failed, for: session.id) {
             dismiss(.failed(session))
         }
 
         if alert, !firstRead { chime() }
         // Only a read that worked ends the first one: Bench may start before
         // the daemon, and what waits then is not news when it first reads it.
-        if snapshot.readError == nil { firstRead = false }
+        if snapshot.readError == nil {
+            firstRead = false
+            // A read that worked but found no session at all is not trusted to
+            // say that nothing waits or failed: it may be a database caught
+            // empty, and what it would take back can't be sent again.
+            if !snapshot.sessions.isEmpty { sessionsRead(standing) }
+        }
     }
 
     /// The needs-input sound, when the setting is on.
