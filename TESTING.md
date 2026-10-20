@@ -323,6 +323,83 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-20, Capsid 0.8.0: quiet while presenting, drift checks, and four fixes
+
+Five changes, each built by a Sonnet agent on its own branch and worktree,
+reviewed and merged here. Made-up fixtures only; nothing below was tried in
+the real app yet.
+
+**Quiet while presenting** (DESIGN.md, Quiet while presenting).
+
+- `PresentingMode` holds the two sources (a Focus filter, the menu switch);
+  either makes Capsid quiet. 33 tests: the panel hides and comes back with
+  what waited; finishes are held and come as one card worded "While you
+  presented" (Nidus keeps "While you focused"; with both on, the hold lasts
+  until the last ends); no chime, no Mac notification; timed cards don't run
+  out unseen; demos start nothing. 22 mutations, all caught.
+- The Focus filter (`QuietWhilePresentingFilter`, a `SetFocusFilterIntent`
+  with one switch, default off, suggested on) needs App Intents metadata,
+  which SwiftPM doesn't extract: `Scripts/appintents-metadata.sh`, ported
+  from Nidus, runs in `build-app.sh` before signing. The release bundle's
+  `Metadata.appintents` lists the filter.
+- ⏳ Not seen: the filter in System Settings → Focus (a self-signed app may
+  need to be in /Applications first), `perform()` running, the launch read
+  of `current`. First thing to try: whether macOS launching Capsid to run the
+  filter opens the main window over a presentation.
+
+**Diagnostics notices Claude Science drift** (DESIGN.md, Diagnostics).
+
+- `CompatInventory` lists everything Capsid depends on (page hooks, reads,
+  writes, the command line, the database), and tests hold it to the code
+  both ways, so a new dependency can't be added silently. It found a gap:
+  Diagnostics checked 14 of the 18 `frames` columns the queries read.
+- Diagnostics shows the Claude Science version against the one Capsid was
+  last checked with (0.1.63), read-only probes of the page and the reads
+  `apiGET` allows (never a write), and the last time a feature found
+  something it expected missing. Two breadcrumbs were cut in review: a 401
+  with no Sign in card is a designed branch, and a repeat within ten minutes
+  isn't recorded again. 124 tests, 46 + 6 mutations, all caught.
+- ⏳ Not seen: the probes against the real page.
+
+**Notifications that outlived a quit** (DESIGN.md, Mac notifications).
+
+- At the first read that worked and found sessions, delivered notifications
+  are checked by the rule the running app uses (`SessionStanding.holds`):
+  needs-input and error notifications whose reason has gone are taken back,
+  the rest adopted; finishes stay. Nothing is sent. 29 tests through a fake
+  `SystemCenter`; 22 mutations, all caught. The test waits on the check
+  itself, not a sleep (10 runs in a row, and 10 under load).
+- ⏳ Not seen: the live `SystemCenter` adapter (a thin pass-through, read in
+  review).
+
+**Time limits in Results** (DESIGN.md, Results).
+
+- A read with no answer after 30 s frees its slot (it no longer pins one
+  until the page answers), and its late answer is dropped. Saves run off the
+  main actor with a limit of 15 s + 1 s per MiB; a folder that doesn't
+  respond fails that save, and saves to it fail at once for 30 s (or until
+  the stuck write returns) instead of queueing behind it. A late write never
+  races another for a name. Seeded fuzzes (30 × 300, twice) and 9 mutations;
+  one (dropping the planning-time name check alone) survives because the
+  re-check catches it.
+- `aDownloadThatLandedJustBeforeTheWindowClosedStartsNoWriteForTheDeadRun`
+  was a race in the test, not the app: it now closes the window at a fixed
+  point (1,500 of 1,500 under load, was 1 in 1,500 failing).
+- Not fixed, documented: the existence check before a save still runs on the
+  main actor.
+
+**Three timing-sensitive suites made deterministic.**
+
+- `LettingGoTests`, `RemoteServerLiveTests` and `RemotePhotoLiveTests` run
+  on injected clocks (`SQLiteReader`'s `schedule:`, `RemoteServer`'s
+  `sleep:`; defaults unchanged), plus one real-timer test each for the
+  default wiring. In full runs under load these suites failed in 17 of 22
+  runs before and in none of 34 after. 11 mutations, all caught.
+
+Automated:
+
+- ✅ `swift test`: **1,590 tests in 199 suites, all passing in one run** (214 more than 0.7.3).
+
 ## 2026-10-19, Capsid 0.7.3: phone setup sees a connected Tailscale; the task you're viewing, for Nidus
 
 Two changes made in Codex chats, then reviewed here.

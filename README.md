@@ -92,6 +92,12 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   Claude Science task's project and title to a small local file for Nidus.
   It clears the file when you leave that task or switch away from Capsid.
   Conversation text is never included.
+- **Quiet while you present.** Turn on **Quiet While Presenting** in the
+  Capsid menu or the Dock menu, or add Capsid's filter to a Focus in System
+  Settings → Focus (a "Presenting" Focus, say). Until it ends, the specimen
+  and its cards stay out of sight, with no sounds or Mac notifications, so
+  nothing pops up over your slides with a project's name on it. Afterwards,
+  whatever still needs you is there, and what finished comes as one card.
 - **Optional menu bar specimen.** Turn it on in Settings to see a session
   working, or a count of those waiting, from the menu bar.
 - **Usage at a glance.** The title bar shows how full your session's context
@@ -219,7 +225,11 @@ If Capsid ever opens on a "Sign in" screen, click **Sign in**.
 
 If the specimens or the "needs you" cards never show up, open **Help → Capsid
 Diagnostics**. It checks each step Capsid takes to see your sessions and has a
-**Copy** button; nothing in it names your projects or sessions. The same
+**Copy** button; nothing in it names your projects or sessions. It also says
+which Claude Science version Capsid was last checked with, looks (without
+changing anything) at the parts of Claude Science's page and API Capsid relies
+on, and shows the last time one of them wasn't what Capsid expected: worth a
+look after a Claude Science update. The same
 report prints in Terminal with the command below, once macOS has let that
 version of Capsid open:
 
