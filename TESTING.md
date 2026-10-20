@@ -323,10 +323,35 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
-## 2026-10-20, Capsid 0.9.2 (unreleased): Codex's background-work, card and Settings changes
+## 2026-10-20, Capsid 0.9.2: Codex's background-work, card and Settings changes; playback a second at a time
 
 Codex's commit dc52caf (`codex/ui-performance-improvements`), reviewed here
-and merged with two fixes. Sam approved all of it, the card redesign included.
+and merged with two fixes (Sam approved all of it, the card redesign
+included), plus the specimen player and database-watcher changes below. The
+Codex commit carried Sam's personal address; it was re-committed under the
+no-reply address and the branch deleted from GitHub.
+
+**Playback a second at a time, and a quieter wait for the daemon** (droplet
+commit c6d2713, synced; DESIGN.md, Efficiency).
+
+- `PlayedGlyphView` draws and plays a second of frames at a time
+  (`PlaybackPlan`, `ChunkedPlayback`: at most two chunks held, each its own
+  keyframe animation on the rotation's clock, filling forward so no frame of
+  the model shows between them). A restart draws only the chunk due now
+  (about 6 ms, not a whole scene). `fps` is settable per view, default 30.
+- Measured on a demo copy (screen locked, a test-only shim reporting the
+  window visible): the footprint no longer swings (91–97 MB once settled,
+  was 42–133 MB), the peak is about 30 MB lower, but the settled level is
+  above the old average (77–82 MB); CPU the same within noise. What holds the
+  ~57 MB of graphics memory is not known. Sam chose to keep it.
+- `DatabaseWatcher`: while the log is missing it watches its folder and
+  retries 2 s doubling to 60 s (about 64 looks an hour while the daemon is
+  down, was 1,800), back to 2 s once it opens.
+- 19 mutations: 15 failed a test, 3 crashed the test process, 1 survived (a
+  defensive guard behind a race that can't be tested deterministically).
+- ⏳ Not seen: playback on an unlocked screen after the change.
+- ✅ `swift test` on the 0.9.2 branch (Codex's merge plus playback): **1,875 tests
+  in 243 suites, all passing in one run**.
 
 - Nidus task sharing has no heartbeat while disabled or unfocused. Identity
   changes coalesce, token-only updates do not rewrite the file, and a serial
