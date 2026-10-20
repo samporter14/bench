@@ -90,6 +90,12 @@ struct ScienceVersionTests {
         #expect(ScienceVersion.lines(running: nil, checkedWith: "0.1.63") == lines)
     }
 
+    @Test func whenTheStatusCantBeReadOnlyTheCheckedVersionIsShown() {
+        #expect(ScienceVersion.checkedOnlyLine(checkedWith: "0.1.63") == "• Capsid was last checked with Claude Science 0.1.63")
+        // Not "didn't say": the daemon may simply be down.
+        #expect(!ScienceVersion.checkedOnlyLine().contains("didn't say"))
+    }
+
     @Test func theLinesUseTheVersionAsReportedWithoutItsWhitespace() {
         #expect(ScienceVersion.lines(running: " 0.1.63\n", checkedWith: "0.1.63").first?.contains("Claude Science 0.1.63;") == true)
     }

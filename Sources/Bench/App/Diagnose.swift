@@ -60,8 +60,10 @@ enum Diagnose {
             out.append(contentsOf: ScienceVersion.lines(running: status.version))
         } catch let error as ScienceError {
             out.append("✗ Claude Science status: \(error.label) (\(detail(error)))")
+            out.append(ScienceVersion.checkedOnlyLine())
         } catch {
             out.append("✗ Claude Science status: \(error)")
+            out.append(ScienceVersion.checkedOnlyLine())
         }
 
         // 2. Every data folder and org database Bench considers, and which it

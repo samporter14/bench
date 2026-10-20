@@ -390,6 +390,12 @@ enum ScienceVersion {
         }
     }
 
+    /// When the status couldn't be read there is no version to compare, but
+    /// the version Capsid was checked with is still worth showing.
+    static func checkedOnlyLine(checkedWith: String = CompatInventory.checkedWith) -> String {
+        "• Capsid was last checked with Claude Science \(checkedWith)"
+    }
+
     private static func head(_ running: String?, _ checkedWith: String) -> [String] {
         ["• Claude Science \(running!.trimmingCharacters(in: .whitespacesAndNewlines)); Capsid was last checked with \(checkedWith)"]
     }

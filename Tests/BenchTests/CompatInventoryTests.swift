@@ -608,6 +608,8 @@ struct CompatWiringTests {
         let diagnose = Repo.source("App/Diagnose.swift")
         #expect(diagnose.contains("CompatInventory.schemaTables"))
         #expect(diagnose.contains("ScienceVersion.lines(running: status.version)"))
+        // Both ways the status can fail still show the version Capsid was checked with.
+        #expect(diagnose.components(separatedBy: "ScienceVersion.checkedOnlyLine()").count == 3)
         #expect(diagnose.contains("CompatProbes.run("))
         #expect(diagnose.contains("CompatReport.whenUsedLines()"))
         #expect(diagnose.contains("breadcrumbs.line()"))
