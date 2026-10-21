@@ -327,6 +327,10 @@ yet checked live: a real failed session, and a real notification close.
 
 From the Codex review's item 4, built by a Sonnet agent and reviewed here.
 
+- ✅ Released as v0.9.4 and installed with `install.sh`: 0.9.4 (42), CDHash
+  `9a71a2aa…`, the same as the download and the local build, and running;
+  phone access came back by itself.
+
 - Every file-system call in Results (destination checks, Save All's names,
   the remembered folder, the saved copy behind Open and Reveal) now goes
   through the disk-work layer off the main actor, under the writes' time
