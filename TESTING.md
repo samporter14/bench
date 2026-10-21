@@ -330,6 +330,10 @@ allows three icon grounds (Ivory, Slate, Clay) and says which parts take clay,
 so six: Clay (the default, unchanged), Ivory, Slate, Ivory one color, Slate
 one color, Ivory and Clay (DESIGN.md, App icon).
 
+- ✅ Released as v0.9.5 and installed with `install.sh`: 0.9.5 (43), CDHash
+  `160bb7f3…`, the same as the download and the local build, and running;
+  phone access came back by itself.
+
 - `Scripts/make-icon-variants.py` splits `bench-glyph.png` into ring, capsid
   and escaped dot by radius and verifies the layers composite back to it
   pixel for pixel; the variants are Icon Composer documents in
