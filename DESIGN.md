@@ -3068,9 +3068,10 @@ either has in hand answers busy (since 0.7.2).
 
 **Disk.** The temporary copies are written, read, re-checked and deleted by
 an actor (`ShelfTemporaryCopies`), off the main actor; saved files (Save…,
-Save All…) are written through a coordinator on the main actor
-(`ShelfSavedFiles`) that runs each blocking write on a queue of its own, one
-at a time per destination and within a time limit (below). Each
+Save All…) are written, and everything the shelf asks of their destination is
+looked at, through a coordinator whose bookkeeping is on the main actor
+(`ShelfSavedFiles`) and whose blocking calls each run on a queue of its own,
+one at a time per destination and within a time limit (below). Each
 window opening is a run; a write that lands after its run was deleted is
 dropped, so a closed window's folder is never made again, and deleting an old
 run never touches the new one's. Quick Look asks for a copy on the main
@@ -3080,10 +3081,26 @@ from BenchApp) deletes earlier runs' folders off the main actor; this run's
 first copy is written after it, and it never deletes this run's folder. A
 cached copy asked for while its existence is being checked is not handed over
 if the window closes meanwhile: it belongs to the run being deleted (since
-0.7.2). Left on the main actor on purpose: the existence checks behind Save
-All's names and the remembered folders (metadata only). Documented, not
-fixed: a stat of a name on a volume that has stopped answering blocks the
-main actor in those checks; only the writes have a limit.
+0.7.2).
+
+**No file-system call on the main actor** (since 0.9.2). Until 0.9.2 the
+existence checks were synchronous `fileExists` calls on the main actor: Save
+All's names (one per candidate name, repeated while it looked for an unused
+one, and again just before each write), the remembered folder a save panel
+starts in, and Open and Reveal in Finder on a saved copy. A stat of a name on
+a volume that had stopped answering (a network mount, a disconnected disk, a
+File Provider) blocked typing, scrolling and closing the window before the
+writer's limit could help, because only the writes had one. They now go
+through `ShelfSavedFiles` like the writes, with the same limit, hold-off and
+sentences (Saved files within a limit, below), so the main actor only ever
+waits for an answer, never for the disk. What the Results code still does on
+the main actor is handing a path to Finder or to the app that opens a file
+(`NSWorkspace`, after the file was looked for), and asking for the Downloads
+folder's path (a search-path lookup). `ResultsDiskCallsTests` lists the
+file-system calls it scans for in Results/ (the file manager, `opendir`,
+`Data(contentsOf:)`, `resourceValues`, a file URL made without
+`isDirectory:`, `NSWorkspace`…) with where each may be, so a new one fails a
+test.
 
 **Saved files within a limit** (`ShelfSavedFiles`, since this change). A
 blocking file-system call can't be cancelled, so each write runs on a queue of
@@ -3117,6 +3134,46 @@ that lands late never races another for one name; a name pinned by a call that
 never returns costs one suffix. The writer's clock, the queue a call runs on
 and the limits are injected, so the tests hold a write as a dropped volume
 would and never sleep.
+
+**Looks within the same limit** (`ShelfSavedFiles`, since 0.9.2). Asking a
+destination something is a call like a write, and has every rule of one: its
+own thread, a turn (looks go one at a time per destination, in turns of their
+own, so a slow write to a folder never holds up a look at it, nor a look a
+write: a Save All started while a write is out still settles its names and
+starts its downloads, and its writes then queue behind that write), the
+injected clock and limit (a look has no bytes, so 15 s; the look at a
+remembered folder, which a person is waiting on before a panel opens, gets
+3 s), and the destination's one hold-off when it doesn't answer. A look that
+doesn't answer counts like a write that didn't: its caller gets "The folder
+didn't respond. If it comes back, the file may still appear there.", the
+destination refuses everything at once ("The folder still isn't responding.",
+no call made) until the stuck call returns or 30 s pass, and one call is then
+let through to find out. The looks are: whether a file is there (Open and
+Reveal in Finder), whether a folder is (the remembered folder), and what a
+folder holds (Save All's names). A look speaks for no name, since it writes
+nothing, and one whose task is cancelled before its turn makes no call.
+Cancelling does not stop a call already out, as with a write; it is waited
+for until it returns or its limit passes.
+
+Where a look's answer goes. A **save panel's** starting folder and **Open and
+Reveal in Finder** wait for it, off the main actor (the window stays alive; a
+second press of Save… while the first is being prepared does nothing). A
+destination that doesn't answer counts as "not there" for the panel, which
+then starts in Downloads, but not for a saved copy: that is kept, because the
+file may still be there, and its row says "The folder didn't respond. …" or
+"The folder still isn't responding." (without "Couldn't save it there:", since
+nothing was being saved). The look at the remembered folder is the one a
+person waits on, so it has a limit of its own, 3 s (`rememberedFolderLimit`)
+instead of 15 s: the first panel for a dead remembered folder opens in
+Downloads after 3 s, as if nothing were remembered, and every later one opens
+at once while the destination is held off (30 s, or until the stuck call
+returns); the hold-off is the destination's, as for any other call. **Save All's names** are settled before its
+first download (Save All…, below); if the folder doesn't answer to the
+listing, nothing is downloaded, the first file's row says "Couldn't save it
+there: The folder didn't respond. If it comes back, the file may still appear
+there." and the rest "Couldn't save it there: The folder still isn't
+responding.", and all are counted "couldn't be saved": one limit for the whole
+batch.
 
 **Thumbnails** (`ShelfThumbnails`, since 0.7.1). A thumbnail read's WebP is
 decoded once, with ImageIO, off the main actor, to a picture of at most 144 px
@@ -3198,7 +3255,21 @@ then saves every file of the session there: two downloads at a time in the share
 within the time limit and the 8 MB cap (a file over it by its listing is
 skipped without a download). A name already in the folder, or earlier in the
 batch, gets " 2", " 3"… before its extension (compared without case);
-nothing is overwritten. Each file saved is recorded like a single Save, so
+nothing is overwritten. The names are settled before the first download, in
+the session's order, from one listing of the folder taken off the main actor
+(`ShelfNamePlan`; until 0.9.2 a stat per candidate name, repeated as the
+numbers climbed, on the main actor). A name is taken when the batch has it,
+the listing has it, or an earlier write of it hasn't returned. A folder that
+holds more than 10,000 names, or that can't be listed (no read permission on a
+drop box, say), is asked about by name instead, one look at a time through the
+same layer, with the same answer. Just before a write, in the same call as the
+write, the name is looked at once more (`write(unlessExists:)`): if a program,
+or a Save of the same name, took it since the plan, nothing is written, the
+name is learned as taken, and the file takes the next free one, numbered from
+the name it asked for, up to 8 tries. That is the final protection against
+overwriting, and it costs no extra turn or limit, since the look and the write
+are one call. (A Save… leaves it out: the save panel already asked whether to
+replace.) Each file saved is recorded like a single Save, so
 Open and Reveal in Finder work for it, with no Saved card per file. The row
 says "Saving 3 of 7…", then "Saved 6 files. 1 was too big to save here."
 with a Reveal in Finder button for the folder. Failures are counted ("2
@@ -3212,14 +3283,18 @@ Saved files within a limit).
 project id and never its name (`UserDefaults` `resultsFolders`,
 `[projectID: path]`), and starts both the Save All… panel and the Save…
 panel for that project's files. A folder that no longer exists is ignored
-and the panel starts in Downloads.
+and the panel starts in Downloads. Whether it is there is asked off the main
+actor (Looks within the same limit), so the panel opens when the answer is in;
+a folder that doesn't answer within 3 s is ignored the same way, and its
+destination is held off.
 
 **Saving** (Save… and Save All…) and the temporary copies are the only ways
 a result's content reaches the disk. Save… asks where, reads the file within
 the 8 MB cap and writes it there; the panel's Saved card follows, as for a
-download. **Open** and **Reveal in Finder** then act on that copy; one that
-was moved or deleted is forgotten and says so. Over 8 MB says to open the
-session and download it there.
+download. **Open** and **Reveal in Finder** then act on that copy, once a look
+(off the main actor) has found it still there; one that was moved or deleted is
+forgotten and says so. Over 8 MB says to open the session and download it
+there.
 
 **Opening on one session.** The Finished card's **Results** button
 (`ResultsWindowController.shared.show(focusing:)`) opens or brings forward

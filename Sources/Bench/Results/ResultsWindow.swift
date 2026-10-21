@@ -497,12 +497,18 @@ struct ResultFileRow: View {
         .buttonStyle(.borderless)
     }
 
+    /// Whether the saved copy is still there is asked of the disk off the main
+    /// actor (`ResultsShelf.savedCopy`), so the window stays alive meanwhile.
     private func openSaved() {
-        if let url = shelf.savedCopy(entry.version) { NSWorkspace.shared.open(url) }
+        Task { @MainActor in
+            if let url = await shelf.savedCopy(entry.version) { NSWorkspace.shared.open(url) }
+        }
     }
 
     private func revealSaved() {
-        if let url = shelf.savedCopy(entry.version) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        Task { @MainActor in
+            if let url = await shelf.savedCopy(entry.version) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        }
     }
 
     /// "PDF · 1.2 MB · Oct 15, 3:40 PM".
@@ -563,35 +569,54 @@ struct ShelfThumbnailView: View {
 }
 
 /// Save… and Save All…: the panels. A project's panel starts in the folder
-/// its files were last saved to (when it is still there), else Downloads.
+/// its files were last saved to (when it is still there and answers), else
+/// Downloads. Whether the folder is there is asked of the disk off the main
+/// actor, so the panel opens when the answer is in, within 3 s (a folder that
+/// doesn't answer is passed over, and the window stays alive meanwhile).
 @MainActor
 enum ResultSaving {
+    /// The panels being prepared: a second press of the same button while the
+    /// folder is being looked up doesn't open a second panel.
+    private static var preparing: Set<String> = []
+
     /// Save…: a save panel named as the file, then the shelf writes it there.
     static func choose(_ entry: ArtifactEntry, project: String, shelf: ResultsShelf) {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = entry.name
-        panel.canCreateDirectories = true
-        panel.directoryURL = shelf.startingFolder(for: project) ?? downloads
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in await shelf.save(entry, to: url, project: project) }
+        let key = "save " + entry.version
+        guard preparing.insert(key).inserted else { return }
+        Task { @MainActor in
+            let start = await shelf.startingFolder(for: project)
+            preparing.remove(key)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = entry.name
+            panel.canCreateDirectories = true
+            panel.directoryURL = start ?? downloads
+            panel.begin { response in
+                guard response == .OK, let url = panel.url else { return }
+                Task { @MainActor in await shelf.save(entry, to: url, project: project) }
+            }
         }
     }
 
     /// Save All…: a folder to choose (or make), then the shelf saves the session's files into it.
     static func chooseFolder(for item: ShelfSession, shelf: ResultsShelf) {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose a folder for this session's files."
-        panel.prompt = "Save Here"
-        panel.directoryURL = shelf.startingFolder(for: item.session.projectID) ?? downloads
         let id = item.id
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in shelf.saveAll(id, into: url) }
+        let key = "save all " + id
+        guard preparing.insert(key).inserted else { return }
+        Task { @MainActor in
+            let start = await shelf.startingFolder(for: item.session.projectID)
+            preparing.remove(key)
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.message = "Choose a folder for this session's files."
+            panel.prompt = "Save Here"
+            panel.directoryURL = start ?? downloads
+            panel.begin { response in
+                guard response == .OK, let url = panel.url else { return }
+                Task { @MainActor in shelf.saveAll(id, into: url) }
+            }
         }
     }
 

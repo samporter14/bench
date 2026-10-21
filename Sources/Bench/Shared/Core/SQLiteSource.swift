@@ -95,6 +95,10 @@ final class SQLiteReadCancellation: @unchecked Sendable {
 
     var isCancelled: Bool { lock.withLock { cancelled } }
 
+    /// How many reads are waiting to be woken by this token: for tests, which
+    /// cancel only once the read they are about is waiting.
+    var waiterCount: Int { lock.withLock { handlers.count } }
+
     func cancel() {
         let callbacks = lock.withLock { () -> [@Sendable () -> Void] in
             guard !cancelled else { return [] }
