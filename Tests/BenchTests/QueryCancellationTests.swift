@@ -14,6 +14,17 @@ private func waitForQuerySignal(_ signal: DispatchSemaphore) async {
     }
 }
 
+/// Whether a signal came within `ceiling` seconds, waited for off Swift's
+/// cooperative executor. A ceiling only bounds a broken run; it is not a
+/// deadline a working one races.
+private func querySignalCame(_ signal: DispatchSemaphore, within ceiling: TimeInterval) async -> Bool {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global(qos: .utility).async {
+            continuation.resume(returning: signal.wait(timeout: .now() + ceiling) == .success)
+        }
+    }
+}
+
 /// These tests hold only their own reader queue. No daemon, live database or
 /// timing assumption about how long a real query normally takes is involved.
 @Suite(.serialized)
@@ -69,17 +80,37 @@ struct QueryCancellationTests {
         let reader = SQLiteReader(queue: queue)
         let cancellation = SQLiteReadCancellation()
         let entered = DispatchSemaphore(value: 0)
+        let left = DispatchSemaphore(value: 0)
+        let outcome = ResultBox()
         queue.suspend()
-        let read = Task.detached {
+        // The read's own deadline is far beyond every ceiling below, so only the
+        // cancellation can end it: a deadline that was a second away raced the
+        // test's own thread hops and, on a loaded machine, could expire first.
+        // The read blocks its thread, so it gets a dispatch thread of its own.
+        DispatchQueue.global(qos: .utility).async {
             entered.signal()
-            return Result { try reader.rows(db: db, sql: "SELECT v FROM t", timeout: 1,
-                                            cancellation: cancellation) }
+            outcome.store(Result { try reader.rows(db: db, sql: "SELECT v FROM t", timeout: 120,
+                                                   cancellation: cancellation) })
+            left.signal()
         }
-        await waitForQuerySignal(entered)
+        let started = await querySignalCame(entered, within: 20)
+        // Cancel only once the read is waiting on the token: cancelled before it
+        // asked, it would leave by the early guard, and the wake-up this test is
+        // about would go unproved. (A ceiling again, not a deadline.)
+        let waiting = ContinuousClock.now + .seconds(20)
+        while cancellation.waiterCount == 0, ContinuousClock.now < waiting { await Task.yield() }
+        #expect(cancellation.waiterCount == 1, "the read never began waiting")
         cancellation.cancel()
-        let result = await read.value
+        // The ceiling is only a bound on a broken implementation (a caller that
+        // stays until its deadline): a working one leaves at once, and nothing
+        // here waits on a clock.
+        let returned = await querySignalCame(left, within: 20)
+        // Always, even when it failed: a suspended queue must not be released.
         queue.resume()
-        #expect(throws: CancellationError.self) { try result.get() }
+        #expect(started, "the read never began")
+        #expect(returned, "a cancelled caller stayed behind the read that held the queue")
+        guard returned else { return }
+        #expect(throws: CancellationError.self) { _ = try outcome.value() }
         #expect(reader.openCount == 0)
         #expect(try reader.rows(db: db, sql: "SELECT v FROM t") == [["1"]])
     }
