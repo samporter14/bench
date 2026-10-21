@@ -323,6 +323,37 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-21, Capsid 0.9.5: six app icons
+
+Sam asked for an ivory icon and a choice of colours. Solanum's brand book
+allows three icon grounds (Ivory, Slate, Clay) and says which parts take clay,
+so six: Clay (the default, unchanged), Ivory, Slate, Ivory one color, Slate
+one color, Ivory and Clay (DESIGN.md, App icon).
+
+- `Scripts/make-icon-variants.py` splits `bench-glyph.png` into ring, capsid
+  and escaped dot by radius and verifies the layers composite back to it
+  pixel for pixel; the variants are Icon Composer documents in
+  `Resources/AppIconVariants/`. No edge on the Ivory tiles: the format has no
+  border, and a drawn one doubled with the system's own edge highlight.
+- The first cut shipped each variant as a 256 px `.icns`, soft at full Dock
+  magnification. `Scripts/compile-icons.sh` now compiles all six in one
+  actool call as alternate app icons (`--alternate-app-icon`,
+  `--include-all-app-icons`), so each has reps up to 1,024 px with the
+  system's treatment. Cost: Assets.car 1.7 → 10.1 MB, the zipped app 6.5 →
+  14.6 MB; Sam chose all six anyway. README's "3 MB download" (already wrong)
+  now says 15 MB.
+- Settings → General → App icon: six tiles; the choice sets
+  `NSApp.applicationIconImage` (the Dock while Capsid runs, Settings' header,
+  Welcome). Finder, Launchpad and a pinned Dock tile while Capsid is quit keep
+  Clay: changing those means altering the signed bundle. 20 tests, an
+  end-to-end compile included; mutations caught.
+- ⏳ Not seen: the real Dock (and whether it uses the 1,024 px rep), Dark and
+  Tinted icon styles, the badge over a custom icon, VoiceOver.
+
+Automated:
+
+- ✅ `swift test`: 1,976 tests in 254 suites, all passing (on the branch).
+
 ## 2026-10-20, Capsid 0.9.4: Results never touches the disk on the main thread
 
 From the Codex review's item 4, built by a Sonnet agent and reviewed here.

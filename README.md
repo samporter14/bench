@@ -12,14 +12,14 @@
 curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh
 ```
 
-Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/download/Bench.zip) (3 MB); see [Install](#install).
+Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/download/Bench.zip) (15 MB); see [Install](#install).
 
 ## Why Capsid
 
-- **Tiny and light.** A 3 MB download, with no Electron and no bundled
-  browser. It uses the WebKit already built into macOS. Capsid itself idles at
-  0% CPU and about 50 MB of memory, and the page runs in WebKit like a Safari
-  tab.
+- **Small and light.** A 15 MB download, most of it the six app icons, with
+  no Electron and no bundled browser. It uses the WebKit already built into
+  macOS. Capsid itself idles at 0% CPU and about 50 MB of memory, and the page
+  runs in WebKit like a Safari tab.
 - **Truly Mac native.** Written in Swift with SwiftUI and AppKit: Liquid
   Glass, a real toolbar, menus, keyboard shortcuts, Settings (⌘,) and Find
   (⌘F).
@@ -131,7 +131,11 @@ on Settings → Panel → Name the specimen that's playing for its name and a
 caption under the session in the panel. Tired of the one playing right
 now? Right-click the panel and choose Don't Play. The panel can sit in any
 corner of your screen, on any display: Settings → Panel → Corner and
-Screen.
+Screen. And Capsid's own icon comes in six of Solanum's colorways (Clay,
+Ivory, Slate, two one-color versions and Ivory with a clay capsid): Settings →
+General → App icon. It changes the Dock icon while Capsid is open; Finder and
+Launchpad keep the Clay one, because macOS doesn't let an app change those
+without altering itself.
 
 <img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, a checkbox per category (Lab 130 of 131, Biology 211 of 214), a search field with an All, On and Off filter, and a grid of specimens under a Lab heading, each with a clay check when on">
 
