@@ -334,13 +334,79 @@ struct AppIconChoiceTests {
         #expect(setters == ["App/AppIconChoice.swift"])
     }
 
-    /// Scripts/build-app.sh compiles whatever is in Resources/AppIconVariants, so a document
+    // MARK: The compiled catalog
+
+    /// Clay is the app's own icon; the rest are alternate app icons named for their documents,
+    /// which is how Scripts/compile-icons.sh names them (the folder, without ".icon").
+    @Test func eachChoiceIsNamedInTheCatalogAsItsDocument() {
+        #expect(AppIconChoice.clay.catalogName == "AppIcon")
+        for choice in AppIconChoice.allCases where choice != .clay {
+            #expect(choice.document == "\(choice.catalogName).icon", "\(choice)")
+        }
+    }
+
+    /// One actool call compiles AppIcon and every variant document of the folder (but Clay) as
+    /// alternates into the app's Assets.car, with no separate .icns per variant; so a document
     /// added there (and to the enum) reaches the app without editing the script.
-    @Test func theBuildScriptCompilesEveryDocumentInTheVariantsFolder() throws {
-        let script = try String(contentsOf: root.appendingPathComponent("Scripts/build-app.sh"), encoding: .utf8)
+    @Test func theBuildCompilesTheVariantsAsAlternateIconsOfOneCatalog() throws {
+        let script = try String(contentsOf: root.appendingPathComponent("Scripts/compile-icons.sh"), encoding: .utf8)
         #expect(script.contains("Resources/AppIconVariants"))
-        #expect(script.contains("AppIcons"))
-        #expect(script.contains("--app-icon \"$ID\""))
+        #expect(script.contains("--alternate-app-icon \"$ID\""))
+        #expect(script.contains("--include-all-app-icons"))
+        #expect(script.contains("--app-icon AppIcon"))
+        let build = try String(contentsOf: root.appendingPathComponent("Scripts/build-app.sh"), encoding: .utf8)
+        #expect(build.contains("Scripts/compile-icons.sh"))
+        #expect(!build.contains("AppIcons"), "no per-variant .icns any more")
+    }
+
+    private static let actool = "/Applications/Xcode.app/Contents/Developer/usr/bin/actool"
+
+    /// The real step, without a release build: Scripts/compile-icons.sh into a throwaway app
+    /// bundle, then the catalog read back as the app reads it. Every choice (Clay as AppIcon)
+    /// has a picture with a 1024 px rep, so it is crisp at the Dock's largest; there is no
+    /// warning; and the partial Info.plist keeps AppIcon as the icon's name. About 5 s.
+    @Test(.enabled(if: FileManager.default.fileExists(atPath: actool), "needs Xcode's actool"))
+    func theCompiledCatalogHasEveryChoiceAtFullSize() throws {
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("AppIconChoiceTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: work) }
+        let contents = work.appendingPathComponent("Fake.app/Contents")
+        let resources = contents.appendingPathComponent("Resources")
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        let info: NSDictionary = [
+            "CFBundleIdentifier": "local.test.appicons", "CFBundleName": "Fake",
+            "CFBundlePackageType": "APPL", "CFBundleIconName": "AppIcon",
+        ]
+        try info.write(to: contents.appendingPathComponent("Info.plist"))
+        let partial = work.appendingPathComponent("partial.plist")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [root.appendingPathComponent("Scripts/compile-icons.sh").path, resources.path, partial.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0, "\(output)")
+        #expect(!output.contains("warning"), "\(output)")
+
+        #expect(FileManager.default.fileExists(atPath: resources.appendingPathComponent("AppIcon.icns").path))
+        #expect(FileManager.default.fileExists(atPath: resources.appendingPathComponent("Assets.car").path))
+        #expect(!FileManager.default.fileExists(atPath: resources.appendingPathComponent("AppIcons").path))
+
+        let plist = try #require(NSDictionary(contentsOf: partial) as? [String: Any])
+        #expect(plist["CFBundleIconName"] as? String == "AppIcon")
+        #expect(plist["CFBundleIconFile"] as? String == "AppIcon")
+
+        let bundle = try #require(Bundle(path: work.appendingPathComponent("Fake.app").path))
+        for choice in AppIconChoice.allCases {
+            let image = try #require(choice.image(in: bundle), "\(choice) is not in the catalog")
+            let largest = image.representations.map { max($0.pixelsWide, $0.pixelsHigh) }.max() ?? 0
+            #expect(largest >= 1024, "\(choice): largest rep is \(largest) px")
+        }
+        // A name that isn't one of the six isn't in it.
+        #expect(bundle.image(forResource: NSImage.Name("mauve")) == nil)
     }
 
     @Test func settingsHasTheRowWithItsPlainLineAndItsInfo() throws {

@@ -26,49 +26,14 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Capsid"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 
-# The icon: an Icon Composer document, Capsid's own in Solanum's product
+# The icons: Capsid's own, an Icon Composer document in Solanum's product
 # family (a Clay tile, the broken ring with its escaped dot, an icosahedral
-# capsid), compiled. actool is given absolute paths only (its helper
-# resolves relative ones against wherever another run started it).
-ICON="$ROOT/Resources/AppIcon.icon"
-if [ -d "$ICON" ]; then
-    WORK="$(mktemp -d "${TMPDIR:-/private/tmp}/capsid-icon.XXXXXX")"
-    cp -R "$ICON" "$WORK/AppIcon.icon"
-    xcrun actool "$WORK/AppIcon.icon" --compile "$APP/Contents/Resources" \
-        --app-icon AppIcon --output-partial-info-plist "$WORK/partial.plist" \
-        --platform macosx --minimum-deployment-target 27.0 --target-device mac \
-        --output-format human-readable-text >/dev/null || echo "warning: icon not compiled"
-    rm -rf "$WORK"
-fi
-
-# The other icons Settings → General → App icon offers (since 0.9.5): one
-# Icon Composer document per choice in Resources/AppIconVariants (cut from the
-# glyph by Scripts/make-icon-variants.py), each compiled the same way into a
-# folder of its own, since actool also writes an Assets.car that would replace
-# the app's, and only its .icns kept, in Contents/Resources/AppIcons/<id>.icns.
-# Capsid sets the chosen one as its Dock icon while it runs; the bundle's own
-# icon, in Finder and Launchpad, is not touched. Clay is that icon, so it is
-# copied. An icon that doesn't compile is skipped: Capsid then keeps Clay.
-VARIANTS="$ROOT/Resources/AppIconVariants"
-if [ -d "$VARIANTS" ] && [ -f "$APP/Contents/Resources/AppIcon.icns" ]; then
-    mkdir -p "$APP/Contents/Resources/AppIcons"
-    cp "$APP/Contents/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcons/clay.icns"
-    for DOC in "$VARIANTS"/*.icon(N); do
-        ID="${DOC:t:r}"
-        [[ "$ID" == clay ]] && continue
-        WORK="$(mktemp -d "${TMPDIR:-/private/tmp}/capsid-icon.XXXXXX")"
-        cp -R "$DOC" "$WORK/$ID.icon"
-        if xcrun actool "$WORK/$ID.icon" --compile "$WORK" \
-            --app-icon "$ID" --output-partial-info-plist "$WORK/partial.plist" \
-            --platform macosx --minimum-deployment-target 27.0 --target-device mac \
-            --output-format human-readable-text >/dev/null && [ -f "$WORK/$ID.icns" ]; then
-            cp "$WORK/$ID.icns" "$APP/Contents/Resources/AppIcons/$ID.icns"
-        else
-            echo "warning: icon $ID not compiled"
-        fi
-        rm -rf "$WORK"
-    done
-fi
+# capsid), and the five others Settings → General → App icon offers (since
+# 0.9.5), compiled together into AppIcon.icns and the app's Assets.car, the
+# others as alternate app icons. Capsid sets the chosen one as its Dock icon
+# while it runs; the bundle's own icon, in Finder and Launchpad, is not touched.
+# See Scripts/compile-icons.sh, which warns and falls back to AppIcon alone.
+"$ROOT/Scripts/compile-icons.sh" "$APP/Contents/Resources"
 
 # The Focus filter (App/PresentingFocusFilter.swift): Xcode extracts its App
 # Intents metadata into the bundle, and SwiftPM doesn't, so this does. Before

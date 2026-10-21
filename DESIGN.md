@@ -2633,31 +2633,47 @@ doubled, uneven line against the system's own. macOS already gives a compiled ic
 and a soft shadow (the compiled Ivory tile reads on light grey, #ECECEC, and on mid grey), so there is none. The
 `border-strong` edge is for flat contexts (a page, a card), not for the Dock.
 
-**Compiled in the build** (`Scripts/build-app.sh`, about 8 s more). For every `*.icon` in
-`Resources/AppIconVariants` but Clay: `actool` as for the main icon (absolute paths, its own temporary
-folder, since it also writes an `Assets.car` that would replace the app's), `--app-icon <id>`, and
-only `<id>.icns` copied to `Contents/Resources/AppIcons/`. Clay's is a copy of `AppIcon.icns`. An icon
-that fails to compile prints a warning and is skipped, and Capsid then keeps Clay, as it does for any
-missing file. Before the Focus filter's metadata and the signature, which seal Resources. A test checks
-the folder and the enum name the same six.
+**Compiled in the build** (`Scripts/compile-icons.sh`, run by `Scripts/build-app.sh`). One `actool`
+call compiles `Resources/AppIcon.icon` as the app's icon and every other document in
+`Resources/AppIconVariants` (all but Clay, which is AppIcon) as an *alternate app icon*:
+`--app-icon AppIcon`, then `--alternate-app-icon <id>` for each of the five and
+`--include-all-app-icons`. The documents' folder names are their icons' names. The result is the
+usual `AppIcon.icns` (unchanged, 49 KB) and one `Assets.car` holding all six as full icon stacks,
+so there is no `AppIcons/` folder and no .icns per variant (an .icns tops out at 256 px, which is soft at
+the Dock's largest magnification). The partial Info.plist actool writes keeps `CFBundleIconName` and
+`CFBundleIconFile` at `AppIcon`, so Finder and Launchpad still get the app's own icon; the app's own
+Info.plist is what ships. It costs 4 to 5 s more in the build. **Assets.car grows from 1.74 MB to
+10.10 MB** (about 1.7 MB an icon: each is a full stack at 32 to 1024 px), and the zipped app from
+6.48 MB to 14.64 MB (`ditto -c -k --keepParent`, measured 2026-10-21; compiling one .icns per
+variant instead, which the catalog replaced, added only 0.32 MB). Either
+`--alternate-app-icon` or `--include-all-app-icons` is enough for actool to compile the extra
+documents; with neither it compiles only AppIcon. The script is failure-tolerant: if the combined call
+fails it warns ("the alternate icons did not compile") and compiles AppIcon alone, so Capsid keeps
+Clay and every choice falls back as a missing picture does; if that fails too it warns and goes on.
+It runs before the Focus filter's metadata and the signature, which seal Resources. Tests check
+that the folder, the enum and the script name the same six, and run the script itself into a
+throwaway bundle (a test that needs Xcode's `actool`, about 5 s, skipped without it): no warning,
+`AppIcon` still the partial plist's icon, and every choice, Clay as AppIcon, has a picture in the
+catalog with a 1024 px rep. A release build isn't needed to check any of it.
 
 **Runtime.** `AppIconDock.shared.apply()` reads `appIcon` and sets `NSApp.applicationIconImage` from
-`AppIcons/<id>.icns`. For Clay, a picture that isn't there and a name this Capsid doesn't know it
+the choice's catalog picture (`AppIconChoice.image(in:)`, `Bundle.image(forResource:)`, which is
+`NSImage(named:)` for the app's own bundle): reps at 32, 64, 256, 512 and 1024 px, with the
+system's treatment (squircle, edge highlight, shadow), so it is crisp at the Dock's largest
+magnification. For Clay, a picture that isn't there and a name this Capsid doesn't know it
 sets nil, which restores the bundle's icon, but only when a chosen picture is up: a Mac that never
 chooses, or launches on Clay, is never told anything (the Dock isn't asked to redraw an icon it
 already has), and going back to Clay clears once. It runs at launch next to
 `BenchAppearance.apply()` (before a demo's early return) and when the setting changes. The
 picture and the setter are injected into an `AppIconDock` of a test's own, so a test never touches the
 real `NSApp`. Pictures are read once (`picture`), since Settings draws six at each refresh. When the
-.icns files are missing (`swift run`, the tests) the picker draws each tile's ground as a rounded
+catalog has none of them (`swift run`, the tests) the picker draws each tile's ground as a rounded
 square.
 
-**What it can't do, and wasn't seen.** A custom `applicationIconImage` is the flattened .icns that
-actool writes (up to 256 px, squircle, shadow and edge baked in), not the layered rendering
-macOS makes of the bundle's own icon, so a chosen icon doesn't follow the system's Dark or Tinted
-icon appearance, and is a little less sharp at the Dock's largest magnification. It was checked as
-compiled and rendered to PNG (the six at 256 px on grey), and by tests; it has not been seen in the
-real Dock.
+**What it can't do, and wasn't seen.** A custom `applicationIconImage` is a still image, not the
+layered rendering macOS makes of the bundle's own icon, so a chosen icon doesn't follow the system's Dark
+or Tinted icon appearance. It was checked as compiled and rendered to PNG (the six at 512 px on grey),
+and by tests; it has not been seen in the real Dock.
 
 ## Diagnostics (App/Diagnose.swift, App/Compat*.swift, since 0.8.0)
 
@@ -3014,7 +3030,8 @@ Resources/AppIcon.icon    Capsid's own icon, in Solanum's one-colour colourway (
                           The file keeps its name, bench-glyph.png, which embed-remote-web.py reads
                           for the phone's icon (RemoteIcon, the same Clay).
 Resources/AppIconVariants The six icons Settings offers (0.9.5), one Icon Composer document each, cut
-                          from that glyph by Scripts/make-icon-variants.py; see App icon.
+                          from that glyph by Scripts/make-icon-variants.py and compiled with AppIcon
+                          by Scripts/compile-icons.sh; see App icon.
 ```
 
 ## Testing checklist ("every feature")

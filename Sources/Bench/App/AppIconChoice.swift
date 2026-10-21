@@ -13,8 +13,9 @@ import SwiftUI
 
 /// One of the icons. Each is an Icon Composer document in
 /// Resources/AppIconVariants/<id>.icon (Scripts/make-icon-variants.py cuts them
-/// from Capsid's own glyph), which Scripts/build-app.sh compiles into
-/// Contents/Resources/AppIcons/<id>.icns.
+/// from Capsid's own glyph), which Scripts/compile-icons.sh compiles into the
+/// app's Assets.car as an alternate app icon named for its id. Clay is the
+/// app's own icon, AppIcon.
 enum AppIconChoice: String, CaseIterable, Identifiable {
     /// Today's icon: a Clay tile, everything in Slate. Also the bundle's own.
     case clay
@@ -56,11 +57,16 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
     /// The Icon Composer document, relative to Resources/AppIconVariants.
     var document: String { "\(rawValue).icon" }
 
-    /// The compiled picture, or nil when the app wasn't built by
-    /// Scripts/build-app.sh (`swift run`, the tests) or the icon didn't compile.
+    /// The icon's name in the asset catalog: AppIcon for Clay, the alternate
+    /// icon's own name (its document's, without ".icon") for the rest.
+    var catalogName: String { self == .clay ? "AppIcon" : rawValue }
+
+    /// The compiled picture from the bundle's asset catalog: 32 to 1024 px, with
+    /// the system's treatment (squircle, edge, shadow). Nil when the app wasn't
+    /// built by Scripts/build-app.sh (`swift run`, the tests) or the icon didn't
+    /// compile.
     func image(in bundle: Bundle = .main) -> NSImage? {
-        guard let url = bundle.url(forResource: rawValue, withExtension: "icns", subdirectory: "AppIcons") else { return nil }
-        return NSImage(contentsOf: url)
+        bundle.image(forResource: NSImage.Name(catalogName))
     }
 
     /// `image()` for the app's own bundle, read once: the pictures can't change
