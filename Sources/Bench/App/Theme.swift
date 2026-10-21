@@ -105,6 +105,9 @@ enum SettingsKey {
     static let settingsTab = "settingsTab"
     /// "system" (follow the Mac), "light" or "dark": see `BenchAppearance`.
     static let appearance = "appearance"
+    /// Which icon Capsid shows in the Dock while it runs, an `AppIconChoice`
+    /// (since 0.9.5). Clay is the bundle's own.
+    static let appIcon = "appIcon"
     // Phase 2 actions
     /// Paired devices may answer a question, approve a plan and send a
     /// message (Capsid on your phone, since 0.4.0). On by default; off, the
@@ -152,6 +155,7 @@ enum SettingsKey {
             panelScreen: "",
             pageZoom: 1.0,
             appearance: BenchAppearance.system.rawValue,
+            appIcon: AppIconChoice.standard.rawValue,
             remoteActions: true, // Phase 2 actions
             remoteBrowse: true, // Phase 3 browse
             titleBarUsage: TitleBarUsage.fiveHour.rawValue,

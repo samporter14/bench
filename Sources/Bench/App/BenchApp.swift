@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         source.resume()
         terminateSignal = source
         BenchAppearance.apply()
+        // The Dock icon the user chose (App/AppIconChoice.swift); Clay leaves the bundle's own.
+        AppIconDock.shared.apply()
         // A demo shows made-up data and starts nothing real (Demo.swift).
         if Demo.mode != nil {
             Demo.start()

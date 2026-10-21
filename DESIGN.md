@@ -2294,7 +2294,7 @@ Settings was drawn in Solanum (https://claude.ai/artifact/BjQZQTY4NYmLcz39pHWmQE
 0.1.12: ivory and slate grounds, mono overlines, hairline cards, a serif heading. Sam then asked for the
 menus and Settings to look like the Mac's own, even where that bends the brand, so since 0.1.13:
 
-- General is a grouped `Form`, as System Settings is: Capsid's icon, name, version and the "Unofficial,
+- General is a grouped `Form`, as System Settings is: Capsid's icon (the chosen one, since 0.9.5), name, version and the "Unofficial,
   and not affiliated with Anthropic" line at the top, native switches, a segmented Theme picker, and
   Diagnostics as a plain button. Its frame was fixed (600 × 640) then; each page has its own height now, and
   since 0.9.3 a width of 760 and a cap by the screen (Settings, Page sizes). A
@@ -2491,8 +2491,8 @@ own height (the window follows the tab), every one 760 wide and none taller
 than the screen it is on (Page sizes, below):
 
 - **General** (`general`): Capsid's name and version, a banner when it can't see
-  your sessions, Appearance, Updates (since 0.3.6), Nidus (since 0.7.3) and
-  Help → Diagnostics.
+  your sessions, Appearance (the theme, and App icon since 0.9.5), Updates
+  (since 0.3.6), Nidus (since 0.7.3) and Help → Diagnostics.
 - **Panel** (`panel`): the specimen while a session works (show it, name it,
   the menu bar), where the panel sits (corner, screen, while Capsid is in
   front), and a way to the Specimens tab.
@@ -2521,11 +2521,13 @@ have one: Alerts → Show a card, Show plans, questions and requests on the
 card, Also send a Mac notification, Show session and project names, Hold
 finishes and the two Quiet rows; Panel → Screen; Usage → Title bar shows
 (since 0.9.1) and Plan and context;
-Specimens → the heading; Phone → browsing. General has none: its lines were
-already two at most. Keys and behaviour are unchanged.
+Specimens → the heading; Phone → browsing; and General → App icon (since
+0.9.5; see App icon). General has no other: its lines were already two at
+most. Keys and behaviour are unchanged.
 
 **Page heights** (`settingsPage(height:)`, set from a capture so the first
-and last rows have the same margin, about 22 pt): General 634, Panel 504,
+and last rows have the same margin, about 22 pt): General 702 (it was 634 before App icon, since 0.9.5; the row is
+67.5 pt, found by rendering the page offscreen with and without it and keeping the old margin), Panel 504,
 Alerts 818 (it was 740, and already cut off at the bottom), Usage 316 (it was
 238 before the Title bar shows row, since 0.9.1; a pop-up row with its line
 and no heading adds 78 pt), Specimens 760×776, Phone 760. Alerts' two new rows (Quiet While Presenting,
@@ -2556,6 +2558,7 @@ before.
 | Setting | Default |
 |---|---|
 | Appearance: Match Mac, Ivory or Slate (the whole app, via `NSApp.appearance`; the page follows while its own theme is System) | Match Mac |
+| App icon: one of six, the Dock icon while Capsid runs (`appIcon`, since 0.9.5; see App icon) | Clay |
 | Title bar shows: 5-hour limit or Whichever is lowest (`titleBarUsage`, since 0.9.1; see Usage remaining) | 5-hour limit |
 | Show the Lab panel | on |
 | Play a sound when a session needs you | on |
@@ -2571,6 +2574,90 @@ before.
 
 Reopening the session you were in (Daemon and sign-in) has no row: it is on,
 and not a setting.
+
+## App icon (App/AppIconChoice.swift, App/AppIconPicker.swift, since 0.9.5)
+
+Settings → General → Appearance → **App icon** offers six icons, drawn as small tiles in a row
+(`AppIconPicker`), the chosen one ringed in the accent (clay: a Settings page tints with it).
+Under the row's title is one plain line, "Changes Capsid's icon in the Dock while it's open.", and
+an ⓘ (`AppIconInfo.dockOnly`) that says why only the Dock: macOS gives an app no way to change the
+icon Finder and Launchpad show without altering the app itself, which would break its signature
+and the permissions the user granted it, and every update would undo it. So **the choice is the
+Dock icon while Capsid runs**, and the icon Capsid draws in its own windows (Settings' header and
+the welcome's first page, through `AppIconChoice.shown`; an alert or the About panel takes
+`NSApp.applicationIconImage` by itself). Finder, Launchpad, notifications and a Dock tile for
+Capsid when it isn't running keep Clay, the bundle's own. Nothing writes to the bundle and nothing
+calls `NSWorkspace.setIcon`; a test holds both, and holds `applicationIconImage =` to one file.
+
+**The six** (`AppIconChoice`, the key `appIcon`, default `clay`). Solanum allows exactly three icon
+grounds, Ivory #FAF9F5, Slate #141413 and Clay #D97757, and one colour rule: structure (the ring, the
+capsid) takes ink, the organism (the escaped dot) takes clay, and a one-colour version sets
+everything to ink. On a Slate tile the ink is Ivory. No other colour appears.
+
+| Id | Name in Settings | Tile | Ring | Capsid | Escaped dot |
+|---|---|---|---|---|---|
+| `clay` | Clay | Clay | Slate | Slate | Slate |
+| `ivory` | Ivory | Ivory | Slate | Slate | Clay |
+| `slate` | Slate | Slate | Ivory | Clay | Clay |
+| `ivoryMono` | Ivory, one color | Ivory | Slate | Slate | Slate |
+| `slateMono` | Slate, one color | Slate | Ivory | Ivory | Ivory |
+| `ivoryClay` | Ivory and Clay | Ivory | Slate | Clay | Clay |
+
+Clay is today's icon, unchanged, and the default. The names use American spelling ("one color").
+
+**One glyph, cut into three layers, never redrawn** (`Scripts/make-icon-variants.py`, Pillow and
+numpy). `Resources/AppIcon.icon/Assets/bench-glyph.png` (1024 px, Slate on transparent) is split by
+distance from its centre, since its three parts sit in separate bands: the capsid inside radius 180,
+the ring 271 to 297 (the annulus), the escaped dot 323 to 364 at the upper right. The cuts are at
+230 and 310, in the gaps; the script stops if a redrawn glyph puts ink within 5 px of a cut, leaves
+a band empty, or moves the dot out of the upper right. The three layers cover every pixel once, so
+nothing is lost or doubled. Each variant is written as `Resources/AppIconVariants/<id>.icon`: an
+`icon.json` with the tile as an sRGB solid (the original's settings otherwise: no shadow, no
+translucency) and `Assets/ring.png`, `capsid.png`, `escapee.png`. A layer is recoloured by setting
+its RGB to the one colour wherever it has ink and keeping the alpha, so the glyph's antialiasing is
+kept; a Slate layer keeps the glyph's own pixels (they are not one flat value: 20 to 22 at full
+alpha, black at the faintest edge), so the Clay document's layers are the raw split. Re-run it after
+changing its table (`python3 Scripts/make-icon-variants.py`; `--check` fails if the committed documents
+differ, comparing pixels, not PNG bytes). It proves what it wrote, reading the PNGs back: the layers' ink
+never overlaps, its union has exactly the glyph's alpha, each layer is one colour, and the Clay and
+Ivory-one-colour documents' layers composite to `bench-glyph.png` byte for byte. `bench-glyph.png` is
+not changed (`embed-remote-web.py` embeds it for the phone's icon). Capsid's own `AppIcon.icon` is
+unchanged too.
+
+**No edge on the Ivory tiles.** Solanum draws an Ivory icon with a `border-strong` edge, rgba(31, 30,
+29, 0.3). Icon Composer's document format has no border or stroke key (its keys are fill, blend-mode,
+lighting, glass, shadow, specular, translucency, opacity, position and scale, with the
+fill and image specializations), so it would be a layer: a thin ring along the tile's edge. A layer is positioned in the same canvas as the tile and masked by it, and the squircle isn't
+a shape that can be drawn to match exactly, so a trial (a superellipse stroke, 4 px, at 30%) compiled to a
+doubled, uneven line against the system's own. macOS already gives a compiled icon its edge highlight
+and a soft shadow (the compiled Ivory tile reads on light grey, #ECECEC, and on mid grey), so there is none. The
+`border-strong` edge is for flat contexts (a page, a card), not for the Dock.
+
+**Compiled in the build** (`Scripts/build-app.sh`, about 8 s more). For every `*.icon` in
+`Resources/AppIconVariants` but Clay: `actool` as for the main icon (absolute paths, its own temporary
+folder, since it also writes an `Assets.car` that would replace the app's), `--app-icon <id>`, and
+only `<id>.icns` copied to `Contents/Resources/AppIcons/`. Clay's is a copy of `AppIcon.icns`. An icon
+that fails to compile prints a warning and is skipped, and Capsid then keeps Clay, as it does for any
+missing file. Before the Focus filter's metadata and the signature, which seal Resources. A test checks
+the folder and the enum name the same six.
+
+**Runtime.** `AppIconDock.shared.apply()` reads `appIcon` and sets `NSApp.applicationIconImage` from
+`AppIcons/<id>.icns`. For Clay, a picture that isn't there and a name this Capsid doesn't know it
+sets nil, which restores the bundle's icon, but only when a chosen picture is up: a Mac that never
+chooses, or launches on Clay, is never told anything (the Dock isn't asked to redraw an icon it
+already has), and going back to Clay clears once. It runs at launch next to
+`BenchAppearance.apply()` (before a demo's early return) and when the setting changes. The
+picture and the setter are injected into an `AppIconDock` of a test's own, so a test never touches the
+real `NSApp`. Pictures are read once (`picture`), since Settings draws six at each refresh. When the
+.icns files are missing (`swift run`, the tests) the picker draws each tile's ground as a rounded
+square.
+
+**What it can't do, and wasn't seen.** A custom `applicationIconImage` is the flattened .icns that
+actool writes (up to 256 px, squircle, shadow and edge baked in), not the layered rendering
+macOS makes of the bundle's own icon, so a chosen icon doesn't follow the system's Dark or Tinted
+icon appearance, and is a little less sharp at the Dock's largest magnification. It was checked as
+compiled and rendered to PNG (the six at 256 px on grey), and by tests; it has not been seen in the
+real Dock.
 
 ## Diagnostics (App/Diagnose.swift, App/Compat*.swift, since 0.8.0)
 
@@ -2696,7 +2783,7 @@ main Claude Science window opens behind it as usual.
 - **Help → Welcome to Capsid** shows it again at any time, from the first page.
   Already open, it only comes forward. The item is dimmed in a demo.
 - **Pages**, with Back, Next and page dots (`WelcomeFlow`: both ends stop):
-  1. *Welcome.* The app icon, "Capsid keeps Claude Science in one window, and
+  1. *Welcome.* The app icon (the one chosen in Settings, since 0.9.5), "Capsid keeps Claude Science in one window, and
      lets you know when a session needs you.", and the small line "A Solanum
      product. Unofficial, and not affiliated with Anthropic."
   2. *The panel.* A specimen playing at 88 pt (`Theme.sceneSize`) in a glass
@@ -2904,7 +2991,7 @@ phone, above), so the page's fetch for it stops.
 
 ```
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
-Sources/Bench/App/        BenchApp, Router, Theme, TimeSpan, SharedShims, SheetCost, PosterCost, Demo, Settings, Welcome, Diagnose and Compat* (inventory, probes, breadcrumbs)   (planner)
+Sources/Bench/App/        BenchApp, Router, Theme, TimeSpan, SharedShims, SheetCost, PosterCost, Demo, Settings, AppIconChoice and AppIconPicker (the Dock icon choice), Welcome, Diagnose and Compat* (inventory, probes, breadcrumbs)   (planner)
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge, page tabs (Close Other Tabs, Close All Tabs), LastSession (reopen where you were)   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule, SpecimenHold,
                           QuestionReply and ReplyWindow (a question, a permission request or a plan's
@@ -2926,6 +3013,8 @@ Resources/AppIcon.icon    Capsid's own icon, in Solanum's one-colour colourway (
                           21 px). Drawn by code (PIL, 4x supersampled), not synced from the droplet.
                           The file keeps its name, bench-glyph.png, which embed-remote-web.py reads
                           for the phone's icon (RemoteIcon, the same Clay).
+Resources/AppIconVariants The six icons Settings offers (0.9.5), one Icon Composer document each, cut
+                          from that glyph by Scripts/make-icon-variants.py; see App icon.
 ```
 
 ## Testing checklist ("every feature")
@@ -2949,6 +3038,7 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] a plan's card shows its summary, and Approve approves it (a throwaway session)
 - [ ] finished card
 - [ ] a question, a plan and an error card show the status header and the card's full width, with no well, while Finished keeps its well (at Small and Large the panel's width changes between them); VoiceOver offers Open and Dismiss on a card (0.9.3)
+- [ ] App icon (0.9.5): Settings → General → Appearance → App icon: each of the six tiles changes Capsid's Dock icon at once and the one in Settings' header; the chosen tile is ringed; the choice survives quitting and launching (the Dock shows it from the launch); Clay puts the bundle's own icon back; Finder, Launchpad and a pinned Capsid that isn't running keep Clay; the ⓘ says why; VoiceOver reads each tile's name and which is selected
 - [ ] Settings on a short or scaled display: every tab fits the screen, and Specimens scrolls as one page when it is short (0.9.3)
 - [ ] find, zoom and back/forward, in the main window and in a Browser window
 - [ ] with Settings in front, Reload, Zoom, Find and Back/Forward are dimmed

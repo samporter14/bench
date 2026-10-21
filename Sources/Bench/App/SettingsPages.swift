@@ -39,6 +39,7 @@ extension View {
 /// sessions, the theme, updates and help.
 struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.appearance) private var appearance = BenchAppearance.system.rawValue
+    @AppStorage(SettingsKey.appIcon) private var appIcon = AppIconChoice.standard.rawValue
     @AppStorage(SettingsKey.shareTaskWithNidus) private var shareTaskWithNidus = false
     @ObservedObject private var lab = LabModel.shared
 
@@ -50,7 +51,7 @@ struct GeneralSettingsView: View {
         Form {
             Section {
                 HStack(spacing: 14) {
-                    Image(nsImage: NSApp.applicationIconImage)
+                    Image(nsImage: AppIconChoice.shown(appIcon))
                         .resizable()
                         .frame(width: 52, height: 52)
                         .accessibilityHidden(true)
@@ -92,6 +93,12 @@ struct GeneralSettingsView: View {
                     Text("The window, the panel and the Claude Science page.")
                 }
                 .pickerStyle(.segmented)
+                LabeledContent {
+                    AppIconPicker(selection: $appIcon)
+                } label: {
+                    InfoTitle("App icon", info: AppIconInfo.dockOnly)
+                    Text("Changes Capsid's icon in the Dock while it's open.")
+                }
             }
 
             UpdatesSection()
@@ -113,8 +120,9 @@ struct GeneralSettingsView: View {
                 }
             }
         }
-        .settingsPage(height: 634)
+        .settingsPage(height: 702)
         .onChange(of: appearance) { BenchAppearance.apply() }
+        .onChange(of: appIcon) { AppIconDock.shared.apply() }
     }
 }
 

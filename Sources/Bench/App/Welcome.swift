@@ -260,9 +260,11 @@ private struct Note: View {
 
 /// 1. Who Bench is.
 private struct IntroPage: View {
+    @AppStorage(SettingsKey.appIcon) private var appIcon = AppIconChoice.standard.rawValue
+
     var body: some View {
         VStack(spacing: 14) {
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(nsImage: AppIconChoice.shown(appIcon))
                 .resizable()
                 .frame(width: 96, height: 96)
                 .accessibilityHidden(true)
