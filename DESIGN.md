@@ -64,7 +64,7 @@ third-party dependencies.
   instead, since 0.9.3). Measured cost is under 6 ms per second of
   frames at 96pt (`Capsid --measure-sheets 48,72,96`). The working rotation
   draws and plays a second of frames at a time, never a whole scene (since
-  0.9.2; Efficiency, Shared changes), at 30 frames a second unless a view is
+  0.9.3; Efficiency, Shared changes), at 30 frames a second unless a view is
   given another (`PlayedGlyph(fps:)`).
 
 ## Where the glass goes
@@ -602,7 +602,7 @@ Size setting; the width of the others does (Scenes settings).
   - While nobody is at the Mac (Holding still, below) the well holds a still,
     the caption line names that specimen, and the turn clock moves a minute
     at a time.
-- **Needs input (card, 360 wide, no well since 0.9.3).** Until 0.9.2 it was
+- **Needs input (card, 360 wide, no well since 0.9.3).** Until 0.9.3 it was
   about 360×170, with the reason's waiting glyph in an 88 pt well at the left.
   - Status header (`actionCard`): the reason's waiting glyph (`PlayedLoop`)
     at 24 pt, hidden from VoiceOver, beside the caption in clay-text,
@@ -631,7 +631,7 @@ Size setting; the width of the others does (Scenes settings).
   - Any other wait (since 0.7.0, with the same setting): the question and
     Reply, or a permission request with Allow Once, Review or Deny. See
     Answering from the card. The question, and a permission request's title,
-    take the same three lines as a plan's summary (two before 0.9.2).
+    take the same three lines as a plan's summary (two before 0.9.3).
 - **Stopped with an error (card, 360 wide, no well since 0.9.3).**
   - Status header: the warning triangle (19 pt, in clay text, in a 24 pt box
     hidden from VoiceOver) beside the caption in clay-text, "Stopped with an
@@ -647,7 +647,7 @@ Size setting; the width of the others does (Scenes settings).
     stopped.
 - **Finished.**
   - Left well: the flask, still (the well stays on the cards that tell you
-    something, 0.9.2).
+    something, 0.9.3).
   - Caption: "Finished", then the duration and the tokens ("12m · 1.2M
     tokens"; times are written one way, below).
   - Open, and **Results** (`.glass`, since 0.7.0): the Results window on this
@@ -1228,7 +1228,7 @@ and 23 MB (Efficiency).
   longer than the limit otherwise in force, and a change of power state
   (`NSProcessInfoPowerStateDidChange`) looks at once. A lower frame rate was
   considered and left: the measured saving is about 40% of the commit cost,
-  and a hold saves all of it (Efficiency, Shared changes). Since 0.9.2 the
+  and a hold saves all of it (Efficiency, Shared changes). Since 0.9.3 the
   Shared player takes a rate per view (`PlayedGlyph(fps:)`, default 30; a
   chunk is a second of frames at that rate), so 15 fps no longer needs a
   Capsid-owned player; Capsid does not use it yet, because no run of a view
@@ -1516,7 +1516,7 @@ screen: open, the list adds roughly 150 pt. Whether a card's list is open is kep
 dropped with the card's plan, so a card that comes back starts closed. The
 label reads "feasibility" rather than "Claude's feasibility estimate"
 because the longer wording was wider than the text column (226 pt at any
-size of the scene well, until 0.9.2; the card's text is now 328 pt wide, and
+size of the scene well, until 0.9.3; the card's text is now 328 pt wide, and
 the short wording stays); the tooltip says whose estimate it is.
 
 **Privacy.** This widens Capsid's "never read content" rule by exactly the
@@ -1577,7 +1577,7 @@ is tried again after 15 s. Then (`QuestionCardState`, pure):
 
 - **Ready**: the root itself is `awaiting_user_response` with its own first
   `ask` readable. The card shows the first question in three lines (two before
-  0.9.2) and how it
+  0.9.3) and how it
   is answered ("3 choices", "Pick any of 4", "Type an answer", "2
   questions"), never the answer choices themselves, and offers **Reply**
   (primary), **Open** and **Later**.
@@ -1841,7 +1841,7 @@ tested on made-up JSON). Only for a frame whose `status` is `failed` and whose
   white space as one space, and a code fence skipped. A Python traceback
   leads with its own header, so its line is its last. Cut at 160 characters
   with an ellipsis, then by the card at the end of its second line (its one
-  line before 0.9.2).
+  line before 0.9.3).
 - *Copy.* The whole message as plain text (not the line, and not stripped of
   its markdown), cut at 4,000 characters, then a blank line and Claude
   Science's own detail line ("HTTP 400 · Request ID: req_…") when it has
@@ -1916,7 +1916,7 @@ favourites (none yet, or all renamed), what is on plays.
 The panel's well follows `size`, and so does the width of the faces that have
 one: the working face (336 + size − 88) and the cards that tell you something
 (Finished, a page notification, a notice, Saved: 360 + size − 88); likewise
-"Not updating" and a paused session, which keep the well. Since 0.9.2 the cards
+"Not updating" and a paused session, which keep the well. Since 0.9.3 the cards
 that ask (needs input, stopped with an error) have no well and stay 360 at every
 size. So the family is mixed: at Small the panel is 24 pt narrower on a Finished
 card than on a question, at Large 32 pt wider, and its width changes when the
@@ -1968,7 +1968,7 @@ Settings, Page sizes) has, in a header of two columns:
   Cells on screen PLAY, drawn live by `SceneLive` (a TimelineView plus a
   Canvas at 20 fps, 30 under the pointer, keeping no frames, at full strength
   with no fade, see Poster stills). The panel's
-  `PlayedGlyph` pre-rendered about 1.5 s per scene (before 0.9.2; now a
+  `PlayedGlyph` pre-rendered about 1.5 s per scene (before 0.9.3; now a
   second or two of frames), and 40 cells of that cost
   about 320 MB more; live drawing costs about 11% of one core with no extra
   memory. Off screen (the lazy grid's onDisappear), or with Reduce Motion
@@ -2948,8 +2948,8 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] needs-input card appears, Open lands on the session
 - [ ] a plan's card shows its summary, and Approve approves it (a throwaway session)
 - [ ] finished card
-- [ ] a question, a plan and an error card show the status header and the card's full width, with no well, while Finished keeps its well (at Small and Large the panel's width changes between them); VoiceOver offers Open and Dismiss on a card (0.9.2)
-- [ ] Settings on a short or scaled display: every tab fits the screen, and Specimens scrolls as one page when it is short (0.9.2)
+- [ ] a question, a plan and an error card show the status header and the card's full width, with no well, while Finished keeps its well (at Small and Large the panel's width changes between them); VoiceOver offers Open and Dismiss on a card (0.9.3)
+- [ ] Settings on a short or scaled display: every tab fits the screen, and Specimens scrolls as one page when it is short (0.9.3)
 - [ ] find, zoom and back/forward, in the main window and in a Browser window
 - [ ] with Settings in front, Reload, Zoom, Find and Back/Forward are dimmed
 - [ ] the window closes and reopens without losing state
@@ -2975,7 +2975,7 @@ another app, and once saved **Open** and **Reveal in Finder**; **Save All…**
 on a session's row; and **Open Conversation** (the arrow on the session's
 row) for where a file came from. A filter field narrows by file name,
 among the files read so far (it says so: sessions not read yet aren't
-searched). Since 0.9.2 the filter takes out the sessions that don't match
+searched). Since 0.9.3 the filter takes out the sessions that don't match
 before the project headings are built, so no empty "Recent sessions", "Older
 sessions" or project heading (and no Show Older Sessions footer) is left; with
 no match at all the window says "No matching files" ("Only loaded results are
@@ -4156,7 +4156,7 @@ shared files gained lines marked `// Phase 3 browse`.
 - **SQL**: since 0.5.1 Capsid reads through one read-only SQLite connection
   (the system library, not the `sqlite3` tool), so values are bound
   parameters (its `timeout` counts from the moment a read is queued, since
-  0.9.2; see Quick Open); ids and the cursor are still checked by shape first,
+  0.9.3; see Quick Open); ids and the cursor are still checked by shape first,
   and `q`'s
   `\`, `%` and `_` are escaped for `LIKE … ESCAPE '\'`. `archived_at` is probed
   with `pragma_table_info` (remembered five minutes), for the projects list and
