@@ -2994,8 +2994,11 @@ sentences (Saved files within a limit, below), so the main actor only ever
 waits for an answer, never for the disk. What the Results code still does on
 the main actor is handing a path to Finder or to the app that opens a file
 (`NSWorkspace`, after the file was looked for), and asking for the Downloads
-folder's path (a search-path lookup). `ResultsDiskCallsTests` lists every
-file-system call in Results/ with where it may be, so a new one fails a test.
+folder's path (a search-path lookup). `ResultsDiskCallsTests` lists the
+file-system calls it scans for in Results/ (the file manager, `opendir`,
+`Data(contentsOf:)`, `resourceValues`, a file URL made without
+`isDirectory:`, `NSWorkspace`…) with where each may be, so a new one fails a
+test.
 
 **Saved files within a limit** (`ShelfSavedFiles`, since this change). A
 blocking file-system call can't be cancelled, so each write runs on a queue of

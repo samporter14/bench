@@ -2978,6 +2978,38 @@ struct ShelfLookTimeoutTests {
         await until { rig.writer.isAtRest && rig.writeClock.pending == 0 }
     }
 
+    @Test func aFolderThatCannotBeListedAndStopsAnsweringToANameDownloadsNothingAndIsHeldOff() async {
+        let rig = ShelfRig()
+        rig.recent = [session(1)]
+        rig.reader.answers[list(1)] = .list((1...3).map { file($0) })
+        let gate = ThreadGate()
+        let saved = rig.saved
+        // The folder can't be listed, so each name is asked about; the second one never answers.
+        let shelf = rig.shelf(exists: { url in
+            if url.lastPathComponent == "made-up-2.md", !gate.hasEntered { gate.block() }
+            return saved.exists(url)
+        }, list: { _ in nil })
+        rig.reader.hold = false
+        shelf.open()
+        await shelf.settled()
+        let id = madeUpID(1)
+        let out = rig.scratch.appending(path: "Dropped", directoryHint: .isDirectory)
+        shelf.saveAll(id, into: out)
+        await until { gate.hasEntered && rig.writeClock.pending == 1 }
+        #expect(gate.ranOnMain == false)
+        #expect(downloads(rig).isEmpty, "the first name was answered, but no file is downloaded before all are named")
+        rig.writeClock.pass()
+        await until { isFinished(shelf, id) }
+        guard case .finished(let summary)? = shelf.batches[id] else { return }
+        #expect(summary.saved == 0 && summary.failed == 3 && summary.tooBig == 0)
+        #expect(shelf.fileProblems["v-1"] == Self.silent)
+        #expect(shelf.fileProblems["v-2"] == Self.stillSilent && shelf.fileProblems["v-3"] == Self.stillSilent)
+        #expect(downloads(rig).isEmpty && rig.saved.written.isEmpty && shelf.saved.isEmpty)
+        #expect(rig.writer.isHeldOff(out) && !shelf.isSavingAll)
+        gate.open()
+        await until { rig.writer.isAtRest && rig.writeClock.pending == 0 }
+    }
+
     @Test func aSavedCopyInAFolderThatDoesNotAnswerIsKeptAndSaysSo() async {
         let rig = ShelfRig()
         rig.reader.hold = false
@@ -3033,7 +3065,7 @@ private final class Switch: @unchecked Sendable {
 // MARK: Nothing in the Results code asks the disk on the main actor
 
 struct ResultsDiskCallsTests {
-    /// What each file of Results/ may say: calls made off the main actor, by
+    /// What each file of Results/ may say (of the calls this scans for): calls made off the main actor, by
     /// the actor that owns the temporary copies, the default closures the
     /// writer runs on its queue, and the real listing. Anything else is a call
     /// that may block the main actor on a disk that has stopped answering.
@@ -3043,7 +3075,8 @@ struct ResultsDiskCallsTests {
             .appendingPathComponent("Sources/Bench/Results")
         // Every way the Results code reaches the file system: the file manager, the C calls, and reads of a URL.
         let calls = ["FileManager.default", "fileManager.", "opendir(", "readdir(", "Data(contentsOf", "String(contentsOf",
-                     "resourceValues(", "FileHandle(", "NSWorkspace", "bookmarkData("]
+                     "resourceValues(", "checkResourceIsReachable(", "standardizedFileURL", "resolvingSymlinksInPath",
+                     "FileHandle(", "NSWorkspace", "bookmarkData("]
         var found: [String: Int] = [:]
         for name in try FileManager.default.contentsOfDirectory(atPath: base.path).sorted() where name.hasSuffix(".swift") {
             let text = try String(contentsOf: base.appending(path: name), encoding: .utf8)
@@ -3051,6 +3084,10 @@ struct ResultsDiskCallsTests {
                 let code = line.trimmingCharacters(in: .whitespaces)
                 guard !code.hasPrefix("//") else { continue }
                 for call in calls where code.contains(call) { found["\(name): \(call)", default: 0] += 1 }
+                // A file URL made without saying whether it is a folder looks at the disk to find out.
+                if code.contains("URL(fileURLWithPath:"), !code.contains("isDirectory:") {
+                    found["\(name): URL(fileURLWithPath:) without isDirectory", default: 0] += 1
+                }
             }
         }
         let allowed: [String: Int] = [
