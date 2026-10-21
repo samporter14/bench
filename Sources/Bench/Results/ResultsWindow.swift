@@ -571,9 +571,8 @@ struct ShelfThumbnailView: View {
 /// Save… and Save All…: the panels. A project's panel starts in the folder
 /// its files were last saved to (when it is still there and answers), else
 /// Downloads. Whether the folder is there is asked of the disk off the main
-/// actor, so the panel opens when the answer is in, within the writer's limit
-/// (a folder that doesn't answer is passed over, and the window stays alive
-/// meanwhile).
+/// actor, so the panel opens when the answer is in, within 3 s (a folder that
+/// doesn't answer is passed over, and the window stays alive meanwhile).
 @MainActor
 enum ResultSaving {
     /// The panels being prepared: a second press of the same button while the

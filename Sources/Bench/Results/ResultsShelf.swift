@@ -908,8 +908,9 @@ final class ResultsShelf: ObservableObject {
     /// The folder a save panel starts in for a project: the last one files of
     /// it were saved to, if that is still there and answers. It is asked of the
     /// disk off the main actor, so this waits (the panel opens when it has an
-    /// answer); a folder that doesn't answer within the limit counts as not
-    /// there, and its destination is held off like one a write timed out in.
+    /// answer); a folder that doesn't answer within 3 s
+    /// (`ShelfSavedFiles.rememberedFolderLimit`) counts as not there, and its
+    /// destination is held off like one a write timed out in.
     func startingFolder(for projectID: String) async -> URL? {
         await folders.folder(for: projectID)
     }

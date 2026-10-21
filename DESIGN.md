@@ -3039,8 +3039,9 @@ own thread, a turn (looks go one at a time per destination, in turns of their
 own, so a slow write to a folder never holds up a look at it, nor a look a
 write: a Save All started while a write is out still settles its names and
 starts its downloads, and its writes then queue behind that write), the
-injected clock and limit (a look has no bytes, so 15 s), and the destination's
-one hold-off when it doesn't answer. A look that
+injected clock and limit (a look has no bytes, so 15 s; the look at a
+remembered folder, which a person is waiting on before a panel opens, gets
+3 s), and the destination's one hold-off when it doesn't answer. A look that
 doesn't answer counts like a write that didn't: its caller gets "The folder
 didn't respond. If it comes back, the file may still appear there.", the
 destination refuses everything at once ("The folder still isn't responding.",
@@ -3059,9 +3060,12 @@ destination that doesn't answer counts as "not there" for the panel, which
 then starts in Downloads, but not for a saved copy: that is kept, because the
 file may still be there, and its row says "The folder didn't respond. …" or
 "The folder still isn't responding." (without "Couldn't save it there:", since
-nothing was being saved). The first panel for a dead remembered folder
-therefore waits one limit (15 s) before it opens; every later one is immediate
-while the destination is held off. **Save All's names** are settled before its
+nothing was being saved). The look at the remembered folder is the one a
+person waits on, so it has a limit of its own, 3 s (`rememberedFolderLimit`)
+instead of 15 s: the first panel for a dead remembered folder opens in
+Downloads after 3 s, as if nothing were remembered, and every later one opens
+at once while the destination is held off (30 s, or until the stuck call
+returns); the hold-off is the destination's, as for any other call. **Save All's names** are settled before its
 first download (Save All…, below); if the folder doesn't answer to the
 listing, nothing is downloaded, the first file's row says "Couldn't save it
 there: The folder didn't respond. If it comes back, the file may still appear
@@ -3179,7 +3183,7 @@ project id and never its name (`UserDefaults` `resultsFolders`,
 panel for that project's files. A folder that no longer exists is ignored
 and the panel starts in Downloads. Whether it is there is asked off the main
 actor (Looks within the same limit), so the panel opens when the answer is in;
-a folder that doesn't answer in time is ignored the same way, and its
+a folder that doesn't answer within 3 s is ignored the same way, and its
 destination is held off.
 
 **Saving** (Save… and Save All…) and the temporary copies are the only ways

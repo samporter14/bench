@@ -118,7 +118,8 @@ enum ShelfSaveError: Error, LocalizedError, Equatable {
 /// its downloads). A blocking file-system call can't be cancelled, so each runs
 /// on a queue of its own and is only waited for: when its time limit passes
 /// (15 s, and a second for each MiB of a write's bytes; a look has no bytes,
-/// so 15 s) the caller is told the folder didn't respond and the call is left
+/// so 15 s, but 3 s for the look at a remembered folder, which a save panel
+/// waits for) the caller is told the folder didn't respond and the call is left
 /// to finish, or never to. That destination (a mounted volume, else the
 /// folder) then refuses further calls, looks and writes alike, at once until
 /// the call comes back or `holdOff` passes, so a Save All into a dead folder
@@ -184,6 +185,7 @@ final class ShelfSavedFiles {
 
     private let limit: (Int) -> Duration
     private let holdOff: Duration
+    private let folderLimit: Duration
     private let wait: @MainActor (Duration) async -> Void
     private let run: (@escaping Work) -> Void
     private var lanes: [String: Lane] = [:]
@@ -191,14 +193,18 @@ final class ShelfSavedFiles {
     private var pending: Set<String> = []
 
     /// `limit` is how long a call may take for that many bytes (a look has
-    /// none); `wait` waits it out (and the hold-off), and `run` starts a
-    /// blocking call off the main actor: tests stand in for all three.
+    /// none); `folderLimit` is how long the look at a remembered folder may
+    /// take (`folderExists`: a person waits for it before a panel opens);
+    /// `wait` waits them out (and the hold-off), and `run` starts a blocking
+    /// call off the main actor: tests stand in for all three.
     init(limit: @escaping (Int) -> Duration = ShelfSavedFiles.limit(forBytes:),
          holdOff: Duration = .seconds(30),
+         folderLimit: Duration = ShelfSavedFiles.rememberedFolderLimit,
          wait: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) },
          run: @escaping (@escaping Work) -> Void = ShelfSavedFiles.runOnDisk) {
         self.limit = limit
         self.holdOff = holdOff
+        self.folderLimit = folderLimit
         self.wait = wait
         self.run = run
     }
@@ -211,6 +217,13 @@ final class ShelfSavedFiles {
     nonisolated static func limit(forBytes bytes: Int) -> Duration {
         .seconds(15 + (max(bytes, 0) + (1 << 20) - 1) >> 20)
     }
+
+    /// 3 s for the look at a remembered folder. A save panel waits for it
+    /// before it opens, so it is far shorter than the 15 s a write or another
+    /// look gets: a folder that has not answered in 3 s is passed over, the
+    /// panel opens in Downloads, and the destination is held off as for any
+    /// call that timed out.
+    nonisolated static let rememberedFolderLimit = Duration.seconds(3)
 
     private nonisolated static let diskQueue = DispatchQueue(label: "sam.bench.saved-files", qos: .utility,
                                                              attributes: .concurrent)
@@ -291,9 +304,12 @@ final class ShelfSavedFiles {
     }
 
     /// Whether the folder itself is there: by the folder's own destination
-    /// (where a Save All into it would go), not its parent's.
+    /// (where a Save All into it would go), not its parent's. This is the look
+    /// a save panel waits for (the remembered folder), so it has its own short
+    /// limit, `folderLimit` (3 s); the hold-off it sets is the destination's
+    /// as for any other call.
     func folderExists(_ folder: URL, using exists: @escaping @Sendable (URL) -> Bool) async throws -> Bool {
-        try await perform(.look, in: Self.destination(inFolder: folder), reserving: nil, allowed: limit(0)) {
+        try await perform(.look, in: Self.destination(inFolder: folder), reserving: nil, allowed: folderLimit) {
             exists(folder)
         }
     }

@@ -1810,10 +1810,11 @@ private final class WriterRig {
     let disk = SavedDisk()
     let writer: ShelfSavedFiles
 
-    init(limit: @escaping (Int) -> Duration = ShelfSavedFiles.limit(forBytes:)) {
+    init(limit: @escaping (Int) -> Duration = ShelfSavedFiles.limit(forBytes:),
+         folderLimit: Duration = ShelfSavedFiles.rememberedFolderLimit) {
         let clock = clock, calls = calls
-        writer = ShelfSavedFiles(limit: limit, holdOff: .seconds(30), wait: { await clock.wait($0) },
-                                 run: { calls.hold($0) })
+        writer = ShelfSavedFiles(limit: limit, holdOff: .seconds(30), folderLimit: folderLimit,
+                                 wait: { await clock.wait($0) }, run: { calls.hold($0) })
     }
 
     /// A save of four bytes to `path`, writing to the recorded disk; with
@@ -2324,6 +2325,54 @@ struct ShelfDestinationLookTests {
         #expect(defaulted.clock.asked == [.seconds(15)])
         defaulted.calls.finishOldest()
         _ = await finished(other)
+    }
+
+    @Test func theLookAtARememberedFolderHasItsOwnShortLimitAndOtherLooksKeepTheirs() async {
+        // The panel waits on this look, so it is 3 s, whatever a look or a write gets.
+        let rig = WriterRig(limit: { .seconds(100 + $0) })
+        let folderLook = rig.folderExists("/made-up/a")
+        await until { rig.calls.count == 1 && rig.clock.pending == 1 }
+        #expect(rig.clock.asked == [.seconds(3)])
+        rig.calls.finishOldest()
+        #expect((await finished(folderLook))?.answer == true)
+        let fileLook = rig.exists("/made-up/a/one.md")
+        await until { rig.calls.count == 1 }
+        rig.calls.finishOldest()
+        _ = await finished(fileLook)
+        let listing = rig.names(in: "/made-up/a") { _ in [] }
+        await until { rig.calls.count == 1 }
+        rig.calls.finishOldest()
+        _ = await finished(listing)
+        let write = rig.save("/made-up/a/two.md")
+        await until { rig.calls.count == 1 }
+        rig.calls.finishOldest()
+        _ = await finished(write)
+        #expect(rig.clock.asked == [.seconds(3), .seconds(100), .seconds(100), .seconds(104)],
+                "a file's look, a listing and a write keep the writer's limit (a write adds a second a MiB)")
+        // The limit is the writer's to inject.
+        let short = WriterRig(folderLimit: .seconds(1))
+        let look = short.folderExists("/made-up/a")
+        await until { short.calls.count == 1 && short.clock.pending == 1 }
+        #expect(short.clock.asked == [.seconds(1)])
+        short.calls.finishOldest()
+        _ = await finished(look)
+    }
+
+    @Test func aRememberedFolderThatDoesNotAnswerInItsShortLimitFailsAndHoldsTheDestinationOff() async {
+        let rig = WriterRig()
+        let stuck = rig.folderExists("/made-up/dropped")
+        await until { rig.calls.count == 1 && rig.clock.pending == 1 }
+        #expect(rig.clock.asked == [.seconds(3)])
+        rig.clock.pass()
+        #expect((await finished(stuck))?.reason == .folderDidNotRespond)
+        #expect(rig.writer.isHeldOff(folder("/made-up/dropped")), "the hold-off is the destination's, as for any call")
+        await until { rig.clock.pending == 1 }
+        #expect(rig.clock.asked == [.seconds(3), .seconds(30)], "and lasts the usual 30 s")
+        #expect((await finished(rig.folderExists("/made-up/dropped")))?.reason == .folderStillSilent)
+        #expect((await finished(rig.save("/made-up/dropped/one.md")))?.reason == .folderStillSilent)
+        #expect(rig.calls.count == 1)
+        rig.calls.finishOldest()
+        await until { rig.writer.isAtRest && rig.clock.pending == 0 }
     }
 
     @Test func aLookTheFolderNeverAnswersFailsAtItsLimitAndHoldsTheDestinationOffLikeAWrite() async {
@@ -2948,6 +2997,7 @@ struct ShelfLookTimeoutTests {
         let ask = Task { await shelf.startingFolder(for: "proj_a") }
         await until { gate.hasEntered && rig.writeClock.pending == 1 }
         #expect(gate.ranOnMain == false)
+        #expect(rig.writeClock.asked == [.seconds(3)], "the panel waits 3 s for it, not the 15 s of a write")
         // The panel is waiting on the answer, and the main actor is free.
         let ticks = Box(0)
         await Task { @MainActor in
@@ -2961,6 +3011,8 @@ struct ShelfLookTimeoutTests {
         let result = await finished(ask)
         #expect(result == .some(nil), "it didn't answer in time: the panel starts where it would")
         #expect(rig.writer.isHeldOff(dropped))
+        await until { rig.writeClock.pending == 1 }
+        #expect(rig.writeClock.asked == [.seconds(3), .seconds(30)], "held off for the usual 30 s")
         // And the next panel doesn't wait for another limit: the folder is passed over at once.
         #expect(await finished(Task { await shelf.startingFolder(for: "proj_a") }) == .some(nil))
         // A Save… into it is refused without a download, like any write into a folder that is held off.
