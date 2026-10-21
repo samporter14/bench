@@ -323,6 +323,34 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-20, Capsid 0.9.4: Results never touches the disk on the main thread
+
+From the Codex review's item 4, built by a Sonnet agent and reviewed here.
+
+- Every file-system call in Results (destination checks, Save All's names,
+  the remembered folder, the saved copy behind Open and Reveal) now goes
+  through the disk-work layer off the main actor, under the writes' time
+  limits and 30 s hold-off. Save All names its files from one listing of the
+  folder (capped at 10,000; by name past that), and the final "is the name
+  free" check happens inside the write's own call. A folder that doesn't
+  answer fails the batch at once with the existing wording, downloading
+  nothing.
+- The remembered folder before a Save panel has its own 3 s limit (the
+  agent's first cut used 15 s, which made a panel wait too long on a dead
+  drive); after it the panel opens in Downloads.
+- `ResultsDiskCallsTests` fails if a new file-system call appears in
+  Results. About 33 rule mutations, all caught but two redundant hold-off
+  guards (caught together).
+- The query-cancellation test that failed once under load now waits for the
+  read to be waiting before cancelling, with no real deadline in the way
+  (`SQLiteReadCancellation.waiterCount`, for tests); the broken wake-up fails
+  it 3 runs in 3.
+- ⏳ Not seen: a real slow or disconnected volume.
+
+Automated:
+
+- ✅ `swift test`: **1,956 tests in 253 suites, all passing in one run**.
+
 ## 2026-10-20, Capsid 0.9.3: thirteen specimens (541), phone follow-ups
 
 0.9.2 was built and pushed but never published as a release; its changes
