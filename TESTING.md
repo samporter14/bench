@@ -332,6 +332,8 @@ yet checked live: a real failed session, and a real notification close.
   published as v0.9.3), the way `install.sh` does it, since the release
   wasn't published yet: /Applications/Capsid.app is 0.9.3 (41), CDHash
   `494a7e3e…`, and running; phone access came back by itself.
+- ✅ Published as v0.9.3 (Latest); its download's CDHash matches the installed
+  app.
 
 **Thirteen specimens (541).** Kimwipe, Tally counter, Bench level,
 Glassblowing, Eyewash station, Chloroplast movement, Neighbor exchange, Lumen
