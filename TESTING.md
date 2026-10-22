@@ -357,7 +357,7 @@ mock-ups' look. A Codex review of M2.1 and M3 came in at the same time.
   ("could not create image from window", the display asleep or locked), so
   its title bar is unseen. Found on the way: the first result wasn't
   selected when the window opened on results already read.
-- ✅ **The whole suite:** 2,315 tests in 302 suites pass, everything merged.
+- ✅ **The whole suite:** 2,316 tests in 303 suites pass, everything merged.
 - ⏳ **Live:** the restyled window on a real session, figures from a real
   run, Keep… from a figure.
 
