@@ -2459,13 +2459,17 @@ and "up to date" after a check that found none, without asking.
 - *The toolbar's Update button* (`App/UpdateToolbarButton.swift`, since
   0.9.7): a clay `arrow.down.circle.fill` and "Update" in a glass capsule of
   its own, first among the trailing items. It is there only while an update
-  is **offered** (`UpdateChecker.offered`: `state` is `.available` and the
-  version wasn't skipped) and never in a demo, which shares the toolbar and
+  is **offered** (`UpdateChecker.offered`: the newest known update, `newest`,
+  and the version wasn't skipped) and never in a demo, which shares the toolbar and
   checks nothing. The condition wraps the `ToolbarItem` itself, in
   `BenchToolbar`: an item holding nothing still gets a capsule. Its help is
   "Capsid 0.9.7 is available". It is a `ReadoutButtonStyle` button, and the
   arrow carries its colour baked in, as the Specimens button's flask does,
-  because the toolbar draws template symbols in its own ink.
+  because the toolbar draws template symbols in its own ink. `newest` is not
+  `state`: it is set by a check that finds an update, cleared by one that
+  finds none, and left alone while a check runs or when one fails, so the
+  button doesn't blink out during the daily ask or vanish for a day offline
+  (a review fix: the first cut keyed it on `state`). Install uses it too.
 - *Its popover* (`UpdateOfferView`, 400 wide with 20 points of padding all
   round, like the usage popover's): the app icon at 40 points, "Capsid 0.9.7
   is available" and "You have 0.9.6.", then the install sentence (or the

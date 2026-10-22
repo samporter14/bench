@@ -301,6 +301,11 @@ final class UpdateChecker: ObservableObject {
     /// The newest version the user chose to skip (`updateSkippedVersion`), as
     /// text. Settings and the app menu still show it: those are explicit asks.
     @Published private(set) var skippedVersion: String?
+    /// The newest installable version known, from the last check that gave an
+    /// answer (or the one remembered from last time). Unlike `state` it stays
+    /// through a check under way or one that failed, so the toolbar button
+    /// doesn't vanish while GitHub is asked, nor for a day when it can't be.
+    @Published private(set) var newest: AvailableUpdate?
 
     let currentVersion: String
 
@@ -350,6 +355,7 @@ final class UpdateChecker: ObservableObject {
         skippedVersion = defaults.string(forKey: Key.skippedVersion)
         state = UpdateRules.restoredState(
             newest: defaults.string(forKey: Key.newestVersion), current: currentVersion, hasChecked: stored != nil)
+        if case .available(let update) = state { newest = update }
     }
 
     isolated deinit {
@@ -362,11 +368,10 @@ final class UpdateChecker: ObservableObject {
     // MARK: Offering
 
     /// The update to put in front of the user unasked: the toolbar button,
-    /// the Dock item. The one `state` holds, unless they skipped it.
+    /// the Dock item. The newest known, unless they skipped it.
     var offered: AvailableUpdate? {
-        guard case .available(let update) = state,
-              UpdateRules.shouldOffer(update.version, skipped: skippedVersion) else { return nil }
-        return update
+        guard let newest, UpdateRules.shouldOffer(newest.version, skipped: skippedVersion) else { return nil }
+        return newest
     }
 
     /// Skip This Version: nothing offers it again, but a newer one is offered.
@@ -471,11 +476,13 @@ final class UpdateChecker: ObservableObject {
             defaults.set(askedAt.timeIntervalSince1970, forKey: Key.lastChecked)
             guard let update = UpdateRules.offer(release, current: current) else {
                 defaults.removeObject(forKey: Key.newestVersion)
+                newest = nil
                 log.info("Update check: up to date")
                 state = .upToDate(current.description)
                 return state
             }
             defaults.set(update.version.description, forKey: Key.newestVersion)
+            newest = update
             // Once per version, whoever finds it first. Whoever asked sees the
             // answer, so only a check on the schedule posts the card, and not
             // for a version that was skipped.
@@ -502,9 +509,10 @@ final class UpdateChecker: ObservableObject {
     // MARK: Installing
 
     /// Runs the README's install line, which quits this Bench, replaces it
-    /// and opens the new one. Callers have said so first.
+    /// and opens the new one. Callers have said so first. The newest known
+    /// update, so the toolbar's Install works while a check is under way.
     func install() {
-        guard case .available(let update) = state, !installing,
+        guard let update = newest, !installing,
               UpdateRules.canInstall(from: Bundle.main.bundleURL) else { return }
         installing = true
         log.notice("Installing an update")

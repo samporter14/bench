@@ -349,6 +349,10 @@ default, tell people subtly, and make installing one click away. Built on
   the install sentence, and Skip This Version, Release Notes, Install and
   Reopen. The Dock menu starts with "Install Capsid X…" under the same
   conditions.
+- Review fix: the button first followed `state`, so it would have blinked out
+  during each daily check and vanished for a day after a failed one
+  (offline, rate-limited). It now follows `newest`, which only a check that
+  answers changes; a test walks offline, a 403 and then up to date.
 - Docs follow: README's privacy sentence and Updates paragraph, DESIGN.md's
   Update check (and the Settings defaults and welcome notes), version 0.9.7
   (45).
@@ -361,8 +365,8 @@ default, tell people subtly, and make installing one click away. Built on
   that is never put in a window (`CAPSID_SNAPSHOT_DIR`; without it the test
   does nothing).
 - ✅ Builds with no warnings.
-- ⏳ Not seen live (they need a newer release on GitHub, and 0.9.7 is the
-  first one that has something to offer to a 0.9.6): the toolbar capsule, and
+- ⏳ Not seen live (they need a release newer than 0.9.7 on GitHub: a 0.9.6
+  is offered 0.9.7 the old way, with no toolbar button): the toolbar capsule, and
   that no empty capsule is left once the update is skipped or installed; the
   popover in a real window, with Capsid's own icon; the card's Install…
   button; the Dock item; the alert's "Skip this version" checkbox. The
@@ -370,7 +374,7 @@ default, tell people subtly, and make installing one click away. Built on
 
 Automated:
 
-- ✅ `swift test`: 1,990 tests in 256 suites, all passing (on the branch; 1,985 before, five new).
+- ✅ `swift test`: 1,991 tests in 256 suites, all passing (on the branch; 1,985 before, six new).
 
 ## 2026-10-21, Capsid 0.9.6: the window reconnects on its own
 

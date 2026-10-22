@@ -613,6 +613,33 @@ struct UpdateCheckerTests {
         #expect(relaunched.offered == nil)
     }
 
+    @Test func theOfferStaysThroughAFailedCheckAndGoesWhenUpToDate() async throws {
+        let scratch = Scratch()
+        defer { scratch.clean() }
+        let network = FakeNetwork { call in
+            switch call {
+            case 1: return Release.reply(Release.json())
+            case 2: throw URLError(.notConnectedToInternet)
+            case 3: return Release.reply(#"{"message": "API rate limit exceeded"}"#, status: 403)
+            default: return Release.reply(Release.json(tag: "v0.3.5", url: nil))
+            }
+        }
+        let updates = checker(scratch, network: network, enabled: false)
+        await updates.checkNow()
+        let update = try #require(updates.offered)
+        // Offline, then refused: Settings says why, the toolbar keeps its button.
+        await updates.checkNow()
+        #expect(updates.state == .failed(.unreachable))
+        #expect(updates.offered == update)
+        await updates.checkNow()
+        #expect(updates.state == .failed(.http(403)))
+        #expect(updates.offered == update)
+        // GitHub says this copy is the newest after all: nothing on offer.
+        await updates.checkNow()
+        #expect(updates.offered == nil)
+        #expect(updates.newest == nil)
+    }
+
     @Test func aReleaseNewerThanTheSkippedOneIsOfferedAgainWithItsOwnCard() async throws {
         let scratch = Scratch()
         defer { scratch.clean() }
