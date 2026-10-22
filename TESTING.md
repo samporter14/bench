@@ -334,6 +334,12 @@ context reads timed out (21:44, 21:47), the main frame timed out (21:50,
 in 0.1.69: every page hook is in its web bundle, every route and field in the
 binary, every column in its migrations, and no migration ran.
 
+- ✅ Released as v0.9.6 (tag on 471fa93) and installed from the release zip:
+  0.9.6 (44), CDHash `2882900e…`, the same as the download and the local
+  build. After the relaunch it pressed Claude Science's Sign in once (the
+  designed path after a restart) and read usage; phone server listening.
+  Tailscale was stopped on the Mac at the time, so the phone wasn't tried.
+
 - `StartRetry` retries a failure that may pass (DESIGN.md, Daemon and
   sign-in, Reconnecting): waits 5, 10, 20, 40 s, a minute ×15, then five
   minutes; asks `status` quietly and signs in only to a daemon that answers
