@@ -410,6 +410,9 @@ final class RemoteBrowser {
         /// The history still has `total` rows: the page Bench holds stands.
         case same(total: Int)
         case unreadable
+        /// A GET's body was over the 2 MiB cap: none of it was read. The
+        /// phone's routes take it as they take `.unreadable`.
+        case tooBig
     }
 
     /// What one turn's read gave.

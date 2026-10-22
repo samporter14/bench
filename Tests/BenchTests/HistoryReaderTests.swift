@@ -223,7 +223,7 @@ struct HistoryReaderPageTests {
         #expect(requests.map(\.path) == [path("from=-12&limit=12"), path("from=50&limit=38")])
         #expect(requests.allSatisfy { $0.cache == "no-store" && $0.method == "GET" })
         #expect(requests.allSatisfy { HistoryReaderScript.isAllowedPath($0.path) })
-        guard case .read(let page)? = outcome else { Issue.record("not read"); return }
+        guard case .read(let page, _)? = outcome else { Issue.record("not read"); return }
         #expect(page.total == 100)
         #expect(page.from == 50)
         #expect(page.items.map(\.index) == Array(50..<100))
@@ -243,7 +243,7 @@ struct HistoryReaderPageTests {
         // Longer than Bench's: read whole, as before.
         let grown = run(known: "96", answers: answers)
         #expect(grown.requests.map(\.path) == [path("from=-12&limit=12"), path("from=50&limit=38")])
-        guard case .read(let page)? = grown.outcome else { Issue.record("not read"); return }
+        guard case .read(let page, _)? = grown.outcome else { Issue.record("not read"); return }
         #expect(page.total == 100)
         // Anything but a whole number is no length.
         for known in ["\"100\"", "100.5", "true"] {
@@ -262,7 +262,7 @@ struct HistoryReaderPageTests {
             path("from=-12&limit=12"): [reply(from: -12, total: 20, count: 12, first: 8)],
             path("from=0&limit=8"): [reply(from: 0, total: 20, count: 8)],
         ])
-        guard case .read(let page)? = outcome else { Issue.record("not read"); return }
+        guard case .read(let page, _)? = outcome else { Issue.record("not read"); return }
         #expect(page.from == 0)
         #expect(page.items.count == 20)
     }
@@ -270,14 +270,14 @@ struct HistoryReaderPageTests {
     @Test func aShortSessionIsOneRequest() {
         let (outcome, _, requests) = run(answers: [path("from=-12&limit=12"): [reply(from: 0, total: 5, count: 5)]])
         #expect(requests.count == 1)
-        guard case .read(let page)? = outcome else { Issue.record("not read"); return }
+        guard case .read(let page, _)? = outcome else { Issue.record("not read"); return }
         #expect(page.items.count == 5)
     }
 
     @Test func anEarlierPageIsTheFiftyRowsBeforeIt() {
         let (outcome, _, requests) = run(before: "120", answers: [path("from=70&limit=50"): [reply(from: 70, total: 300, count: 50)]])
         #expect(requests.map(\.path) == [path("from=70&limit=50")])
-        guard case .read(let page)? = outcome else { Issue.record("not read"); return }
+        guard case .read(let page, _)? = outcome else { Issue.record("not read"); return }
         #expect(page.from == 70)
         #expect(page.total == 300)
         let near = run(before: "30", answers: [path("from=0&limit=30"): [reply(from: 0, total: 300, count: 30)]])
