@@ -194,6 +194,9 @@ struct KeptReadmeRoundTripTests {
         bare.figure = KeptFile(path: "z_prime.png", role: .figure, bytes: 0)
         var otherVersion = record()
         otherVersion.answerShowsVersion = 4
+        var unmatched = record()
+        unmatched.figure.expectedSha256 = "3f2a9c41d2e0"
+        unmatched.files[0].expectedSha256 = "ffff"
         let said = KeptText(legend: "Plate 3 \"re-run\" with the \\ new lot.\n\nSecond paragraph · Z′ > 0.5.",
                             claudeSaid: "He wrote \"Z′ > 0.5\" and a path C:\\plates\n> a quote inside the quote\n\n  indented\n日本語 🧪",
                             attribution: KeptReadme.attribution(answerAt: answeredAt, timeZone: zone, locale: english),
@@ -206,6 +209,8 @@ struct KeptReadmeRoundTripTests {
             Case(label: "quotes, backslashes, a middle dot and every script", record: odd, text: said),
             Case(label: "no answer found", record: record(), text: KeptText(legend: "", claudeSaid: "", attribution: "", origin: "")),
             Case(label: "an answer that shows another version", record: otherVersion, text: text()),
+            Case(label: "files that don't match their checksums", record: unmatched, text: text()),
+            Case(label: "a file that doesn't match, nothing missing", record: { var r = unmatched; r.missing = []; return r }(), text: text()),
         ]
     }
 
@@ -357,6 +362,30 @@ struct KeptReadmeRefusalTests {
         let moved = markdown.replacingOccurrences(of: line, with: "")
             .replacingOccurrences(of: "claude_science: ", with: line + "claude_science: ")
         #expect(KeptReadme.parse(moved) == nil)
+    }
+
+    @Test func aChecksumThatDidntMatchIsBothChecksumsAndOneSentence() throws {
+        var unmatched = record()
+        unmatched.figure.expectedSha256 = "3f2a9c41d2e0"
+        let markdown = render(unmatched, text())
+        #expect(markdown.contains("\nfigure: { file: \"z_prime.png\", artifact: \"art_1\", version: \"ver_3\", index: 3, of: 4, sha256: \"aaaa\", expected_sha256: \"3f2a9c41d2e0\", bytes: 86016 }\n"))
+        #expect(markdown.contains("## Not copied\n\n- The raw input, plate_reader.xlsx: too big to keep here (over 8 MB).\n\n## Checksums\n\n"
+            + "- z_prime.png doesn’t match Claude Science’s checksum for this version (expected 3f2a9c41…, got aaaa). "
+            + "It may be a reference file that changed since; check it before you use it.\n\n---\n"))
+        #expect(try #require(KeptReadme.parse(markdown)).record.figure.expectedSha256 == "3f2a9c41d2e0")
+        // Without one, nothing is written for it.
+        #expect(!good.contains("expected_sha256") && !good.contains(KeptReadme.checksumHeading))
+        // Refused: after `bytes`, before `sha256`, not quoted; the section before "Not copied".
+        let field = "sha256: \"aaaa\", expected_sha256: \"3f2a9c41d2e0\", bytes: 86016"
+        for bad in ["sha256: \"aaaa\", bytes: 86016, expected_sha256: \"3f2a9c41d2e0\"",
+                    "expected_sha256: \"3f2a9c41d2e0\", sha256: \"aaaa\", bytes: 86016",
+                    "sha256: \"aaaa\", expected_sha256: 3f2a9c41d2e0, bytes: 86016"] {
+            #expect(KeptReadme.parse(markdown.replacingOccurrences(of: field, with: bad)) == nil, "\(bad)")
+        }
+        let swapped = markdown.replacingOccurrences(of: KeptReadme.missingHeading, with: "## placeholder")
+            .replacingOccurrences(of: KeptReadme.checksumHeading, with: KeptReadme.missingHeading)
+            .replacingOccurrences(of: "## placeholder", with: KeptReadme.checksumHeading)
+        #expect(KeptReadme.parse(swapped) == nil)
     }
 
     @Test func anyOffsetIsRead() throws {

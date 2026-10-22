@@ -3,10 +3,10 @@
 // folder: a failed first read and a failed figure download recovered by Try
 // Again; the version that went, swapped for another; an answer pinned by the
 // caller, and an answer kept with a version it doesn't show; bytes that don't
-// match the daemon's checksum; a README that couldn't be rewritten after a
-// Try Again, and a Cancel in the middle of one. The reads are fakes (nothing
-// here talks to Claude Science); the disk is the real `KeptDisk` on a folder
-// made for each test and removed after it.
+// match the daemon's checksum, kept and named; a README that couldn't be
+// rewritten after a Try Again, and a Cancel in the middle of one. The reads
+// are fakes (nothing here talks to Claude Science); the disk is the real
+// `KeptDisk` on a folder made for each test and removed after it.
 import Foundation
 import Testing
 @testable import Bench
@@ -365,35 +365,45 @@ struct KeepPinnedAnswerTests {
     }
 }
 
-// MARK: C. Bytes that aren't the version's
+// MARK: C. Bytes that don't match the checksum
 
 @MainActor
 struct KeepChecksumTests {
-    @Test func aFigureWhoseBytesArentTheVersionsKeepsNothing() async throws {
+    private static let other = Data("not these bytes".utf8)
+
+    @Test func aFigureWhoseBytesDontMatchIsKeptAndTheSheetSaysSo() async throws {
         let rig = try Rig()
         defer { rig.tearDown() }
         rig.science.corrupt[Made.v4] = 1
         let model = rig.model()
         model.open()
         try await until("the sheet is filled") { model.isReady }
-        #expect(model.plan?.figure.sha == KeptDisk.sha256(of: Made.figure(Made.v4)))
+        let expected = KeptDisk.sha256(of: Made.figure(Made.v4))
+        #expect(model.plan?.figure.sha == expected)
         model.keep()
-        try await until("the keep fails") { model.failure != nil }
-        #expect(model.failure?.sentence == "The download didn\u{2019}t match Claude Science\u{2019}s checksum for this version, so nothing was kept.")
-        #expect(model.failure?.retry == .keep)
-        // Not a byte written, not even the hidden folder.
-        #expect(names(rig.collection).isEmpty)
-
-        // Try Again downloads it again; the version's own bytes are kept.
-        model.tryAgain()
         try await until("it is kept") { model.keptOutcome != nil }
         let outcome = try #require(model.keptOutcome)
+        // Kept, every file, but not silently: the sheet stays open with the sentence until Done.
+        #expect(outcome.isComplete && outcome.kept == 3)
+        #expect(!outcome.closesSheet)
+        #expect(model.shownOutcome == outcome)
+        #expect(outcome.mismatched.map(\.path) == ["z_prime.png"])
+        #expect(outcome.mismatched.first?.expectedSha256 == expected)
+        #expect(outcome.mismatched.first?.sha256 == KeptDisk.sha256(of: Self.other))
+        #expect(model.outcomeSentence == "Kept 3 files. z_prime.png doesn\u{2019}t match Claude Science\u{2019}s checksum; see README.md before you use it.")
+        // The bytes that came are the ones written.
         let figure = try Data(contentsOf: outcome.folder.appending(path: "z_prime.png", directoryHint: .notDirectory))
-        #expect(figure == Made.figure(Made.v4))
-        #expect(names(rig.collection) == ["z_prime"])
+        #expect(figure == Self.other)
+        // The README has both checksums and says it in a sentence.
+        let back = try await rig.disk.readme(at: outcome.folder)
+        #expect(back.record.figure.expectedSha256 == expected)
+        #expect(back.record.figure.sha256 == KeptDisk.sha256(of: Self.other))
+        #expect(back.record.missing.isEmpty)
+        #expect(back.markdown.contains("sha256: \"\(KeptDisk.sha256(of: Self.other))\", expected_sha256: \"\(expected)\", bytes: \(Self.other.count) }"))
+        #expect(back.markdown.contains("## Checksums\n\n- z_prime.png doesn\u{2019}t match Claude Science\u{2019}s checksum for this version (expected \(expected.prefix(8))\u{2026}, got \(KeptDisk.sha256(of: Self.other).prefix(8))\u{2026}). It may be a reference file that changed since; check it before you use it.\n"))
     }
 
-    @Test func aDataFileWhoseBytesArentTheVersionsIsListedAsMissing() async throws {
+    @Test func aDataFileWhoseBytesDontMatchIsKeptWithTheWarning() async throws {
         let rig = try Rig()
         defer { rig.tearDown() }
         rig.science.corrupt[Made.in1] = 1
@@ -401,17 +411,65 @@ struct KeepChecksumTests {
         model.open()
         try await until("the sheet is filled") { model.isReady }
         model.keep()
-        try await until("the keep ends") { model.partialOutcome != nil }
-        let outcome = try #require(model.partialOutcome)
-        let missing = KeptMissing(role: .data, name: "z_prime_by_plate.csv", reason: "didn\u{2019}t match Claude Science\u{2019}s checksum")
-        #expect(outcome.missing == [missing])
-        #expect(outcome.kept == 2 && outcome.total == 3)
-        #expect(!exists(outcome.folder, "data/z_prime_by_plate.csv"))
-        #expect(model.fate(of: .data)?.text == "Not copied: didn\u{2019}t match Claude Science\u{2019}s checksum.")
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        // Not missing: kept, and named.
+        #expect(outcome.missing.isEmpty && outcome.kept == 3 && outcome.total == 3)
+        #expect(!outcome.closesSheet)
+        #expect(outcome.mismatched.map(\.path) == ["data/z_prime_by_plate.csv"])
+        #expect(exists(outcome.folder, "data/z_prime_by_plate.csv"))
+        #expect(model.fate(of: .data)?.text == "Kept, but it doesn\u{2019}t match Claude Science\u{2019}s checksum.")
+        #expect(model.fate(of: .data)?.isProblem == true)
+        #expect(model.fate(of: .code)?.text == "Kept")
+        #expect(model.outcomeSentence == "Kept 3 files. data/z_prime_by_plate.csv doesn\u{2019}t match Claude Science\u{2019}s checksum; see README.md before you use it.")
         let back = try await rig.disk.readme(at: outcome.folder)
-        #expect(back.record.missing == [missing])
-        #expect(back.record.files.map(\.path) == ["code/z_prime.py"])
-        #expect(back.markdown.contains("- The data file, z_prime_by_plate.csv: didn\u{2019}t match Claude Science\u{2019}s checksum."))
+        #expect(back.record.missing.isEmpty)
+        let data = try #require(back.record.files.first { $0.path == "data/z_prime_by_plate.csv" })
+        #expect(data.expectedSha256 == KeptDisk.sha256(of: Made.table(Made.in1)))
+        #expect(data.sha256 == KeptDisk.sha256(of: Self.other))
+        #expect(back.record.figure.expectedSha256 == nil)
+        #expect(back.markdown.contains("- data/z_prime_by_plate.csv doesn\u{2019}t match Claude Science\u{2019}s checksum for this version"))
+    }
+
+    @Test func aFileThatLandsInTryAgainWithoutItsChecksumIsNamedToo() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        // The table times out once, then comes with other bytes.
+        rig.science.downloadFailures[Made.in1] = 1
+        rig.science.corrupt[Made.in1] = 1
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep ends") { model.partialOutcome != nil }
+        #expect(model.partialOutcome?.mismatched.isEmpty == true)
+        model.retry()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.missing.isEmpty)
+        #expect(!outcome.closesSheet)
+        #expect(outcome.mismatched.map(\.path) == ["data/z_prime_by_plate.csv"])
+        let back = try await rig.disk.readme(at: outcome.folder)
+        #expect(back.record.files.first { $0.path == "data/z_prime_by_plate.csv" }?.expectedSha256
+            == KeptDisk.sha256(of: Made.table(Made.in1)))
+        #expect(back.markdown.contains("\n## Checksums\n"))
+    }
+
+    @Test func bytesThatMatchCloseTheSheetAsBefore() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.closesSheet && outcome.mismatched.isEmpty)
+        #expect(model.shownOutcome == nil)
+        let back = try await rig.disk.readme(at: outcome.folder)
+        #expect(KeptReadme.mismatched(back.record).isEmpty)
+        #expect(!back.markdown.contains("## Checksums"))
+        #expect(!back.markdown.contains("expected_sha256"))
     }
 }
 

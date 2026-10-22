@@ -353,10 +353,25 @@ struct KeepSentenceTests {
             == "Kept 2 of 3 files. The data it was drawn from wasn\u{2019}t copied. The files landed, but README.md couldn\u{2019}t be updated to list them. The folder didn\u{2019}t respond.")
     }
 
-    @Test func theChecksumSentencesArePlain() {
-        #expect(KeepRules.figureChecksumSentence
-            == "The download didn\u{2019}t match Claude Science\u{2019}s checksum for this version, so nothing was kept.")
-        #expect(KeepRules.checksumReason == "didn\u{2019}t match Claude Science\u{2019}s checksum")
+    @Test func filesThatDontMatchTheirChecksumsAreNamedAndKeepTheSheetOpen() {
+        let folder = URL(fileURLWithPath: "/tmp/x", isDirectory: true)
+        func file(_ path: String) -> KeptFile {
+            KeptFile(path: path, role: path.hasPrefix("data/") ? .data : .figure, sha256: "9c41", bytes: 1, expectedSha256: "3f2a")
+        }
+        let one = KeepOutcome(folder: folder, collection: "c", folderName: "n", kept: 3, total: 3, missing: [],
+                              mismatched: [file("z_prime.png")])
+        #expect(one.isComplete && !one.closesSheet)
+        #expect(KeepRules.outcomeSentence(one)
+            == "Kept 3 files. z_prime.png doesn\u{2019}t match Claude Science\u{2019}s checksum; see README.md before you use it.")
+        let two = KeepOutcome(folder: folder, collection: "c", folderName: "n", kept: 2, total: 3,
+                              missing: [KeptMissing(role: .code, name: "z_prime.py", reason: "x")],
+                              mismatched: [file("z_prime.png"), file("data/a.csv")])
+        #expect(KeepRules.outcomeSentence(two)
+            == "Kept 2 of 3 files. The code that drew it wasn\u{2019}t copied. z_prime.png and data/a.csv don\u{2019}t match Claude Science\u{2019}s checksums; see README.md before you use them.")
+        #expect(KeepRules.mismatchClause(["a", "b", "c"])?.hasPrefix("a, b and c don\u{2019}t match") == true)
+        #expect(KeepRules.mismatchClause([]) == nil)
+        let clean = KeepOutcome(folder: folder, collection: "c", folderName: "n", kept: 3, total: 3, missing: [])
+        #expect(clean.closesSheet)
     }
 
     @Test func theExcerptIsOneLineCutAtAWord() {
@@ -409,6 +424,17 @@ struct KeepRecordTests {
                                                   copied: [], missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0")
         #expect(plain.answerShowsVersion == nil)
         #expect(!plainText.attribution.contains("not this one"))
+    }
+
+    @Test func aFigureThatDoesntMatchItsChecksumKeepsBothInTheRecord() throws {
+        let plan = try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: Made.choices))
+        let copied = [KeptFile(path: "z_prime.png", role: .figure, artifact: Made.artifact, version: Made.v3, sha256: "9c41", bytes: 10,
+                               expectedSha256: String(repeating: "ab", count: 32))]
+        let (record, _) = KeepRules.record(subject: Made.subject, sources: Made.full, plan: plan, folderName: "n", keptAt: Made.at(100),
+                                           copied: copied, missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0")
+        #expect(record.figure.sha256 == "9c41")
+        #expect(record.figure.expectedSha256 == String(repeating: "ab", count: 32))
+        #expect(record.figure.index == 3)
     }
 
     @Test func theFallbackAnswerIsLabelledAsSuch() throws {

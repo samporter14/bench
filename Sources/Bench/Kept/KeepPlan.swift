@@ -163,7 +163,13 @@ struct KeepOutcome: Equatable, Sendable {
     /// Files landed but README.md couldn't be rewritten to list them: why, in
     /// a sentence. Try Again rewrites it.
     var recordFailed: String? = nil
+    /// Files kept whose bytes don't match Claude Science's checksum for their
+    /// version (each with both checksums): kept, but the sheet stays open to
+    /// say so, and the README says it too.
+    var mismatched: [KeptFile] = []
     var isComplete: Bool { missing.isEmpty && recordFailed == nil }
+    /// Kept, with nothing to say about it: the sheet closes by itself.
+    var closesSheet: Bool { isComplete && mismatched.isEmpty }
 }
 
 enum KeepRules {
@@ -501,6 +507,9 @@ enum KeepRules {
                 sentence = "\(lead) \(outcome.missing.count) weren\u{2019}t copied."
             }
         }
+        if let clause = mismatchClause(outcome.mismatched.map(\.path)) {
+            sentence += " \(clause)"
+        }
         if let reason = outcome.recordFailed {
             sentence += " \(recordFailedSentence) \(reason)"
             if !sentence.hasSuffix(".") { sentence += "." }
@@ -508,14 +517,20 @@ enum KeepRules {
         return sentence
     }
 
+    /// "z_prime.png doesn't match Claude Science's checksum; see README.md
+    /// before you use it." Nil when every file matched.
+    static func mismatchClause(_ paths: [String]) -> String? {
+        guard let last = paths.last else { return nil }
+        if paths.count == 1 {
+            return "\(last) doesn\u{2019}t match Claude Science\u{2019}s checksum; see README.md before you use it."
+        }
+        let names = paths.dropLast().joined(separator: ", ") + " and " + last
+        return "\(names) don\u{2019}t match Claude Science\u{2019}s checksums; see README.md before you use them."
+    }
+
     /// After files landed in a kept folder and its README couldn't be rewritten.
     static let recordFailedSentence = "The files landed, but README.md couldn\u{2019}t be updated to list them."
 
-    /// Why a file other than the figure wasn't kept when its bytes weren't the version's.
-    static let checksumReason = "didn\u{2019}t match Claude Science\u{2019}s checksum"
-
-    /// The figure's bytes weren't the version's: nothing is kept.
-    static let figureChecksumSentence = "The download didn\u{2019}t match Claude Science\u{2019}s checksum for this version, so nothing was kept."
 
     static func roleTitle(_ role: KeptRole) -> String {
         switch role {
@@ -549,7 +564,8 @@ enum KeepRules {
             projectID: subject.session.projectID, projectName: subject.session.projectName,
             sessionID: subject.session.id, sessionTitle: subject.session.displayTitle,
             figure: KeptFile(path: figure.path, role: .figure, artifact: figure.artifact, version: figure.version,
-                             index: index, of: versions.isEmpty ? nil : versions.count, sha256: figure.sha256, bytes: figure.bytes),
+                             index: index, of: versions.isEmpty ? nil : versions.count, sha256: figure.sha256, bytes: figure.bytes,
+                             expectedSha256: figure.expectedSha256),
             files: copied.filter { $0.role != .figure }, missing: missing,
             claudeScience: scienceVersion ?? "unknown", capsid: capsidVersion,
             answerShowsVersion: plan.answerShows.flatMap { shown in versions.first { $0.v == shown }?.n })

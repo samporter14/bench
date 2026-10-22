@@ -2,10 +2,10 @@
 // the reads that fill it (the file's facts, the artifact's versions, the
 // answer that shows one, the chosen version's provenance), the choices, and
 // the keep itself: each file fetched through the shelf's queue, checked
-// against the daemon's checksum (bytes that don't match are never written),
-// written into a hidden folder beside its destination, the README last, then
-// the folder renamed into place. What couldn't be copied is listed, never
-// guessed, and Try Again copies only that and then rewrites the README: it
+// against the daemon's checksum (bytes that don't match are kept, never
+// silently: the README and the sheet say so), written into a hidden folder
+// beside its destination, the README last, then the folder renamed into
+// place. What couldn't be copied is listed, never guessed, and Try Again copies only that and then rewrites the README: it
 // isn't done until the README agrees with the folder. A failure before
 // anything landed says what Try Again will do (read again, or keep again).
 // Every step that touches the page or the disk is a dependency, so the demo
@@ -483,11 +483,12 @@ final class KeepModel: ObservableObject, Identifiable {
         for (index, item) in plan.all.enumerated() {
             if Task.isCancelled { await d.disk.abandon(destination); phase = .ready; return }
             switch await fetch(item) {
-            case .bytes(let data):
+            case .bytes(let data, let expected):
                 do {
                     try await d.disk.write(data, to: item.relativePath, in: destination)
                     copied.append(KeptFile(path: item.relativePath, role: item.role, artifact: item.artifact, version: item.version,
-                                           index: nil, of: nil, sha256: d.disk.sha256(of: data), bytes: data.count))
+                                           index: nil, of: nil, sha256: d.disk.sha256(of: data), bytes: data.count,
+                                           expectedSha256: expected))
                 } catch {
                     missing.append(KeptMissing(role: item.role, name: item.name, reason: KeptDiskError.sentence(error)))
                 }
@@ -503,13 +504,6 @@ final class KeepModel: ObservableObject, Identifiable {
                 missing.append(KeptMissing(role: item.role, name: item.name, reason: ShelfFailure.missing.sentence))
             case .tooBig:
                 missing.append(KeptMissing(role: item.role, name: item.name, reason: "too big to keep here (over 8 MB)"))
-            case .mismatched where item.role == .figure:
-                // Not this version's bytes: nothing is kept, and none of them are written.
-                await d.disk.abandon(destination)
-                phase = .failed(KeepRules.figureChecksumSentence, retry: .keep)
-                return
-            case .mismatched:
-                missing.append(KeptMissing(role: item.role, name: item.name, reason: KeepRules.checksumReason))
             case .failed(let sentence) where item.role == .figure:
                 await d.disk.abandon(destination)
                 phase = .failed(sentence, retry: .keep)
@@ -538,7 +532,8 @@ final class KeepModel: ObservableObject, Identifiable {
         self.folder = folder
         KeptSettings.remember(collection: destination.collection, for: subject.session.projectID, defaults: d.defaults)
         let outcome = KeepOutcome(folder: folder, collection: destination.collection, folderName: folder.lastPathComponent,
-                                  kept: copied.count, total: plan.all.count, missing: missing)
+                                  kept: copied.count, total: plan.all.count, missing: missing,
+                                  mismatched: copied.filter { $0.expectedSha256 != nil })
         log.notice("Kept \(outcome.kept, privacy: .public) of \(outcome.total, privacy: .public) files")
         d.didKeep(outcome)
         phase = outcome.isComplete ? .kept(outcome) : .partial(outcome)
@@ -568,11 +563,12 @@ final class KeepModel: ObservableObject, Identifiable {
         copying: for item in wanted {
             if Task.isCancelled { break }
             switch await fetch(item) {
-            case .bytes(let data):
+            case .bytes(let data, let expected):
                 do {
                     try await d.disk.writeInto(folder, data, relativePath: item.relativePath)
                     landed.append(KeptFile(path: item.relativePath, role: item.role, artifact: item.artifact, version: item.version,
-                                           index: nil, of: nil, sha256: d.disk.sha256(of: data), bytes: data.count))
+                                           index: nil, of: nil, sha256: d.disk.sha256(of: data), bytes: data.count,
+                                           expectedSha256: expected))
                     missing.removeAll { $0.name == item.name && $0.role == item.role }
                     kept += 1
                     phase = .keeping(done: kept, total: outcome.total)
@@ -581,7 +577,6 @@ final class KeepModel: ObservableObject, Identifiable {
                 }
             case .gone: replaceReason(&missing, item, ShelfFailure.missing.sentence)
             case .tooBig: replaceReason(&missing, item, "too big to keep here (over 8 MB)")
-            case .mismatched: replaceReason(&missing, item, KeepRules.checksumReason)
             case .failed(let sentence): replaceReason(&missing, item, sentence)
             case .cancelled: break copying
             }
@@ -589,8 +584,11 @@ final class KeepModel: ObservableObject, Identifiable {
         // The README, with what is there now, even after a Cancel.
         let recordFailed = await rewriteReadme(at: folder, adding: landed, missing: missing)
         unrecorded = recordFailed == nil ? [] : landed
+        let noted = Set(outcome.mismatched.map(\.path))
+        let mismatched = outcome.mismatched + landed.filter { $0.expectedSha256 != nil && !noted.contains($0.path) }
         let result = KeepOutcome(folder: folder, collection: outcome.collection, folderName: outcome.folderName,
-                                 kept: kept, total: outcome.total, missing: missing, recordFailed: recordFailed)
+                                 kept: kept, total: outcome.total, missing: missing, recordFailed: recordFailed,
+                                 mismatched: mismatched)
         if let recordFailed { log.error("A kept folder's README couldn't be updated: \(recordFailed, privacy: .public)") }
         d.didKeep(result)
         phase = result.isComplete ? .kept(result) : .partial(result)
@@ -625,28 +623,30 @@ final class KeepModel: ObservableObject, Identifiable {
     }
 
     private enum Fetched {
-        /// `mismatched`: the bytes aren't the ones the daemon's checksum is for.
-        case bytes(Data), gone, tooBig, mismatched, failed(String), cancelled
+        /// `expected`: the daemon's checksum, when the bytes don't match it.
+        case bytes(Data, expected: String?), gone, tooBig, failed(String), cancelled
     }
 
     /// A file's bytes: the script from the text it is, the rest through the
     /// shelf's queue and the 8 MB cap, checked against the daemon's checksum
-    /// when it has one. A version's bytes never change, so bytes that don't
-    /// match aren't that version's and are never written.
+    /// when it has one. Bytes that don't match are kept all the same (a
+    /// reference file's checksum can be stale, and Capsid can't tell one from a
+    /// stored file), with the checksum they should have had, so the README and
+    /// the sheet can say so.
     private func fetch(_ item: KeepItem) async -> Fetched {
         switch item.source {
         case .text(let text):
-            return .bytes(Data(text.utf8))
+            return .bytes(Data(text.utf8), expected: nil)
         case .download(let version):
             if let size = item.size, size > KeepRules.cap { return .tooBig }
             switch await dependencies.read(.download(version: version)) {
             case .answered(.bytes(let data)):
                 guard case .success(let bytes) = ArtifactGate.downloadBytes(data) else { return .tooBig }
-                if let sha = item.sha, sha.lowercased() != dependencies.disk.sha256(of: bytes) {
-                    log.error("A kept file's bytes don't match the daemon's checksum: not kept")
-                    return .mismatched
+                if let sha = item.sha?.lowercased(), sha != dependencies.disk.sha256(of: bytes) {
+                    log.error("A kept file's bytes don't match the daemon's checksum: kept, and the README says so")
+                    return .bytes(bytes, expected: sha)
                 }
-                return .bytes(bytes)
+                return .bytes(bytes, expected: nil)
             case .answered(.tooBig): return .tooBig
             case .answered(.missing): return .gone
             case .answered(.cancelled), .cancelled: return .cancelled
@@ -667,9 +667,20 @@ final class KeepModel: ObservableObject, Identifiable {
         }
     }
 
-    /// After a keep, each row's fate: "Kept", or why not.
+    /// The keep's outcome while the sheet stays to show it: a partial keep,
+    /// or one kept with files that don't match their checksums.
+    var shownOutcome: KeepOutcome? {
+        switch phase {
+        case .partial(let outcome): outcome
+        case .kept(let outcome) where !outcome.closesSheet: outcome
+        default: nil
+        }
+    }
+
+    /// After a keep, each row's fate: "Kept", or why not, or kept with bytes
+    /// that don't match.
     func fate(of kind: KeepRowKind) -> (text: String, isProblem: Bool)? {
-        guard case .partial(let outcome) = phase, let plan else { return nil }
+        guard let outcome = shownOutcome, let plan else { return nil }
         let role: KeptRole = switch kind {
         case .answer: .figure
         case .data: .data
@@ -679,10 +690,15 @@ final class KeepModel: ObservableObject, Identifiable {
         let items = plan.files.filter { $0.role == role }
         guard !items.isEmpty else { return nil }
         let lost = outcome.missing.filter { $0.role == role }
-        if lost.isEmpty { return ("Kept", false) }
-        var reason = lost.first?.reason ?? ""
-        if reason.hasSuffix(".") { reason.removeLast() }
-        return ("Not copied: \(reason).", true)
+        if let first = lost.first {
+            var reason = first.reason
+            if reason.hasSuffix(".") { reason.removeLast() }
+            return ("Not copied: \(reason).", true)
+        }
+        if outcome.mismatched.contains(where: { $0.role == role }) {
+            return ("Kept, but it doesn\u{2019}t match Claude Science\u{2019}s checksum.", true)
+        }
+        return ("Kept", false)
     }
 
     func showInFinder() {
