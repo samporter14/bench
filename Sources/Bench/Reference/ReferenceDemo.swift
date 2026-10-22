@@ -4,8 +4,11 @@
 // (the figures sit on the steps that made them), then answers. Nothing is
 // read from Claude Science; Open Conversation and Copy with Source do their
 // ordinary things (the latter on the real pasteboard). `--step figures`
-// opens it on the answer with two figures, `--step failed` on reads that fail.
+// opens it on the answer with two figures, `--step failed` on reads that fail,
+// and `--step shelved` on that answer by Show Where It Came From, the bar chart
+// on a made-up shelf (it writes nothing, and reads nothing of the real one).
 import AppKit
+import Combine
 import Foundation
 
 @MainActor
@@ -94,9 +97,19 @@ enum ReferenceDemo {
         return opening + filler
     }()
 
+    /// One made-up shelf for the demo's windows.
+    static let demoShelf = ReferenceDemoShelf()
+
     /// `answer` (the newest), `figures` (the one before it, with its two
-    /// figures) or `failed`.
+    /// figures), `shelved` (the same, reached by Show Where It Came From) or
+    /// `failed`.
     static func show(step: String, quiet: Bool) {
+        if step == "shelved" {
+            // The reply that holds history row 19, scrolled to the bar chart, which is on the shelf.
+            demoShelf.put(barChart.v)
+            ReferenceWindowController.shared.show(session, dependencies: dependencies(), at: 19, mark: barChart.v)
+            return
+        }
         ReferenceWindowController.shared.show(session, dependencies: dependencies(failing: step == "failed"))
         guard step == "figures" else { return }
         Task { @MainActor in
@@ -111,6 +124,7 @@ enum ReferenceDemo {
     /// pause.
     static func dependencies(failing: Bool = false, delay: Duration = .milliseconds(300)) -> ReferenceDependencies {
         var live = ReferenceDependencies.live()
+        live.shelf = demoShelf.access
         live.readPage = { _, before in
             try await Task.sleep(for: delay)
             if failing { return .unreadable }
@@ -158,5 +172,43 @@ enum ReferenceDemo {
         guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else { return Data() }
         return png
+    }
+}
+
+/// The demo's shelf, made up: empty, and anything "adds" after a moment
+/// (`--step shelved` starts with the bar chart on it). Nothing is written,
+/// and the real shelf is not read.
+@MainActor
+final class ReferenceDemoShelf {
+    private(set) var onShelf: Set<String> = []
+    private(set) var adding: Set<String> = []
+    let changes = PassthroughSubject<Void, Never>()
+    private(set) var access: ShelfAccess!
+
+    init() {
+        access = ShelfAccess(
+            contains: { [unowned self] in onShelf.contains($0) },
+            isAdding: { [unowned self] in adding.contains($0) },
+            count: { [unowned self] in onShelf.count },
+            add: { [unowned self] source in
+                let version = source.entry.version
+                adding.insert(version)
+                changes.send()
+                try? await Task.sleep(for: .milliseconds(600))
+                adding.remove(version)
+                onShelf.insert(version)
+                changes.send()
+                return .added(ShelfPlacement(folder: URL(fileURLWithPath: "/dev/null/\(source.entry.name)"),
+                                             name: source.entry.name, collection: source.session.projectName))
+            },
+            undo: { _ in false },
+            show: { _ in },
+            prime: {},
+            changes: changes.eraseToAnyPublisher())
+    }
+
+    func put(_ version: String) {
+        onShelf.insert(version)
+        changes.send()
     }
 }

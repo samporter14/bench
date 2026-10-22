@@ -4,7 +4,9 @@
 // an icon, the name, the kind, the size and the date; Preview (Quick Look, also
 // the Space bar), Copy, Save…, drag out to Finder or another app, and once
 // saved Open and Reveal in Finder; Save All… on a session; and Open
-// Conversation for where it came from.
+// Conversation for where it came from. Each file's one-click action is the
+// shelf's: Add to Shelf (a spinner while it is added, "On Shelf ✓" after), and
+// Keep with Data and Code… (⌥⌘K) is in its menu and the File menu.
 import AppKit
 import QuickLookUI
 import SwiftUI
@@ -74,6 +76,7 @@ final class ResultsWindowController: NSObject, NSWindowDelegate {
         quickLook?.closePanel()
         (shelf ?? .shared).close()
         KeptCommands.shared.selected = nil
+        ShelfCommands.shared.selected = nil
     }
 }
 
@@ -126,8 +129,13 @@ struct ResultsView: View {
     @ObservedObject private var keepCommands = KeptCommands.shared
     /// The Keep sheet, while one is up.
     @State private var keeping: KeepModel?
+    /// The shelf the rows add to and ask about, and File → Add to Shelf's selection.
+    @ObservedObject var onShelf: ShelfAccess = .live
+    @ObservedObject private var shelfCommands = ShelfCommands.shared
+    /// Why an add failed, by version, until the next try.
+    @State private var shelfProblems: [String: String] = [:]
 
-    /// How many kept results the section shows before "Open Kept".
+    /// How many shelved results the section shows before "Open Shelf".
     static let keptShown = 5
 
     var body: some View {
@@ -167,12 +175,17 @@ struct ResultsView: View {
         .onAppear { kept.refresh() }
         .onChange(of: shelf.takenAt) { kept.refresh() }
         .onDisappear { keptThumbnails.removeAll() }
-        // The File menu's Keep… acts on the selected file.
+        // The File menu's Keep with Data and Code… and Add to Shelf act on the selected file.
         .onChange(of: selection) { _, selection in
-            keepCommands.selected = subject(for: selection)
+            let subject = subject(for: selection)
+            keepCommands.selected = subject
+            shelfCommands.selected = subject.map { ShelfSource(session: $0.session, entry: $0.entry) }
         }
         .onChange(of: keepCommands.requests) {
             if let subject = subject(for: selection) { keep(subject) }
+        }
+        .onChange(of: shelfCommands.requests) {
+            if let subject = subject(for: selection) { addToShelf(subject) }
         }
         .sheet(item: $keeping) { model in
             KeepSheet(model: model, dismiss: { keeping = nil })
@@ -183,6 +196,19 @@ struct ResultsView: View {
     private func keep(_ subject: KeepSubject) {
         guard keeping == nil else { return }
         keeping = KeepModel(subject: subject, dependencies: .live(shelf: shelf))
+    }
+
+    /// Add to Shelf for one file: the row shows the spinner and then "On
+    /// Shelf ✓" from the shelf itself; a failure is a sentence under the file.
+    private func addToShelf(_ subject: KeepSubject) {
+        let version = subject.entry.version
+        guard Demo.mode == nil, ShelfMark(version, in: onShelf) == .off else { return }
+        shelfProblems[version] = nil
+        Task { @MainActor in
+            if case .failed(let sentence) = await onShelf.add(ShelfSource(session: subject.session, entry: subject.entry)) {
+                shelfProblems[version] = sentence
+            }
+        }
     }
 
     /// The session and file a selection names, when it names a file.
@@ -231,15 +257,15 @@ struct ResultsView: View {
         return ScrollViewReader { proxy in
             List(selection: $selection) {
                 if !keptShownRows.isEmpty {
-                    Section("Kept") {
+                    Section("On your shelf") {
                         ForEach(keptShownRows) { result in
                             keptRow(result)
                                 .tag(ShelfSelection.kept(result.id))
                         }
                         if kept.results.count > Self.keptShown || !search.isEmpty {
                             HStack(spacing: 10) {
-                                Button("Open Kept") { KeptWindowController.shared.show() }
-                                Text(KeepRules.count(kept.results.count, "result") + " kept")
+                                Button("Open Shelf") { onShelf.show(nil) }
+                                Text(KeepRules.count(kept.results.count, "item") + " on your shelf")
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
@@ -289,8 +315,8 @@ struct ResultsView: View {
         return Array(matching.prefix(Self.keptShown))
     }
 
-    /// A kept result: its picture, its name, its collection and the day.
-    /// A double-click opens it in the Kept window.
+    /// A shelved result: its picture, its name, its collection and the day.
+    /// A double-click opens it in the Shelf window.
     private func keptRow(_ result: KeptResult) -> some View {
         HStack(spacing: 10) {
             KeptThumbnailView(store: keptThumbnails, url: result.figureURL, side: 36,
@@ -313,10 +339,10 @@ struct ResultsView: View {
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { KeptWindowController.shared.show(select: result.folder) }
+        .onTapGesture(count: 2) { onShelf.show(result.folder) }
         .onDrag { NSItemProvider(contentsOf: result.figureURL) ?? NSItemProvider() }
         .contextMenu {
-            Button("Open in Kept") { KeptWindowController.shared.show(select: result.folder) }
+            Button("Show on Shelf") { onShelf.show(result.folder) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([result.folder]) }
             Divider()
             Button("Open Conversation") { LabModel.shared.open(sessionID: result.record.sessionID) }
@@ -473,8 +499,10 @@ struct ResultsView: View {
                 .foregroundStyle(.secondary)
         case .loaded(let entries, _):
             ForEach(entries.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }, id: \.version) { entry in
-                ResultFileRow(shelf: shelf, entry: entry, session: item.session, onPreview: { preview(entry) },
-                              onKeep: { keep(KeepSubject(session: item.session, entry: entry)) })
+                ResultFileRow(shelf: shelf, onShelf: onShelf, entry: entry, session: item.session,
+                              problem: shelfProblems[entry.version], onPreview: { preview(entry) },
+                              onKeep: { keep(KeepSubject(session: item.session, entry: entry)) },
+                              onAddToShelf: { addToShelf(KeepSubject(session: item.session, entry: entry)) })
                     .tag(ShelfSelection.file(entry.version))
             }
         case .failed(let failure):
@@ -520,12 +548,20 @@ struct ResultsView: View {
 
 struct ResultFileRow: View {
     @ObservedObject var shelf: ResultsShelf
+    /// The Shelf: whether this file is on it, being added, or neither.
+    @ObservedObject var onShelf: ShelfAccess
     let entry: ArtifactEntry
     let session: SessionStatus
+    /// Why the last Add to Shelf failed, when it did.
+    var problem: String? = nil
     /// Preview: Quick Look on this file.
     let onPreview: () -> Void
-    /// Keep…: the sheet for this file (Kept/KeepSheet.swift).
+    /// Keep with Data and Code…: the sheet for this file (Kept/KeepSheet.swift).
     let onKeep: () -> Void
+    /// Add to Shelf: one click, no sheet.
+    let onAddToShelf: () -> Void
+
+    private var mark: ShelfMark { ShelfMark(entry.version, in: onShelf) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -541,7 +577,7 @@ struct ResultFileRow: View {
                 Text(ResultFileRow.detail(entry))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                if let problem = shelf.fileProblems[entry.version] {
+                if let problem = shelf.fileProblems[entry.version] ?? problem {
                     Text(problem)
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.clayText)
@@ -558,8 +594,15 @@ struct ResultFileRow: View {
         // Dragged out, the file is fetched when it is dropped, not when the drag begins.
         .onDrag { ShelfDrag.provider(for: entry, shelf: shelf) }
         .contextMenu {
-            Button("Keep…") { onKeep() }
+            if mark == .on {
+                Button("Show on Shelf") { onShelf.show(nil) }
+            } else {
+                Button(ShelfWords.add) { onAddToShelf() }
+                    .disabled(Demo.mode != nil || mark == .adding)
+            }
+            Button(ShelfWords.keep) { onKeep() }
                 .disabled(Demo.mode != nil)
+            Divider()
             Button("Preview") { onPreview() }
                 .disabled(shelf.preparing.contains(entry.version))
             if ShelfCopy.isOffered(entry.kind) {
@@ -578,10 +621,19 @@ struct ResultFileRow: View {
 
     private var actions: some View {
         HStack(spacing: 4) {
-            Button { onKeep() } label: { Image(systemName: "checkmark.seal") }
-                .help("Keep… (⌥⌘K): the real version, with Claude\u{2019}s words, its data and its code, in a folder you own")
-                .accessibilityLabel("Keep \(entry.name)")
-                .disabled(Demo.mode != nil)
+            switch mark {
+            case .off:
+                Button { onAddToShelf() } label: { ShelfGlyph().stroke(style: StrokeStyle(lineWidth: 1.3)).frame(width: 16, height: 16) }
+                    .help("Add to Shelf (\u{2325}\u{2318}S): this file, with what Claude said about it and where it came from")
+                    .accessibilityLabel("Add \(entry.name) to the shelf")
+                    .disabled(Demo.mode != nil)
+            case .adding:
+                ProgressView().controlSize(.small).accessibilityLabel("Adding \(entry.name) to the shelf")
+            case .on:
+                Button { onShelf.show(nil) } label: { Text(ShelfWords.on).font(.system(size: 11)) }
+                    .help("It is on your shelf. Show the shelf.")
+                    .accessibilityLabel("\(entry.name) is on your shelf. Show the shelf.")
+            }
             if shelf.preparing.contains(entry.version) {
                 ProgressView().controlSize(.small).accessibilityLabel("Getting \(entry.name)")
             } else {

@@ -268,6 +268,9 @@ struct BenchToolbar: ViewModifier {
                     ResultsToolbarButton()
                 }
                 ToolbarItem {
+                    ShelfToolbarButton()
+                }
+                ToolbarItem {
                     ScenesToolbarButton()
                 }
             }
@@ -290,8 +293,10 @@ struct BenchCommands: Commands {
     @ObservedObject private var presenting = PresentingMode.shared
     /// What waits, for Next Waiting Session's dimming (Lab/NextWaiting.swift).
     @ObservedObject private var lab = LabModel.shared
-    /// The result selected in the Results window, for Keep… (Kept/KeptWindow.swift).
+    /// The result selected in the Results window, for Keep with Data and Code… (Kept/KeptWindow.swift).
     @ObservedObject private var kept = KeptCommands.shared
+    /// The same selection, for Add to Shelf (Shelf/ShelfCommands.swift).
+    @ObservedObject private var shelfCommands = ShelfCommands.shared
     /// The key reference window, for Keep on Top (Reference/ReferenceWindow.swift).
     @ObservedObject private var reference = ReferenceCommands.shared
     /// The key shown beside Quick Start… (QuickStart/GlobalHotKey.swift).
@@ -330,12 +335,16 @@ struct BenchCommands: Commands {
             Button("Results…") { ResultsWindowController.shared.show() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(Demo.mode != nil)
-            // Keep the selected result (Kept/KeepSheet.swift), and what is kept
-            // (Kept/KeptWindow.swift). Neither key is used by the page.
-            Button("Keep…") { kept.keepSelected() }
+            // The shelf (Kept/Shelf.swift, Shelf/): add the selected result in
+            // one click, keep it with its data and code (Kept/KeepSheet.swift),
+            // and the Shelf window. None of the keys is used by the page.
+            Button("Add to Shelf") { shelfCommands.addSelected() }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+                .disabled(!shelfCommands.canAdd)
+            Button("Keep with Data and Code…") { kept.keepSelected() }
                 .keyboardShortcut("k", modifiers: [.command, .option])
                 .disabled(!kept.canKeep)
-            Button("Kept…") { KeptWindowController.shared.show() }
+            Button("Shelf…") { Shelf.shared.show() }
                 .keyboardShortcut("k", modifiers: [.command, .shift])
                 .disabled(Demo.mode != nil)
             Divider()

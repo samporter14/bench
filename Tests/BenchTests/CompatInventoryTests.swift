@@ -133,8 +133,8 @@ struct CompatInventoryShapeTests {
 struct CompatPageHookTests {
     /// Every page script that looks at Claude Science's markup.
     private var scripts: [String] {
-        [PageTabsScript.body, PageTabsScript.probe, TabContextMenu.script, SignInScript.press, SignInScript.look,
-         HandoverWatch.script]
+        [PageTabsScript.body, PageTabsScript.probe, TabContextMenu.script, ConversationMenu.script, SignInScript.press,
+         SignInScript.look, HandoverWatch.script]
     }
 
     private var literalTokens: Set<String> {
@@ -169,6 +169,7 @@ struct CompatPageHookTests {
         #expect(tabs.contains("button[data-tab-close]"))
         #expect(tabs.contains("aria-current"))
         #expect(ScriptLiterals.selectors(in: TabContextMenu.script) == [#"[data-testid="right-tab-strip"] [data-tab-id]"#, "data-tab-id"])
+        #expect(ScriptLiterals.selectors(in: ConversationMenu.script) == ["img, a[href]"])
         #expect(ScriptLiterals.texts(in: SignInScript.press) == ["Sign in"])
         // And a made-up new hook is seen.
         #expect(ScriptLiterals.selectors(in: #"x.querySelector('[data-new]'); y.getAttribute("data-newer");"#) == ["[data-new]", "data-newer"])
@@ -176,8 +177,8 @@ struct CompatPageHookTests {
 
     @Test func noOtherFileReadsTheMarkupOfThePage() {
         // Capsid's own phone page (RemoteWebApp) is its own markup.
-        let known: Set<String> = ["Remote/RemoteWebApp.swift", "Web/HandoverWatch.swift", "Web/PageTabs.swift", "Web/TabContextMenu.swift",
-                                  "Web/WebContainer.swift"]
+        let known: Set<String> = ["Remote/RemoteWebApp.swift", "Shelf/ConversationMenu.swift", "Web/HandoverWatch.swift",
+                                  "Web/PageTabs.swift", "Web/TabContextMenu.swift", "Web/WebContainer.swift"]
         let found = Repo.files(matching: #"querySelector|\.closest\(|getElementById|getElementsBy"#)
         #expect(found == known, "now: \(found.sorted())")
     }
@@ -186,8 +187,8 @@ struct CompatPageHookTests {
         let known: Set<String> = [
             "Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/InsightReader.swift", "Remote/RemoteLive.swift",
             "Remote/RemotePhotoUpload.swift", "Remote/SessionReader.swift", "Remote/SessionWriter.swift",
-            "Web/HandoverWatch.swift", "Web/NotificationBridge.swift", "Web/PageTabs.swift", "Web/TabContextMenu.swift",
-            "Web/WebAPI.swift", "Web/WebContainer.swift",
+            "Shelf/ConversationMenu.swift", "Web/HandoverWatch.swift", "Web/NotificationBridge.swift", "Web/PageTabs.swift",
+            "Web/TabContextMenu.swift", "Web/WebAPI.swift", "Web/WebContainer.swift",
         ]
         let found = Repo.files(matching: #"callAsyncJavaScript\(|evaluateJavaScript\(|WKUserScript\("#)
         #expect(found == known, "now: \(found.sorted())")

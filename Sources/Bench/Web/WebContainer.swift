@@ -60,7 +60,7 @@ final class WebContainer: ObservableObject, WebPageWindow {
     @Published private(set) var currentFrameID: String?
 
     /// The one web view on the daemon. Created once, never recreated. It is a
-    /// `TabMenuWebView`, which adds the tab items to its right-click menu.
+    /// `TabMenuWebView`, which adds the tab and Shelf items to its right-click menu.
     let webView: WKWebView
     let finder: PageFinder
     /// Closes the page's artifact tabs, one sweep at a time (Web/PageTabs.swift).
@@ -136,10 +136,17 @@ final class WebContainer: ObservableObject, WebPageWindow {
             Task { await WebContainer.shared.tabCloser.close(request) }
         })
         tabMenu.install(on: configuration.userContentController)
+        // And which figure or file link, for Add to Shelf and its neighbours (Shelf/ConversationMenu.swift).
+        let shelfMenu = ConversationMenu(daemonPort: { WebContainer.shared.port }, run: { action, pick in
+            Task { await ConversationShelf.shared.run(action, on: pick) }
+        })
+        shelfMenu.install(on: configuration.userContentController)
 
         let view = TabMenuWebView(frame: .zero, configuration: configuration)
         view.tabMenu = tabMenu
         tabMenu.webView = view
+        view.shelfMenu = shelfMenu
+        shelfMenu.webView = view
         webView = view
         WebSetup.finish(webView)
         finder = PageFinder(webView: webView)

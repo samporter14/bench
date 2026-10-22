@@ -4,10 +4,14 @@
 // page, SolanumSurface.swift). The title bar shows the session's title over
 // "<project> · read only", centred, and two round chevrons, Earlier and Later
 // (⌥⌘← and ⌥⌘→ while the window is key). The page: "Claude's answer · 8:47",
-// what the user asked, the figures on white cards with Keep… under each, then
-// what Claude said. At the foot, two pills: Copy with Source (⇧⌘C) and Open
-// Conversation. Window → Keep on Top floats the key one. Nothing here is in
-// the clay: the window reads, it never asks.
+// what the user asked, the figures on white cards with Add to Shelf under
+// each, then what Claude said, then its other files. At the foot, two pills:
+// Copy with Source (⇧⌘C) and Open Conversation. Window → Keep on Top floats the
+// key one. Nothing here is in the clay: the window reads, it never asks. (What
+// it does besides is the Shelf's: Add to Shelf, "On Shelf ✓" once it is, and
+// a shelved figure wears board 11's mark, a slate chip and an ink ring. Show
+// Where It Came From opens the window on the reply a shelved item came from,
+// scrolled to it.)
 import AppKit
 import SwiftUI
 
@@ -60,10 +64,15 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
     private var windows: [String: ReferenceWindow] = [:]
     private var models: [String: ReferenceModel] = [:]
 
-    func show(_ session: SessionStatus, dependencies: ReferenceDependencies? = nil) {
+    /// Opens a session's window, or brings it forward. With `row` or `mark`
+    /// (Show Where It Came From, Open as Reference on a figure) it goes to
+    /// the reply that holds that history row, or shows that version, and
+    /// scrolls to the file: a window already open moves there too.
+    func show(_ session: SessionStatus, dependencies: ReferenceDependencies? = nil, at row: Int? = nil, mark: String? = nil) {
         if let window = windows[session.id] {
             Demo.activateUnlessQuiet()
             window.makeKeyAndOrderFront(nil)
+            if row != nil || mark != nil { models[session.id]?.land(at: row, mark: mark) }
             return
         }
         ReadingGate.shared.start()
@@ -98,7 +107,7 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         }
         windows[session.id] = window
         models[session.id] = model
-        model.open()
+        model.open(at: row, mark: mark)
         Demo.activateUnlessQuiet()
         if Demo.isQuiet { window.orderFrontRegardless() } else { window.makeKeyAndOrderFront(nil) }
     }
@@ -111,14 +120,25 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
 
     /// THE SHELF'S CONTRACT (Kept/Shelf.swift): "Show Where It Came From".
     /// Opens a session's reference window at the reply that holds history row
-    /// `row`, with the file `version` marked "On your shelf"; with no row, at
-    /// the newest reply that shows the version. The shelf-add agent implements
-    /// the place and the mark; until then it opens the session's window.
+    /// `row`, scrolled to the file `version` and marked "On your shelf" (the
+    /// mark follows the shelf); with no row, at the newest reply that shows the
+    /// version. The window's own title and project are the ones given; its
+    /// Open Conversation goes to the session's address on the daemon's port.
     func show(sessionID: String, projectID: String, title: String, projectName: String,
               at row: Int?, mark version: String?) {
-        let session = SessionStatus(id: sessionID, projectID: projectID, projectName: projectName, title: title,
-                                    state: .finished, updatedAt: Date(), startedAt: nil)
-        show(session)
+        show(Self.session(id: sessionID, projectID: projectID, title: title, projectName: projectName,
+                          port: WebContainer.shared.port),
+             at: row, mark: version)
+    }
+
+    /// The session a shelved item names, built from the ids and words its
+    /// README kept: Open Conversation needs the address, which is made only
+    /// from ids as the database has them (a README can be written by hand).
+    static func session(id: String, projectID: String, title: String, projectName: String, port: Int?) -> SessionStatus {
+        let link = BrowseSQL.isProjectID(projectID) && PlanCheck.isFrameID(id)
+            ? URL(string: "http://localhost:\(port ?? 8765)/projects/\(projectID)/frames/\(id)") : nil
+        return SessionStatus(id: id, projectID: projectID, projectName: projectName, title: title,
+                             state: .finished, updatedAt: Date(), startedAt: nil, deepLink: link)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -162,6 +182,8 @@ final class ReferenceSelection {
 
 struct ReferenceView: View {
     @ObservedObject var model: ReferenceModel
+    /// The shelf, watched so "On Shelf ✓" and the mark follow it.
+    @ObservedObject private var shelf: ShelfAccess
     let selection: ReferenceSelection
     @State private var keeping: KeepModel?
     /// The window's width, for the Keep sheet: one wider than the window
@@ -172,6 +194,12 @@ struct ReferenceView: View {
     private static let side: CGFloat = 24
     private static let top: CGFloat = 20
     private static let gap: CGFloat = 14
+
+    init(model: ReferenceModel, selection: ReferenceSelection) {
+        self.model = model
+        self.selection = selection
+        _shelf = ObservedObject(wrappedValue: model.shelf)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -236,26 +264,46 @@ struct ReferenceView: View {
     @ViewBuilder
     private var content: some View {
         if let answer = model.current {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Self.gap) {
-                    caption(answer)
-                    if let question = answer.question { asked(question) }
-                    ForEach(answer.figures, id: \.v) { file in figure(file) }
-                    if !answer.parts.isEmpty {
-                        ReferenceTextView(text: model.rendered(answer), selection: selection)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Self.gap) {
+                        caption(answer)
+                        if let note = model.landingNote {
+                            Text(note)
+                                .font(.system(size: Solanum.captionSize))
+                                .foregroundStyle(Solanum.muted)
+                        }
+                        if let question = answer.question { asked(question) }
+                        ForEach(model.figures(of: answer), id: \.v) { file in figure(file).id(file.v) }
+                        if !answer.parts.isEmpty {
+                            ReferenceTextView(text: model.rendered(answer), selection: selection)
+                        }
+                        if model.readingRest || model.restMissing {
+                            Text(model.readingRest ? "Reading the rest\u{2026}" : "Part of this answer couldn\u{2019}t be read.")
+                                .font(.system(size: Solanum.captionSize))
+                                .foregroundStyle(Solanum.muted)
+                        }
+                        if !answer.files.isEmpty {
+                            VStack(spacing: 8) {
+                                ForEach(answer.files, id: \.v) { file in fileRow(file).id(file.v) }
+                            }
+                        }
                     }
-                    if model.readingRest || model.restMissing {
-                        Text(model.readingRest ? "Reading the rest\u{2026}" : "Part of this answer couldn\u{2019}t be read.")
-                            .font(.system(size: Solanum.captionSize))
-                            .foregroundStyle(Solanum.muted)
+                    .padding(.horizontal, Self.side)
+                    .padding(.top, Self.top)
+                    .padding(.bottom, Self.side)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollContentBackground(.hidden)
+                // Show Where It Came From: once the reply is up, the file it came for.
+                .onChange(of: model.scrollRequest, initial: true) { _, request in
+                    guard let request else { return }
+                    Task { @MainActor in
+                        await Task.yield()
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(request.id, anchor: .center) }
                     }
                 }
-                .padding(.horizontal, Self.side)
-                .padding(.top, Self.top)
-                .padding(.bottom, Self.side)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .scrollContentBackground(.hidden)
             .id(answer.id)
         } else {
             empty
@@ -291,15 +339,15 @@ struct ReferenceView: View {
             .accessibilityLabel("You asked: \(question)")
     }
 
-    /// A figure on a white card, the page's width, its name and Keep… under it.
+    /// A figure on a white card, the page's width, its name and the shelf's
+    /// pill under it; shelved, it wears the chip and the ring.
     private func figure(_ file: HistoryFile) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ReferenceFigureView(store: model.thumbnails, file: file, failed: model.thumbnailFailed(file))
+        let mark = model.shelfMark(file)
+        return VStack(alignment: .leading, spacing: 8) {
+            ReferenceFigureView(store: model.thumbnails, file: file, failed: model.thumbnailFailed(file),
+                                shelved: mark == .on)
                 .onAppear { model.wantThumbnail(file) }
-                .contextMenu {
-                    Button("Keep\u{2026}") { keep(file) }
-                    Button("Open Conversation") { model.openConversation() }
-                }
+                .contextMenu { shelfItems(file, mark: mark) }
             HStack(spacing: 8) {
                 Text(file.name)
                     .font(.system(size: Solanum.captionSize))
@@ -307,13 +355,51 @@ struct ReferenceView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
-                Button("Keep\u{2026}") { keep(file) }
-                    .buttonStyle(SolanumPillStyle(.small))
-                    .help("Keep this figure, with what Claude said about it, in your Kept folder")
+                ShelfPill(mark: mark, add: { shelve(file) }, show: { model.showOnShelf(file) })
             }
+            problem(file)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Figure, \(file.name)")
+        .accessibilityLabel(mark == .on ? "Figure, \(file.name), on your shelf" : "Figure, \(file.name)")
+    }
+
+    /// A file that isn't a picture, in a quiet row under the words.
+    private func fileRow(_ file: HistoryFile) -> some View {
+        let mark = model.shelfMark(file)
+        return VStack(alignment: .leading, spacing: 6) {
+            ReferenceFileRow(file: file, mark: mark, add: { shelve(file) }, show: { model.showOnShelf(file) })
+                .contextMenu { shelfItems(file, mark: mark) }
+            problem(file)
+        }
+    }
+
+    /// Why an add failed, under the file, until the next try.
+    @ViewBuilder
+    private func problem(_ file: HistoryFile) -> some View {
+        if let sentence = model.shelfProblems[file.v] {
+            Text(sentence)
+                .font(.system(size: Solanum.captionSize))
+                .foregroundStyle(Theme.clayText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The context menu of a figure or a file.
+    @ViewBuilder
+    private func shelfItems(_ file: HistoryFile, mark: ShelfMark) -> some View {
+        if mark == .on {
+            Button("Show on Shelf") { model.showOnShelf(file) }
+        } else {
+            Button(ShelfWords.add) { shelve(file) }
+                .disabled(mark == .adding)
+        }
+        Button(ShelfWords.keep) { keep(file) }
+        Divider()
+        Button("Open Conversation") { model.openConversation() }
+    }
+
+    private func shelve(_ file: HistoryFile) {
+        Task { await model.addToShelf(file) }
     }
 
     /// Copy with Source and Open Conversation, as the mock-up's foot has them.
@@ -390,6 +476,8 @@ struct ReferenceFigureView: View {
     @ObservedObject var store: ShelfThumbnails
     let file: HistoryFile
     let failed: Bool
+    /// On the shelf: board 11's slate chip and a 2-point ink ring.
+    var shelved = false
 
     /// Taller than this, a picture is shown smaller rather than filling the window.
     private static let maxHeight: CGFloat = 520
@@ -418,7 +506,11 @@ struct ReferenceFigureView: View {
         }
         .background(Solanum.raised)
         .clipShape(.rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Solanum.hairline, lineWidth: 1))
+        .overlay(alignment: .topLeading) {
+            if shelved { OnShelfChip().padding(10) }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .strokeBorder(shelved ? Solanum.ink : Solanum.hairline, lineWidth: shelved ? 2 : 1))
     }
 }
 
