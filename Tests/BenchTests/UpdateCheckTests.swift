@@ -283,7 +283,7 @@ struct UpdateNoticeTests {
 
     @Test func whatInstallDoesIsSaidInWords() throws {
         #expect(UpdateRules.installSentence(try version("0.3.6"))
-            == "Capsid will quit, download 0.3.6 from GitHub and reopen. Your sessions keep running in Claude Science.")
+            == "Capsid will download 0.3.6 from GitHub, check that it\u{2019}s signed the way this copy is, then quit and reopen. Your sessions keep running in Claude Science.")
     }
 
     @Test func aVersionIsOfferedUnlessItOrANewerOneWasSkipped() throws {
@@ -700,13 +700,14 @@ struct UpdateCheckerTests {
 
 // MARK: Installing
 
-struct UpdateInstallTests {
-    @Test func theInstallLineIsTheREADMEsLineAndInstallShsAddress() throws {
+struct InstallPlaceTests {
+    /// First installs still come through the README's line and install.sh;
+    /// an installed Capsid updates itself natively (UpdateInstallTests).
+    @Test func theREADMEsInstallLineStillPointsAtInstallSh() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         let readme = try String(contentsOf: root.appendingPathComponent("README.md"), encoding: .utf8)
-        #expect(readme.contains(UpdateRules.installLine))
-        #expect(UpdateRules.installLine == "curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh")
+        #expect(readme.contains("curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh"))
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("install.sh").path))
     }
 
@@ -733,13 +734,14 @@ struct UpdateOfferSnapshotTests {
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let update = AvailableUpdate(version: try #require(BenchVersion("0.9.7")), notesURL: UpdateRules.releasesPage)
-        let cases: [(name: String, canInstall: Bool, installing: Bool)] = [
-            ("offer", true, false), ("installing", true, true), ("cannot-install", false, false),
+        let cases: [(name: String, canInstall: Bool, phase: InstallPhase?)] = [
+            ("offer", true, nil), ("downloading", true, .downloading(received: 3_100_000, expected: 9_400_000)),
+            ("checking", true, .checking), ("installing", true, .installing), ("cannot-install", false, nil),
         ]
         for dark in [false, true] {
             for item in cases {
                 let view = UpdateOfferView(update: update, currentVersion: "0.9.6", canInstall: item.canInstall,
-                                           installing: item.installing, install: {}, releaseNotes: {}, skip: {})
+                                           phase: item.phase, install: {}, cancel: {}, releaseNotes: {}, skip: {})
                     .background(Color(nsColor: .windowBackgroundColor))
                 let host = NSHostingView(rootView: view)
                 host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)

@@ -25,6 +25,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Capsid"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+# The last step of a native update (App/UpdateInstall.swift): Capsid copies it
+# out of the bundle and runs it once the new copy has been checked.
+cp "$ROOT/Resources/swap.sh" "$APP/Contents/Resources/swap.sh"
 
 # The icons: Capsid's own, an Icon Composer document in Solanum's product
 # family (a Clay tile, the broken ring with its escaped dot, an icosahedral

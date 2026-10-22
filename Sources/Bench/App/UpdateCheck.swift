@@ -61,12 +61,25 @@ struct GitHubRelease: Equatable, Sendable {
     let notesURL: URL
     /// Whether the release has a Bench.zip, which the installer downloads.
     let hasZip: Bool
+    /// The release's tag as GitHub has it (`v0.9.8`), which names the file
+    /// to download; nil when it isn't a version's tag.
+    var tag: String? = nil
 }
 
 /// A newer Bench that can be installed.
 struct AvailableUpdate: Equatable, Sendable {
     let version: BenchVersion
     let notesURL: URL
+    /// The release's tag (`v0.9.8`): the installer downloads
+    /// `releases/download/<tag>/Bench.zip`. A version remembered from an
+    /// earlier launch gets `v` and its number, the way Bench's tags are made.
+    let tag: String
+
+    init(version: BenchVersion, notesURL: URL, tag: String? = nil) {
+        self.version = version
+        self.notesURL = notesURL
+        self.tag = tag.flatMap { UpdateInstallRules.isTag($0) ? $0 : nil } ?? "v\(version)"
+    }
 }
 
 /// Why a check gave no answer.
@@ -93,9 +106,6 @@ enum UpdateRules {
     static let latestReleaseURL = URL(string: "https://api.github.com/repos/samporter14/bench/releases/latest")!
     /// Where release notes go when GitHub's own link can't be trusted.
     static let releasesPage = URL(string: "https://github.com/samporter14/bench/releases/latest")!
-    /// The README's install line, run as it stands. It is a constant, never
-    /// read from the network.
-    static let installLine = "curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh"
     static let installDirectory = "/Applications/Capsid.app"
     static let zipName = "Bench.zip"
 
@@ -147,7 +157,8 @@ enum UpdateRules {
         return GitHubRelease(
             version: version,
             notesURL: notesURL(payload.htmlURL, version: version),
-            hasZip: payload.assets?.contains { $0.name == zipName } ?? false)
+            hasZip: payload.assets?.contains { $0.name == zipName } ?? false,
+            tag: version != nil && UpdateInstallRules.isTag(payload.tagName) ? payload.tagName : nil)
     }
 
     /// GitHub's `html_url` when it really is a page of Bench's releases; the
@@ -179,16 +190,18 @@ enum UpdateRules {
     /// offered yet, and comes when the file does.
     static func offer(_ release: GitHubRelease, current: BenchVersion) -> AvailableUpdate? {
         guard let version = release.version, version > current, release.hasZip else { return nil }
-        return AvailableUpdate(version: version, notesURL: release.notesURL)
+        return AvailableUpdate(version: version, notesURL: release.notesURL, tag: release.tag)
     }
 
     /// What Settings shows at launch, before any check: the newest version
     /// seen last time if it is still newer than this one, else "up to date"
-    /// once a check has been made.
-    static func restoredState(newest: String?, current: String, hasChecked: Bool) -> UpdateChecker.State {
+    /// once a check has been made. The remembered tag is used when it is
+    /// that version's.
+    static func restoredState(newest: String?, tag: String? = nil, current: String, hasChecked: Bool) -> UpdateChecker.State {
         guard let current = BenchVersion(current) else { return .idle }
         if let newest = newest.flatMap(BenchVersion.init), newest > current {
-            return .available(AvailableUpdate(version: newest, notesURL: notesURL(nil, version: newest)))
+            let known = tag.flatMap { BenchVersion($0) == newest ? $0 : nil }
+            return .available(AvailableUpdate(version: newest, notesURL: notesURL(nil, version: newest), tag: known))
         }
         return hasChecked ? .upToDate(current.description) : .idle
     }
@@ -240,7 +253,7 @@ enum UpdateRules {
 
     /// What Install does, said before it does it.
     static func installSentence(_ version: BenchVersion) -> String {
-        "Capsid will quit, download \(version) from GitHub and reopen. Your sessions keep running in Claude Science."
+        "Capsid will download \(version) from GitHub, check that it\u{2019}s signed the way this copy is, then quit and reopen. Your sessions keep running in Claude Science."
     }
 
     static let cannotInstallHere =
@@ -296,8 +309,10 @@ final class UpdateChecker: ObservableObject {
     @Published private(set) var state: State
     /// When the last check that got an answer was made: what Settings shows.
     @Published private(set) var lastChecked: Date?
-    /// The installer is running: Bench is about to quit.
-    @Published private(set) var installing = false
+    /// Where an install stands, while one runs (App/UpdateInstall.swift).
+    @Published private(set) var installPhase: InstallPhase?
+    /// An install is under way.
+    var installing: Bool { installPhase != nil }
     /// The newest version the user chose to skip (`updateSkippedVersion`), as
     /// text. Settings and the app menu still show it: those are explicit asks.
     @Published private(set) var skippedVersion: String?
@@ -313,6 +328,7 @@ final class UpdateChecker: ObservableObject {
         static let lastChecked = "updateLastChecked"
         static let lastAsked = "updateLastAsked"
         static let newestVersion = "updateNewestVersion"
+        static let newestTag = "updateNewestTag"
         static let announcedVersion = "updateAnnouncedVersion"
         static let skippedVersion = "updateSkippedVersion"
     }
@@ -324,6 +340,13 @@ final class UpdateChecker: ObservableObject {
     private let post: @MainActor (LabNotice) -> Void
     private let launchDelay: Duration
     private let enabledDelay: Duration
+    /// The install's steps, injected so the tests never download or swap.
+    private let installDependencies: @MainActor () -> UpdateInstallDependencies
+    /// What an install that stopped shows.
+    private let installFailed: @MainActor (AvailableUpdate, UpdateInstallFailure) -> Void
+    /// At launch: the copy swap.sh set aside, and its marker.
+    private let settle: @MainActor () -> Void
+    private var installTask: Task<Void, Never>?
     /// When Bench last got any response from GitHub, an answer or not. The
     /// schedule counts from this, so a GitHub that refuses isn't asked again
     /// until tomorrow.
@@ -340,7 +363,10 @@ final class UpdateChecker: ObservableObject {
          isDemo: Bool = Demo.mode != nil,
          launchDelay: Duration = UpdateRules.launchDelay,
          enabledDelay: Duration = UpdateRules.enabledDelay,
-         post: @escaping @MainActor (LabNotice) -> Void = { LabModel.shared.post($0) }) {
+         post: @escaping @MainActor (LabNotice) -> Void = { LabModel.shared.post($0) },
+         installDependencies: @escaping @MainActor () -> UpdateInstallDependencies = { .live() },
+         installFailed: @escaping @MainActor (AvailableUpdate, UpdateInstallFailure) -> Void = { UpdatePrompts.installFailed($0, $1) },
+         settle: @escaping @MainActor () -> Void = { UpdateAftermath.run() }) {
         self.defaults = defaults
         self.currentVersion = currentVersion
         self.fetch = fetch
@@ -349,12 +375,16 @@ final class UpdateChecker: ObservableObject {
         self.post = post
         self.launchDelay = launchDelay
         self.enabledDelay = enabledDelay
+        self.installDependencies = installDependencies
+        self.installFailed = installFailed
+        self.settle = settle
         let stored = (defaults.object(forKey: Key.lastChecked) as? Double).map(Date.init(timeIntervalSince1970:))
         lastChecked = stored
         lastAsked = (defaults.object(forKey: Key.lastAsked) as? Double).map(Date.init(timeIntervalSince1970:))
         skippedVersion = defaults.string(forKey: Key.skippedVersion)
         state = UpdateRules.restoredState(
-            newest: defaults.string(forKey: Key.newestVersion), current: currentVersion, hasChecked: stored != nil)
+            newest: defaults.string(forKey: Key.newestVersion), tag: defaults.string(forKey: Key.newestTag),
+            current: currentVersion, hasChecked: stored != nil)
         if case .available(let update) = state { newest = update }
     }
 
@@ -390,6 +420,9 @@ final class UpdateChecker: ObservableObject {
     /// starts it. Never in a demo.
     func start() {
         guard !isDemo, observer == nil else { return }
+        // A launch right after an install: the old copy goes, or the swap's
+        // failure is shown.
+        settle()
         wasEnabled = enabled
         observer = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification, object: defaults)
             .receive(on: DispatchQueue.main)
@@ -476,12 +509,14 @@ final class UpdateChecker: ObservableObject {
             defaults.set(askedAt.timeIntervalSince1970, forKey: Key.lastChecked)
             guard let update = UpdateRules.offer(release, current: current) else {
                 defaults.removeObject(forKey: Key.newestVersion)
+                defaults.removeObject(forKey: Key.newestTag)
                 newest = nil
                 log.info("Update check: up to date")
                 state = .upToDate(current.description)
                 return state
             }
             defaults.set(update.version.description, forKey: Key.newestVersion)
+            defaults.set(update.tag, forKey: Key.newestTag)
             newest = update
             // Once per version, whoever finds it first. Whoever asked sees the
             // answer, so only a check on the schedule posts the card, and not
@@ -508,48 +543,54 @@ final class UpdateChecker: ObservableObject {
 
     // MARK: Installing
 
-    /// Runs the README's install line, which quits this Bench, replaces it
-    /// and opens the new one. Callers have said so first. The newest known
-    /// update, so the toolbar's Install works while a check is under way.
+    /// Downloads the newest known update, checks it and runs the swap, which
+    /// quits this Bench and opens the new one (App/UpdateInstall.swift).
+    /// Callers have said so first. The newest known update, so the toolbar's
+    /// Install works while a check is under way. Only the copy in
+    /// Applications installs; `canInstall` says why the others don't.
     func install() {
-        guard let update = newest, !installing,
+        guard let update = newest, installPhase == nil,
               UpdateRules.canInstall(from: Bundle.main.bundleURL) else { return }
-        installing = true
+        installPhase = .downloading(received: 0, expected: nil)
         log.notice("Installing an update")
-        do {
-            try UpdateInstaller.launch { [weak self] in self?.installerExited(update) }
-        } catch {
-            installerExited(update)
+        let flow = UpdateInstallFlow(dependencies: installDependencies()) { [weak self] phase in
+            guard let self, installPhase != nil else { return }
+            installPhase = phase
+        }
+        installTask = Task { [weak self] in
+            let failure = await flow.run(update) { [weak self] marker in self?.swapExited(update, marker: marker) }
+            guard let self else { return }
+            installTask = nil
+            guard let failure else { return } // The swap script runs; Bench is quitting.
+            installPhase = nil
+            if !failure.isCancellation {
+                log.error("The update didn't install: \(String(describing: failure), privacy: .public)")
+                installFailed(update, failure)
+            }
         }
     }
 
-    /// The installer ended while Bench is still here. When it works, Bench
-    /// has been quit before it ends, so this means it didn't.
-    private func installerExited(_ update: AvailableUpdate) {
-        installing = false
-        log.error("The installer ended without replacing Bench")
-        UpdatePrompts.installFailed(update)
+    /// Cancel, while the download or the checks run: nothing has been
+    /// touched, and the download is deleted. Once the swap has started
+    /// there is nothing to cancel.
+    func cancelInstall() {
+        guard let installTask, installPhase != .installing else { return }
+        installTask.cancel()
     }
-}
 
-/// Starts the install line the way the README has it, detached: its output
-/// goes nowhere, and it carries on after this Bench has been quit, which is
-/// the first thing it does.
-@MainActor
-enum UpdateInstaller {
-    static func launch(onExit: @escaping @MainActor () -> Void) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", UpdateRules.installLine]
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        // The script's own switch for testing it; an update is always a real
-        // install into Applications.
-        var environment = ProcessInfo.processInfo.environment
-        environment["BENCH_INSTALL_DIR"] = nil
-        process.environment = environment
-        process.terminationHandler = { _ in Task { @MainActor in onExit() } }
-        try process.run()
+    /// The swap script ended while Bench is still here. When it works, Bench
+    /// has quit before it ends, so this means it didn't: it says why in its
+    /// marker.
+    private func swapExited(_ update: AvailableUpdate, marker: String?) {
+        guard installPhase == .installing else { return }
+        installPhase = nil
+        let failure: UpdateInstallFailure
+        if let marker, case .failed(let reason) = UpdateInstallRules.parseMarker(marker) {
+            failure = UpdateInstallRules.failure(forReason: reason)
+        } else {
+            failure = .swap("the swap script ended without saying why")
+        }
+        log.error("The swap script ended without replacing Bench: \(String(describing: failure), privacy: .public)")
+        installFailed(update, failure)
     }
 }

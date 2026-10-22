@@ -25,7 +25,7 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   (⌘F).
 - **Nothing collected.** No Capsid account, no analytics, no telemetry. Capsid
   talks to nothing beyond your Mac except links you click, a once-a-day
-  update check, which you can turn off, and, if you turn on Capsid on your phone,
+  update check, which you can turn off, the update you choose to install, and, if you turn on Capsid on your phone,
   your own paired devices over your Tailscale network, with notifications,
   if you turn them on, carried by Apple's push service and encrypted so only
   your device can read them. Capsid reads Claude Science and changes nothing
@@ -199,9 +199,10 @@ Bench.zip, and this repository is still `bench`.
 curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh
 ```
 
-It downloads the latest Capsid from this page's releases, puts it in
-Applications (quitting and replacing an older one), and opens it. **Run the
-same line again to update.** macOS doesn't show its "can't verify" warning
+It downloads the latest Capsid from this page's releases, checks its
+signature, puts it in Applications (quitting an older one, which it keeps
+aside until the new one is running), and opens it. **Run the same line again
+to update.** macOS doesn't show its "can't verify" warning
 for apps installed this way, because it only flags apps downloaded through a
 web browser. You're trusting this page instead, so [install.sh](install.sh)
 is short enough to read first.
@@ -214,10 +215,14 @@ Version**; the Dock icon's menu has an Install item too. The request carries
 only the name `Capsid` and its version, nothing about you or your sessions,
 though GitHub sees your IP address as any site you visit does.
 **Capsid → Check for Updates…** and **Check Now** ask at once, with the
-switch off too. Installing runs the line above for you, after telling you that
-Capsid will quit, download the new version from GitHub and reopen, and that
-your sessions keep running in Claude Science. A copy that isn't in
-Applications can't replace itself, so it offers only the release notes.
+switch off too. Installing is Capsid's own work: it downloads that release's
+Bench.zip from GitHub, checks that the copy is signed the way the one you're
+running is and says the version it was offered, then quits and swaps it in.
+The copy you had is kept beside the new one until the new one is running, and
+put back if it doesn't start; nothing is deleted before then. The toolbar
+button shows the download, and Cancel stops it until the swap begins. A copy
+that isn't in Applications can't replace itself, so it offers only the
+release notes.
 
 ### Or download it
 

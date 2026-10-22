@@ -96,15 +96,59 @@ enum UpdatePrompts {
         alert.runModal()
     }
 
-    /// The installer ended and Bench is still here, so nothing was replaced.
-    static func installFailed(_ update: AvailableUpdate) {
+    /// An install stopped and Bench is still here, so nothing was replaced:
+    /// which step, and what to do. Try Again (for a download that didn't
+    /// finish) runs the install again; Release Notes is offered for a copy
+    /// that failed its checks.
+    static func installFailed(_ update: AvailableUpdate, _ failure: UpdateInstallFailure) {
+        let choice = failureAlert(title: "Capsid \(update.version) didn\u{2019}t install",
+                                  text: failure.message(offered: update.version, current: UpdateChecker.shared.currentVersion),
+                                  failure: failure)
+        switch choice {
+        case .tryAgain: UpdateChecker.shared.install()
+        case .notes: openReleaseNotes(update)
+        case .dismiss: break
+        }
+    }
+
+    /// At a launch after a swap that failed: this is the copy that was put
+    /// back, and the one offered is named by its tag when it is known.
+    static func installFailedAtLaunch(_ failure: UpdateInstallFailure, offered tag: String?) {
+        let offered = tag.flatMap(BenchVersion.init)
+        let name = offered.map { "Capsid \($0)" } ?? "The update"
+        let title = failure == .didNotOpen ? "\(name) didn\u{2019}t open" : "\(name) didn\u{2019}t install"
+        let current = UpdateChecker.shared.currentVersion
+        let text = failure.message(offered: offered ?? BenchVersion(current) ?? BenchVersion("0")!, current: current)
+        let choice = failureAlert(title: title, text: text, failure: failure)
+        if choice == .notes {
+            LinkDispatcher.open(offered.map { UpdateRules.notesURL(nil, version: $0) } ?? UpdateRules.releasesPage, as: .web)
+        }
+    }
+
+    private enum FailureChoice { case tryAgain, notes, dismiss }
+
+    private static func failureAlert(title: String, text: String, failure: UpdateInstallFailure) -> FailureChoice {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Capsid \(update.version) didn\u{2019}t install"
-        alert.informativeText = "Capsid is still the version you had. Try again later, or run the install line from the README in Terminal."
-        alert.addButton(withTitle: "OK")
+        alert.messageText = title
+        alert.informativeText = text
+        var choices: [FailureChoice] = []
+        if failure.canRetry {
+            alert.addButton(withTitle: "Try Again")
+            alert.addButton(withTitle: "Later")
+            alert.buttons.last?.keyEquivalent = "\u{1b}"
+            choices = [.tryAgain, .dismiss]
+        } else {
+            alert.addButton(withTitle: "OK")
+            choices = [.dismiss]
+        }
+        if failure.offersNotes {
+            alert.addButton(withTitle: "Release Notes")
+            choices.append(.notes)
+        }
         NSApp.activate()
-        alert.runModal()
+        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        return choices.indices.contains(index) ? choices[index] : .dismiss
     }
 }
 
@@ -121,12 +165,28 @@ struct UpdatesSection: View {
     private var canInstall: Bool { UpdateRules.canInstall(from: Bundle.main.bundleURL) }
 
     private var title: String {
+        if let phase = updates.installPhase, case .available(let update) = updates.state {
+            return Self.installTitle(phase, version: update.version)
+        }
         switch updates.state {
-        case .idle: "Check for a newer version"
-        case .checking: "Asking GitHub\u{2026}"
-        case .upToDate(let version): "Capsid is up to date (\(version))"
-        case .available(let update): "Capsid \(update.version) is available"
-        case .failed: "Couldn\u{2019}t check for updates"
+        case .idle: return "Check for a newer version"
+        case .checking: return "Asking GitHub\u{2026}"
+        case .upToDate(let version): return "Capsid is up to date (\(version))"
+        case .available(let update): return "Capsid \(update.version) is available"
+        case .failed: return "Couldn\u{2019}t check for updates"
+        }
+    }
+
+    /// The status line while an install runs.
+    static func installTitle(_ phase: InstallPhase, version: BenchVersion) -> String {
+        switch phase {
+        case .downloading(let received, let expected):
+            if let expected, expected > 0 {
+                return "Downloading Capsid \(version)\u{2026} \(Int(Double(received) * 100 / Double(expected)))%"
+            }
+            return "Downloading Capsid \(version)\u{2026}"
+        case .checking: return "Checking the signature\u{2026}"
+        case .installing: return "Installing\u{2026}"
         }
     }
 
@@ -157,9 +217,13 @@ struct UpdatesSection: View {
                 LabeledContent {
                     HStack {
                         Button("Release Notes") { UpdatePrompts.openReleaseNotes(update) }
-                        Button(updates.installing ? "Installing\u{2026}" : "Install Update") { confirming = update }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(!canInstall || updates.installing)
+                        if updates.installing, updates.installPhase != .installing {
+                            Button("Cancel") { updates.cancelInstall() }
+                        } else {
+                            Button(updates.installing ? "Installing\u{2026}" : "Install Update") { confirming = update }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!canInstall || updates.installing)
+                        }
                     }
                 } label: {
                     Text(canInstall ? UpdateRules.installSentence(update.version) : UpdateRules.cannotInstallHere)

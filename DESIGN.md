@@ -2370,7 +2370,7 @@ Home Screen name) and the docs. What deliberately kept the old name:
   **`Resources/AppIcon.icon`** with its `bench-glyph.png`: the icon is being
   redesigned separately.
 
-## Update check (App/UpdateCheck.swift, App/UpdatePrompts.swift, since 0.3.6)
+## Update check (App/UpdateCheck.swift, App/UpdatePrompts.swift, App/UpdateInstall.swift, since 0.3.6)
 
 Capsid can ask GitHub whether a newer Capsid is out, and install it. **On by
 default since 0.9.7**; it was off from 0.3.6 to 0.9.6, because it is the one
@@ -2394,8 +2394,9 @@ application/vnd.github+json`, `User-Agent: Capsid/<version>` and a fixed
 `Accept-Language: en`, so the system's language preferences aren't sent. No
 identifier, no account, nothing about sessions, projects or the machine.
 GitHub does see the connection's IP address, as any site does. It is
-`UpdateRules.request`, and a test pins the headers. It is the only
-`URLSession` in Capsid.
+`UpdateRules.request`, and a test pins the headers. The install's download goes through the same
+session; the phone's push sender has one of its own (Capsid on your phone →
+Notifications).
 
 **What is read.** `tag_name`, `html_url` and whether `assets` has a
 `Bench.zip`; `draft` and `prerelease`. Nothing else is decoded.
@@ -2510,55 +2511,129 @@ and "up to date" after a check that found none, without asking.
   other link to a website does (Web routing policy: GitHub is "any other
   http(s)"), where "Open in Safari" is one click away.
 
-**Install.** `UpdateInstaller` runs the README's line, exactly, as `/bin/zsh -c
-"curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh
-| zsh"`. The line is a constant (`UpdateRules.installLine`, with a test that
-README.md contains it) and nothing the network says ever becomes part of it.
-It is started with its input and output on /dev/null and not waited for;
-`install.sh` takes it from there: SIGTERM quits this Capsid the way ⌘Q does
-(`AppDelegate`), the new one is moved into /Applications and opened. The
-confirmation says: "Capsid will quit, download 0.3.6 from GitHub and reopen.
-Your sessions keep running in Claude Science." (The second sentence since
-0.9.7: Capsid never stops the daemon, so a running session doesn't notice.)
-- It is offered only to the copy that is /Applications/Capsid.app
-  (`canInstall`). The script replaces that path and quits only that copy, so
-  from a build folder or Downloads it would open a second Capsid beside the
-  first. Those copies get Release Notes and the sentence "This copy of Capsid
-  isn't in Applications, so it can't replace itself."
-- `BENCH_INSTALL_DIR` (the script's testing switch) is removed from the
-  environment it gets.
-- **From Bench to Capsid (0.6.0).** A Bench 0.5.x asks the same
-  `releases/latest`, wants the same `Bench.zip` and runs the same install line,
-  which fetches `install.sh` from `main` as it is at that moment. That script
-  takes Capsid.app out of the zip, quits a running Bench or Capsid in
-  /Applications (each matched by its exact executable path, as before), puts
-  Capsid at /Applications/Capsid.app and only then removes
-  /Applications/Bench.app: the two share a bundle id and must never sit side
-  by side. Capsid's `installDirectory` is /Applications/Capsid.app, so the
-  next update finds it there. A zip from before 0.6.0, holding Bench.app, is
-  still installed as Bench.app, so `main` can carry the new script before the
-  0.6.0 release exists. The order matters: `install.sh` reaches `main` first,
-  then 0.6.0 is published with a `Bench.zip` whose top level is Capsid.app.
-  The other way round, a Bench offered 0.6.0 runs the old script, which finds
-  no Bench.app in the zip, stops before quitting anything, and Bench says the
-  update didn't install.
-- If the installer ends while Capsid is still running, nothing was replaced (a
-  success quits Capsid before the script ends), and an alert says so and points
-  to the README's line. The script can't tell Capsid about a failed download
-  (`curl | zsh` ends 0), so this is the only failure it shows.
+**Installing natively (App/UpdateInstall.swift, Resources/swap.sh, since
+1.0).** Until 0.9.7, Install ran the README's line, `curl … main/install.sh |
+zsh`: a script fetched from the `main` branch as it stood at that moment, not
+from the release being installed, which deleted the installed app before the
+new copy was in place and checked nothing about what it had downloaded. Since
+0.9.7 turned the daily check on by default, more copies run this path, so 1.0
+installs natively, in three steps, and the installed Capsid is never deleted
+until the new one is running:
 
-**Tests** (`UpdateCheckTests`): version compare, the JSON from made-up
-fixtures, the once-per-version card and its Install… action, `shouldOffer`,
-Skip This Version (kept across launches, `state` unchanged, a newer release
-offered again, no card for a skipped one), "not due yet", the setting off
-meaning no request (an injected fetch that records its calls), the request's
-headers, failures, a check shared by two callers, and the install line
-matching the README. No test goes online or runs the installer; the checker
-keeps its state in a scratch `UserDefaults` suite. With `CAPSID_SNAPSHOT_DIR`
-set to a folder, one more test draws the popover into it as PNGs, light and
-dark, through an `NSHostingView` that is never shown (`ImageRenderer` leaves
-a "no entry" sign where a borderless button is); without it that test does
-nothing.
+1. *Download.* `GET https://github.com/samporter14/bench/releases/download/<tag>/Bench.zip`,
+   the offered release's own file, through the update check's ephemeral
+   session (`UpdateDownloader`: no cookies, no cache, a size cap of 200 MB,
+   redirects followed only to https, since GitHub hands the file to its
+   content host). The tag is the release's `tag_name` kept by the check
+   (`AvailableUpdate.tag`, remembered as `updateNewestTag`), accepted only
+   when it is a version with or without its `v` (`UpdateInstallRules.isTag`),
+   so nothing read off the network steers the address; a version remembered
+   without its tag gets `v` and its number. The file lands in a state folder,
+   `~/Library/Caches/local.sam.bench/update/<tag>/`, on the same volume as
+   /Applications, after a check that 200 MB are free. The popover, the
+   toolbar button ("Updating", with a clay ring) and Settings show the
+   progress ("Downloading Capsid 0.9.8… 3.1 of 9.4 MB"), and Cancel stops
+   it: the download is deleted and nothing else has been touched.
+2. *Check,* before anything is quit or moved: `ditto -x -k` unpacks the zip;
+   it must hold `Capsid.app`; the copy must carry no quarantine mark (this
+   path never sets one, so one means the file came another way; it is a
+   tripwire, never stripped); its signature must be valid down to every
+   nested piece **and meet the designated requirement of the copy running**
+   (`SecCodeCopySelf` → `SecCodeCopyDesignatedRequirement`, checked with
+   `SecStaticCodeCheckValidity` strict, nested, all architectures), with
+   `codesign --verify --deep --strict` as a second opinion; and its
+   `Info.plist` must say `local.sam.bench` and the version that was offered.
+   A copy that fails any of these is deleted without being opened, and the
+   alert says which check it failed ("The downloaded copy isn't signed the
+   way this one is, so Capsid deleted it without opening it. You still have
+   0.9.7, and nothing was changed."; "…says it is 0.9.6, not 0.9.8…").
+   Because the requirement is the running copy's own, a release signed
+   another way fails here on purpose: the first release signed with a
+   Developer ID certificate after the self-signed ones will have to be
+   installed by hand once (its successors then match again). The check is an
+   injected closure (`UpdateInstallDependencies.meetsRequirement`), so that
+   release can widen it to "or Solanum's Team ID" without rewiring.
+3. *Swap.* `Resources/swap.sh`, shipped in the bundle, is copied into the
+   state folder and started detached with this process's id, the installed
+   app's path, the unpacked copy's path and the state folder; then Capsid
+   quits the way ⌘Q does. The script waits up to 30 s for that process to
+   exit (touching nothing while it runs), moves `/Applications/Capsid.app` to
+   `Capsid.app.previous`, moves the new copy into place, opens it, and waits
+   up to 30 s for a process whose executable is exactly the installed app's
+   (compared as text, as install.sh does), looking again two seconds later
+   because a copy that dies on launch is seen for an instant. Then it writes
+   one marker in the state folder: `installed 0.9.8`, or `failed: <reason>`.
+   If the new copy doesn't start it is moved into the state folder for a
+   look, the old copy is moved back and opened; if a move fails the old copy
+   is put back and opened; a leftover `.previous` from an earlier update goes
+   into the state folder, not the bin. The script never deletes the installed
+   app. Its test hooks (`CAPSID_SWAP_WAIT`, `CAPSID_SWAP_LAUNCH`,
+   `CAPSID_SWAP_RUNNING_FILE`) are scrubbed from the environment Capsid gives
+   it. If the script ends while Capsid is still here (Capsid didn't quit),
+   its marker is shown as the failure.
+4. *The launch after.* `UpdateAftermath.settle`, from `UpdateChecker.start()`,
+   for the copy in Applications and never in a demo: with the marker saying
+   installed, or a `Capsid.app.previous` beside it, the old copy is removed
+   **only if its version is older than the running one** (anything else is
+   left and logged), the state folder goes, and one notice card says
+   "Capsid 0.9.8 is installed", "Your sessions kept running in Claude
+   Science." (caption Updated, no button, 15 s). With the marker saying
+   failed, this is the copy that was put back: an alert says why ("Capsid
+   0.9.8 didn't open", "The new copy didn't start, so Capsid put 0.9.7
+   back."), with Release Notes.
+
+The confirmation now reads: "Capsid will download 0.9.8 from GitHub, check
+that it's signed the way this copy is, then quit and reopen. Your sessions
+keep running in Claude Science." Install is still offered only to the copy
+that is /Applications/Capsid.app (`canInstall`); from a build folder or
+Downloads the sentence says so and Install is left out. A failure's alert
+offers Try Again only when trying again can help (a download that stopped,
+a zip without Capsid.app, a Capsid that didn't quit), and Release Notes for a
+copy that failed its checks or didn't open; every sentence names the version
+you still have.
+
+`install.sh` (first installs, and the path every copy up to 0.9.7 still
+updates through, since it runs `main`'s script) does the same by hand: it
+asks the API which release is latest and downloads that tag's zip (falling
+back to `releases/latest/download` when the API refuses, which it does after
+60 unauthenticated calls an hour), runs `codesign --verify --deep --strict`
+and the quarantine check before quitting anything, moves the installed copy
+aside instead of removing it, opens the new one and removes the old only
+once the new one has been running for two seconds, putting it back otherwise.
+A push of that file to `main` reaches every 0.9.7 at once, so it is tested
+against the real release in a scratch folder (`BENCH_INSTALL_DIR`) before it
+goes anywhere.
+
+`Capsid --update-dry-run <tag>` runs the download and every check against a
+real release into a scratch folder and stops before the swap, printing each
+step: how the live path is tried without a newer release (TESTING.md).
+
+- *What is sent* grows by one request, made only when you click Install: the
+  release's file. README's promise says so ("and the update you choose to
+  install").
+- *Nothing automatic.* Install is a click; no download happens on the daily
+  check.
+
+**Tests** (`UpdateCheckTests`, `UpdateInstallTests`, `SwapScriptTests`):
+version compare, the JSON from made-up fixtures (now keeping the tag), the
+once-per-version card and its Install… action, `shouldOffer`, Skip This
+Version, "not due yet", the setting off meaning no request, the request's
+headers, failures, a check shared by two callers, and the README's line still
+pointing at install.sh; the install's rules (tags, the asset address, the
+bundle check, markers, which old copies may be removed, the hooks scrubbed,
+the progress sentence, every failure's sentence and buttons); the whole flow
+with fakes for every step (a good download is checked then swapped and Capsid
+quits; a download that stops, no room, a zip without Capsid, a copy signed
+another way or quarantined or of another version, a copy without the script,
+and a cancel mid-download all leave nothing behind and touch nothing); what a
+launch does with the marker and the `.previous` copy; and `swap.sh` run
+against a scratch folder with made-up bundles (the swap, a new copy that
+never starts, a move that fails, a running copy that never quits, a stale
+`.previous`, bad arguments, and that build-app.sh ships it). No test goes
+online, runs a real installer or touches /Applications. With
+`CAPSID_SNAPSHOT_DIR` set to a folder, one more test draws the popover into
+it as PNGs, light and dark, in each phase (the offer, downloading, checking,
+installing, and a copy that can't install).
 
 ## Settings (⌘,)
 

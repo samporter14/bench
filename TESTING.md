@@ -323,6 +323,76 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-22, Capsid 1.0 M2.1: updates install natively, and the old copy waits
+
+The first 1.0 milestone (the handoff's M2.1). Until now Install ran the
+README's `curl … main/install.sh | zsh`, a script fetched live from `main`
+that deleted the installed app before the new one was in place and checked
+nothing about the download. Now Capsid downloads the offered release's own
+Bench.zip, checks it is signed the way the running copy is and says the
+version offered, and runs a shipped script that swaps it in and keeps the old
+copy until the new one has been running for two seconds (DESIGN.md, Update
+check → Installing natively).
+
+- ✅ **The live download and every check, against the real v0.9.7 release**
+  (`build/Capsid.app/Contents/MacOS/Capsid --update-dry-run v0.9.7`, a build
+  signed with Solanum Code Signing): GitHub's redirect to its content host,
+  the unzip, no quarantine mark, the running copy's designated requirement
+  met, `codesign --verify --deep --strict`, bundle id and version, all in
+  1.8 s; it stopped before the swap, as a dry run does, and left nothing in
+  Caches. `--update-dry-run v0.0.1` (no such release) stopped at the download
+  with "The download from GitHub stopped before it finished. You still have
+  0.9.7, and nothing was changed."; `--update-dry-run latest` was refused
+  before any request.
+- ✅ **swap.sh against scratch bundles** (`SwapScriptTests`, 7 tests, 11 s):
+  the swap with the old copy kept at `.previous`; a new copy that never
+  starts is moved into the state folder and the old one comes back; a move
+  that fails puts the old copy back; a running copy that never quits is left
+  alone; a stale `.previous` is moved into the state folder first; bad
+  arguments are refused; build-app.sh ships the script.
+- ✅ **The flow with fakes** (`UpdateInstallTests`, 27 tests): a good download
+  is checked, the script is started from its copy in the state folder with
+  the right arguments and Capsid quits; a download that stops, no room, a zip
+  without Capsid, a copy signed another way, quarantined, of another version
+  or another bundle id, a copy without the script, and a cancel
+  mid-download all touch nothing and leave nothing behind; the marker and the
+  `.previous` copy at the next launch (removed only when older).
+- ✅ **install.sh, rewritten and run against the real release** in a scratch
+  folder (`BENCH_INSTALL_DIR`): a first install of 0.9.7 (verified,
+  unquarantined, no `.previous` left), a second run over it (the inode
+  changed), a stale `.previous` cleared, the first `mv` failing (an immutable
+  file, then a read-only folder: exit 1, "Nothing was changed.", the original
+  untouched), the final `mv` failing (injected: the old copy put back), the
+  API fallback (`127.0.0.1:9`, then bad tags `v0.9.7/../../evil`, `latest`,
+  empty: all fall back to `releases/latest/download`), and an offline
+  harness of tiny signed executables: a new copy that runs, one that dies
+  after 1 s (rolled back, the old one relaunched), one that dies at once, a
+  fresh install whose copy dies, a tampered signature (nothing quit), the
+  quarantine tripwire, and Bench.app → Capsid.app with and without the new
+  copy starting. About 11 API calls were spent. The script is 183 lines.
+- ✅ **The whole suite:** 2,025 tests in 261 suites pass (`swift test --jobs
+  2`), 34 of them new.
+- ✅ **The popover's phases drawn offscreen** (`CAPSID_SNAPSHOT_DIR`): the
+  offer, "Downloading Capsid 0.9.7… 3.1 of 9.4 MB" with a clay bar and
+  Cancel, "Checking the signature…", "Installing… Capsid will reopen in a
+  moment.", and a copy that can't install, light and dark.
+- ⏳ **The real swap, end to end,** needs a release newer than 0.9.7 on GitHub:
+  the toolbar's Updating ring, the quit, swap.sh moving the old copy aside
+  and opening the new one, the "Capsid 1.0 is installed" card at the next
+  launch and the old copy gone. It is the first thing to watch when 1.0's
+  first release goes out, with `~/Library/Caches/local.sam.bench/update/swap.log`
+  as the record. Until then, 0.9.7 copies update through `main`'s install.sh.
+- ⏳ **install.sh run by 0.9.7's own Update button** (its `curl | zsh` child
+  outliving the quit through the longer swap): not seen; the same risk the
+  old script had, with a wider window. Watch the first 0.9.7 → 1.0 update.
+- ⏳ **A download cancelled from the popover, and the failure alerts** (Try
+  Again, Later, Release Notes): drawn, not clicked.
+- ⏳ **The first Developer ID-signed release** will fail the "signed the way
+  this copy is" check from a self-signed copy, by design: one manual install
+  then (DESIGN.md says so; M2.6 can widen the requirement).
+- Not pushed: `main`'s install.sh is what every 0.9.7 runs, so the push is
+  its own release step, after Sam's go.
+
 ## 2026-10-22, Capsid 0.9.7: updates you notice and install in one click
 
 Capsid already had an update check, but it was off unless someone found the

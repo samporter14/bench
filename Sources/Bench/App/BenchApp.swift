@@ -14,6 +14,7 @@ struct BenchApp: App {
         SceneReel.runIfAsked()
         PosterCost.runIfAsked()
         Diagnose.runIfAsked()
+        UpdateDryRun.runIfAsked()
         Demo.validate()
         SettingsKey.register()
     }
