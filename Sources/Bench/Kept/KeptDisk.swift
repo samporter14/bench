@@ -15,9 +15,12 @@
 // uses ("The folder didn't respond. If it comes back, the file may still
 // appear there."). The call is left to finish or never to. While one is out
 // past its limit, the others are refused at once ("The folder still isn't
-// responding.") instead of each waiting out a limit of its own; a call that
-// only cleans up still goes in, behind it. The clock and the queue are
-// injected, so tests hold a write as a dropped volume would and never sleep.
+// responding.") instead of each waiting out a limit of its own, until it comes
+// back. The queue is one at a time, so a call that never comes back holds every
+// later one until Capsid is opened again: an abandon is not refused, but it
+// waits behind the stuck call and gives up after its own limit, leaving the
+// hidden folder where it is. The clock and the queue are injected, so tests
+// hold a write as a dropped volume would and never sleep.
 // All the file-system calls are in `KeptDiskWork`, below, which is not
 // main-actor code, and `KeptDiskCallsTests` fails if any other file of
 // Kept/ makes one.
