@@ -229,7 +229,6 @@ struct ShelfView: View {
     private func detail(_ item: ShelfItem) -> some View {
         ShelfDetail(item: item, model: model, thumbnails: thumbnails, quickLook: quickLook,
                     keep: { keepWithDataAndCode(item) }, maxHeight: max(220, size.height * 0.56))
-            .id(item.id)
     }
 
     private func keepWithDataAndCode(_ item: ShelfItem) {
@@ -353,7 +352,8 @@ struct ShelfDetail: View {
     let maxHeight: CGFloat
     @State private var copied = false
     @State private var sayingMore = false
-    @State private var contentHeight: CGFloat = 0
+    /// The card's height as measured; a guess until then, so it never fills the window for a frame.
+    @State private var contentHeight: CGFloat = 230
 
     private var said: String { item.text.claudeSaid.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var longSaid: Bool { said.count > 170 || said.filter(\.isNewline).count > 2 }
@@ -405,6 +405,7 @@ struct ShelfDetail: View {
                 if item.hasMore {
                     Solanum.hairline.frame(height: 1).padding(.top, 18)
                     ShelfExtras(item: item, model: model)
+                        .id(item.id)
                         .padding(.top, 16)
                 }
             }
@@ -412,13 +413,17 @@ struct ShelfDetail: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(height: contentHeight == 0 ? nil : min(contentHeight, maxHeight))
+        .frame(height: min(contentHeight, maxHeight))
         .background(Solanum.raised, in: .rect(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Solanum.strong, lineWidth: 1))
         .clipShape(.rect(cornerRadius: 12))
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
         .padding(.top, 8)
+        .onChange(of: item.id) { _, _ in
+            sayingMore = false
+            copied = false
+        }
     }
 
     private var preview: some View {
