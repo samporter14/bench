@@ -451,7 +451,7 @@ enum UpdateSignature {
 final class UpdateDownloader: NSObject, URLSessionTaskDelegate, URLSessionDownloadDelegate, @unchecked Sendable {
     private let progress: @Sendable (Int64, Int64?) -> Void
     private let lock = NSLock()
-    private var overflowed = false
+    private var didOverflow = false
 
     private init(progress: @escaping @Sendable (Int64, Int64?) -> Void) {
         self.progress = progress
@@ -463,16 +463,26 @@ final class UpdateDownloader: NSObject, URLSessionTaskDelegate, URLSessionDownlo
         request.httpShouldHandleCookies = false
         request.setValue("Capsid", forHTTPHeaderField: "User-Agent")
         let delegate = UpdateDownloader(progress: progress)
-        let (file, response) = try await UpdateTransport.session.download(for: request, delegate: delegate)
+        let file: URL, response: URLResponse
+        do {
+            (file, response) = try await UpdateTransport.session.download(for: request, delegate: delegate)
+        } catch let error as URLError where error.code == .cancelled {
+            // The session says "cancelled" for both: a file over the cap,
+            // which the delegate stopped, and the task's own cancellation.
+            if delegate.overflowed { throw UpdateInstallFailure.download("the file was too large") }
+            if Task.isCancelled { throw CancellationError() }
+            throw error
+        }
         // The file is a temporary that goes away after this returns.
         defer { try? FileManager.default.removeItem(at: file) }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw UpdateInstallFailure.download("GitHub answered with status \((response as? HTTPURLResponse)?.statusCode ?? 0)")
         }
-        if delegate.overflowed { throw UpdateInstallFailure.download("the file was too large") }
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: file, to: destination)
     }
+
+    var overflowed: Bool { lock.withLock { didOverflow } }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest) async -> URLRequest? {
@@ -483,7 +493,7 @@ final class UpdateDownloader: NSObject, URLSessionTaskDelegate, URLSessionDownlo
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil
         if max(totalBytesWritten, expected ?? 0) > UpdateInstallRules.maxZipBytes {
-            lock.withLock { overflowed = true }
+            lock.withLock { didOverflow = true }
             downloadTask.cancel()
             return
         }

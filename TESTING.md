@@ -376,12 +376,28 @@ check → Installing natively).
   offer, "Downloading Capsid 0.9.7… 3.1 of 9.4 MB" with a clay bar and
   Cancel, "Checking the signature…", "Installing… Capsid will reopen in a
   moment.", and a copy that can't install, light and dark.
-- ⏳ **The real swap, end to end,** needs a release newer than 0.9.7 on GitHub:
-  the toolbar's Updating ring, the quit, swap.sh moving the old copy aside
-  and opening the new one, the "Capsid 1.0 is installed" card at the next
-  launch and the old copy gone. It is the first thing to watch when 1.0's
-  first release goes out, with `~/Library/Caches/local.sam.bench/update/swap.log`
-  as the record. Until then, 0.9.7 copies update through `main`'s install.sh.
+- ✅ **swap.sh through its production path, no hooks:** against a scratch
+  Applications folder holding two fake Capsid.app bundles (a tiny Mach-O
+  that sleeps, bundle id `test.capsid.swap.fake`, versions 9.9.8 and 9.9.9),
+  with the real `/usr/bin/open` and the real `ps -axo pid=,comm=` exact
+  match: marker `installed 9.9.9`, the new copy running from the scratch
+  path (`comm` shows the bundle path in full), the old one kept at
+  `.previous`, 4 s end to end. The dry run had already read a real bundle's
+  Info.plist the way the launch after does.
+- ⏳ **The chain as one, on the real app:** `UpdateChecker.install()` →
+  the flow → `UpdateSwap.launch` → `terminate` → swap.sh → a real Capsid
+  relaunched → `UpdateAftermath` at its launch (the "Capsid 1.0 is installed"
+  card, the old copy gone). `install()` runs only from
+  /Applications/Capsid.app and the dry run stops before the swap by design,
+  so this needs a release newer than 0.9.7 on GitHub: the first thing to
+  watch when 1.0's first release goes out, with
+  `~/Library/Caches/local.sam.bench/update/swap.log` as the record. Until
+  then, 0.9.7 copies update through `main`'s install.sh.
+- ⏳ **A download over the 200 MB cap, and a stalled one:** the delegate
+  stops the first and the alert says "stopped before it finished" (a
+  cancelled session answer is told apart from the user's Cancel by
+  `Task.isCancelled`); the second waits 60 s. Neither can be made with a
+  real release.
 - ⏳ **install.sh run by 0.9.7's own Update button** (its `curl | zsh` child
   outliving the quit through the longer swap): not seen; the same risk the
   old script had, with a wider window. Watch the first 0.9.7 → 1.0 update.
