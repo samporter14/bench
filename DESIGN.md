@@ -5194,9 +5194,10 @@ answers before it a step away. It reads the way the phone reads a conversation
 (Capsid on your phone → History) and writes nothing.
 
 **Opening.** Three doors, all on a session: Quick Open (⌥↩ on the field opens
-the highlighted session as a reference instead of in the main window, read
-from `NSApp.currentEvent` at submit, and every row's context menu has Open as
-Reference), the activity list (every session row's context menu and VoiceOver
+the highlighted session as a reference instead of in the main window, caught
+with `onKeyPress` as the arrows are, since Option-Return in a text field
+inserts a line break and never submits; and every row's context menu has Open
+as Reference), the activity list (every session row's context menu and VoiceOver
 actions, `menuActions` on `ActivityRow`, never a hover button), and a card's
 Later menu (Open as Reference under Open in Capsid, on the cards that name a
 session). Opening a session as a reference leaves its cards and reminder as
@@ -5225,7 +5226,8 @@ Science in its context menu; and a footer with Copy with Source and Open in
 Claude Science, both plain. Nothing in it is in the clay: the window reads, it
 never asks. Window → Keep on Top (`ReferenceCommands`) floats the key
 reference window (`level = .floating`), dim unless one is key; it is the only
-window that floats.
+ordinary window that floats (the Reply window and the specimens panel are
+panels, floating by nature).
 
 **Copy with Source.** The selection, or the whole answer as drawn, then a
 blank line, then `— Claude, in “<session>” (<project>), 22 October 2026, 8:47`

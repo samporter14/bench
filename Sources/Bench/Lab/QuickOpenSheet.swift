@@ -36,7 +36,15 @@ struct QuickOpenSheet: View {
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($searching)
-                    .onSubmit { submit(results.first { $0.id == selected }) }
+                    .onSubmit { open(results.first { $0.id == selected }) }
+                    // ⌥↩ opens the highlighted session as a reference. Caught
+                    // here, as the arrows are: in a text field Option-Return
+                    // would insert a line break and never submit.
+                    .onKeyPress(keys: [.return]) { press in
+                        guard press.modifiers.contains(.option) else { return .ignored }
+                        reference(results.first { $0.id == selected })
+                        return .handled
+                    }
                     .onKeyPress(.upArrow) {
                         selectedID = neighbour(of: selected, in: results, by: -1)
                         return .handled
@@ -139,17 +147,9 @@ struct QuickOpenSheet: View {
         dismiss()
     }
 
-    /// Return opens the session; ⌥↩ opens it as a reference instead.
-    private func submit(_ session: SessionStatus?) {
-        if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
-            reference(session)
-        } else {
-            open(session)
-        }
-    }
-
-    /// The reader beside the work (Reference/ReferenceWindow.swift), which
-    /// leaves the session's cards and reminder as they are.
+    /// ⌥↩, or the row's menu: the reader beside the work
+    /// (Reference/ReferenceWindow.swift), which leaves the session's cards
+    /// and reminder as they are.
     private func reference(_ session: SessionStatus?) {
         guard let session else { return }
         dismiss()

@@ -359,7 +359,8 @@ struct BenchCommands: Commands {
         }
         CommandGroup(after: .windowArrangement) {
             // A reference window floats over the work while it is wanted
-            // there. Dim unless one is key: it is the only window that floats.
+            // there. Dim unless one is key: the only ordinary window that
+            // floats (Reply and the specimens panel are panels).
             Toggle("Keep on Top", isOn: Binding(get: { reference.isOnTop }, set: { reference.setOnTop($0) }))
                 .disabled(reference.keyWindow == nil)
         }

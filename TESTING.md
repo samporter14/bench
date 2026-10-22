@@ -371,12 +371,19 @@ the Markdown on Opus), merged; the window, the model and the gate here.
   captured by window ID (`bench-wt/shoot.sh`; captures work again on this Mac):
   title and "Assay development · read only" subtitle, the Earlier/Later
   control group, the caption, the text, the footer.
+- ✅ **⌥↩ in Quick Open** goes through `onKeyPress`, as the arrows do: a
+  review caught that Option-Return in a text field inserts a line break and
+  never submits, so the first draft's `onSubmit` check could not have fired.
+  Builds; the Quick Open suites pass. Not yet pressed on the real sheet.
 - ⏳ **Not live:** no real session was read yet (Sam: right-click a session in
   the activity list → Open as Reference). The `reading` log line's numbers,
   the typing gate against real key presses, ⌥⌘←/→ in the key window, Keep on
-  Top, Keep… from a figure, and Copy with Source on a real answer are
-  unverified on the real app; the demo's reads are made up, so no cost was
-  measured.
+  Top, Keep… from a figure (its sheet reads through the Results shelf's
+  queue, which has never served with the Results window closed), and Copy
+  with Source on a real answer are unverified on the real app; the demo's
+  reads are made up, so no cost was measured. Known: Copy with Source on a
+  whole answer copies the drawn text, so a table comes out as "Not shown
+  here: a table." and a rule as its dash.
 
 ## 2026-10-22, Capsid 1.0 M3: Keep, and the Kept window
 
