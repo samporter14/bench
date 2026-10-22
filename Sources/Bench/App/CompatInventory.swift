@@ -56,6 +56,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
     case usage, context, planCard, approve, errorCard, phone
     case start, sessions, activity, browse
     case keep
+    case planProgress, reviewer, notes
 
     var title: String {
         switch self {
@@ -76,6 +77,9 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .activity: "The usage graph and the week in review"
         case .browse: "Quick Open, Results and the phone's project list"
         case .keep: "Keep a figure with its answer, data and script"
+        case .planProgress: "Step n of m under a running session"
+        case .reviewer: "The reviewer's findings on a finished card"
+        case .notes: "Claude's messages to you, on a card"
         }
     }
 
@@ -215,6 +219,17 @@ extension CompatInventory {
         read("_artifact_refs and _ts on GET /api/frames/<session>/messages",
              "an assistant row's {name: {artifact_id, version_id}} for the files its text shows or names; _ts in milliseconds",
              .keep, "Remote/HistoryReader.swift", check: .whenUsed("it is what was said, so it is never read from here")),
+        // Step progress, the reviewer's findings and Claude's notes (since 1.0): each is projected in the
+        // page (Remote/InsightReader.swift; the notes by the history reader), so apiGET never reads them.
+        read("plan statuses on GET /api/frames/<session>/trace-shallow?include_messages=false",
+             "the session's tree: each frame's status; on the root context_data._plan_approved (true), _plan_version_id, _plan_json (phases[].delegations[].steps[].title, in order) and _step_statuses; on each direct child context_data._plan_claims[] (plan_version_id, steps[].title) and _step_statuses; a status is {status: pending|in_progress|completed|blocked|skipped}. Projected in the page to a step number, a total and at most one title: never a step's description or a status's notes",
+             .planProgress, "Remote/InsightReader.swift"),
+        read("GET /api/frames/<session>/verification?resolved_limit=0&actionable_limit=500",
+             "{checks: [{verdict: pass|warn|fail|inconclusive, status: open|claimed|resolved|unaddressed, rebuttal, reflag_count}], running: [], completed_review_count, resolved_by_verdict: {fail, warn}}; projected in the page to four counts: never a claim, its evidence or a rebuttal",
+             .reviewer, "Remote/InsightReader.swift"),
+        read("send_user_message in GET /api/frames/<session>/messages",
+             "an assistant row's tool_use block named send_user_message, with input.message (text) and its tool_result {delivered, attachments}; the history reader projects it as a toYou item, and the panel offers the newest page's new ones",
+             .notes, "Remote/HistoryReader.swift", check: .whenUsed("it is what was said, so it is never read from here")),
         read("GET /api/csrf", "sets the cookie that writes send back",
              .approve, "Web/WebAPI.swift", check: .whenUsed("read only when a write is refused as stale")),
         read("401 on any /api read", "what a signed-out page answers",
