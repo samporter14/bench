@@ -10,12 +10,25 @@ import Foundation
 import Testing
 @testable import Bench
 
+/// A settings suite of a test's own, and what puts it away: its domain, and
+/// the plist the system wrote for it, so Preferences stays as it was.
+private func scratchDefaults(_ prefix: String) -> (defaults: UserDefaults, name: String) {
+    let name = "capsid-\(prefix)-\(UUID().uuidString)"
+    return (UserDefaults(suiteName: name)!, name)
+}
+
+private func putAway(_ defaults: UserDefaults, _ name: String) {
+    defaults.removePersistentDomain(forName: name)
+    let plist = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences/\(name).plist")
+    try? FileManager.default.removeItem(at: plist)
+}
+
 // MARK: Recipes
 
 struct RecipeStoreTests {
     private func suite() -> (UserDefaults, String) {
-        let name = "capsid-recipes-test-\(UUID().uuidString)"
-        return (UserDefaults(suiteName: name)!, name)
+        let made = scratchDefaults("recipes-test")
+        return (made.defaults, made.name)
     }
 
     private let list = [
@@ -25,7 +38,7 @@ struct RecipeStoreTests {
 
     @Test func recipesRoundTripThroughSettingsAsOneJSONString() {
         let (defaults, name) = suite()
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { putAway(defaults, name) }
         let store = RecipeStore(defaults: defaults)
         #expect(store.recipes.isEmpty)
         store.recipes = list
@@ -141,8 +154,7 @@ struct GlobalHotKeyTests {
     }
 
     private func keys(_ settings: [String: String] = [:]) -> (GlobalKeys, FakeBackend, UserDefaults, String) {
-        let name = "capsid-keys-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
+        let (defaults, name) = scratchDefaults("keys-test")
         for (key, value) in settings { defaults.set(value, forKey: key) }
         let backend = FakeBackend()
         return (GlobalKeys(backend: backend, defaults: defaults), backend, defaults, name)
@@ -150,7 +162,7 @@ struct GlobalHotKeyTests {
 
     @Test func eachKeyIsRegisteredFromItsSettingAndTheDefaultsAreTheDefaults() {
         let (keys, backend, defaults, name) = keys()
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { putAway(defaults, name) }
         keys.apply()
         #expect(backend.registered[.quickStart]?.code == UInt32(kVK_Space))
         #expect(backend.registered[.reply]?.code == UInt32(kVK_ANSI_R))
@@ -164,7 +176,7 @@ struct GlobalHotKeyTests {
 
     @Test func changingAKeyLetsGoOfTheOldOneAndNoneRegistersNothing() {
         let (keys, backend, defaults, name) = keys()
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { putAway(defaults, name) }
         keys.apply()
         defaults.set("controlOptionCommandN", forKey: SettingsKey.quickStartKey)
         keys.apply()
@@ -179,7 +191,7 @@ struct GlobalHotKeyTests {
 
     @Test func aKeyAnotherAppHoldsIsSaidSoAndTheOtherKeyStillWorks() {
         let (keys, backend, defaults, name) = keys()
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { putAway(defaults, name) }
         backend.refuse[.controlOptionCommandSpace] = OSStatus(eventHotKeyExistsErr)
         keys.apply()
         #expect(backend.registered[.quickStart] == nil)
@@ -203,7 +215,7 @@ struct GlobalHotKeyTests {
 
     @Test func twoSlotsNeverHoldTheSameKeyAndTheSecondSaysWhoHasIt() {
         let (keys, backend, defaults, name) = keys(["quickStartKey": "controlOptionCommandR", "replyKey": "controlOptionCommandR"])
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { putAway(defaults, name) }
         keys.apply()
         #expect(backend.registered[.quickStart] != nil)
         #expect(backend.registered[.reply] == nil)
@@ -217,7 +229,7 @@ struct GlobalHotKeyTests {
 
     @Test func twoKeysCanSwapInOneChange() {
         let (keys, backend, defaults, name) = keys(["quickStartKey": "controlOptionCommandN", "replyKey": "controlOptionCommandR"])
-        defer { defaults.removePersistentDomain(forName: name) }
+        defer { putAway(defaults, name) }
         keys.apply()
         defaults.set("controlOptionCommandR", forKey: SettingsKey.quickStartKey)
         defaults.set("controlOptionCommandN", forKey: SettingsKey.replyKey)
@@ -228,9 +240,8 @@ struct GlobalHotKeyTests {
     }
 
     @Test func aPressRunsItsActionOnceEvenIfTheKeyRepeats() {
-        let name = "capsid-keys-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defer { defaults.removePersistentDomain(forName: name) }
+        let (defaults, name) = scratchDefaults("keys-test")
+        defer { putAway(defaults, name) }
         var clock = Date(timeIntervalSince1970: 1_000)
         let keys = GlobalKeys(backend: FakeBackend(), defaults: defaults, now: { clock })
         var presses: [String] = []

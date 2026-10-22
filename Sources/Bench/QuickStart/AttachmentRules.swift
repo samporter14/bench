@@ -57,7 +57,7 @@ enum AttachmentRules {
     static let totalLimitWords = "40 MB"
 
     /// The kinds, in the words the sentence uses.
-    static let whatIsSent = "Capsid sends documents, spreadsheets, tables, images, text, code and common lab data files."
+    static let whatIsSent = "Capsid sends documents, tables, images, text and lab data files."
 
     /// The extension (lower case, no dot) to the content type it is sent as.
     static let types: [String: String] = {

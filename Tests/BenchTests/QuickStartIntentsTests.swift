@@ -99,7 +99,8 @@ struct IntentEntityTests {
                 id == "0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5"
                     ? IntentSession(id: id, title: "Plate reader QC", projectID: "proj_a", projectName: "Assay development", state: "Working")
                     : nil
-            })
+            },
+            recipes: { [Recipe(id: "r1", name: "QC a plate-reader export", text: "QC it"), Recipe(id: "r2", name: "Summarize a paper", text: "Do")] })
     }
 
     @Test func projectsAreOfferedFoundByIdAndMatchedByName() async throws {
@@ -127,17 +128,17 @@ struct IntentEntityTests {
         #expect(entity.projectID == "proj_a" && entity.state == "Working")
     }
 
-    @Test func recipesAreTheSettingsOwnAndNothingIsKeptByTheEntities() async throws {
-        let store = RecipeStore()
-        let before = store.recipes
-        defer { store.recipes = before }
-        store.recipes = [Recipe(id: "r1", name: "QC a plate-reader export", text: "QC it"), Recipe(id: "r2", name: "Summarize a paper", text: "Do")]
+    @Test func recipesAreReadEachTimeAndNothingIsKeptByTheEntities() async throws {
+        IntentDatabase.current = fake()
+        defer { IntentDatabase.reset() }
         let query = RecipeEntityQuery()
         #expect(try await query.suggestedEntities().map(\.id) == ["r1", "r2"])
         #expect(try await query.entities(matching: "summarize").map(\.id) == ["r2"])
         #expect(try await query.entities(for: ["r2", "r9"]).map(\.id) == ["r2"])
         // The entities hold no storage of their own: reading them again reads again.
-        store.recipes = [Recipe(id: "r3", name: "New one", text: "x")]
+        var changed = fake()
+        changed.recipes = { [Recipe(id: "r3", name: "New one", text: "x")] }
+        IntentDatabase.current = changed
         #expect(try await query.suggestedEntities().map(\.id) == ["r3"])
     }
 

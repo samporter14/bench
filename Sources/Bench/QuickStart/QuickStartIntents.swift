@@ -29,6 +29,8 @@ struct IntentDatabase: Sendable {
     /// no words, the recent ones.
     var sessions: @Sendable (_ words: [String]) async -> [IntentSession]
     var session: @Sendable (_ id: String) async -> IntentSession?
+    /// The recipes: the person's own settings, read each time.
+    var recipes: @Sendable () -> [Recipe]
 
     static let live = IntentDatabase(
         projects: { await QuickStartProjects.fromDatabaseOffMain() ?? [] },
@@ -45,7 +47,8 @@ struct IntentDatabase: Sendable {
                 guard PlanCheck.isFrameID(id), let db = resolveDatabase() else { return nil }
                 return (try? fetchSession(db: db, id: id)).flatMap { $0 }.map(IntentSession.init)
             }.value
-        })
+        },
+        recipes: { RecipeStore().recipes })
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var replacement: IntentDatabase?
@@ -216,18 +219,18 @@ struct RecipeEntityQuery: EntityStringQuery {
     init() {}
 
     func entities(for identifiers: [String]) async throws -> [RecipeEntity] {
-        let all = RecipeStore().recipes
+        let all = IntentDatabase.current.recipes()
         return identifiers.compactMap { id in all.first { $0.id == id }.map(RecipeEntity.init) }
     }
 
     func entities(matching string: String) async throws -> [RecipeEntity] {
         let words = string.split(whereSeparator: \.isWhitespace).map { $0.lowercased() }
-        return RecipeStore().recipes.filter { recipe in words.allSatisfy { recipe.name.lowercased().contains($0) } }
+        return IntentDatabase.current.recipes().filter { recipe in words.allSatisfy { recipe.name.lowercased().contains($0) } }
             .map(RecipeEntity.init)
     }
 
     func suggestedEntities() async throws -> [RecipeEntity] {
-        RecipeStore().recipes.map(RecipeEntity.init)
+        IntentDatabase.current.recipes().map(RecipeEntity.init)
     }
 }
 
@@ -332,6 +335,18 @@ enum ShortcutsActions {
         guard let given, !given.isEmpty else { return ([], {}) }
         var made: [QuickStartFile] = []
         var folder: URL?
+        do {
+            try addFiles(from: given, to: &made, folder: &folder)
+        } catch {
+            // A refusal leaves nothing behind: what was written goes before it is thrown.
+            if let folder { try? FileManager.default.removeItem(at: folder) }
+            throw error
+        }
+        let cleanup: @Sendable () -> Void = { [folder] in if let folder { try? FileManager.default.removeItem(at: folder) } }
+        return (made, cleanup)
+    }
+
+    private static func addFiles(from given: [IntentFile], to made: inout [QuickStartFile], folder: inout URL?) throws {
         for item in given {
             let url: URL
             if let place = item.fileURL {
@@ -352,8 +367,6 @@ enum ShortcutsActions {
                 throw ShortcutError(sentence: refusal.sentence)
             }
         }
-        let cleanup: @Sendable () -> Void = { [folder] in if let folder { try? FileManager.default.removeItem(at: folder) } }
-        return (made, cleanup)
     }
 
     /// The project a recipe with none starts in: the one chosen in the
@@ -431,7 +444,7 @@ struct RunRecipeIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<SessionEntity> & ProvidesDialog {
-        guard let made = RecipeStore().recipes.first(where: { $0.id == recipe.id }) else {
+        guard let made = IntentDatabase.current.recipes().first(where: { $0.id == recipe.id }) else {
             throw ShortcutError(sentence: "That recipe isn't in Capsid's settings any more.")
         }
         let projects = await IntentDatabase.current.projects()

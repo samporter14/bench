@@ -46,7 +46,7 @@ struct AttachmentRulesTests {
         guard case .unsupported(let shown, _)? = refusal else { Issue.record("not refused: \(name)"); return }
         #expect(shown == name)
         #expect(refusal?.sentence.contains("\u{201C}\(name)\u{201D}") == true)
-        #expect(refusal?.sentence.hasSuffix("Capsid sends documents, spreadsheets, tables, images, text, code and common lab data files.") == true)
+        #expect(refusal?.sentence.hasSuffix("Capsid sends documents, tables, images, text and lab data files.") == true)
     }
 
     @Test func theSentencesSayWhatHappened() {

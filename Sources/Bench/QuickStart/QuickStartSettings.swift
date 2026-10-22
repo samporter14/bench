@@ -15,6 +15,15 @@ struct RecipesSettingsView: View {
     @State private var editing: Recipe?
     @State private var adding = false
     private let store = RecipeStore()
+    /// Recipes and projects given instead of read: a snapshot's, which reads
+    /// no settings and no database.
+    private let seed: (recipes: [Recipe], projects: [QuickStartProject])?
+
+    init(seed: (recipes: [Recipe], projects: [QuickStartProject])? = nil) {
+        self.seed = seed
+        _recipes = State(initialValue: seed?.recipes ?? [])
+        _projects = State(initialValue: seed?.projects ?? [])
+    }
 
     var body: some View {
         Form {
@@ -36,6 +45,7 @@ struct RecipesSettingsView: View {
         }
         .settingsPage(height: 520)
         .task {
+            guard seed == nil else { return }
             recipes = store.recipes
             projects = await QuickStartProjects.fromDatabase() ?? []
         }
