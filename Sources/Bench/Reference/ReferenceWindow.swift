@@ -1,11 +1,14 @@
 // ReferenceWindow.swift — the reference reader (DESIGN.md, Reference): a
-// small read-only window with one of Claude's answers from a session, to keep
-// beside the work. The session's title over "<project> · read only"; Earlier
-// and Later in the toolbar (⌥⌘← and ⌥⌘→ while the window is key); the answer
-// as selectable text, its figures as thumbnails; Copy with Source and Open in
-// Claude Science at the foot. Window → Keep on Top floats the key one. Nothing
-// here is in the clay: the window reads, it never asks.
+// small read-only window with one of Claude's replies from a session, to keep
+// beside the work. The figures come first, full width, each with Keep…; then
+// what Claude said, as selectable text; above them, quietly, what the user
+// asked. The session's title is the window's, and its subtitle says the
+// project, when and which reply ("2 of 3"). The toolbar holds the rest: Earlier
+// and Later (⌥⌘← and ⌥⌘→ while the window is key), Copy with Source (⇧⌘C) and
+// Open Conversation. Window → Keep on Top floats the key one. Nothing here is
+// in the clay: the window reads, it never asks.
 import AppKit
+import Combine
 import SwiftUI
 
 /// The Window menu's Keep on Top: the key reference window, if any.
@@ -33,9 +36,9 @@ final class ReferenceWindow: NSWindow {
 final class ReferenceWindowController: NSObject, NSWindowDelegate {
     static let shared = ReferenceWindowController()
     /// The window's width, and its height before the user resizes it.
-    static let size = NSSize(width: 440, height: 560)
+    static let size = NSSize(width: 440, height: 620)
     private static let frameName = "CapsidReference"
-    /// The figures' thumbnail reads, one at a time, apart from the Results shelf's queue.
+    /// The figures' reads, one at a time, apart from the Results shelf's queue.
     static let transfers = makeTransfers()
 
     private static func makeTransfers() -> ShelfTransfers {
@@ -56,6 +59,7 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
 
     private var windows: [String: ReferenceWindow] = [:]
     private var models: [String: ReferenceModel] = [:]
+    private var watches: [String: AnyCancellable] = [:]
 
     func show(_ session: SessionStatus, dependencies: ReferenceDependencies? = nil) {
         if let window = windows[session.id] {
@@ -68,14 +72,14 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         let selection = ReferenceSelection()
         let hosting = NSHostingController(rootView: ReferenceView(model: model, selection: selection))
         // The window keeps its size whatever it shows: the empty and failed
-        // states are smaller than an answer, and must not shrink it.
+        // states are smaller than a reply, and must not shrink it.
         hosting.sizingOptions = []
         let window = ReferenceWindow(contentRect: NSRect(origin: .zero, size: Self.size),
                                      styleMask: [.titled, .closable, .resizable, .miniaturizable],
                                      backing: .buffered, defer: false)
         window.contentViewController = hosting
         window.title = session.displayTitle
-        window.subtitle = "\(session.projectName) · read only"
+        window.subtitle = model.subtitle
         window.setContentSize(Self.size)
         window.contentMinSize = NSSize(width: 360, height: 320)
         window.isReleasedWhenClosed = false
@@ -87,6 +91,13 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         if windows.values.contains(where: { $0.frame.origin == window.frame.origin }) {
             window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: window.frame.minX, y: window.frame.maxY)))
         }
+        // The subtitle follows the reply shown.
+        watches[session.id] = model.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak window, weak model] _ in
+                guard let window, let model else { return }
+                if window.subtitle != model.subtitle { window.subtitle = model.subtitle }
+            }
         windows[session.id] = window
         models[session.id] = model
         model.open()
@@ -105,6 +116,7 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         models[id]?.close()
         models[id] = nil
         windows[id] = nil
+        watches[id] = nil
         if ReferenceCommands.shared.keyWindow === window { ReferenceCommands.shared.keyWindow = nil }
     }
 
@@ -141,76 +153,118 @@ struct ReferenceView: View {
     let selection: ReferenceSelection
     @State private var keeping: KeepModel?
 
+    /// The page's margin, and the space between its parts.
+    private static let margin: CGFloat = 20
+    private static let gap: CGFloat = 18
+
     var body: some View {
-        VStack(spacing: 0) {
-            content
-            Divider()
-            footer
-        }
-        .frame(minWidth: 360, minHeight: 320)
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                ControlGroup {
-                    Button { model.earlier() } label: { Label("Earlier", systemImage: "chevron.left") }
-                        .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-                        .disabled(!model.canGoEarlier)
-                        .help("The answer before this one. Option-Command-Left Arrow.")
-                    Button { model.later() } label: { Label("Later", systemImage: "chevron.right") }
-                        .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-                        .disabled(!model.canGoLater)
-                        .help("The answer after this one. Option-Command-Right Arrow.")
+        content
+            .frame(minWidth: 360, minHeight: 320)
+            .background(Color(nsColor: .textBackgroundColor))
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    ControlGroup {
+                        Button { model.earlier() } label: { Label("Earlier", systemImage: "chevron.left") }
+                            .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                            .disabled(!model.canGoEarlier)
+                            .help("The reply before this one (Option-Command-Left Arrow)")
+                        Button { model.later() } label: { Label("Later", systemImage: "chevron.right") }
+                            .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                            .disabled(!model.canGoLater)
+                            .help("The reply after this one (Option-Command-Right Arrow)")
+                    }
+                    .controlGroupStyle(.navigation)
+                }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if model.phase == .reading, model.current != nil {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Reading")
+                    }
+                    Button { copy() } label: {
+                        Label(model.copied ? "Copied" : "Copy with Source",
+                              systemImage: model.copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .disabled(model.current == nil)
+                    .help("Copy with Source: the selection, or the whole reply, with where it came from (Shift-Command-C)")
+                    Button { model.openConversation() } label: {
+                        Label("Open Conversation", systemImage: "arrow.up.forward.square")
+                    }
+                    .help("Open Conversation: this session in the main window")
                 }
             }
-        }
-        .sheet(item: $keeping) { keep in
-            KeepSheet(model: keep, dismiss: { keeping = nil })
-        }
+            .sheet(item: $keeping) { keep in
+                KeepSheet(model: keep, dismiss: { keeping = nil })
+            }
     }
 
     @ViewBuilder
     private var content: some View {
         if let answer = model.current {
-            VStack(alignment: .leading, spacing: 0) {
-                positionLine
-                // One page: the text at its own height, then its figures.
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Self.gap) {
+                    if let question = answer.question { asked(question) }
+                    ForEach(answer.figures, id: \.v) { file in figure(file) }
+                    if !answer.parts.isEmpty {
                         ReferenceTextView(text: model.rendered(answer), selection: selection)
-                        if model.readingRest || model.restFailed.contains(answer.i) {
-                            Text(model.readingRest ? "Reading the rest…" : "The rest of this answer couldn\u{2019}t be read.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 8)
-                        }
-                        if !answer.figures.isEmpty { figures(answer) }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if model.readingRest || model.restMissing {
+                        Text(model.readingRest ? "Reading the rest\u{2026}" : "Part of this reply couldn\u{2019}t be read.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .id(answer.i)
+                .padding(Self.margin)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .id(answer.id)
         } else {
             empty
         }
     }
 
-    /// "Claude's answer · 8:47 · 2 of 3", with a small spinner while a page is read.
-    private var positionLine: some View {
-        HStack(spacing: 8) {
-            Text(model.positionLine ?? "")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-            if model.phase == .reading {
-                ProgressView()
+    /// What the user asked: quiet, a hairline at its side, three lines at most.
+    private func asked(_ question: String) -> some View {
+        Text(question)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(3)
+            .truncationMode(.tail)
+            .textSelection(.enabled)
+            .padding(.leading, 10)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(.quaternary)
+                    .frame(width: 2)
+            }
+            .accessibilityLabel("You asked: \(question)")
+    }
+
+    /// A figure, the page's width, with its name and Keep… under it.
+    private func figure(_ file: HistoryFile) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ReferenceFigureView(store: model.thumbnails, file: file, failed: model.thumbnailFailed(file))
+                .onAppear { model.wantThumbnail(file) }
+                .contextMenu {
+                    Button("Keep\u{2026}") { keep(file) }
+                    Button("Open Conversation") { model.openConversation() }
+                }
+            HStack(spacing: 8) {
+                Text(file.name)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Button { keep(file) } label: { Label("Keep\u{2026}", systemImage: "checkmark.seal") }
+                    .buttonStyle(.borderless)
                     .controlSize(.small)
-                    .accessibilityLabel("Reading")
+                    .help("Keep this figure, with what Claude said about it, in your Kept folder")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Figure, \(file.name)")
     }
 
     /// Reading, failed or nothing to show. As tall as the window lets it: a
@@ -242,42 +296,6 @@ struct ReferenceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// The answer's figures, as the Results window draws them.
-    private func figures(_ answer: ReferenceAnswer) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(answer.figures, id: \.v) { file in
-                    ShelfThumbnailView(store: model.thumbnails, version: file.v, kind: file.kind)
-                        .frame(width: 72, height: 72)
-                        .clipShape(.rect(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.quaternary))
-                        .onAppear { model.wantThumbnail(file) }
-                        .help(file.name)
-                        .accessibilityLabel("Figure, \(file.name)")
-                        .contextMenu {
-                            Button("Keep…") { keep(file) }
-                            Button("Open in Claude Science") { model.openInScience() }
-                        }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
-    }
-
-    private var footer: some View {
-        HStack {
-            Button(model.copied ? "Copied" : "Copy with Source") { copy() }
-                .disabled(model.current == nil)
-                .help("Copies the selection, or the whole answer, with where it came from")
-            Spacer()
-            Button("Open in Claude Science") { model.openInScience() }
-                .help("Shows this session in the main window")
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
     private func copy() {
         guard let answer = model.current else { return }
         model.copy(selection.selectedText ?? model.rendered(answer).string)
@@ -289,14 +307,49 @@ struct ReferenceView: View {
     }
 }
 
-/// The answer's text: a read-only, selectable text view as tall as its text
-/// at the width it is given, so the page around it scrolls, with the figures
-/// after the text rather than pinned under it.
+/// A figure at the page's width: the picture when it has come, else a quiet
+/// frame of the same shape as most charts.
+struct ReferenceFigureView: View {
+    @ObservedObject var store: ShelfThumbnails
+    let file: HistoryFile
+    let failed: Bool
+
+    /// Taller than this, a picture is shown smaller rather than filling the window.
+    private static let maxHeight: CGFloat = 520
+
+    var body: some View {
+        Group {
+            if let image = store.image(for: file.v) {
+                Image(decorative: image, scale: 2)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(CGFloat(image.width) / CGFloat(max(image.height, 1)), contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: Self.maxHeight)
+            } else {
+                Rectangle()
+                    .fill(.quaternary.opacity(0.4))
+                    .aspectRatio(3 / 2, contentMode: .fit)
+                    .overlay {
+                        if failed {
+                            Image(systemName: "photo")
+                                .font(.title2)
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+            }
+        }
+        .clipShape(.rect(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 0.5))
+    }
+}
+
+/// The reply's text: a read-only, selectable text view as tall as its text
+/// at the width it is given, so the page around it scrolls.
 struct ReferenceTextView: NSViewRepresentable {
     let text: NSAttributedString
     let selection: ReferenceSelection
-
-    private static let inset = NSSize(width: 11, height: 8)
 
     final class Coordinator {
         /// The text last put in, by identity: the model renders once per text.
@@ -317,10 +370,12 @@ struct ReferenceTextView: NSViewRepresentable {
         textView.isVerticallyResizable = false
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = []
-        textView.textContainerInset = Self.inset
+        // The text lines up with the figures and the question: no inset.
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.heightTracksTextView = false
-        textView.setAccessibilityLabel("Claude\u{2019}s answer")
+        textView.setAccessibilityLabel("Claude\u{2019}s reply")
         selection.textView = textView
         return textView
     }
@@ -340,10 +395,10 @@ struct ReferenceTextView: NSViewRepresentable {
         guard let width = proposal.width, width > 0, let container = textView.textContainer,
               let layout = textView.layoutManager else { return nil }
         let placed = container.containerSize
-        container.containerSize = NSSize(width: width - 2 * Self.inset.width, height: .greatestFiniteMagnitude)
+        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
         container.containerSize = placed
-        return CGSize(width: width, height: ceil(used.height) + 2 * Self.inset.height)
+        return CGSize(width: width, height: ceil(used.height))
     }
 }

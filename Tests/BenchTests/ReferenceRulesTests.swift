@@ -1,5 +1,7 @@
-// ReferenceRulesTests.swift — the reference reader's pure rules: which rows
-// are answers, the position line, the time, the source line and the copied text.
+// ReferenceRulesTests.swift — the reference reader's pure rules: how rows
+// become replies (a reply runs from one of the user's turns to the next, its
+// figures from every step, one per artifact), the subtitle, the time, the
+// source line and the copied text.
 import AppKit
 import Foundation
 import Testing
@@ -23,33 +25,91 @@ struct ReferenceRulesTests {
     static let at = Date(timeIntervalSince1970: 1_792_655_220)
     static let now = at.addingTimeInterval(3_600)
 
-    @Test func onlyClaudesTurnsAreAnswers() {
-        let file = HistoryFile(v: "aaaaaaaa-0000-4000-8000-000000000004", a: nil, name: "z.png", kind: .image, size: nil)
-        let page = HistoryPage(total: 6, from: 0, items: [
-            .turn(i: 0, role: .you, at: nil, text: "Q", cut: false, files: []),
-            .steps(i: 1, line: "Ran a command", failed: false, files: [file]),
-            .turn(i: 2, role: .claude, at: Self.at, text: "A", cut: true, files: [file]),
-            .plan(i: 3, steps: 2),
-            .ask(i: 4, q: "Which?", a: nil),
-            .turn(i: 5, role: .claude, at: nil, text: "B", cut: false, files: []),
-        ])
-        let answers = ReferenceRules.answers(in: page)
-        #expect(answers.map(\.i) == [2, 5])
-        #expect(answers[0] == ReferenceAnswer(i: 2, at: Self.at, text: "A", cut: true, files: [file]))
-        #expect(answers[0].figures == [file])
-        #expect(answers[1].figures.isEmpty)
+    static func file(_ v: Int, artifact: Int, name: String = "plot.png", kind: ArtifactKind = .image) -> HistoryFile {
+        HistoryFile(v: String(format: "aaaaaaaa-0000-4000-8000-%012d", v), a: String(format: "bbbbbbbb-0000-4000-8000-%012d", artifact),
+                    name: name, kind: kind, size: nil)
     }
 
-    @Test func thePositionLineCountsWhatWasReadAndSaysSoFarUntilTheStart() {
-        #expect(ReferenceRules.positionLine(at: Self.at, index: 1, count: 3, final: true, now: Self.now,
-                                            calendar: Self.calendar, locale: Self.locale)
-                == "Claude\u{2019}s answer · 8:47 · 2 of 3")
-        #expect(ReferenceRules.positionLine(at: Self.at, index: 0, count: 1, final: false, now: Self.now,
-                                            calendar: Self.calendar, locale: Self.locale)
-                == "Claude\u{2019}s answer · 8:47 · 1 of 1 so far")
-        #expect(ReferenceRules.positionLine(at: nil, index: 2, count: 3, final: true, now: Self.now,
-                                            calendar: Self.calendar, locale: Self.locale)
-                == "Claude\u{2019}s answer · 3 of 3")
+    @Test func aReplyRunsFromTheUsersTurnToTheNextAndGathersEveryFigure() {
+        let draft = Self.file(1, artifact: 1), final = Self.file(2, artifact: 1), heatmap = Self.file(3, artifact: 2, name: "map.png")
+        let table = Self.file(4, artifact: 3, name: "plates.csv", kind: .table)
+        let upload = Self.file(5, artifact: 4, name: "mine.png")
+        let items: [HistoryItem] = [
+            .turn(i: 0, role: .you, at: nil, text: "  Plot it.  ", cut: false, files: [upload]),
+            .turn(i: 1, role: .claude, at: Self.at, text: "Let me plot it.", cut: false, files: []),
+            .steps(i: 2, line: "Ran code", failed: false, files: [draft]),
+            .steps(i: 3, line: "Ran code", failed: false, files: [heatmap, table]),
+            .steps(i: 4, line: "Ran code", failed: false, files: [final]),
+            .plan(i: 5, steps: 2),
+            .toYou(i: 6, text: "Halfway there.", files: []),
+            .turn(i: 7, role: .claude, at: Self.at.addingTimeInterval(60), text: "Here it is.", cut: true, files: []),
+            .turn(i: 8, role: .claude, at: nil, text: "   ", cut: false, files: []),
+            .turn(i: 9, role: .you, at: nil, text: "Thanks.", cut: false, files: []),
+        ]
+        let answers = ReferenceRules.answers(items: items, reachedStart: true, whole: [:])
+        #expect(answers.count == 1)
+        let reply = answers[0]
+        #expect(reply.id == 8)
+        #expect(reply.question == "Plot it.")
+        // The last version of each artifact, in the place it first appeared; no table, no upload.
+        #expect(reply.figures == [final, heatmap])
+        #expect(reply.parts.map(\.i) == [1, 6, 7])
+        #expect(reply.text == "Let me plot it.\n\nHalfway there.\n\nHere it is.")
+        #expect(reply.cutRows == [7])
+        #expect(reply.at == Self.at.addingTimeInterval(60))
+        #expect(reply.complete)
+        // Read whole since: the text is the whole one, and nothing is cut.
+        let whole = ReferenceRules.answers(items: items, reachedStart: true, whole: [7: "Here it is, in full."])[0]
+        #expect(whole.text.hasSuffix("Here it is, in full."))
+        #expect(whole.cutRows.isEmpty)
+    }
+
+    @Test func rowsBeforeTheFirstQuestionAreAReplyWhoseStartIsUnread() {
+        let items: [HistoryItem] = [
+            .steps(i: 40, line: "Ran code", failed: false, files: []),
+            .turn(i: 41, role: .claude, at: nil, text: "Earlier words.", cut: false, files: []),
+            .turn(i: 42, role: .you, at: nil, text: "Next?", cut: false, files: []),
+            .turn(i: 43, role: .claude, at: nil, text: "Next.", cut: false, files: []),
+        ]
+        let partial = ReferenceRules.answers(items: items, reachedStart: false, whole: [:])
+        #expect(partial.map(\.id) == [41, 43])
+        #expect(partial[0].complete == false)
+        #expect(partial[0].question == nil)
+        #expect(partial[1].complete)
+        // At the history's start, the first rows are a reply of their own.
+        #expect(ReferenceRules.answers(items: items, reachedStart: true, whole: [:])[0].complete)
+    }
+
+    @Test func aStretchWithNeitherWordsNorFiguresIsNoReply() {
+        let items: [HistoryItem] = [
+            .turn(i: 0, role: .you, at: nil, text: "Go.", cut: false, files: []),
+            .steps(i: 1, line: "Ran code", failed: false, files: []),
+            .ask(i: 2, q: "Which plate?", a: "7"),
+            .turn(i: 3, role: .you, at: nil, text: "And?", cut: false, files: []),
+            .steps(i: 4, line: "Ran code", failed: false, files: [Self.file(9, artifact: 9)]),
+        ]
+        let answers = ReferenceRules.answers(items: items, reachedStart: true, whole: [:])
+        // The second has a figure and no words: a reply still.
+        #expect(answers.map(\.id) == [4])
+        #expect(answers[0].parts.isEmpty)
+        #expect(answers[0].figures.count == 1)
+    }
+
+    @Test func aLongQuestionIsCutAndFiguresAreCapped() {
+        var items: [HistoryItem] = [.turn(i: 0, role: .you, at: nil, text: String(repeating: "q", count: 1_000), cut: false, files: [])]
+        for n in 1...40 { items.append(.steps(i: n, line: "Ran code", failed: false, files: [Self.file(n, artifact: n)])) }
+        let reply = ReferenceRules.answers(items: items, reachedStart: true, whole: [:])[0]
+        #expect(reply.question?.count == ReferenceRules.questionLimit)
+        #expect(reply.figures.count == ReferenceRules.figureLimit)
+    }
+
+    @Test func theSubtitleIsTheTimeThenTheProject() {
+        #expect(ReferenceRules.subtitle(project: "Assay development", at: Self.at, now: Self.now,
+                                        calendar: Self.calendar, locale: Self.locale)
+                == "8:47 · Assay development")
+        #expect(ReferenceRules.subtitle(project: "Assay development", at: nil, now: Self.now,
+                                        calendar: Self.calendar, locale: Self.locale)
+                == "Assay development")
     }
 
     @Test func theTimeAloneOnTheDayElseTheDayToo() {

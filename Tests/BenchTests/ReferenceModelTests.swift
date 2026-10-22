@@ -1,16 +1,19 @@
-// ReferenceModelTests.swift — the reference reader on made-up pages: which
-// answer is shown, paging back for earlier ones, the whole-turn read of a cut
-// answer landing by row (never on the answer shown meanwhile), failures, and
-// that closing cancels. No page, no daemon.
+// ReferenceModelTests.swift — the reference reader on made-up histories
+// shaped like real ones (the user asks, Claude narrates, runs steps that make
+// figures, answers): which reply is shown, reading back until a reply's
+// question is in, Earlier and Later, a cut turn read whole and landing on its
+// own row, failures, and that closing cancels. No page, no daemon.
 import AppKit
 import Foundation
 import Testing
 @testable import Bench
 
-/// A session's made-up history and the reads the reader makes of it.
+/// A session's made-up history and the reads the reader makes of it. The
+/// first read is the newest 50 rows, as the page's is; later ones are 25.
 @MainActor
 final class FakeHistory {
     var rows: [HistoryItem]
+    var total: Int
     /// The `before` of every page read, in order.
     private(set) var pageReads: [Int?] = []
     private(set) var turnReads: [Int] = []
@@ -29,8 +32,9 @@ final class FakeHistory {
     private(set) var copied: [String] = []
     private(set) var opened: [String] = []
 
-    init(rows: [HistoryItem]) {
+    init(rows: [HistoryItem], total: Int? = nil) {
         self.rows = rows
+        self.total = total ?? ((rows.map(\.index).max() ?? -1) + 1)
     }
 
     func release() {
@@ -57,9 +61,9 @@ final class FakeHistory {
                 if pagesThrow { throw WebAPIError.notReady }
                 if pagesUnreadable { return .unreadable }
                 if pagesTooBig { return .tooBig }
-                let end = before ?? rows.count
-                let start = max(0, end - (before == nil ? 12 : ReferenceModel.rows))
-                return .page(HistoryPage(total: rows.count, from: start, items: Array(rows[start..<end])))
+                let end = before ?? total
+                let start = max(0, end - (before == nil ? 50 : ReferenceModel.rows))
+                return .page(HistoryPage(total: total, from: start, items: rows.filter { (start..<end).contains($0.index) }))
             },
             readTurn: { [self] _, index in
                 turnReads.append(index)
@@ -85,19 +89,23 @@ struct ReferenceModelTests {
         id: "00000000-0000-4000-8000-000000000001", projectID: "00000000-0000-4000-8000-0000000000aa",
         projectName: "Assay development", title: "Plate reader QC", state: .finished, updatedAt: Date(), startedAt: nil)
 
-    static func claude(_ i: Int, _ text: String, cut: Bool = false, files: [HistoryFile] = []) -> HistoryItem {
-        .turn(i: i, role: .claude, at: Date(timeIntervalSince1970: 1_791_990_000 + Double(i) * 60), text: text, cut: cut, files: files)
+    static func figure(_ n: Int, artifact: Int? = nil, kind: ArtifactKind = .image) -> HistoryFile {
+        HistoryFile(v: String(format: "aaaaaaaa-0000-4000-8000-%012d", n),
+                    a: String(format: "bbbbbbbb-0000-4000-8000-%012d", artifact ?? n),
+                    name: kind == .image ? "figure_\(n).png" : "table_\(n).csv", kind: kind, size: 1_000)
     }
 
-    static func you(_ i: Int) -> HistoryItem {
-        .turn(i: i, role: .you, at: nil, text: "Question \(i)", cut: false, files: [])
-    }
-
-    /// `count` rows of steps, with Claude's answers at the given rows.
-    static func history(_ count: Int, answers: [Int: String], cut: Set<Int> = [], files: [Int: [HistoryFile]] = [:]) -> [HistoryItem] {
+    /// `count` rows of steps, with the user's turns, Claude's turns and the
+    /// steps' figures where given.
+    static func history(_ count: Int, you: [Int: String], claude: [Int: String], cut: Set<Int> = [],
+                        figures: [Int: [HistoryFile]] = [:]) -> [HistoryItem] {
         (0..<count).map { i in
-            if let text = answers[i] { return claude(i, text, cut: cut.contains(i), files: files[i] ?? []) }
-            return .steps(i: i, line: "Ran a command", failed: false, files: [])
+            if let text = you[i] { return .turn(i: i, role: .you, at: nil, text: text, cut: false, files: []) }
+            if let text = claude[i] {
+                return .turn(i: i, role: .claude, at: Date(timeIntervalSince1970: 1_791_990_000 + Double(i) * 60),
+                             text: text, cut: cut.contains(i), files: [])
+            }
+            return .steps(i: i, line: "Ran code", failed: false, files: figures[i] ?? [])
         }
     }
 
@@ -109,78 +117,107 @@ struct ReferenceModelTests {
     }
 
     static func settle(_ model: ReferenceModel) async {
-        for _ in 0..<200 where model.phase == .reading { await Task.yield() }
+        for _ in 0..<400 where model.phase == .reading { await Task.yield() }
     }
 
-    @Test func openShowsTheNewestAnswerOnTheLastPage() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Newest", 5: "First"]))
+    @Test func openShowsTheNewestReplyWithItsQuestionFiguresAndWords() async throws {
+        let chart = Self.figure(1)
+        let (fake, model) = Self.make(Self.history(30, you: [0: "Run the QC.", 20: "Plot Z′ by plate."],
+                                                   claude: [5: "Eleven passed.", 22: "Let me plot it.", 28: "Plate 7 is low."],
+                                                   figures: [25: [chart]]))
         model.open()
         await Self.settle(model)
         #expect(fake.pageReads == [nil])
-        #expect(model.answers.map(\.i) == [28])
-        #expect(model.shown == 0)
-        #expect(model.current?.text == "Newest")
-        #expect(!model.reachedStart)
+        #expect(model.reachedStart)
+        #expect(model.answers.map(\.id) == [19, 29])
+        let shown = try #require(model.current)
+        #expect(shown.id == 29)
+        #expect(shown.question == "Plot Z′ by plate.")
+        #expect(shown.figures == [chart])
+        #expect(shown.text == "Let me plot it.\n\nPlate 7 is low.")
+        #expect(shown.complete)
+        #expect(model.subtitle.hasSuffix(" · Assay development"))
         #expect(model.canGoEarlier)
         #expect(!model.canGoLater)
-        #expect(model.positionLine?.hasSuffix("1 of 1 so far") == true)
     }
 
-    @Test func earlierAtTheEdgeReadsBackAndShowsThePageNewestAnswer() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Newest", 12: "Middle", 5: "First"]))
+    @Test func aLongReplyIsReadBackUntilItsQuestionIsIn() async throws {
+        // The reply that began at row 30 runs to row 119: the first read (70..<120)
+        // has no question, so the reader goes back 25 rows at a time.
+        let (fake, model) = Self.make(Self.history(120, you: [0: "First.", 30: "Analyse the screen."],
+                                                   claude: [10: "Done.", 119: "Here is the analysis."]))
         model.open()
         await Self.settle(model)
-        model.earlier()
-        await Self.settle(model)
-        #expect(fake.pageReads == [nil, 18])
-        #expect(model.answers.map(\.i) == [5, 12, 28])
-        #expect(model.shown == 1)
-        #expect(model.current?.text == "Middle")
-        #expect(model.reachedStart)
-        #expect(model.positionLine?.hasSuffix("2 of 3") == true)
-        model.earlier()
-        #expect(model.current?.text == "First")
-        #expect(!model.canGoEarlier)
-        model.earlier()
-        #expect(model.current?.text == "First")
-        model.later()
-        model.later()
-        #expect(model.current?.text == "Newest")
-        #expect(!model.canGoLater)
-        #expect(fake.pageReads.count == 2)
+        #expect(fake.pageReads == [nil, 70, 45])
+        #expect(model.current?.id == 119)
+        #expect(model.current?.question == "Analyse the screen.")
+        #expect(model.current?.complete == true)
+        #expect(!model.reachedStart)
     }
 
-    @Test func pagesWithoutAnAnswerAreReadUntilOneAppears() async throws {
-        // Rows 88..<100 and 63..<88 hold none; 38..<63 holds one.
-        let (fake, model) = Self.make(Self.history(100, answers: [40: "Found"]))
-        model.open()
-        await Self.settle(model)
-        #expect(fake.pageReads == [nil, 88, 63])
-        #expect(model.current?.text == "Found")
-        #expect(model.from == 38)
-    }
-
-    @Test func theLookStopsAfterEightPagesAndEarlierLooksAgain() async throws {
-        let (fake, model) = Self.make(Self.history(400, answers: [3: "Far back"]))
+    @Test func theLookStopsAfterEightPagesAndShowsWhatItHasThenEarlierFinishesIt() async throws {
+        let (fake, model) = Self.make(Self.history(400, you: [0: "Start the run."], claude: [399: "Finished."]))
         model.open()
         await Self.settle(model)
         #expect(fake.pageReads.count == ReferenceModel.pagesPerLook)
-        #expect(model.answers.isEmpty)
-        #expect(model.shown == nil)
-        #expect(model.phase == .idle)
-        #expect(!model.reachedStart)
-        #expect(model.canGoEarlier)
+        #expect(model.current?.id == 399)
+        #expect(model.current?.question == nil)
+        #expect(model.current?.complete == false)
         model.earlier()
         await Self.settle(model)
-        #expect(fake.pageReads.count == 2 * ReferenceModel.pagesPerLook)
-        model.earlier()
-        await Self.settle(model)
-        #expect(model.current?.text == "Far back")
         #expect(model.reachedStart)
+        #expect(model.current?.id == 399)
+        #expect(model.current?.question == "Start the run.")
+        #expect(model.current?.complete == true)
     }
 
-    @Test func aSessionWithoutAnswersReachesItsStart() async throws {
-        let (_, model) = Self.make([Self.you(0), .steps(i: 1, line: "Ran a command", failed: false, files: [])])
+    @Test func earlierAtTheEdgeReadsBackAndShowsTheNewestOlderReply() async throws {
+        let (fake, model) = Self.make(Self.history(100, you: [0: "Q1", 40: "Q2", 80: "Q3"],
+                                                   claude: [5: "A1", 45: "A2", 95: "A3"]))
+        model.open()
+        await Self.settle(model)
+        #expect(model.current?.text == "A3")
+        #expect(fake.pageReads == [nil])
+        model.earlier()
+        await Self.settle(model)
+        #expect(fake.pageReads == [nil, 50])
+        #expect(model.current?.text == "A2")
+        #expect(model.current?.question == "Q2")
+        model.earlier()
+        await Self.settle(model)
+        #expect(fake.pageReads == [nil, 50, 25])
+        #expect(model.current?.text == "A1")
+        #expect(model.reachedStart)
+        #expect(!model.canGoEarlier)
+        model.later()
+        model.later()
+        #expect(model.current?.text == "A3")
+        #expect(!model.canGoLater)
+        #expect(fake.pageReads.count == 3)
+    }
+
+    @Test func aPageLandingWhileTheUserMovedKeepsTheReplyShown() async throws {
+        let (fake, model) = Self.make(Self.history(100, you: [0: "Q1", 40: "Q2", 60: "Q3", 80: "Q4"],
+                                                   claude: [5: "A1", 45: "A2", 65: "A3", 95: "A4"]))
+        model.open()
+        await Self.settle(model)
+        model.earlier()
+        #expect(model.current?.text == "A3")
+        fake.holding = true
+        model.earlier()
+        #expect(model.phase == .reading)
+        for _ in 0..<50 where fake.pageReads.count < 2 { await Task.yield() }
+        model.later()
+        #expect(model.current?.text == "A4")
+        fake.holding = false
+        fake.release()
+        await Self.settle(model)
+        #expect(model.answers.map(\.text) == ["A2", "A3", "A4"])
+        #expect(model.current?.text == "A4")
+    }
+
+    @Test func aSessionWithoutRepliesReachesItsStart() async throws {
+        let (_, model) = Self.make(Self.history(6, you: [0: "Hello?"], claude: [:]))
         model.open()
         await Self.settle(model)
         #expect(model.answers.isEmpty)
@@ -189,67 +226,64 @@ struct ReferenceModelTests {
         #expect(model.phase == .idle)
     }
 
-    @Test func aCutAnswerIsReadWholeAndReplacedInPlace() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Cut…"], cut: [28]))
-        fake.wholeTexts[28] = "The whole answer"
+    @Test func aCutTurnIsReadWholeAndReplacedInPlace() async throws {
+        let (fake, model) = Self.make(Self.history(30, you: [0: "Write it up."], claude: [28: "Cut…"], cut: [28]))
+        fake.wholeTexts[28] = "The whole report"
         model.open()
         await Self.settle(model)
-        for _ in 0..<200 where model.current?.cut == true { await Task.yield() }
+        for _ in 0..<200 where model.current?.text != "The whole report" { await Task.yield() }
         #expect(fake.turnReads == [28])
-        #expect(model.current?.text == "The whole answer")
-        #expect(model.current?.cut == false)
+        #expect(model.current?.text == "The whole report")
+        #expect(model.current?.cutRows.isEmpty == true)
         #expect(!model.readingRest)
     }
 
-    @Test func aLateWholeAnswerLandsOnItsOwnRowNotTheOneShown() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "C whole", 20: "B cut…"], cut: [20]))
-        fake.wholeTexts[20] = "B whole"
+    @Test func aLateWholeTurnLandsOnItsOwnRowWhileAnotherReplyIsShown() async throws {
+        let (fake, model) = Self.make(Self.history(40, you: [0: "Q1", 20: "Q2"], claude: [10: "B cut…", 30: "C"], cut: [10]))
+        fake.wholeTexts[10] = "B whole"
         model.open()
         await Self.settle(model)
-        #expect(model.current?.text == "C whole")
+        #expect(model.current?.text == "C")
         fake.holding = true
         model.earlier()
         #expect(model.current?.text == "B cut…")
         #expect(model.readingRest)
         for _ in 0..<50 where fake.turnReads.isEmpty { await Task.yield() }
-        #expect(fake.turnReads == [20])
-        // Moved on while B's whole text is still being read.
+        #expect(fake.turnReads == [10])
         model.later()
-        #expect(model.current?.text == "C whole")
+        #expect(model.current?.text == "C")
         fake.holding = false
         fake.release()
-        for _ in 0..<200 where model.answers[0].cut { await Task.yield() }
-        #expect(model.current?.text == "C whole")
-        #expect(model.answers[0].text == "B whole")
-        #expect(model.answers[0].cut == false)
-        // Back on B: whole, with nothing read again.
+        for _ in 0..<200 where model.answers.first?.text != "B whole" { await Task.yield() }
+        #expect(model.current?.text == "C")
+        #expect(model.answers.first?.text == "B whole")
         model.earlier()
         #expect(model.current?.text == "B whole")
         #expect(!model.readingRest)
         await Task.yield()
-        #expect(fake.turnReads == [20])
+        #expect(fake.turnReads == [10])
     }
 
     @Test func aWholeReadThatFailsLeavesTheCutTextWithANote() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Cut…"], cut: [28]))
+        let (fake, model) = Self.make(Self.history(30, you: [0: "Q"], claude: [28: "Cut…"], cut: [28]))
         fake.turnsThrow = true
         model.open()
         await Self.settle(model)
-        for _ in 0..<200 where !model.restFailed.contains(28) { await Task.yield() }
-        #expect(model.restFailed.contains(28))
+        for _ in 0..<200 where !model.restMissing { await Task.yield() }
+        #expect(model.restMissing)
         #expect(model.current?.text == "Cut…")
         #expect(!model.readingRest)
         // A turn the page says isn't one is the same failure.
-        let (fake2, model2) = Self.make(Self.history(30, answers: [28: "Cut…"], cut: [28]))
+        let (fake2, model2) = Self.make(Self.history(30, you: [0: "Q"], claude: [28: "Cut…"], cut: [28]))
         model2.open()
         await Self.settle(model2)
-        for _ in 0..<200 where !model2.restFailed.contains(28) { await Task.yield() }
+        for _ in 0..<200 where !model2.restMissing { await Task.yield() }
         #expect(fake2.turnReads == [28])
-        #expect(model2.restFailed.contains(28))
+        #expect(model2.restMissing)
     }
 
     @Test func anUnreadablePageFailsAndTryAgainReads() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Newest"]))
+        let (fake, model) = Self.make(Self.history(30, you: [0: "Q"], claude: [28: "Newest"]))
         fake.pagesUnreadable = true
         model.open()
         await Self.settle(model)
@@ -263,25 +297,22 @@ struct ReferenceModelTests {
         #expect(fake.pageReads == [nil, nil])
     }
 
-    @Test func aReadThatThrowsFails() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Newest"]))
+    @Test func aReadThatThrowsFailsAndOneOverTheCapSaysSo() async throws {
+        let (fake, model) = Self.make(Self.history(30, you: [0: "Q"], claude: [28: "Newest"]))
         fake.pagesThrow = true
         model.open()
         await Self.settle(model)
         #expect(model.phase == .failed(ReferenceRules.failureSentence))
-    }
-
-    @Test func aPageOverTheCapSaysSoAndPointsAtClaudeScience() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Newest"]))
-        fake.pagesTooBig = true
-        model.open()
-        await Self.settle(model)
-        #expect(model.phase == .failed(ReferenceRules.tooBigSentence))
-        #expect(model.current == nil)
+        let (fake2, model2) = Self.make(Self.history(30, you: [0: "Q"], claude: [28: "Newest"]))
+        fake2.pagesTooBig = true
+        model2.open()
+        await Self.settle(model2)
+        #expect(model2.phase == .failed(ReferenceRules.tooBigSentence))
+        #expect(model2.current == nil)
     }
 
     @Test func closingCancelsTheReadAndDropsWhatLands() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Newest"]))
+        let (fake, model) = Self.make(Self.history(30, you: [0: "Q"], claude: [28: "Newest"]))
         fake.holding = true
         model.open()
         for _ in 0..<50 where fake.pageReads.isEmpty { await Task.yield() }
@@ -293,33 +324,11 @@ struct ReferenceModelTests {
         fake.release()
         for _ in 0..<20 { await Task.yield() }
         #expect(model.answers.isEmpty)
-        #expect(model.shown == nil)
-    }
-
-    @Test func aPageLandingWhileTheUserMovedKeepsTheShownAnswer() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "D", 25: "C", 12: "B", 5: "A"]))
-        model.open()
-        await Self.settle(model)
-        #expect(model.current?.text == "D")
-        model.earlier()
-        #expect(model.current?.text == "C")
-        fake.holding = true
-        model.earlier()
-        #expect(model.phase == .reading)
-        for _ in 0..<50 where fake.pageReads.count < 2 { await Task.yield() }
-        model.later()
-        #expect(model.current?.text == "D")
-        fake.holding = false
-        fake.release()
-        await Self.settle(model)
-        #expect(model.answers.map(\.text) == ["A", "B", "C", "D"])
-        #expect(model.current?.text == "D")
-        #expect(model.shown == 3)
-        #expect(model.positionLine?.hasSuffix("4 of 4") == true)
+        #expect(model.shownID == nil)
     }
 
     @Test func copyWithSourceAddsTheSourceLineAndTheLink() async throws {
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Newest"]))
+        let (fake, model) = Self.make(Self.history(30, you: [0: "Q"], claude: [28: "Newest"]))
         model.open()
         await Self.settle(model)
         #expect(model.copy("the part I selected"))
@@ -327,31 +336,33 @@ struct ReferenceModelTests {
         #expect(copied.hasPrefix("the part I selected\n\n\u{2014} Claude, in \u{201C}Plate reader QC\u{201D} (Assay development), "))
         #expect(copied.hasSuffix("\nbench://session?project=00000000-0000-4000-8000-0000000000aa&frame=00000000-0000-4000-8000-000000000001"))
         #expect(model.copied)
-        model.openInScience()
+        model.openConversation()
         #expect(fake.opened == [Self.session.id])
     }
 
-    @Test func aFigureThumbnailIsReadOnceAndAFailedOneNotAgain() async throws {
-        let figure = HistoryFile(v: "aaaaaaaa-0000-4000-8000-000000000004", a: nil, name: "z_prime.png", kind: .image, size: 85_000)
-        let missing = HistoryFile(v: "aaaaaaaa-0000-4000-8000-000000000005", a: nil, name: "other.png", kind: .image, size: 100)
-        let table = HistoryFile(v: "aaaaaaaa-0000-4000-8000-000000000006", a: nil, name: "plates.csv", kind: .table, size: 100)
-        let (fake, model) = Self.make(Self.history(30, answers: [28: "Newest"], files: [28: [figure, missing, table]]))
-        fake.thumbnails[figure.v] = KeptDemo.chart(variant: 1)
+    @Test func aFigureIsReadOnceAndAFailedOneNotAgain() async throws {
+        let chart = Self.figure(4), missing = Self.figure(5)
+        let (fake, model) = Self.make(Self.history(30, you: [0: "Q"], claude: [28: "Newest"],
+                                                   figures: [10: [chart], 12: [missing, Self.figure(6, kind: .table)]]))
+        fake.thumbnails[chart.v] = KeptDemo.chart(variant: 1)
         model.open()
         await Self.settle(model)
-        #expect(model.current?.figures.map(\.v) == [figure.v, missing.v])
-        model.wantThumbnail(figure)
-        model.wantThumbnail(figure)
+        #expect(model.current?.figures.map(\.v) == [chart.v, missing.v])
+        model.wantThumbnail(chart)
+        model.wantThumbnail(chart)
         model.wantThumbnail(missing)
-        model.wantThumbnail(table)
-        for _ in 0..<400 where !model.thumbnails.contains(figure.v) { try await Task.sleep(for: .milliseconds(5)) }
-        #expect(model.thumbnails.contains(figure.v))
-        model.wantThumbnail(figure)
+        for _ in 0..<400 where !model.thumbnails.contains(chart.v) || !model.thumbnailFailed(missing) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(model.thumbnails.contains(chart.v))
+        #expect(model.thumbnailFailed(missing))
+        model.wantThumbnail(chart)
         model.wantThumbnail(missing)
         await Task.yield()
-        #expect(fake.thumbnailReads == [figure.v, missing.v])
-        let subject = model.keepSubject(figure)
-        #expect(subject.entry.name == "z_prime.png")
+        #expect(fake.thumbnailReads == [chart.v, missing.v])
+        let subject = model.keepSubject(chart)
+        #expect(subject.entry.version == chart.v)
+        #expect(subject.entry.name == "figure_4.png")
         #expect(subject.entry.kind == .image)
         #expect(subject.session.id == Self.session.id)
     }

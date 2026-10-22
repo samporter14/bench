@@ -21,20 +21,19 @@ struct ReferenceSnapshotTests {
             model.open()
             for _ in 0..<100 where model.phase == .reading { try await Task.sleep(for: .milliseconds(20)) }
             if !failing {
-                // The middle answer, with its figure.
+                // The middle reply, with its two figures.
                 model.earlier()
                 for _ in 0..<100 where model.phase == .reading { try await Task.sleep(for: .milliseconds(20)) }
-                if let figure = model.current?.figures.first {
+                for figure in model.current?.figures ?? [] {
                     model.wantThumbnail(figure)
                     for _ in 0..<100 where !model.thumbnails.contains(figure.v) { try await Task.sleep(for: .milliseconds(20)) }
                 }
             }
             for dark in [false, true] {
                 let view = ReferenceView(model: model, selection: ReferenceSelection())
-                    .background(Color(nsColor: .windowBackgroundColor))
                 let host = NSHostingView(rootView: view)
                 host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                let size = NSSize(width: ReferenceWindowController.size.width, height: 480)
+                let size = NSSize(width: ReferenceWindowController.size.width, height: ReferenceWindowController.size.height)
                 host.frame = CGRect(origin: .zero, size: size)
                 host.layoutSubtreeIfNeeded()
                 let rep = try #require(NSBitmapImageRep(

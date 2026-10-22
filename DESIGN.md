@@ -5186,12 +5186,26 @@ the reader tests for the three shapes and the showing op against a fake
 
 ## Reference (Reference/, since 1.0)
 
-An answer beside the work. A session's conversation lives in Claude Science's
-window; when the user is writing from what Claude found, they want one answer
-next to the document, not the tab behind it. Open as Reference opens a small
-read-only window on one session with Claude's newest answer in it, and the
-answers before it a step away. It reads the way the phone reads a conversation
-(Capsid on your phone → History) and writes nothing.
+A reply beside the work. A session's conversation lives in Claude Science's
+window; when the user is writing from what Claude found, they want one reply
+next to the document, its figures first, not the tab behind it. Open as
+Reference opens a small read-only window on one session with Claude's newest
+reply in it, and the replies before it a step away. It reads the way the phone
+reads a conversation (Capsid on your phone → History) and writes nothing.
+
+**A reply** is everything Claude did in answer to one of the user's messages:
+from that message to the next, its words (every turn of Claude's and every
+message it sent mid-run, in order) and every picture it made or showed on the
+way. A figure sits on the tool step that made it, not on the words after it,
+so the reply gathers the files of its steps, turns and messages, keeps the
+images (`ArtifactGate.thumb`), one per artifact (the last version, in the
+place the first appeared), and leaves out the user's own uploads; 24 at most.
+A stretch with neither words nor figures (steps only, a plan, a question) is
+no reply. A reply's id is its last row, which stays the same as earlier pages
+are read (`ReferenceRules.answers`). The first version of the window showed
+each of Claude's turns alone and only the turn's own files: on a real session
+that meant narration ("Let me load the data.") as answers and no figures at
+all, since the figures were on the steps.
 
 **Opening.** Three doors, all on a session: Quick Open (⌥↩ on the field opens
 the highlighted session as a reference instead of in the main window, caught
@@ -5201,32 +5215,38 @@ as Reference), the activity list (every session row's context menu and VoiceOver
 actions, `menuActions` on `ActivityRow`, never a hover button), and a card's
 Later menu (Open as Reference under Open in Capsid, on the cards that name a
 session). Opening a session as a reference leaves its cards and reminder as
-they are; Open in Claude Science inside the window goes through
+they are; Open Conversation inside the window goes through
 `Router.open(session)`, not `LabModel.open`, for the same reason. One window
 per session (`ReferenceWindowController.windows`); opening it again brings it
 forward.
 
-**The window** (`ReferenceWindow.swift`). A normal titled window, 440 wide and
-560 tall at first (`ReferenceWindowController.size`, no smaller than 360 × 320),
-its frame remembered under one name (`CapsidReference`) when it closes, so the
-next opens where the last was (a second one open at the same place steps down).
-The title is the session's title, the subtitle "<project> · read only". The
-toolbar has one `ControlGroup`, Earlier and Later, with ⌥⌘← and ⌥⌘→ on the
-buttons themselves, so the keys work only while this window is key and never
-reach the page (⌥⌘↓ is Next Waiting app-wide; the arrows were free). Under the
-toolbar one caption, "Claude's answer · 8:47 · 2 of 3" (the time alone on the
-day it is, else the day and month too; "2 of 3 so far" until row 0 has been
-read, since the count is over the answers read), with a small spinner while a
-page is read; then the answer as selectable text in an `NSTextView` sized to
-its text, so the page around it scrolls and the figures follow the text rather
-than sitting under it (`ReferenceTextView.sizeThatFits`); the figures as 72-pt
-thumbnails (the shelf's `ShelfThumbnails`, read through a one-slot
-`ShelfTransfers` of the window's own), each with Keep… and Open in Claude
-Science in its context menu; and a footer with Copy with Source and Open in
-Claude Science, both plain. Nothing in it is in the clay: the window reads, it
-never asks. Window → Keep on Top (`ReferenceCommands`) floats the key
-reference window (`level = .floating`), dim unless one is key; it is the only
-ordinary window that floats (the Reply window and the specimens panel are
+**The window** (`ReferenceWindow.swift`). A normal titled window, 440 by 620
+at first (`ReferenceWindowController.size`, no smaller than 360 × 320), on the
+text background colour, its frame remembered under one name
+(`CapsidReference`) when it closes (a demo's never), so the next opens where
+the last was (a second one open at the same place steps down). The title is
+the session's; the subtitle is when Claude last spoke in the reply, then the
+project ("8:47 · Assay development"), time first because a narrow title bar
+cuts the end off. No count of replies: Earlier and Later dim at the ends, and
+a count of the replies read so far would read as the session's. The toolbar:
+Earlier and Later as one navigation control at the leading edge (⌥⌘← and ⌥⌘→
+on the buttons themselves, so the keys work only while this window is key and
+never reach the page; ⌥⌘↓ is Next Waiting app-wide), and at the trailing edge
+Copy with Source (⇧⌘C) and Open Conversation as icons with their names in the
+help and to VoiceOver, plus a small spinner while a page is read. No footer.
+The page, 20 pt from the edges, 18 between its parts: what the user asked, in
+the secondary colour with a hairline at its side, three lines at most; then
+the figures, each the page's width (800-pixel pictures from the daemon, decoded
+into a store of the window's own, 48 MiB, `ReferenceModel.figureStore`;
+shorter than 520 pt, a quiet 3:2 frame with a spinner until the picture comes,
+a photo glyph if it can't be read), with its file name and a borderless Keep…
+under it (and Keep… and Open Conversation in its context menu); then Claude's
+words as selectable text in an `NSTextView` sized to its text, lined up with
+the figures (no inset), so the page scrolls as one
+(`ReferenceTextView.sizeThatFits`). Nothing in it is in the clay: the window
+reads, it never asks. Window → Keep on Top (`ReferenceCommands`) floats the
+key reference window (`level = .floating`), dim unless one is key; it is the
+only ordinary window that floats (the Reply window and the specimens panel are
 panels, floating by nature).
 
 **Copy with Source.** The selection, or the whole answer as drawn, then a
@@ -5235,27 +5255,28 @@ blank line, then `— Claude, in “<session>” (<project>), 22 October 2026, 8
 line after, which opens the session in Capsid. Line separators the renderer put
 in for hard breaks go back to newlines. The button says Copied for a moment.
 
-**What is read** (`ReferenceModel.swift`). Pages of the session's history, back
-from the newest end, 25 rows a page (`ReferenceModel.rows`; the first read is
-the page's 12-row tail), through `readHistory(_:before:rows:nonce:)` and
-`readTurn(_:index:nonce:)` (the groundwork, Capsid on your phone → History). An
-answer is a `turn` row whose role is Claude's; everything else on the page
-(steps, plans, questions, the user's turns) is passed over. A look reads pages
-until one holds an answer, row 0 is reached, or eight pages held none
-(`pagesPerLook`); then the window says "No answer in the newest messages" and
-Earlier looks again, or "No answers yet" when the session has none. Earlier at
-the oldest answer loaded reads the next page and shows its newest answer,
-unless the user moved meanwhile, in which case the page is merged and the shown
-answer stays the same answer (its index shifts by what was added). A page's
-text is cut at 2,000 characters; a cut answer, when shown, gets a whole-turn
-read (≤ 20,000) that lands on its row, by row index, never on the answer shown
-at the time, and is asked once per row; while it is in flight the window says
-"Reading the rest…", and if it fails, "The rest of this answer couldn't be
-read." Every read is dropped once the window closes (`close` bumps a token and
-cancels the tasks; a read that lands after the token moved changes nothing). A
-read that fails says "The conversation couldn't be read. Claude Science may not
-be up." with Try Again; a page over the reader's 2 MiB cap says it is too large
-to read here and points at Claude Science.
+**What is read** (`ReferenceModel.swift`). Pages of the session's history,
+back from the newest end: the page's first read (its 12-row tail and the rows
+before it, 50 in all), then 25 rows a page (`ReferenceModel.rows`), through
+`readHistory(_:before:rows:nonce:)` and `readTurn(_:index:nonce:)` (the
+groundwork, Capsid on your phone → History). The rows read are kept as items
+and the replies worked out again after each page. A look reads pages until
+what it wants is in, row 0 is reached, or eight pages were read
+(`pagesPerLook`): on opening, the newest reply and the user's message that
+began it (a long run of steps can fill many pages); on Earlier at the oldest
+reply read, a whole reply before it, which is then shown unless the user moved
+meanwhile; on Earlier onto a reply whose start is unread, that start. A look
+that ends at eight pages shows what it has, and Earlier carries on. With no
+reply the window says "No answer in the newest messages" (Earlier looks again)
+or, at the start, "No answers yet". A turn's text is cut at 2,000 characters
+on a page; each cut turn of the reply shown gets a whole-turn read (≤ 20,000),
+once per row, kept by row and never applied to another; while one is in
+flight the page says "Reading the rest…", and if one fails, "Part of this
+reply couldn't be read." Every read is dropped once the window closes (`close`
+bumps a token and cancels the tasks; a read that lands after the token moved
+changes nothing). A read that fails says "The conversation couldn't be read.
+Claude Science may not be up." with Try Again; a page over the reader's 2 MiB
+cap says it is too large to read here and to open the conversation instead.
 
 **When it reads** (`ReadingGate.swift`). The reads run in the page, on the
 page's main thread, so each costs the user a few milliseconds of typing. The
@@ -5294,11 +5315,12 @@ what Copy with Source copies and nothing else. No session or project name
 reaches the log.
 
 **`--demo reference`** (`ReferenceDemo.swift`): the window on a made-up session
-whose pages and thumbnails are answered from the demo after 300 ms (three
-answers: one with a list, one with code and a figure, the newest cut on its
-page and whole on the turn read, with a heading, a numbered list and a table
-that becomes its placeholder); `--step failed` opens it on reads that fail.
-Nothing is read from Claude Science.
+shaped like a real one (Claude narrates, runs steps, answers; the figures sit
+on the steps), its pages and pictures answered from the demo after 300 ms:
+three replies, the middle one with a bar chart (and an earlier draft of it
+that isn't shown) and a heatmap, the newest a report cut on its page and whole
+on the turn read, with a table that becomes its placeholder; `--step failed`
+opens it on reads that fail. Nothing is read from Claude Science.
 
 **Tests.** `ReferenceModelTests` (the newest answer on open; Earlier at the
 edge reading back; empty pages read until an answer appears, eight at most;

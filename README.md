@@ -165,14 +165,14 @@ it). The Kept folder is in Settings → General → Kept.
 When you're writing from what Claude found, you want the answer next to the
 document, not in a tab behind it. **Open as Reference** (⌥↩ in Open Session…,
 the right-click menu of any session in the activity list, or a card's Later
-menu) opens a small read-only window with Claude's latest answer in that
-session: headings, lists and code as Claude wrote them, and the figures it
-showed as thumbnails (right-click one to Keep it). Earlier and Later step
-through the answers (⌥⌘← and ⌥⌘→). **Copy with Source** copies what you
-selected, or the whole answer, with a line saying which session and project it
+menu) opens a small read-only window with Claude's latest reply in that
+session: the figures it made, full width, then what it said, with your
+question above. Each figure has **Keep…** under it. Earlier and Later step
+through the replies (⌥⌘← and ⌥⌘→). **Copy with Source** (⇧⌘C) copies what you
+selected, or the whole reply, with a line saying which session and project it
 came from and when, and a link that opens the session in Capsid. **Window →
-Keep on Top** floats the window over your document; Open in Claude Science
-takes you to the session itself. The window reads the conversation the way the
+Keep on Top** floats the window over your document; Open Conversation takes
+you to the session itself. The window reads the conversation the way the
 phone does, a page at a time, waits while you type, and writes nothing.
 
 ## Capsid on your phone
