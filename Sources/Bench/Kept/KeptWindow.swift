@@ -102,9 +102,16 @@ final class KeptWindowController: NSObject, NSWindowDelegate {
                                     styleMask: [.titled, .closable, .resizable, .miniaturizable],
                                     backing: .buffered, defer: false)
             window.contentViewController = hosting
+            // Drawn as board 9 of the 1.0 mock-ups (SolanumSurface.swift): the
+            // title and the collection pill in the toolbar, the page's colour
+            // under a transparent title bar.
             window.title = "Kept"
-            window.setContentSize(NSSize(width: 960, height: 640))
-            window.contentMinSize = NSSize(width: 720, height: 480)
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.styleMask.insert(.fullSizeContentView)
+            window.backgroundColor = Solanum.pageColor
+            window.setContentSize(NSSize(width: 760, height: 720))
+            window.contentMinSize = NSSize(width: 620, height: 480)
             window.isReleasedWhenClosed = false
             window.setFrameAutosaveName("CapsidKept")
             window.delegate = self
@@ -136,41 +143,49 @@ struct KeptView: View {
     @State private var selection: String?
     @State private var collection: String?
     @State private var search = ""
-
-    private static let all = "\u{0}all"
+    @FocusState private var listFocused: Bool
 
     private var shown: [KeptResult] { index.results(matching: search, in: collection) }
     private var selected: KeptResult? { shown.first { $0.id == selection } }
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
-        } detail: {
+                .frame(width: 236)
+            Solanum.hairline.frame(width: 1)
             detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "Search kept results")
+        .frame(minWidth: 620, minHeight: 480)
+        .background {
+            GeometryReader { proxy in
+                VStack(spacing: 0) {
+                    Solanum.bar
+                        .frame(height: proxy.safeAreaInsets.top)
+                        .overlay(alignment: .bottom) { Solanum.hairline.frame(height: 1) }
+                    Solanum.page
+                }
+                .ignoresSafeArea()
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Picker("Collection", selection: Binding(get: { collection ?? Self.all },
-                                                         set: { collection = $0 == Self.all ? nil : $0 })) {
-                    Text("All Collections").tag(Self.all)
-                    if !index.collections.isEmpty { Divider() }
-                    ForEach(index.collections, id: \.self) { Text($0).tag($0) }
+                HStack(spacing: 10) {
+                    Text("Kept")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Solanum.ink)
+                    collectionPill
                 }
-                .pickerStyle(.menu)
-                .frame(minWidth: 140)
+                .fixedSize()
             }
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button { showInFinder() } label: { Label("Show in Finder", systemImage: "folder") }
-                    .help("Show the kept folder in Finder")
-                    .disabled(selected == nil)
-                Button { openConversation() } label: { Label("Open Conversation", systemImage: "arrow.up.forward.square") }
-                    .help("Open the session it came from in Capsid")
-                    .disabled(selected == nil || Demo.mode != nil)
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .primaryAction) {
+                searchField
             }
+            .sharedBackgroundVisibility(.hidden)
         }
-        .frame(minWidth: 720, minHeight: 480)
+        .toolbar(removing: .title)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onAppear {
             if let initialSelection { selection = initialSelection.path }
         }
@@ -181,56 +196,135 @@ struct KeptView: View {
         .onKeyPress(.space) { previewSelected() ? .handled : .ignored }
     }
 
-    // MARK: The sidebar
-
-    @ViewBuilder
-    private var sidebar: some View {
-        List(selection: $selection) {
-            if collection == nil {
-                ForEach(index.collections.filter { name in shown.contains { $0.collection == name } }, id: \.self) { name in
-                    Section(name) {
-                        ForEach(shown.filter { $0.collection == name }) { row($0) }
-                    }
-                }
-            } else {
-                ForEach(shown) { row($0) }
+    /// The collection shown, as a pill: "All collections" or one by name.
+    private var collectionPill: some View {
+        Menu {
+            Button("All Collections") { collection = nil }
+            if !index.collections.isEmpty { Divider() }
+            ForEach(index.collections, id: \.self) { name in
+                Button(name) { collection = name }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(collection ?? "All Collections")
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
             }
         }
-        .listStyle(.sidebar)
-        .overlay {
-            if index.results.isEmpty, index.state == .reading { ProgressView().controlSize(.small) }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(SolanumPillStyle(.small))
+        .fixedSize()
+        .accessibilityLabel("Collection, \(collection ?? "all collections")")
+    }
+
+    /// Search, as a pill.
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(Solanum.muted)
+                .accessibilityHidden(true)
+            TextField("Search", text: $search)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(Solanum.ink)
+                .accessibilityLabel("Search kept results")
         }
-        .safeAreaInset(edge: .bottom) {
+        .padding(.horizontal, 10)
+        .frame(width: 170, height: 26)
+        .background(Capsule().fill(Solanum.raised))
+        .overlay(Capsule().strokeBorder(Solanum.strong, lineWidth: 1))
+    }
+
+    // MARK: The list
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        if collection == nil {
+                            ForEach(index.collections.filter { name in shown.contains { $0.collection == name } }, id: \.self) { name in
+                                Text(name)
+                                    .font(.system(size: Solanum.captionSize, weight: .semibold))
+                                    .foregroundStyle(Solanum.muted)
+                                    .padding(.horizontal, 8)
+                                    .padding(.top, 10)
+                                    .padding(.bottom, 2)
+                                ForEach(shown.filter { $0.collection == name }) { row($0) }
+                            }
+                        } else {
+                            ForEach(shown) { row($0) }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 10)
+                }
+                .onChange(of: selection) { _, id in
+                    if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
+                }
+            }
+            .focusable()
+            .focused($listFocused)
+            .focusEffectDisabled()
+            .onKeyPress(.downArrow) { move(1) }
+            .onKeyPress(.upArrow) { move(-1) }
+            .overlay {
+                if index.results.isEmpty, index.state == .reading { ProgressView().controlSize(.small) }
+            }
             Text(verbatim: "\(KeepRules.abbreviated(index.rootURL)) · \(KeepRules.count(index.results.count, "result"))")
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Solanum.muted)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
                 .help(index.rootURL.path)
                 .contextMenu { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([index.rootURL]) } }
         }
     }
 
+    /// ↑ and ↓ in the list.
+    private func move(_ step: Int) -> KeyPress.Result {
+        let ids = shown.map(\.id)
+        guard !ids.isEmpty else { return .ignored }
+        guard let current = selection, let at = ids.firstIndex(of: current) else {
+            selection = ids.first
+            return .handled
+        }
+        selection = ids[min(max(at + step, 0), ids.count - 1)]
+        return .handled
+    }
+
     private func row(_ result: KeptResult) -> some View {
-        HStack(spacing: 10) {
-            KeptThumbnailView(store: thumbnails, url: result.figureURL, side: 40, kind: kind(of: result))
-                .frame(width: 40, height: 40)
-                .clipShape(.rect(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 0.5))
+        let isSelected = result.id == selection
+        return HStack(spacing: 10) {
+            KeptThumbnailView(store: thumbnails, url: result.figureURL, side: 44, kind: kind(of: result))
+                .frame(width: 44, height: 34)
+                .background(Solanum.raised)
+                .clipShape(.rect(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Solanum.hairline, lineWidth: 1))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(result.record.name)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(Solanum.ink)
                     .lineLimit(2)
-                Text(result.record.keptAt.formatted(date: .abbreviated, time: .omitted))
+                Text(result.record.keptAt.formatted(.dateTime.day().month(.abbreviated)))
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Solanum.muted)
             }
+            Spacer(minLength: 0)
         }
-        .padding(.vertical, 2)
-        .tag(result.id)
+        .padding(8)
+        .background(isSelected ? Solanum.selection : .clear, in: .rect(cornerRadius: 8))
+        .contentShape(.rect(cornerRadius: 8))
+        .onTapGesture {
+            selection = result.id
+            listFocused = true
+        }
+        .id(result.id)
         .onDrag { NSItemProvider(contentsOf: result.figureURL) ?? NSItemProvider() }
         .contextMenu {
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([result.folder]) }
@@ -238,6 +332,8 @@ struct KeptView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(result.record.name), \(result.collection), kept \(result.record.keptAt.formatted(date: .abbreviated, time: .omitted))")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { selection = result.id }
     }
 
     /// The detail's empty states: in the wide pane, said once.
@@ -247,30 +343,16 @@ struct KeptView: View {
         case .reading:
             Color.clear
         case .rootMissing:
-            ContentUnavailableView {
-                Label("The Kept folder isn\u{2019}t there", systemImage: "folder.badge.questionmark")
-            } description: {
-                Text("\(KeepRules.abbreviated(index.rootURL)) was moved or deleted, or its disk isn\u{2019}t connected.")
-            } actions: {
-                Button("Choose Folder…") { KeptFolderSection.chooseRoot { index.refresh() } }
-            }
+            KeptEmpty(title: "The Kept folder isn\u{2019}t there",
+                      sentence: "\(KeepRules.abbreviated(index.rootURL)) was moved or deleted, or its disk isn\u{2019}t connected.",
+                      action: ("Choose Folder\u{2026}", { KeptFolderSection.chooseRoot { index.refresh() } }))
         case .failed(let sentence):
-            ContentUnavailableView {
-                Label("The Kept folder didn\u{2019}t respond", systemImage: "folder.badge.questionmark")
-            } description: {
-                Text(sentence)
-            } actions: {
-                Button("Try Again") { index.refresh() }
-            }
+            KeptEmpty(title: "The Kept folder didn\u{2019}t respond", sentence: sentence,
+                      action: ("Try Again", { index.refresh() }))
         default:
-            ContentUnavailableView {
-                Label("Nothing kept yet", systemImage: "checkmark.seal")
-            } description: {
-                Text("In Results, select a figure and choose Keep… It\u{2019}s copied here with Claude\u{2019}s words, its data and its code, in a folder you own.")
-            } actions: {
-                Button("Open Results") { ResultsWindowController.shared.show() }
-                    .disabled(Demo.mode != nil)
-            }
+            KeptEmpty(title: "Nothing kept yet",
+                      sentence: "In Results, select a figure and choose Keep\u{2026} It\u{2019}s copied here with Claude\u{2019}s words, its data and its code, in a folder you own.",
+                      action: Demo.mode == nil ? ("Open Results", { ResultsWindowController.shared.show() }) : nil)
         }
     }
 
@@ -282,15 +364,11 @@ struct KeptView: View {
             KeptDetailView(result: selected, index: index, thumbnails: thumbnails, quickLook: quickLook)
                 .id(selected.id)
         } else if !search.isEmpty, shown.isEmpty {
-            ContentUnavailableView {
-                Label("No kept results match \u{201C}\(search)\u{201D}", systemImage: "magnifyingglass")
-            } description: {
-                Text("Search covers names, legends and Claude\u{2019}s words.")
-            } actions: {
-                Button("Clear Search") { search = "" }
-            }
+            KeptEmpty(title: "No kept results match \u{201C}\(search)\u{201D}",
+                      sentence: "Search covers names, legends and Claude\u{2019}s words.",
+                      action: ("Clear Search", { search = "" }))
         } else if !index.results.isEmpty {
-            ContentUnavailableView("No result selected", systemImage: "checkmark.seal")
+            KeptEmpty(title: "No result selected", sentence: "Choose one on the left.", action: nil)
         } else {
             nothingKept
         }
@@ -305,15 +383,33 @@ struct KeptView: View {
         quickLook.show([selected.figureURL], at: 0)
         return true
     }
+}
 
-    private func showInFinder() {
-        guard let selected else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([selected.folder])
-    }
+/// An empty or failed state on the page: a title, a sentence, maybe a pill.
+struct KeptEmpty: View {
+    let title: String
+    let sentence: String
+    let action: (String, () -> Void)?
 
-    private func openConversation() {
-        guard let selected else { return }
-        LabModel.shared.open(sessionID: selected.record.sessionID)
+    var body: some View {
+        VStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Solanum.ink)
+                .multilineTextAlignment(.center)
+            Text(sentence)
+                .font(.system(size: 13))
+                .foregroundStyle(Solanum.muted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+            if let action {
+                Button(action.0, action: action.1)
+                    .buttonStyle(SolanumPillStyle(.medium))
+                    .padding(.top, 6)
+            }
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -340,25 +436,37 @@ struct KeptDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 preview
                 Text(record.name)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Solanum.ink)
                     .textSelection(.enabled)
-                    .padding(.top, 16)
+                    .padding(.top, 14)
                 Text(sourceLine)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Solanum.captionSize))
+                    .foregroundStyle(Solanum.muted)
                     .padding(.top, 2)
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     copyButton("Copy Figure", key: "figure") { copyFigure() }
                     copyButton("Copy Legend", key: "legend") { copyLegend() }
                         .help("Copies your legend, or Claude\u{2019}s words if you haven\u{2019}t written one.")
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([result.folder]) }
+                    Button("Open Conversation") { LabModel.shared.open(sessionID: record.sessionID) }
+                        .disabled(Demo.mode != nil)
+                        .help("The session it came from, in Capsid")
                 }
-                .padding(.top, 12)
+                .buttonStyle(SolanumPillStyle(.medium))
+                .padding(.top, 14)
 
-                label("Your legend").padding(.top, 24)
+                label("Your legend").padding(.top, 22)
                 TextField("The legend you\u{2019}ll use in the paper", text: $legend, axis: .vertical)
-                    .lineLimit(3...12)
-                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...12)
+                    .textFieldStyle(.plain)
                     .font(.system(size: 13))
+                    .foregroundStyle(Solanum.ink)
+                    .lineSpacing(3)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Solanum.raised, in: .rect(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Solanum.strong, lineWidth: 1))
                     .accessibilityLabel("Your legend")
                     .padding(.top, 6)
                     .onChange(of: legend) { _, text in scheduleSave(text) }
@@ -372,37 +480,37 @@ struct KeptDetailView: View {
                         Button("Use Mine") { Task { await save(legend, force: true) } }
                         Button("Use Theirs") { Task { await load() } }
                     }
+                    .buttonStyle(SolanumPillStyle(.small))
                     .padding(.top, 6)
                 }
 
                 if !result.text.claudeSaid.isEmpty {
-                    label("What Claude said").padding(.top, 24)
-                    VStack(alignment: .leading, spacing: 8) {
+                    label("What Claude said").padding(.top, 22)
+                    VStack(alignment: .leading, spacing: 6) {
                         Text(result.text.claudeSaid)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Solanum.ink)
+                            .lineSpacing(3)
                             .lineLimit(showMore ? nil : 6)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                         if result.text.claudeSaid.count > 400 {
                             Button(showMore ? "Show Less" : "Show More") { showMore.toggle() }
-                                .buttonStyle(.link)
+                                .buttonStyle(.plain)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Solanum.muted)
+                                .underline()
+                        }
+                        if !result.text.attribution.isEmpty {
+                            Text(result.text.attribution)
                                 .font(.system(size: 11))
+                                .foregroundStyle(Solanum.muted)
                         }
                     }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
                     .padding(.top, 6)
-                    if !result.text.attribution.isEmpty {
-                        Text(result.text.attribution)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-                    }
                 }
 
-                label("Files").padding(.top, 24)
+                label("Files").padding(.top, 22)
                 VStack(alignment: .leading, spacing: 4) {
                     fileRow(record.figure)
                     ForEach(record.files, id: \.path) { fileRow($0) }
@@ -410,16 +518,17 @@ struct KeptDetailView: View {
                                      sha256: nil, bytes: 0), isReadme: true)
                     ForEach(record.missing, id: \.name) { missing in
                         HStack(spacing: 8) {
-                            Image(systemName: "doc").font(.system(size: 14)).foregroundStyle(.tertiary)
-                            Text(missing.name).font(.system(size: 12.5)).foregroundStyle(.secondary)
-                            Text("Not copied: \(missing.reason)").font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(missing.name).font(.system(size: 13)).foregroundStyle(Solanum.muted)
+                            Spacer(minLength: 8)
+                            Text("Not copied: \(missing.reason)").font(.system(size: 11)).foregroundStyle(Solanum.muted)
                         }
                     }
                 }
                 .padding(.top, 6)
             }
-            .padding(24)
-            .frame(maxWidth: 640, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(maxWidth: 680, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task { await load() }
@@ -439,9 +548,10 @@ struct KeptDetailView: View {
         KeptThumbnailView(store: thumbnails, url: result.figureURL, side: 360,
                           kind: ArtifactKind.classify(name: record.figure.path, mime: nil))
             .frame(maxWidth: .infinity)
-            .frame(height: 300)
+            .frame(height: 280)
+            .background(Solanum.raised)
             .clipShape(.rect(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Solanum.hairline, lineWidth: 1))
             .onDrag { NSItemProvider(contentsOf: result.figureURL) ?? NSItemProvider() }
             .onTapGesture(count: 2) { quickLook.show([result.figureURL], at: 0) }
             .accessibilityLabel("Figure, \(record.figure.path)")
@@ -450,14 +560,14 @@ struct KeptDetailView: View {
 
     private func label(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
+            .font(.system(size: Solanum.captionSize, weight: .semibold))
+            .foregroundStyle(Solanum.muted)
     }
 
     private func line(_ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.clay).accessibilityHidden(true)
-            Text(text).font(.system(size: 12))
+            Text(text).font(.system(size: 12)).foregroundStyle(Solanum.ink)
         }
     }
 
@@ -470,25 +580,21 @@ struct KeptDetailView: View {
                 if copied == key { copied = nil }
             }
         }
-        .frame(minWidth: 96)
     }
 
     private func fileRow(_ file: KeptFile, isReadme: Bool = false) -> some View {
         let url = result.folder.appendingPathComponent(file.path)
         return HStack(spacing: 8) {
-            Image(systemName: isReadme ? "doc.text" : ResultFileRow.symbol(ArtifactKind.classify(name: file.path, mime: nil)))
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
             Text(file.path)
-                .font(.system(size: 12.5))
+                .font(.system(size: 13))
+                .foregroundStyle(Solanum.ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
             if !isReadme {
                 Text(ByteCountFormatter.string(fromByteCount: Int64(file.bytes), countStyle: .file))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Solanum.muted)
                     .monospacedDigit()
             }
         }

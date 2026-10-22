@@ -292,7 +292,7 @@ struct ReferenceView: View {
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
                 Button("Keep\u{2026}") { keep(file) }
-                    .buttonStyle(SolanumPillStyle(small: true))
+                    .buttonStyle(SolanumPillStyle(.small))
                     .help("Keep this figure, with what Claude said about it, in your Kept folder")
             }
         }

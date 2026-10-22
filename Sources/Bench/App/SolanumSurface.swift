@@ -25,6 +25,9 @@ enum Solanum {
     /// Card and panel edges.
     static let hairlineColor = dynamic(light: NSColor(srgbRed: 31 / 255, green: 30 / 255, blue: 29 / 255, alpha: 0.15),
                                        dark: NSColor(srgbRed: 250 / 255, green: 249 / 255, blue: 245 / 255, alpha: 0.18))
+    /// A selected row's ground: ink at a tenth (never the accent).
+    static let selectionColor = dynamic(light: NSColor(srgbRed: 31 / 255, green: 30 / 255, blue: 29 / 255, alpha: 0.1),
+                                        dark: NSColor(srgbRed: 250 / 255, green: 249 / 255, blue: 245 / 255, alpha: 0.12))
     /// Control edges, where 3:1 is the floor.
     static let strongColor = dynamic(light: NSColor(srgbRed: 31 / 255, green: 30 / 255, blue: 29 / 255, alpha: 0.3),
                                      dark: NSColor(srgbRed: 250 / 255, green: 249 / 255, blue: 245 / 255, alpha: 0.32))
@@ -36,6 +39,7 @@ enum Solanum {
     static let muted = Color(nsColor: mutedColor)
     static let hairline = Color(nsColor: hairlineColor)
     static let strong = Color(nsColor: strongColor)
+    static let selection = Color(nsColor: selectionColor)
 
     // MARK: Type (the system font at the mock-ups' sizes)
 
@@ -56,19 +60,25 @@ enum Solanum {
     }
 }
 
-/// A pill: white (raised) with a strong hairline, ink words. `small` is the
-/// 26-point one that sits under a figure.
+/// A pill: white (raised) with a strong hairline, ink words. Regular (30
+/// points) for a window's foot, medium (28) for a row of actions, small (26)
+/// under a figure.
 struct SolanumPillStyle: ButtonStyle {
-    var small = false
+    enum Size { case regular, medium, small }
+    var size: Size = .regular
     @Environment(\.isEnabled) private var isEnabled
+
+    init(_ size: Size = .regular) {
+        self.size = size
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: small ? 12 : 13))
+            .font(.system(size: size == .regular ? 13 : 12))
             .foregroundStyle(Solanum.ink)
             .lineLimit(1)
-            .padding(.horizontal, small ? 10 : 14)
-            .frame(height: small ? 26 : 30)
+            .padding(.horizontal, size == .small ? 10 : size == .medium ? 12 : 14)
+            .frame(height: size == .small ? 26 : size == .medium ? 28 : 30)
             .background(Capsule().fill(Solanum.raised))
             .overlay(Capsule().fill(Solanum.hairline).opacity(configuration.isPressed ? 1 : 0))
             .overlay(Capsule().strokeBorder(Solanum.strong, lineWidth: 1))
