@@ -40,6 +40,9 @@ enum CompatMiss: String, CaseIterable, Sendable {
     case approveAnswerNotUnderstood
     // The reason on a failure card (Lab/FailureReason.swift)
     case failedFrameNotUnderstood
+    // Keep (Remote/ArtifactReader.swift)
+    case keepVersionsNotUnderstood
+    case keepFactsNotUnderstood
 
     var feature: CompatFeature {
         switch self {
@@ -55,6 +58,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
             .approve
         case .failedFrameNotUnderstood:
             .errorCard
+        case .keepVersionsNotUnderstood, .keepFactsNotUnderstood:
+            .keep
         }
     }
 
@@ -78,6 +83,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
         case .approveRouteGone: "the Approve route wasn't found"
         case .approveAnswerNotUnderstood: "the Approve answer wasn't what Capsid expects"
         case .failedFrameNotUnderstood: "a stopped session's answer has no status"
+        case .keepVersionsNotUnderstood: "the list of an artifact's versions wasn't the shape Capsid reads"
+        case .keepFactsNotUnderstood: "a version's details weren't the shape Capsid reads"
         }
     }
 }

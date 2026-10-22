@@ -102,9 +102,9 @@ private final class ArtifactPage {
         script.evaluate("__seen = []; __table = JSON.parse(__answers); __result = null;")
         script.evaluate("""
         (function (a) {
-            return (async function (op, frameId, versionId, width) {
+            return (async function (op, frameId, versionId, width, artifactId) {
             \(ArtifactReaderScript.body)
-            })(a.op, a.frameId, a.versionId, a.width);
+            })(a.op, a.frameId, a.versionId, a.width, a.artifactId);
         })(JSON.parse(__args)).then(function (v) { __result = v; }, function (e) { __result = "threw: " + e; });
         """)
         #expect(script.exception == nil)
@@ -129,7 +129,7 @@ private final class ArtifactPage {
     /// Runs any expression with the reader's functions defined.
     func evaluate(_ source: String) -> String? {
         script.evaluate(ArtifactReaderScript.pathBuilder + "\n" + ArtifactReaderScript.projection + "\n"
-                        + ArtifactReaderScript.codecs + "\n" + source)
+                        + ArtifactReaderScript.keepProjection + "\n" + ArtifactReaderScript.codecs + "\n" + source)
     }
 
     func set(_ name: String, _ value: String) {
@@ -155,6 +155,68 @@ private enum Made {
          "checksum": "SECRET-CHECKSUM", "agent_name": "SECRET-AGENT",
          "file_path": "/Users/someone/SECRET-PATH/file.bin", "ref_host_path": "/Users/someone/SECRET-HOST"\(extra)}
         """
+    }
+
+    // Keep's reads: made-up 36-character ids and rows. Every path here is under
+    // /opt/made-up, and every field Capsid must drop holds "SECRET".
+    static let artifact = "6d1f0c2e-7a3b-4c8d-9e10-2b3c4d5e6f70"
+    static let other = "7e20d1f3-8b4c-4d9e-8f21-3c4d5e6f7081"
+    static let v1 = "1c8d3a5f-2b3c-4d4e-9f00-b1c2d3e4f5a6"
+    static let v2 = "2d9e4b60-3c4d-4e5f-8011-c2d3e4f5a6b7"
+    static let v3 = "3eaf5c71-4d5e-4f60-9122-d3e4f5a6b7c8"
+    static let frame = "4fb06d82-5e6f-4071-a233-e4f5a6b7c8d9"
+    static let digest = String(repeating: "ab12", count: 16)
+    static let versionsPath = "/api/artifacts/\(artifact)/versions"
+    static func factsPath(_ v: String = v3) -> String { "/api/artifacts/versions/\(v)?include_metadata=true" }
+    static func lineagePath(_ v: String = v3) -> String { "/api/artifacts/versions/\(v)/lineage?slim=1" }
+
+    /// An id of 36 characters for the n-th made-up row.
+    static func id(_ n: Int) -> String { String(format: "%08lx-0000-4000-8000-%012lx", n, n) }
+
+    static func json(_ object: Any) -> String {
+        String(decoding: try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
+    }
+
+    /// One row of `/versions` as the daemon writes it, with every field Capsid must drop.
+    static func versionRow(_ v: String, n: Int, frame: String? = Made.frame, type: String = "image/png", size: Int = 2048,
+                           created: Any = "2026-10-12T19:30:00.000Z", parent: String? = nil) -> [String: Any] {
+        ["version_id": v, "version_number": n, "artifact_id": artifact, "frame_id": frame ?? NSNull(),
+         "agent_name": "SECRET-AGENT", "language": "SECRET-LANGUAGE", "content_type": type, "size_bytes": size,
+         "created_at": created, "file_path": "/opt/made-up/SECRET-PATH/fig.png", "parent_version_id": parent ?? NSNull()]
+    }
+
+    static func versions(_ rows: [[String: Any]]) -> String { json(rows) }
+
+    /// The answer of `?include_metadata=true`, `edit`ed.
+    static func facts(version: String = v3, _ edit: (inout [String: Any]) -> Void = { _ in }) -> String {
+        var object: [String: Any] = [
+            "artifact_id": artifact, "version_id": version, "version_number": 3, "filename": "plots/z_prime.png",
+            "content_type": "image/png; charset=binary", "size_bytes": 86016, "created_at": "2026-10-12T19:30:00.000Z",
+            "agent_name": "SECRET-AGENT", "is_user_upload": false, "checksum": digest,
+            "file_path": "/opt/made-up/SECRET-PATH/z_prime.png", "ref_host_path": "/opt/made-up/SECRET-HOST"]
+        edit(&object)
+        return json(object)
+    }
+
+    static let code = "import pandas as pd\nplot({{artifact:\(v2)}})\n"
+
+    static var mapping: [String: Any] {
+        ["inputs": [
+            ["filename": "plate_reader.csv", "artifact_id": other, "version_id": v2, "workspace_path": NSNull(),
+             "consensus": "runtime", "read_cell_id": "SECRET-CELL"] as [String: Any],
+            ["filename": NSNull(), "workspace_path": "/opt/made-up/SECRET-WORKSPACE/raw/notes.xlsx", "consensus": "ast_only"],
+        ], "outputs": [["SECRET": "output"]], "mapping_status": "complete", "mapping_attempts": 1]
+    }
+
+    /// The answer of `lineage?slim=1`, `edit`ed.
+    static func lineage(version: String = v3, _ edit: (inout [String: Any]) -> Void = { _ in }) -> String {
+        var object: [String: Any] = [
+            "artifact_id": artifact, "version_id": version, "version_number": 3, "filename": "z_prime.png",
+            "code": code, "code_description": "Plots Z prime by plate.", "messages": NSNull(),
+            "environment_snapshot": NSNull(), "language": "python", "interactions": NSNull(), "has_cell_sources": true,
+            "has_messages": true, "has_environment": true, "pending": false, "dependency_mappings": mapping]
+        edit(&object)
+        return json(object)
     }
 
     static func entry(_ name: String, version: String = "ver_1", mime: String? = nil, size: Int = 12) -> ArtifactEntry {
@@ -196,7 +258,7 @@ struct ArtifactPathTests {
         ]
         for read in cases {
             page.set("__args", ArtifactPage.arguments(read))
-            let built = page.evaluate("var a = JSON.parse(__args); JSON.stringify(benchArtifactPath(a.op, a.frameId, a.versionId, a.width))")
+            let built = page.evaluate("var a = JSON.parse(__args); JSON.stringify(benchArtifactPath(a.op, a.frameId, a.versionId, a.width, a.artifactId))")
             let expected = read.path.map { "\"\($0)\"" } ?? "null"
             #expect(built == expected, "\(read)")
         }
@@ -586,6 +648,612 @@ struct ArtifactReadTests {
         #expect(ArtifactReaderScript.outcome(of: big, for: .thumb(version: "v", width: 120)) == .tooBig)
         #expect(ArtifactReaderScript.outcome(of: Data("[]".utf8), for: .text(version: "v")) == .unreadable)
         #expect(ArtifactReaderScript.outcome(of: Data(#"{"outcome":"lost"}"#.utf8), for: .text(version: "v")) == .lost)
+    }
+}
+
+// MARK: Keep's reads: the paths
+
+struct KeepPathTests {
+    @Test func theThreeReadsAreBuiltFromTypedIdsAndNothingElse() {
+        #expect(ArtifactRead.versions(artifact: Made.artifact).path == Made.versionsPath)
+        #expect(ArtifactRead.facts(version: Made.v3).path == Made.factsPath())
+        #expect(ArtifactRead.lineage(version: Made.v3).path == Made.lineagePath())
+        // The older reads are as they were, and pass no artifact id.
+        #expect(ArtifactRead.download(version: "ver_Made-up_01").path == "/api/artifacts/versions/ver_Made-up_01")
+        #expect(ArtifactRead.versions(artifact: "x").arguments["artifactId"] as? String == "x")
+        #expect(ArtifactRead.download(version: "x").arguments["artifactId"] is NSNull)
+        #expect(ArtifactRead.facts(version: "x").arguments["versionId"] as? String == "x")
+    }
+
+    @Test func onlyFullIdsMakeAPath() {
+        let hostile = ["", "ver_1", "../etc", Made.v3.uppercased(), String(Made.v3.dropLast()), Made.v3 + "0", "a/b",
+                       "a?include_metadata=true", Made.v3 + "\n", "ü" + Made.v3.dropFirst(2), "..",
+                       String(repeating: "-", count: 35) + "x"]
+        for id in hostile {
+            #expect(ArtifactRead.versions(artifact: id).path == nil, "\(id)")
+            #expect(ArtifactRead.facts(version: id).path == nil, "\(id)")
+            #expect(ArtifactRead.lineage(version: id).path == nil, "\(id)")
+        }
+        #expect(!PlanCheck.isUUIDLike("ver_1") && PlanCheck.isUUIDLike(Made.v1))
+    }
+
+    @Test func theAllowlistTakesKeepsThreeShapesAndRefusesTheNearMisses() {
+        #expect(ArtifactRead.isAllowedPath(Made.versionsPath))
+        #expect(ArtifactRead.isAllowedPath(Made.factsPath()))
+        #expect(ArtifactRead.isAllowedPath(Made.lineagePath()))
+        let a = Made.artifact, v = Made.v3
+        let refused = [
+            // An artifact's id where a version's goes, and the other way round.
+            "/api/artifacts/versions/\(v)/versions", "/api/artifacts/\(v)/lineage?slim=1", "/api/artifacts/\(a)/lineage?slim=1",
+            "/api/artifacts/versions/\(v)/versions?x=1",
+            // Short, long, capital or odd ids.
+            "/api/artifacts/ver_1/versions", "/api/artifacts/versions/ver_1?include_metadata=true",
+            "/api/artifacts/versions/ver_1/lineage?slim=1", "/api/artifacts/\(a.uppercased())/versions",
+            "/api/artifacts/versions/\(v.uppercased())/lineage?slim=1", "/api/artifacts/\(a)0/versions",
+            // The query is exactly what it should be.
+            "/api/artifacts/versions/\(v)/lineage?slim=0", "/api/artifacts/versions/\(v)/lineage", "/api/artifacts/versions/\(v)/lineage?",
+            "/api/artifacts/versions/\(v)/lineage?slim=1&x=1", "/api/artifacts/versions/\(v)/lineage?slim=true",
+            "/api/artifacts/versions/\(v)?include_metadata=false", "/api/artifacts/versions/\(v)?include_metadata=true&x=1",
+            "/api/artifacts/versions/\(v)?include_metadata=1", "/api/artifacts/versions/\(v)?include_metadata=true&thumbnail=120",
+            "/api/artifacts/versions/\(v)/script-bundle", "/api/artifacts/\(v)/script-bundle",
+            // Slashes, dots and trailing parts.
+            "/api/artifacts/\(a)/versions/", "/api/artifacts//versions", "/api/artifacts/../versions",
+            "/api/artifacts/versions/../\(v)/lineage?slim=1", "/api/artifacts/\(a)/versions/..", "/artifacts/\(a)/versions",
+            "/api/artifacts/\(a)", "/api/artifacts/\(a)/lineage", "/api/projects/\(a)/versions",
+        ]
+        for path in refused { #expect(!ArtifactRead.isAllowedPath(path), "\(path)") }
+        // The phone's and the shelf's shapes are as they were.
+        #expect(ArtifactRead.isAllowedPath("/api/artifacts/versions/ver_1?thumbnail=120"))
+        #expect(!ArtifactRead.isAllowedPath("/api/artifacts/versions/ver_1/lineage?slim=1"))
+    }
+
+    @Test func thePageBuildsTheSamePathsAsSwiftForKeepsReads() {
+        let page = ArtifactPage()
+        let cases: [ArtifactRead] = [
+            .versions(artifact: Made.artifact), .versions(artifact: Made.v3), .versions(artifact: "x"),
+            .versions(artifact: Made.artifact.uppercased()), .facts(version: Made.v3), .facts(version: "ver_1"),
+            .facts(version: Made.v3.uppercased()), .lineage(version: Made.v3), .lineage(version: "ver_1"),
+            .lineage(version: Made.v3 + "0"),
+        ]
+        for read in cases {
+            page.set("__args", ArtifactPage.arguments(read))
+            let built = page.evaluate("var a = JSON.parse(__args); JSON.stringify(benchArtifactPath(a.op, a.frameId, a.versionId, a.width, a.artifactId))")
+            #expect(built == (read.path.map { "\"\($0)\"" } ?? "null"), "\(read)")
+        }
+        // An id in the wrong slot, a missing one, an unknown op: no path.
+        #expect(page.evaluate("JSON.stringify(benchArtifactPath('versions', null, '\(Made.artifact)', null, null))") == "null")
+        #expect(page.evaluate("JSON.stringify(benchArtifactPath('versions', null, null, null, undefined))") == "null")
+        #expect(page.evaluate("JSON.stringify(benchArtifactPath('facts', null, null, null, '\(Made.v3)'))") == "null")
+        #expect(page.evaluate("JSON.stringify(benchArtifactPath('script-bundle', null, '\(Made.v3)', null, '\(Made.artifact)'))") == "null")
+        // The older ops ignore an artifact id.
+        #expect(page.evaluate("JSON.stringify(benchArtifactPath('download', null, 'v1', null, '\(Made.artifact)'))") == "\"/api/artifacts/versions/v1\"")
+    }
+
+    @Test func aReadThatMakesNoPathIsRefusedInThePageBeforeAnyFetch() {
+        for read in [ArtifactRead.versions(artifact: "../x"), .facts(version: "ver_1"), .lineage(version: Made.v3.uppercased())] {
+            let result = ArtifactPage().run(read, [:])
+            #expect(result.raw == #"{"outcome":"refused"}"#, "\(read)")
+            #expect(result.seen.isEmpty)
+            #expect(result.outcome == .unreadable)
+        }
+    }
+}
+
+// MARK: Keep's reads: the projections
+
+struct KeepProjectionTests {
+    private let page = ArtifactPage()
+
+    private func project(_ call: String, _ raw: String) -> String? {
+        page.set("__raw", raw)
+        return page.evaluate("JSON.stringify(\(call))")
+    }
+
+    private func parsed(_ json: String?) -> Any? {
+        json.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8), options: [.fragmentsAllowed]) }
+    }
+
+    private func versions(_ raw: String, cap: Int = 500) -> (json: String?, versions: [ArtifactVersion]?) {
+        let json = project("benchProjectVersions(JSON.parse(__raw), \(cap))", raw)
+        guard let json, json != "null" else { return (json, nil) }
+        return (json, ArtifactReaderScript.versions(parsed(json)))
+    }
+
+    private func facts(_ raw: String, asked: String = Made.v3) -> (json: String?, facts: ArtifactFacts?) {
+        let json = project("benchProjectFacts(JSON.parse(__raw), '\(asked)')", raw)
+        guard let json, json != "null" else { return (json, nil) }
+        return (json, ArtifactReaderScript.facts(parsed(json), asked: asked))
+    }
+
+    private func lineage(_ raw: String, asked: String = Made.v3) -> (json: String?, lineage: ArtifactLineage?) {
+        let json = project("benchProjectLineage(JSON.parse(__raw), '\(asked)')", raw)
+        guard let json, json != "null" else { return (json, nil) }
+        return (json, ArtifactReaderScript.lineage(parsed(json), asked: asked))
+    }
+
+    /// Nothing the fixtures mark as a secret, and no path.
+    private func leaks(_ json: String?) -> Bool {
+        guard let json else { return true }
+        return json.contains("SECRET") || json.contains("/opt") || json.contains("made-up/")
+    }
+
+    private func keys(_ json: String?, at path: [String] = []) -> Set<String>? {
+        var value = parsed(json)
+        if let array = value as? [Any] { value = array.first }
+        for step in path { value = (value as? [String: Any])?[step]; if let array = value as? [Any] { value = array.first } }
+        return (value as? [String: Any]).map { Set($0.keys) }
+    }
+
+    // MARK: Versions
+
+    @Test func eachVersionKeepsSevenFieldsAndNothingElse() throws {
+        let rows = Made.versions([
+            Made.versionRow(Made.v1, n: 1),
+            Made.versionRow(Made.v2, n: 2, frame: nil, type: "Image/PNG; x=y", size: 4096, parent: Made.v1),
+            Made.versionRow(Made.v3, n: 3, parent: Made.v2),
+        ])
+        let (json, list) = versions(rows)
+        #expect(!leaks(json))
+        #expect(!(json ?? "").contains("agent") && !(json ?? "").contains("language"))
+        let all = try #require(list)
+        #expect(all.map(\.v) == [Made.v1, Made.v2, Made.v3])
+        #expect(all.map(\.n) == [1, 2, 3])
+        #expect(all[0] == ArtifactVersion(v: Made.v1, n: 1, frame: Made.frame, mime: "image/png", size: 2048,
+                                         at: Date(timeIntervalSince1970: 1_791_833_400), parent: nil))
+        #expect(all[1].frame == nil && all[1].parent == Made.v1 && all[1].size == 4096 && all[1].mime == "image/png")
+        #expect(keys(json) == ["v", "n", "frame", "mime", "size", "at", "parent"])
+    }
+
+    @Test func fieldsTheDaemonDoesntGiveCleanlyAreNull() throws {
+        let row = Made.versionRow(Made.v1, n: 1, frame: "not-an-id", type: "nonsense", created: "yesterday", parent: "x")
+        let all = try #require(versions(Made.versions([row])).versions)
+        #expect(all[0].frame == nil && all[0].mime == nil && all[0].at == nil && all[0].parent == nil)
+        let epoch = Made.versionRow(Made.v1, n: 1, created: 1_791_833_400_000)
+        #expect(try #require(versions(Made.versions([epoch])).versions)[0].at == Date(timeIntervalSince1970: 1_791_833_400))
+    }
+
+    @Test func aVersionListThatIsntTheShapeReadsNothing() {
+        let good = Made.versionRow(Made.v1, n: 1)
+        for body in [Made.json(["versions": [good]]), "\"[]\"", "null", "5", "{}"] {
+            #expect(versions(body).json == "null", "\(body.prefix(40))")
+        }
+        let bad: [[String: Any]] = [
+            Made.versionRow("ver_1", n: 2), Made.versionRow(Made.v2.uppercased(), n: 2), Made.versionRow(Made.v2, n: -1),
+            Made.versionRow(Made.v2, n: 2, size: -5),
+            Made.versionRow(Made.v2, n: 2).merging(["version_number": "2"]) { $1 },
+            Made.versionRow(Made.v2, n: 2).merging(["version_number": 2.5]) { $1 },
+            Made.versionRow(Made.v2, n: 2).merging(["size_bytes": NSNull()]) { $1 },
+            Made.versionRow(Made.v2, n: 2).merging(["content_type": 5]) { $1 },
+            Made.versionRow(Made.v2, n: 2).merging(["version_id": 7]) { $1 },
+        ]
+        #expect(versions("[]").versions == [])
+        for row in bad {
+            #expect(versions(Made.versions([good, row])).json == "null", "\(Made.json(row).prefix(80))")
+        }
+        #expect(versions("[5]").json == "null")
+    }
+
+    @Test func theNewestFiveHundredAreKept() throws {
+        let rows = Made.versions((0..<600).map { Made.versionRow(Made.id($0), n: $0 + 1) })
+        let all = try #require(versions(rows).versions)
+        #expect(all.count == 500)
+        #expect(all.first?.n == 101 && all.last?.n == 600)
+        #expect(all.first?.v == Made.id(100))
+    }
+
+    @Test func swiftChecksEveryVersionFieldAgain() {
+        func check(_ row: [String: Any]) -> [ArtifactVersion]? {
+            ArtifactReaderScript.versions(parsed(Made.json([row])))
+        }
+        let good: [String: Any] = ["v": Made.v1, "n": 1, "frame": NSNull(), "mime": "image/png", "size": 3, "at": NSNull(), "parent": NSNull()]
+        #expect(check(good)?.count == 1)
+        #expect(ArtifactReaderScript.versions(parsed(Made.json([good, good])))?.count == 1)
+        let overrides: [(String, Any)] = [
+            ("v", "ver_1"), ("n", 1.5), ("n", -1), ("n", true), ("frame", "x"), ("mime", "Image/PNG"), ("size", -3),
+            ("at", "today"), ("parent", "../x"),
+        ]
+        for (key, value) in overrides {
+            #expect(check(good.merging([key: value]) { $1 }) == nil, "\(key) \(value)")
+        }
+        let many = (0...500).map { good.merging(["v": Made.id($0)]) { $1 } }
+        #expect(ArtifactReaderScript.versions(parsed(Made.json(many))) == nil)
+    }
+
+    // MARK: Facts
+
+    @Test func factsKeepTwelveFieldsAndNeverAPath() throws {
+        let raw = Made.facts {
+            $0["reproduction_code"] = "x = 1\n"
+            $0["environment"] = ["environment_name": "base", "python_version": "3.12.4",
+                                 "packages": [["name": "numpy", "version": "1.26.4"], ["name": "pandas", "version": "2.2.2"]],
+                                 "op_log": [["operation": "SECRET-OP", "packages": ["SECRET-PKG"]]]] as [String: Any]
+        }
+        let (json, read) = facts(raw)
+        #expect(!leaks(json))
+        #expect(try #require(read) == ArtifactFacts(
+            v: Made.v3, a: Made.artifact, n: 3, name: "z_prime.png", mime: "image/png", size: 86016,
+            at: Date(timeIntervalSince1970: 1_791_833_400), sha: Made.digest, isUpload: false, code: "x = 1\n", codeCut: false,
+            environment: ArtifactEnvironment(name: "base", python: "3.12.4",
+                                             packages: [(name: "numpy", version: "1.26.4"), (name: "pandas", version: "2.2.2")])))
+        #expect(keys(json) == ["v", "a", "n", "name", "mime", "size", "at", "sha", "upload", "code", "codeCut", "env"])
+        #expect(keys(json, at: ["env"]) == ["name", "python", "packages"])
+        #expect(keys(json, at: ["env", "packages"]) == ["name", "version"])
+    }
+
+    @Test func aVersionWithNoCodeOrEnvironmentHasNone() throws {
+        let known = try #require(facts(Made.facts()).facts)
+        #expect(known.code == nil && !known.codeCut && known.environment == nil && !known.isUpload)
+    }
+
+    @Test func theChecksumIsSixtyFourHexDigitsOrNil() throws {
+        func sha(_ value: Any) throws -> String? {
+            try #require(facts(Made.facts { $0["checksum"] = value }).facts).sha
+        }
+        #expect(try sha(NSNull()) == nil)
+        #expect(try sha("") == nil)
+        #expect(try sha("abc") == nil)
+        #expect(try sha(String(repeating: "g", count: 64)) == nil)
+        #expect(try sha(String(repeating: "ab", count: 33)) == nil)
+        #expect(try sha(12345) == nil)
+        #expect(try sha(String(repeating: "AB12", count: 16)) == String(repeating: "ab12", count: 16))
+        #expect(try sha(Made.digest) == Made.digest)
+    }
+
+    @Test func anAnswerForAnotherVersionIsRefusedInThePageAndInSwift() throws {
+        // An artifact's id in a version's place serves the artifact's latest version.
+        #expect(facts(Made.facts(version: Made.v2), asked: Made.v3).json == "null")
+        #expect(facts(Made.facts(version: Made.artifact), asked: Made.v3).json == "null")
+        // Swift refuses it too, were the page to let one through.
+        let ok = try #require(facts(Made.facts()).json)
+        let answer = Data(#"{"outcome":"facts","facts":\#(ok)}"#.utf8)
+        #expect(ArtifactReaderScript.outcome(of: answer, for: .facts(version: Made.v1)) == .unreadable)
+        #expect(ArtifactReaderScript.outcome(of: answer, for: .facts(version: Made.v3)) != .unreadable)
+        // And an answer of another kind of read.
+        #expect(ArtifactReaderScript.outcome(of: answer, for: .lineage(version: Made.v3)) == .unreadable)
+        #expect(ArtifactReaderScript.outcome(of: answer, for: .versions(artifact: Made.artifact)) == .unreadable)
+    }
+
+    @Test func factsThatArentTheShapeReadNothing() {
+        for raw in ["[]", "null", "\"x\"", "5", Made.facts { $0["is_user_upload"] = "no" }, Made.facts { $0["is_user_upload"] = NSNull() },
+                    Made.facts { $0.removeValue(forKey: "is_user_upload") }, Made.facts { $0["version_id"] = 5 }] {
+            #expect(facts(raw).json == "null", "\(raw.prefix(60))")
+        }
+        #expect(facts(Made.facts(version: "ver_1"), asked: "ver_1").json == "null")
+    }
+
+    @Test func theNameIsTheLastSegmentWithoutControls() throws {
+        func name(_ filename: String) throws -> String? {
+            try #require(facts(Made.facts { $0["filename"] = filename }).facts).name
+        }
+        #expect(try name("results/run 1/Z′ by plate.png") == "Z′ by plate.png")
+        #expect(try name("C:\\data\\table.csv") == "table.csv")
+        #expect(try name("evil\u{0}\u{202E}gnp.txt\r\n") == "evilgnp.txt")
+        #expect(try name("folder/") == nil)
+        #expect(try name("") == nil)
+        #expect(try name(String(repeating: "n", count: 400) + ".txt")?.unicodeScalars.count == 255)
+    }
+
+    @Test func codeIsCutAtTwoHundredFiftySixKilobytesOfUTF8WithoutSplittingACharacter() throws {
+        func code(_ text: String) throws -> (code: String?, cut: Bool) {
+            let known = try #require(facts(Made.facts { $0["reproduction_code"] = text }).facts)
+            return (known.code, known.codeCut)
+        }
+        let limit = 256 * 1024
+        let exact = String(repeating: "a", count: limit)
+        let whole = try code(exact)
+        #expect(whole.code == exact && !whole.cut)
+        let over = try code(String(repeating: "a", count: limit + 1))
+        #expect(over.code?.utf8.count == limit && over.cut)
+        // Two-byte characters meet the limit exactly; three- and four-byte ones stop short of it.
+        let two = try code(String(repeating: "é", count: 200_000))
+        #expect(two.code?.utf8.count == limit && two.code?.unicodeScalars.count == limit / 2 && two.cut)
+        let three = try code(String(repeating: "日", count: 100_000))
+        #expect(three.code?.utf8.count == 3 * (limit / 3) && three.cut)
+        let four = try code("a" + String(repeating: "🧪", count: 70_000))
+        #expect(four.code?.utf8.count == 1 + 4 * ((limit - 1) / 4) && four.cut)
+        #expect(four.code?.unicodeScalars.last == "🧪")
+        #expect(try code("").code == nil)
+        let short = try code("short\n")
+        #expect(short.code == "short\n" && !short.cut)
+    }
+
+    @Test func anEnvironmentKeepsNamePythonAndAtMostTwoThousandPackages() throws {
+        var packages: [Any] = (0..<2_500).map { ["name": "pkg\($0)", "version": "1.\($0)", "channel": "SECRET-CHANNEL"] as [String: Any] }
+        packages += [5, ["version": "9"], ["name": 3]] as [Any]
+        let raw = Made.facts { $0["environment"] = ["environment_name": "base", "python_version": "3.12", "packages": packages] as [String: Any] }
+        let (json, read) = facts(raw)
+        #expect(!leaks(json))
+        let env = try #require(read?.environment)
+        #expect(env.name == "base" && env.python == "3.12")
+        #expect(env.packages.count == 2_000)
+        #expect(env.packages.first?.name == "pkg0" && env.packages.first?.version == "1.0")
+        #expect(env.packages.last?.name == "pkg1999")
+        // An environment that isn't an object is none; one with nothing in it has nothing.
+        #expect(try #require(facts(Made.facts { $0["environment"] = "x" }).facts).environment == nil)
+        let bare = try #require(facts(Made.facts { $0["environment"] = [String: Any]() }).facts).environment
+        #expect(bare == ArtifactEnvironment(name: nil, python: nil, packages: []))
+    }
+
+    @Test func swiftChecksEveryFactsFieldAgain() {
+        let base: [String: Any] = ["v": Made.v3, "a": NSNull(), "n": NSNull(), "name": NSNull(), "mime": NSNull(), "size": NSNull(),
+                                   "at": NSNull(), "sha": NSNull(), "upload": false, "code": NSNull(), "codeCut": false, "env": NSNull()]
+        func check(_ key: String? = nil, _ value: Any = NSNull(), asked: String = Made.v3) -> ArtifactFacts? {
+            var row = base
+            if let key { row[key] = value }
+            return ArtifactReaderScript.facts(parsed(Made.json(row)), asked: asked)
+        }
+        #expect(check() != nil)
+        #expect(check(asked: Made.v2) == nil)
+        let environment = { (packages: Any) -> [String: Any] in ["name": NSNull(), "python": NSNull(), "packages": packages] }
+        let overrides: [(String, Any)] = [
+            ("sha", String(repeating: "A", count: 64)), ("sha", "abc"), ("sha", 5), ("n", -1), ("n", 1.5), ("size", -1), ("size", "3"),
+            ("at", "today"), ("a", "art_1"), ("a", 5), ("name", "a\u{7}b"), ("mime", "Text/Plain"), ("upload", 1), ("upload", NSNull()),
+            ("codeCut", true), ("code", ""), ("code", 5), ("code", String(repeating: "a", count: 256 * 1024 + 1)),
+            ("env", environment([["name": "", "version": "1"]])), ("env", environment([["name": "a", "version": 1]])),
+            ("env", ["name": NSNull(), "python": NSNull()] as [String: Any]), ("env", 5),
+            ("env", environment((0...2_000).map { ["name": "p\($0)", "version": "1"] })),
+        ]
+        for (key, value) in overrides {
+            #expect(check(key, value) == nil, "\(key) \(String(describing: value).prefix(40))")
+        }
+        #expect(check("env", environment([["name": "a", "version": ""]]))?.environment?.packages.count == 1)
+        #expect(check("codeCut", true) == nil && check("code", "x") != nil)
+    }
+
+    // MARK: Lineage
+
+    @Test func aLineageKeepsElevenFieldsAndNeverAPathOrAProvenanceMessage() throws {
+        let (json, read) = lineage(Made.lineage())
+        #expect(!leaks(json))
+        let known = try #require(read)
+        #expect(known.v == Made.v3)
+        #expect(known.code == "import pandas as pd\nplot({{artifact:\(Made.v2)}})\n" && !known.codeCut)
+        #expect(known.description == "Plots Z prime by plate." && known.language == "python")
+        #expect(!known.pending && known.unavailableModel == nil && known.unavailableReason == nil)
+        #expect(known.hasCells && known.hasEnvironment && known.mappingStatus == "complete")
+        #expect(known.inputs == [
+            LineageInput(v: Made.v2, a: Made.other, name: "plate_reader.csv", file: nil, how: "runtime", inferred: false),
+            LineageInput(v: nil, a: nil, name: nil, file: "notes.xlsx", how: "ast_only", inferred: true),
+        ])
+        #expect(known.inputs.map(\.fetchable) == [true, false])
+        #expect(keys(json) == ["v", "code", "codeCut", "desc", "lang", "pending", "unavailable", "cells", "env", "mapping", "inputs"])
+        #expect(keys(json, at: ["inputs"]) == ["v", "a", "name", "file", "how", "inferred", "fetchable"])
+    }
+
+    @Test func aLineageThatCarriesTheConversationOrTheSnapshotOrTheCellsIsRefused() {
+        #expect(lineage(Made.lineage()).lineage != nil)
+        let carrying: [(String, Any)] = [
+            ("messages", [["role": "user", "content": "SECRET-MESSAGE"]]), ("messages", [Any]()),
+            ("environment_snapshot", ["packages": [Any]()]), ("environment_snapshot", [String: Any]()),
+            ("interactions", [Any]()), ("interactions", [["source": "SECRET-CELL"]]), ("messages", "SECRET"),
+        ]
+        for (key, value) in carrying {
+            let result = lineage(Made.lineage { $0[key] = value })
+            #expect(result.json == "null", "\(key)")
+        }
+        // Absent is as null: an older daemon's slim answer.
+        let bare = Made.lineage { $0.removeValue(forKey: "messages"); $0.removeValue(forKey: "environment_snapshot"); $0.removeValue(forKey: "interactions") }
+        #expect(!bare.contains("\"messages\"") && lineage(bare).lineage != nil)
+    }
+
+    @Test func aLineageForAnotherVersionIsRefused() throws {
+        #expect(lineage(Made.lineage(version: Made.v2), asked: Made.v3).json == "null")
+        let ok = try #require(lineage(Made.lineage()).json)
+        let answer = Data(#"{"outcome":"lineage","lineage":\#(ok)}"#.utf8)
+        #expect(ArtifactReaderScript.outcome(of: answer, for: .lineage(version: Made.v1)) == .unreadable)
+        #expect(ArtifactReaderScript.outcome(of: answer, for: .lineage(version: Made.v3)) != .unreadable)
+    }
+
+    @Test func pendingAndUnavailableAndUploadAndNoMappingAreKept() throws {
+        let pending = try #require(lineage(Made.lineage { $0["pending"] = true; $0["code"] = NSNull() }).lineage)
+        #expect(pending.pending && pending.code == nil)
+        let off = try #require(lineage(Made.lineage {
+            $0["code_unavailable"] = ["model": "a-made-up-model", "reason": "not_enabled_for_org"]
+        }).lineage)
+        #expect(off.unavailableModel == "a-made-up-model" && off.unavailableReason == "not_enabled_for_org")
+        let none = try #require(lineage(Made.lineage { $0["dependency_mappings"] = NSNull() }).lineage)
+        #expect(none.inputs.isEmpty && none.mappingStatus == nil)
+        let waiting = try #require(lineage(Made.lineage {
+            $0["dependency_mappings"] = ["inputs": [Any](), "mapping_status": "pending"] as [String: Any]
+        }).lineage)
+        #expect(waiting.inputs.isEmpty && waiting.mappingStatus == "pending")
+        // A user upload answers with no code and no description.
+        let upload = try #require(lineage(Made.lineage { $0["code"] = NSNull(); $0["code_description"] = NSNull() }).lineage)
+        #expect(upload.code == nil && upload.description == nil)
+    }
+
+    @Test func inputsAreCappedAtTwoHundredAndKeepOnlyTheLastSegmentOfAWorkspacePath() throws {
+        let many: [Any] = (0..<250).map {
+            ["filename": "f\($0).csv", "artifact_id": Made.id($0), "version_id": Made.id($0 + 1_000), "consensus": "both"] as [String: Any]
+        }
+        let capped = try #require(lineage(Made.lineage {
+            $0["dependency_mappings"] = ["inputs": many, "mapping_status": "complete"] as [String: Any]
+        }).lineage)
+        #expect(capped.inputs.count == 200 && capped.inputs.last?.name == "f199.csv" && capped.inputs.allSatisfy(\.fetchable))
+        let odd: [Any] = [
+            ["workspace_path": "/opt/made-up/SECRET-WS/a/b/data.tsv"], ["workspace_path": "C:\\SECRET\\x.txt", "version_id": "../x"],
+            ["consensus": "weird consensus"], 5, ["filename": "k.csv", "consensus": "ast_only", "version_id": Made.v1],
+        ]
+        let read = lineage(Made.lineage { $0["dependency_mappings"] = ["inputs": odd] as [String: Any] })
+        #expect(!leaks(read.json))
+        let inputs = try #require(read.lineage).inputs
+        // The odd ones are left out or cleaned; the paths never come through.
+        #expect(inputs.map(\.file) == ["data.tsv", "x.txt", nil])
+        #expect(inputs.map(\.v) == [nil, nil, Made.v1])
+        #expect(inputs.last?.inferred == true && inputs.last?.fetchable == false && inputs.first?.fetchable == false)
+    }
+
+    @Test func aLongDescriptionIsCutAtTwoThousandCharacters() throws {
+        let known = try #require(lineage(Made.lineage { $0["code_description"] = String(repeating: "é", count: 3_000) }).lineage)
+        #expect(known.description?.unicodeScalars.count == 2_000 && known.description?.hasSuffix("…") == true)
+    }
+
+    @Test func swiftChecksEveryLineageFieldAgain() {
+        let base: [String: Any] = ["v": Made.v3, "code": NSNull(), "codeCut": false, "desc": NSNull(), "lang": NSNull(), "pending": false,
+                                   "unavailable": NSNull(), "cells": false, "env": false, "mapping": NSNull(), "inputs": [Any]()]
+        func check(_ key: String? = nil, _ value: Any = NSNull(), asked: String = Made.v3) -> ArtifactLineage? {
+            var row = base
+            if let key { row[key] = value }
+            return ArtifactReaderScript.lineage(parsed(Made.json(row)), asked: asked)
+        }
+        let input: [String: Any] = ["v": NSNull(), "a": NSNull(), "name": "x.csv", "file": NSNull(), "how": "runtime", "inferred": false, "fetchable": false]
+        #expect(check("inputs", [input])?.inputs.count == 1)
+        #expect(check() != nil && check(asked: Made.v1) == nil)
+        let bad: [[String: Any]] = [
+            input.merging(["name": NSNull()]) { $1 },
+            input.merging(["v": "a/b", "name": NSNull()]) { $1 },
+            input.merging(["how": "ast_only"]) { $1 },
+            input.merging(["inferred": true]) { $1 },
+            input.merging(["v": "v1", "a": "a1"]) { $1 },
+            input.merging(["v": "v1", "fetchable": true]) { $1 },
+            input.merging(["name": "x\u{7}"]) { $1 },
+            input.merging(["how": "two words"]) { $1 },
+        ]
+        for row in bad { #expect(check("inputs", [row]) == nil, "\(row)") }
+        #expect(check("inputs", Array(repeating: input, count: 201)) == nil)
+        #expect(check("inputs", ["x": 1]) == nil)
+        for (key, value) in [("pending", 1), ("cells", "yes"), ("lang", "two words"), ("mapping", "a b"), ("desc", "x\u{7}")] as [(String, Any)] {
+            #expect(check(key, value) == nil, "\(key)")
+        }
+        #expect(check("unavailable", ["model": "m", "reason": "not_enabled_for_org"])?.unavailableReason == "not_enabled_for_org")
+        #expect(check("unavailable", ["model": 5, "reason": NSNull()]) == nil)
+        #expect(check("codeCut", true) == nil && check("code", "x") != nil)
+    }
+}
+
+// MARK: Keep's reads: in the page
+
+struct KeepReadTests {
+    private let page = ArtifactPage()
+
+    private func json(_ text: String, status: Int = 200, headers: [String: String] = [:]) -> ArtifactPage.Answer {
+        .init(status: status, headers: headers, bytes: Array(text.utf8))
+    }
+
+    @Test func eachReadIsOneNoStoreJSONGetAndItsAnswerIsProjected() throws {
+        let rows = Made.versions([Made.versionRow(Made.v1, n: 1), Made.versionRow(Made.v2, n: 2, parent: Made.v1)])
+        let versions = page.run(.versions(artifact: Made.artifact), [Made.versionsPath: json(rows)])
+        #expect(versions.seen.map(\.path) == [Made.versionsPath])
+        #expect(versions.seen.first?.cache == "no-store" && versions.seen.first?.credentials == "include")
+        #expect(versions.seen.first?.accept == "application/json" && versions.seen.first?.range == nil)
+        guard case .versions(let list) = versions.outcome else { Issue.record("not versions"); return }
+        #expect(list.map(\.v) == [Made.v1, Made.v2])
+        #expect(!(versions.raw ?? "").contains("SECRET") && !(versions.raw ?? "").contains("/opt"))
+
+        let facts = page.run(.facts(version: Made.v3), [Made.factsPath(): json(Made.facts())])
+        #expect(facts.seen.map(\.path) == [Made.factsPath()])
+        #expect(facts.seen.first?.accept == "application/json" && facts.seen.first?.cache == "no-store")
+        guard case .facts(let known) = facts.outcome else { Issue.record("not facts"); return }
+        #expect(known.v == Made.v3 && known.sha == Made.digest)
+        #expect(!(facts.raw ?? "").contains("SECRET") && !(facts.raw ?? "").contains("/opt"))
+
+        let lineage = page.run(.lineage(version: Made.v3), [Made.lineagePath(): json(Made.lineage())])
+        #expect(lineage.seen.map(\.path) == [Made.lineagePath()])
+        guard case .lineage(let found) = lineage.outcome else { Issue.record("not lineage"); return }
+        #expect(found.inputs.count == 2)
+        #expect(!(lineage.raw ?? "").contains("SECRET") && !(lineage.raw ?? "").contains("/opt"))
+    }
+
+    @Test func aMissingVersionIs404AndASignedOutPageIs401() {
+        let reads: [(ArtifactRead, String)] = [
+            (.versions(artifact: Made.artifact), Made.versionsPath), (.facts(version: Made.v3), Made.factsPath()),
+            (.lineage(version: Made.v3), Made.lineagePath()),
+        ]
+        for (read, path) in reads {
+            for status in [404, 410] {
+                let result = page.run(read, [path: .init(status: status, length: 4)])
+                #expect(result.outcome == .missing, "\(status) \(read)")
+                #expect(result.seen.first?.pulled == 0 && result.seen.first?.cancelled == true, "its body isn't read")
+            }
+            #expect(page.run(read, [path: .init(status: 401)]).outcome == .lost)
+            for status in [204, 206, 302, 403, 416, 500] {
+                #expect(page.run(read, [path: json("[]", status: status)]).outcome == .unreadable, "\(status) \(read)")
+            }
+            #expect(page.run(read, [:]).outcome == .unreadable)
+        }
+    }
+
+    @Test func aBodyThatIsntTheShapeIsUnreadable() {
+        for text in ["<html>", "", "null", "5", "\"[]\"", "{\"versions\": []}", "[5]", "{"] {
+            #expect(page.run(.versions(artifact: Made.artifact), [Made.versionsPath: json(text)]).outcome == .unreadable, "\(text)")
+        }
+        for text in ["<html>", "[]", "null", "{}", #"{"version_id": 5}"#] {
+            #expect(page.run(.facts(version: Made.v3), [Made.factsPath(): json(text)]).outcome == .unreadable, "\(text)")
+            #expect(page.run(.lineage(version: Made.v3), [Made.lineagePath(): json(text)]).outcome == .unreadable, "\(text)")
+        }
+    }
+
+    @Test func anAnswerForAnotherVersionIsUnreadable() {
+        // What the daemon does with an artifact's id in a version's place.
+        let result = page.run(.facts(version: Made.v3), [Made.factsPath(): json(Made.facts(version: Made.v2))])
+        #expect(result.outcome == .unreadable)
+        #expect(result.raw == #"{"outcome":"unreadable"}"#)
+        let lineage = page.run(.lineage(version: Made.v3), [Made.lineagePath(): json(Made.lineage(version: Made.v2))])
+        #expect(lineage.outcome == .unreadable)
+    }
+
+    @Test func aLineageThatCarriesTheConversationIsUnreadableAndNothingOfItLeaves() {
+        let carrying = Made.lineage { $0["messages"] = [["role": "user", "content": "SECRET-MESSAGE"]] }
+        let result = page.run(.lineage(version: Made.v3), [Made.lineagePath(): json(carrying)])
+        #expect(result.outcome == .unreadable)
+        #expect(!(result.raw ?? "").contains("SECRET"))
+    }
+
+    @Test func eachBodyIsReadOnlyToItsCap() {
+        let caps: [(ArtifactRead, String, Int)] = [
+            (.versions(artifact: Made.artifact), Made.versionsPath, 1024 * 1024),
+            (.facts(version: Made.v3), Made.factsPath(), 2 * 1024 * 1024),
+            (.lineage(version: Made.v3), Made.lineagePath(), 2 * 1024 * 1024),
+        ]
+        for (read, path, cap) in caps {
+            // By its own length: not read at all.
+            let declared = page.run(read, [path: .init(headers: ["Content-Length": "\(cap + 1)"], length: cap + 1)])
+            #expect(declared.outcome == .tooBig, "\(read)")
+            #expect(declared.seen.first?.pulled == 0 && declared.seen.first?.cancelled == true)
+            // Without a length: read up to the cap, then given up.
+            let streamed = page.run(read, [path: .init(length: cap + 1)])
+            #expect(streamed.outcome == .tooBig, "\(read)")
+            #expect(streamed.seen.first?.cancelled == true)
+            #expect((streamed.seen.first?.pulled ?? .max) <= cap + 65_536)
+        }
+    }
+
+    @Test func aBodyUpToTheCapIsReadAndItsCodeCutNotRefused() throws {
+        // More rows than any real list: 2,000, the newest 500 kept, under 1 MB.
+        let rows = Made.versions((0..<2_000).map { Made.versionRow(Made.id($0), n: $0 + 1) })
+        #expect(rows.utf8.count > 500_000 && rows.utf8.count <= 1024 * 1024)
+        guard case .versions(let list) = page.run(.versions(artifact: Made.artifact), [Made.versionsPath: json(rows)]).outcome
+        else { Issue.record("not versions"); return }
+        #expect(list.count == 500 && list.last?.n == 2_000)
+        // Facts with code over 256 KB in a body under 2 MB.
+        let big = Made.facts { $0["reproduction_code"] = String(repeating: "x = 1\n", count: 100_000) }
+        guard case .facts(let facts) = page.run(.facts(version: Made.v3), [Made.factsPath(): json(big)]).outcome
+        else { Issue.record("not facts"); return }
+        #expect(facts.codeCut && facts.code?.utf8.count == 256 * 1024)
+    }
+
+    @Test func theOlderReadsAreAsTheyWere() {
+        let list = page.run(.list(frame: Made.session), [Made.listPath: .init(text: "[\(Made.row("a.txt"))]")])
+        guard case .list(let entries) = list.outcome else { Issue.record("not a list"); return }
+        #expect(entries.count == 1 && list.seen.count == 1)
+        let download = page.run(.download(version: Made.version), [Made.versionPath: .init(bytes: [1, 2, 3])])
+        #expect(download.outcome == .bytes(Data([1, 2, 3])))
+        #expect(download.seen.first?.accept == "*/*")
+    }
+
+    @Test func swiftTakesAnAnswerOnlyForTheReadItAskedFor() {
+        let versions = Data(#"{"outcome":"versions","versions":[]}"#.utf8)
+        #expect(ArtifactReaderScript.outcome(of: versions, for: .versions(artifact: Made.artifact)) == .versions([]))
+        for read in [ArtifactRead.facts(version: Made.v3), .lineage(version: Made.v3), .download(version: "v"), .list(frame: Made.session)] {
+            #expect(ArtifactReaderScript.outcome(of: versions, for: read) == .unreadable, "\(read)")
+        }
+        let tooBig = Data(#"{"outcome":"tooBig"}"#.utf8)
+        for read in [ArtifactRead.versions(artifact: Made.artifact), .facts(version: Made.v3), .lineage(version: Made.v3)] {
+            #expect(ArtifactReaderScript.outcome(of: tooBig, for: read) == .tooBig)
+        }
+        #expect(ArtifactReaderScript.outcome(of: tooBig, for: .list(frame: Made.session)) == .unreadable)
+        #expect(ArtifactReaderScript.outcome(of: Data(#"{"outcome":"missing"}"#.utf8), for: .facts(version: Made.v3)) == .missing)
+        #expect(ArtifactReaderScript.outcome(of: Data(#"{"outcome":"lost"}"#.utf8), for: .lineage(version: Made.v3)) == .lost)
     }
 }
 

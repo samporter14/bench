@@ -6,11 +6,14 @@
 //   - the reads that `WebContainer.apiGET` is allowed to make, each answered
 //     in the shape Capsid parses, checked by the very parsers the app uses.
 //
-// The probes have no way to write: the environment they are given holds a
-// read and two looks, and no POST. The phone's readers (messages, artifact
-// lists, live text) and every write are listed as checked only when used: the
-// first return what was said or made, which Diagnostics never reads, and the
-// rest change things.
+// The probes have no way to write: the environment they are given holds two
+// reads (`apiGET`, and Keep's typed artifact read) and two looks, and no POST.
+// The phone's readers (messages, artifact lists, live text), Keep's lineage and
+// every write are listed as checked only when used: the first return what was
+// said or made, which Diagnostics never reads, the lineage can start Claude
+// Science's own code reconstruction, and the rest change things. Keep's other
+// two reads (an artifact's versions, one version's facts) are pure, and run on
+// the shown session's plan artifact.
 //
 // A probe says one of four things: it answered as expected, it answered in a
 // shape Capsid doesn't read, the thing isn't on screen right now (a tab strip
@@ -138,6 +141,40 @@ enum CompatProbeRules {
         return .ok("a summary\(steps)")
     }
 
+    // MARK: Keep's reads
+
+    /// An artifact's versions (Keep): at least one, each with a number (the
+    /// reader refuses a row without one) and a time.
+    static func versions(_ outcome: ArtifactReadOutcome) -> ProbeVerdict {
+        guard case .versions(let rows) = outcome else { return failure(outcome, miss: .keepVersionsNotUnderstood) }
+        if rows.isEmpty { return .unexpectedShape("the list was empty") }
+        let timeless = rows.filter { $0.at == nil }.count
+        if timeless > 0 { return .unexpectedShape("\(timeless) of \(rows.count) versions have no time") }
+        return .ok("\(rows.count) version\(rows.count == 1 ? "" : "s"), each with a number and a time")
+    }
+
+    /// One version's facts (Keep): the answer is for the version asked, has a
+    /// number, and a checksum that is 64 hex digits (the reader nils anything
+    /// else) or none.
+    static func facts(_ outcome: ArtifactReadOutcome, version: String) -> ProbeVerdict {
+        guard case .facts(let facts) = outcome else { return failure(outcome, miss: .keepFactsNotUnderstood) }
+        guard facts.v == version else { return .unexpectedShape("the answer was for another version") }
+        guard facts.n != nil else { return .unexpectedShape("the answer has no version number") }
+        return facts.sha == nil ? .ok("a number, and no checksum (a file read from your Mac may have none)")
+                                : .ok("a checksum and a number")
+    }
+
+    /// Why a typed artifact read didn't come back as the shape it was asked for.
+    static func failure(_ outcome: ArtifactReadOutcome, miss: CompatMiss) -> ProbeVerdict {
+        switch outcome {
+        case .lost: .failed("signed out (401); Capsid signs back in by itself")
+        case .missing: .failed("answered 404: the route may have moved, or that session is gone")
+        case .tooBig: .failed("the answer exceeded the read limit")
+        case .cancelled: .failed("the read didn't complete")
+        default: .unexpectedShape(miss.phrase)
+        }
+    }
+
     /// Why a read didn't come back, from the page's own words. Only the HTTP
     /// status is taken from the error: its text can hold an address.
     static func failure(_ error: any Error) -> ProbeVerdict {
@@ -184,6 +221,10 @@ struct CompatProbeEnvironment {
     /// `PageTabsScript.probe`'s JSON.
     var tabStrip: @MainActor @Sendable () async throws -> String
     var signInShowing: @MainActor @Sendable () async throws -> Bool
+    /// `WebContainer.readArtifact`: one of Keep's reads, projected in the page
+    /// and checked again. The probes ask only for an artifact's versions and a
+    /// version's facts, never the lineage, which can start a reconstruction.
+    var artifactRead: @MainActor @Sendable (ArtifactRead) async throws -> ArtifactReadOutcome
     /// How long any one probe may take before it is called failed.
     var timeout: Duration = .seconds(6)
 
@@ -193,7 +234,8 @@ struct CompatProbeEnvironment {
             shownSession: { WebContainer.shared.currentFrameID },
             get: { try await WebContainer.shared.apiGET($0) },
             tabStrip: { try await WebContainer.shared.readTabStrip() },
-            signInShowing: { try await WebContainer.shared.signInButtonIsShowing() })
+            signInShowing: { try await WebContainer.shared.signInButtonIsShowing() },
+            artifactRead: { try await WebContainer.shared.readArtifact($0) })
     }
 }
 
@@ -207,8 +249,10 @@ enum CompatProbes {
         static let context = "GET /api/frames/<session>/token-series"
         static let frame = "GET /api/frames/<session>?shallow=true"
         static let plan = "GET /api/artifacts/versions/<version>"
+        static let versions = "GET /api/artifacts/<artifact>/versions"
+        static let facts = "GET /api/artifacts/versions/<version>?include_metadata=true"
 
-        static let all = [tabStrip, signIn, address, usage, context, frame, plan]
+        static let all = [tabStrip, signIn, address, usage, context, frame, plan, versions, facts]
     }
 
     /// Every probe, in order. Never throws: what goes wrong is a verdict.
@@ -243,6 +287,8 @@ enum CompatProbes {
             add(Name.context, none)
             add(Name.frame, none)
             add(Name.plan, none)
+            add(Name.versions, none)
+            add(Name.facts, none)
             return results
         }
         switch await timed(env.timeout, { try await env.get(ContextModel.seriesPath(for: session)) }) {
@@ -253,7 +299,10 @@ enum CompatProbes {
         // The frame and, if it names a plan, the plan. Both need a full id.
         guard let framePath = PlanCheck.framePath(session) else {
             add(Name.frame, .unexpectedShape("the session's id isn't the 36-character id Capsid reads"))
-            add(Name.plan, .notOnScreenNow("the session has no readable id"))
+            let unreadable = ProbeVerdict.notOnScreenNow("the session has no readable id")
+            add(Name.plan, unreadable)
+            add(Name.versions, unreadable)
+            add(Name.facts, unreadable)
             return results
         }
         var shownFrame: PlanFrame?
@@ -266,14 +315,53 @@ enum CompatProbes {
             add(Name.frame, CompatProbeRules.failure(error))
         }
         guard let version = shownFrame?.versionID, let planPath = PlanCheck.versionPath(version) else {
-            add(Name.plan, .notOnScreenNow("the shown session has no plan"))
+            let none = ProbeVerdict.notOnScreenNow("the shown session has no plan")
+            add(Name.plan, none)
+            add(Name.versions, none)
+            add(Name.facts, none)
             return results
         }
         switch await timed(env.timeout, { try await env.get(planPath) }) {
         case .success(let data): add(Name.plan, CompatProbeRules.plan(data))
         case .failure(let error): add(Name.plan, CompatProbeRules.failure(error))
         }
+
+        // Keep's two pure reads, on the plan's artifact.
+        let keep = await keepReads(env, version: version, artifact: shownFrame?.artifactID)
+        add(Name.versions, keep.versions)
+        add(Name.facts, keep.facts)
         return results
+    }
+
+    /// An artifact's versions and one version's facts, for the plan the shown
+    /// session has. The facts are read first: they name the artifact when the
+    /// frame didn't. Neither read writes, and neither is the lineage.
+    @MainActor
+    private static func keepReads(_ env: CompatProbeEnvironment, version: String, artifact: String?)
+        async -> (versions: ProbeVerdict, facts: ProbeVerdict) {
+        var artifactID = artifact.flatMap { PlanCheck.isUUIDLike($0) ? $0 : nil }
+        let facts: ProbeVerdict
+        if PlanCheck.isUUIDLike(version) {
+            switch await timed(env.timeout, { try await env.artifactRead(.facts(version: version)) }) {
+            case .success(let outcome):
+                facts = CompatProbeRules.facts(outcome, version: version)
+                if artifactID == nil, case .facts(let known) = outcome { artifactID = known.a }
+            case .failure(let error):
+                facts = CompatProbeRules.failure(error)
+            }
+        } else {
+            facts = .notOnScreenNow("the shown session's plan has no 36-character version id")
+        }
+        let versions: ProbeVerdict
+        if let artifactID {
+            switch await timed(env.timeout, { try await env.artifactRead(.versions(artifact: artifactID)) }) {
+            case .success(let outcome): versions = CompatProbeRules.versions(outcome)
+            case .failure(let error): versions = CompatProbeRules.failure(error)
+            }
+        } else {
+            versions = .notOnScreenNow("the shown session's plan has no 36-character artifact id")
+        }
+        return (versions, facts)
     }
 
     /// `work`, or a timeout. The probe that is slow is left running and

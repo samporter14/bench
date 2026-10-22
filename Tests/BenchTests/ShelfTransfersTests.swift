@@ -136,6 +136,7 @@ private final class HeldReader {
         case .thumb: return .bytes(webp)
         case .text: return .unreadable
         case .download(let version): return .bytes(Data("bytes of \(version)".utf8))
+        case .versions, .facts, .lineage: return .unreadable
         }
     }
 
@@ -3194,6 +3195,7 @@ struct ShelfLimitsFuzzTests {
         case .thumb: .bytes(webp)
         case .text: .unreadable
         case .download(let version): .bytes(Data("bytes of \(version)".utf8))
+        case .versions, .facts, .lineage: .unreadable
         }
     }
 

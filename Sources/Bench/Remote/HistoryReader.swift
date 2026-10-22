@@ -12,6 +12,12 @@
 // run the very same strings in JavaScriptCore on made-up pages. Swift checks
 // every field again (`HistoryPage`); anything that doesn't match is
 // unreadable. What is read lives in memory only, while the answer is built.
+//
+// Keep (since 1.0) adds one more op beside these, on the same allowlisted GET:
+// `benchFindShowingMessage` finds the assistant message that shows a figure
+// (`ShowingRead`, below). It keeps the message's index, time and text and which
+// of four ways it matched, and nothing else: never tool input, results beyond
+// `artifacts[]`, thinking or images.
 import Foundation
 import WebKit
 
@@ -419,17 +425,32 @@ enum HistoryReaderScript {
     """#
 
     /// The page's own fetch: only paths `isAllowedPath` allows, `no-store`,
-    /// 15 s each. Answers `{json}`, `{lost}` (401) or `{failed}`.
+    /// 15 s each. Answers `{json}`, `{lost}` (401) or `{failed}`. `get(path,
+    /// stop)` takes an optional AbortController too (Keep's showing read files
+    /// one under its nonce, so `benchAbortRead` can end the fetch); without
+    /// one, as the phone's reads, the 15 s is the only signal.
     static let fetcher = #"""
     const ALLOWED = /^\/api\/frames\/[0-9a-f-]{36}\/messages\?(from=-12&limit=12|from=\d{1,7}&limit=([1-9]|[1-4]\d|50))$/;
-    const signal = () => typeof AbortSignal === "function" && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(15000) : undefined;
-    const get = async path => {
+    const signal = stop => {
+        const limit = typeof AbortSignal === "function" && typeof AbortSignal.timeout === "function"
+            ? AbortSignal.timeout(15000) : undefined;
+        if (!stop) { return limit; }
+        if (limit === undefined) { return stop.signal; }
+        if (typeof AbortSignal.any === "function") { return AbortSignal.any([stop.signal, limit]); }
+        // No AbortSignal.any: a third controller, aborted by either.
+        const either = new AbortController();
+        const end = () => { try { either.abort(); } catch (e) { } };
+        for (const one of [stop.signal, limit]) {
+            if (one.aborted) { end(); } else if (typeof one.addEventListener === "function") { one.addEventListener("abort", end); }
+        }
+        return either.signal;
+    };
+    const get = async (path, stop) => {
         if (!ALLOWED.test(path)) { return { failed: true }; }
         let response;
         try {
             response = await fetch(path, { credentials: "include", cache: "no-store",
-                                           headers: { "Accept": "application/json" }, signal: signal() });
+                                           headers: { "Accept": "application/json" }, signal: signal(stop) });
         } catch (e) { return { failed: true }; }
         if (response.status === 401) { return { lost: true }; }
         if (!response.ok) { return { failed: true }; }
@@ -437,6 +458,61 @@ enum HistoryReaderScript {
     };
     const isPage = v => v !== null && typeof v === "object" && typeof v.from === "number" && typeof v.total === "number"
         && Array.isArray(v.messages) && Number.isInteger(v.total) && v.total >= 0;
+    """#
+
+    /// `readRows(frameId, before, knownTotal, stop)`: the rows a page covers,
+    /// as `{messages, base, total}`, or `{outcome}` when the read ended
+    /// early: `refused` (an id or an index out of shape; nothing fetched),
+    /// `lost` (a 401), `unreadable`, or `same` (only without `before`: the
+    /// history is as long as `knownTotal`). Without `before` the session
+    /// reader's `from=-12&limit=12` says how many rows there are, and one more
+    /// GET reads the 38 before them; with it, one GET reads the 50 before it.
+    /// The history page's body and Keep's showing body share it.
+    static let rowReader = #"""
+    const readRows = async (frameId, before, knownTotal, stop) => {
+        if (typeof frameId !== "string" || !/^[0-9a-f-]{36}$/.test(frameId)) { return { outcome: "refused" }; }
+        const hasBefore = before !== null && before !== undefined;
+        if (hasBefore && (typeof before !== "number" || !Number.isInteger(before) || before < 1 || before > 9999999)) {
+            return { outcome: "refused" };
+        }
+        const path = (from, limit) => "/api/frames/" + frameId + "/messages?from=" + from + "&limit=" + limit;
+        const unreadable = { outcome: "unreadable" };
+        let messages, base, total;
+        if (hasBefore) {
+            const from = Math.max(0, before - 50), limit = before - from;
+            const reply = await get(path(from, limit), stop);
+            if (reply.lost) { return { outcome: "lost" }; }
+            if (reply.failed || !isPage(reply.json) || reply.json.from !== from || reply.json.messages.length > limit) { return unreadable; }
+            messages = reply.json.messages;
+            base = from;
+            total = reply.json.total;
+        } else {
+            const tail = await get("/api/frames/" + frameId + "/messages?from=-12&limit=12", stop);
+            if (tail.lost) { return { outcome: "lost" }; }
+            // The last rows: they end at `total`, whether the reply's `from` says
+            // where they start or echoes the -12 it was asked for.
+            if (tail.failed || !isPage(tail.json) || tail.json.messages.length > 12
+                || tail.json.messages.length > tail.json.total) { return unreadable; }
+            total = tail.json.total;
+            base = total - tail.json.messages.length;
+            if (tail.json.from !== base && tail.json.from !== -12) { return unreadable; }
+            // As long as Bench already holds: no more to read, nothing to project.
+            if (typeof knownTotal === "number" && Number.isInteger(knownTotal) && knownTotal === total) {
+                return { outcome: "same", total: total };
+            }
+            messages = tail.json.messages;
+            const from = Math.max(0, total - 50), limit = base - from;
+            if (limit > 0) {
+                const earlier = await get(path(from, limit), stop);
+                if (earlier.lost) { return { outcome: "lost" }; }
+                if (earlier.failed || !isPage(earlier.json) || earlier.json.from !== from
+                    || earlier.json.messages.length !== limit) { return unreadable; }
+                messages = earlier.json.messages.concat(messages);
+                base = from;
+            }
+        }
+        return { messages: messages, base: base, total: total };
+    };
     """#
 
     /// What `callAsyncJavaScript` runs, with `frameId`, `before` (a row
@@ -447,52 +523,13 @@ enum HistoryReaderScript {
     /// nothing more; otherwise one more GET reads the 38 before them. Answers
     /// a JSON string: `{"outcome":"read","page":{…}}`, `"same"`,
     /// `"unreadable"`, `"lost"` or `"refused"`.
-    static let pageBody = projection + "\n" + fetcher + #"""
+    static let pageBody = projection + "\n" + fetcher + "\n" + rowReader + #"""
 
-    if (typeof frameId !== "string" || !/^[0-9a-f-]{36}$/.test(frameId)) { return JSON.stringify({ outcome: "refused" }); }
-    const hasBefore = before !== null && before !== undefined;
-    if (hasBefore && (typeof before !== "number" || !Number.isInteger(before) || before < 1 || before > 9999999)) {
-        return JSON.stringify({ outcome: "refused" });
-    }
-    const path = (from, limit) => "/api/frames/" + frameId + "/messages?from=" + from + "&limit=" + limit;
-    const unreadable = JSON.stringify({ outcome: "unreadable" });
-    let messages, base, total;
-    if (hasBefore) {
-        const from = Math.max(0, before - 50), limit = before - from;
-        const reply = await get(path(from, limit));
-        if (reply.lost) { return JSON.stringify({ outcome: "lost" }); }
-        if (reply.failed || !isPage(reply.json) || reply.json.from !== from || reply.json.messages.length > limit) { return unreadable; }
-        messages = reply.json.messages;
-        base = from;
-        total = reply.json.total;
-    } else {
-        const tail = await get("/api/frames/" + frameId + "/messages?from=-12&limit=12");
-        if (tail.lost) { return JSON.stringify({ outcome: "lost" }); }
-        // The last rows: they end at `total`, whether the reply's `from` says
-        // where they start or echoes the -12 it was asked for.
-        if (tail.failed || !isPage(tail.json) || tail.json.messages.length > 12
-            || tail.json.messages.length > tail.json.total) { return unreadable; }
-        total = tail.json.total;
-        base = total - tail.json.messages.length;
-        if (tail.json.from !== base && tail.json.from !== -12) { return unreadable; }
-        // As long as Bench already holds: no more to read, nothing to project.
-        if (typeof knownTotal === "number" && Number.isInteger(knownTotal) && knownTotal === total) {
-            return JSON.stringify({ outcome: "same", total: total });
-        }
-        messages = tail.json.messages;
-        const from = Math.max(0, total - 50), limit = base - from;
-        if (limit > 0) {
-            const earlier = await get(path(from, limit));
-            if (earlier.lost) { return JSON.stringify({ outcome: "lost" }); }
-            if (earlier.failed || !isPage(earlier.json) || earlier.json.from !== from
-                || earlier.json.messages.length !== limit) { return unreadable; }
-            messages = earlier.json.messages.concat(messages);
-            base = from;
-        }
-    }
+    const rows = await readRows(frameId, before, knownTotal, null);
+    if (rows.outcome !== undefined) { return JSON.stringify(rows); }
     let page = null;
-    try { page = benchProjectHistory({ total: total, messages: messages }, base); } catch (e) { page = null; }
-    return page === null ? unreadable : JSON.stringify({ outcome: "read", page: page });
+    try { page = benchProjectHistory({ total: rows.total, messages: rows.messages }, rows.base); } catch (e) { page = null; }
+    return page === null ? JSON.stringify({ outcome: "unreadable" }) : JSON.stringify({ outcome: "read", page: page });
     """#
 
     /// With `frameId` and `index`: one row, `from=<index>&limit=1`. Answers
@@ -511,6 +548,242 @@ enum HistoryReaderScript {
     let turn = null;
     try { turn = benchProjectTurn(reply.json, index); } catch (e) { turn = null; }
     return JSON.stringify(turn === null ? { outcome: "none" } : { outcome: "turn", turn: turn });
+    """#
+
+    /// Keep's showing op, pure: no fetch, no DOM, no globals.
+    ///
+    /// `benchFindShowingMessage(page, base, versionIds)`: of one page of raw
+    /// rows (`page` is `{total, messages}`, its first message row `base`), the
+    /// NEWEST assistant message that shows any of `versionIds` (an artifact's
+    /// version ids, oldest first), as `{i, at, text, how, v}`, or null when none
+    /// does. Throws when a shape doesn't match, or the ids are none (the body
+    /// answers that as unreadable). `how` is the first of four ways that fits
+    /// the message, in this order:
+    ///   `inline`  `{{artifact:<v>}}` or `?v=<v>` in its text;
+    ///   `image`   an `_artifact_refs` value for an id, whose key is the last
+    ///             segment of a `![…](src)` in its text;
+    ///   `mention` any `_artifact_refs` value for an id;
+    ///   `saved`   a `tool_use` of a save or run tool whose result's
+    ///             `artifacts[]` lists an id: the message is the next assistant
+    ///             text after the result, before the user's next turn, else the
+    ///             message holding the tool call itself.
+    /// Each message gets its best way, and the newest message with one wins.
+    /// When one message names several ids the same way, `v` is the one latest
+    /// in `versionIds`. `text` is the message's text blocks joined (≤ 20,000);
+    /// `at` its `_ts` in milliseconds or null. Read: text blocks, `tool_use`
+    /// names and ids, a save or run result's `artifacts[].version_id`, and
+    /// `_artifact_refs`. Never read: thinking, tool input, any other result,
+    /// images.
+    ///
+    /// `benchNewestTs(messages)`: the largest `_ts` of a page, in milliseconds,
+    /// or null when no row has one.
+    static let showingProjection = #"""
+    function benchFindShowingMessage(page, base, versionIds) {
+        "use strict";
+        const WHOLE = 20000, MAX_IDS = 600, MAX_REFS = 500;
+        const EARLIEST = 946684800000, LATEST = 4102444800000;
+        // The history's own lists: rows its UI hides, and the tools whose
+        // results list the files they made (its "run" and "save" groups).
+        const HIDDEN_FLAGS = ["_task_boundary", "_rolling_summary", "_harness_prompt", "_from_agent",
+                              "_from_aside", "_harness_notice"];
+        const HIDDEN_STARTS = ["[System]", "[compute]", "[Memory]", "[image:", "[document:"];
+        const SAVERS = ["save_artifacts", "bash", "powershell", "python", "r", "repl", "operon", "compute_provider", "code_execution"];
+        const ID = /^[A-Za-z0-9_-]{1,128}$/;
+        const isObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
+        const isAbsent = v => v === undefined || v === null;
+        const fail = () => { throw new Error("shape"); };
+        const time = v => {
+            let ms = null;
+            if (typeof v === "number" && isFinite(v)) { ms = v < 1e11 ? v * 1000 : v; }
+            else if (typeof v === "string") { const parsed = Date.parse(v); if (isFinite(parsed)) { ms = parsed; } }
+            return ms !== null && ms >= EARLIEST && ms <= LATEST ? Math.round(ms) : null;
+        };
+        if (!isObject(page) || !Array.isArray(page.messages) || typeof base !== "number" || !Number.isInteger(base) || base < 0) { fail(); }
+        if (!Array.isArray(versionIds) || versionIds.length === 0 || versionIds.length > MAX_IDS
+            || !versionIds.every(v => typeof v === "string" && ID.test(v))) { fail(); }
+        // Later in the list is newer.
+        const rank = new Map();
+        versionIds.forEach((v, n) => rank.set(v, n));
+        const newer = (a, b) => b === null || rank.get(a) > rank.get(b);
+        const cut = text => {
+            const all = Array.from(text);
+            return all.length <= WHOLE ? text : all.slice(0, WHOLE - 1).join("") + "…";
+        };
+        // A tool result as JSON: its text, parsed, when it is an object of reasonable size.
+        const resultJSON = content => {
+            let text = null;
+            if (typeof content === "string") { text = content; }
+            else if (Array.isArray(content)) {
+                text = content.filter(b => isObject(b) && b.type === "text" && typeof b.text === "string").map(b => b.text).join("");
+            } else if (isObject(content)) { return content; }
+            if (text === null || text.length > 524288) { return null; }
+            try { const parsed = JSON.parse(text); return isObject(parsed) ? parsed : null; } catch (e) { return null; }
+        };
+        // The last part of a path or an image's source, without its query.
+        const lastSegment = src => {
+            let seg = src.split(/[?#]/)[0].split("/").pop();
+            try { seg = decodeURIComponent(seg); } catch (e) { }
+            return seg;
+        };
+        // The newest of `rank`'s ids that `text` writes as `{{artifact:<v>}}` or `?v=<v>`.
+        const inline = text => {
+            let best = null, found;
+            for (const re of [/\{\{artifact:([A-Za-z0-9_-]{1,128})\}\}/g, /[?&]v=([A-Za-z0-9_-]{1,128})/g]) {
+                while ((found = re.exec(text)) !== null) {
+                    if (rank.has(found[1]) && newer(found[1], best)) { best = found[1]; }
+                }
+            }
+            return best;
+        };
+        // The file names `text` shows as `![…](src)`: the source's last segment
+        // and, as the page reads one, without a `v<hex>_` prefix.
+        const images = text => {
+            const names = new Set();
+            const re = /!\[[^\]]*\]\(\s*<?([^)\s>]+)/g;
+            let found;
+            while ((found = re.exec(text)) !== null) {
+                const seg = lastSegment(found[1]);
+                names.add(seg);
+                names.add(seg.replace(/^v[0-9a-f]+_/, ""));
+            }
+            return names;
+        };
+
+        const rows = [];
+        const calls = Object.create(null);
+        const saves = [];
+        const turns = [];
+        for (let k = 0; k < page.messages.length; k++) {
+            const i = base + k, m = page.messages[k];
+            if (!isObject(m)) { fail(); }
+            if (m.role !== "user" && m.role !== "assistant") { continue; }
+            let blocks;
+            if (typeof m.content === "string") { blocks = [{ type: "text", text: m.content }]; }
+            else if (Array.isArray(m.content)) { blocks = m.content; }
+            else { fail(); }
+            for (const block of blocks) {
+                if (!isObject(block) || typeof block.type !== "string") { fail(); }
+                if (block.type === "text" && typeof block.text !== "string") { fail(); }
+            }
+            // Too big for the daemon to send: a placeholder.
+            if (!isAbsent(m._oversized_bytes)) { continue; }
+            const texts = blocks.filter(b => b.type === "text").map(b => b.text);
+            if (m.role === "user") {
+                if (HIDDEN_FLAGS.some(flag => Boolean(m[flag]))) { continue; }
+                for (const block of blocks) {
+                    if (block.type !== "tool_result" || typeof block.tool_use_id !== "string" || block.is_error === true) { continue; }
+                    const call = calls[block.tool_use_id];
+                    if (call === undefined || !call.saver) { continue; }
+                    const result = resultJSON(block.content);
+                    if (result === null || !Array.isArray(result.artifacts)) { continue; }
+                    let listed = null;
+                    for (const one of result.artifacts.slice(0, 50)) {
+                        if (isObject(one) && typeof one.version_id === "string" && rank.has(one.version_id) && newer(one.version_id, listed)) {
+                            listed = one.version_id;
+                        }
+                    }
+                    if (listed !== null) { saves.push({ after: i, tool: call.row, v: listed }); }
+                }
+                const own = texts.join("\n\n").trim();
+                if (own !== "" && !HIDDEN_STARTS.some(start => own.startsWith(start))) { turns.push(i); }
+            } else {
+                const row = { i: i, at: time(m._ts), text: texts.map(t => t.trim()).filter(Boolean).join("\n\n"), refs: [] };
+                for (const block of blocks) {
+                    // A call's name and id only: its input is never looked at.
+                    if ((block.type === "tool_use" || block.type === "server_tool_use") && typeof block.name === "string"
+                        && typeof block.id === "string") {
+                        calls[block.id] = { row: rows.length, saver: SAVERS.indexOf(block.name.toLowerCase()) >= 0 };
+                    }
+                }
+                // `{"<filename>": {artifact_id, version_id}}`.
+                if (isObject(m._artifact_refs)) {
+                    for (const name of Object.keys(m._artifact_refs).slice(0, MAX_REFS)) {
+                        const ref = m._artifact_refs[name];
+                        if (isObject(ref) && typeof ref.version_id === "string" && rank.has(ref.version_id)) {
+                            row.refs.push({ name: name, v: ref.version_id });
+                        }
+                    }
+                }
+                rows.push(row);
+            }
+        }
+
+        // Each message's own way of showing an id.
+        const hits = new Map();
+        rows.forEach((row, n) => {
+            const written = inline(row.text);
+            if (written !== null) { hits.set(n, { how: "inline", v: written }); return; }
+            if (row.refs.length === 0) { return; }
+            const shown = images(row.text);
+            let image = null, mention = null;
+            for (const ref of row.refs) {
+                if (shown.has(lastSegment(ref.name)) && newer(ref.v, image)) { image = ref.v; }
+                if (newer(ref.v, mention)) { mention = ref.v; }
+            }
+            hits.set(n, image !== null ? { how: "image", v: image } : { how: "mention", v: mention });
+        });
+        // A save: the next assistant text after its result, before the user's
+        // next turn, else the message that made the call.
+        for (const save of saves) {
+            const turn = turns.find(t => t > save.after);
+            let target = save.tool;
+            for (let n = 0; n < rows.length; n++) {
+                if (rows[n].i > save.after && (turn === undefined || rows[n].i < turn) && rows[n].text !== "") { target = n; break; }
+            }
+            const have = hits.get(target);
+            if (have === undefined || (have.how === "saved" && newer(save.v, have.v))) { hits.set(target, { how: "saved", v: save.v }); }
+        }
+
+        let best = -1;
+        for (const n of hits.keys()) { if (n > best) { best = n; } }
+        if (best < 0) { return null; }
+        const row = rows[best], hit = hits.get(best);
+        return { i: row.i, at: row.at, text: cut(row.text), how: hit.how, v: hit.v };
+    }
+
+    function benchNewestTs(messages) {
+        "use strict";
+        const EARLIEST = 946684800000, LATEST = 4102444800000;
+        let newest = null;
+        if (!Array.isArray(messages)) { return null; }
+        for (const m of messages) {
+            if (m === null || typeof m !== "object" || typeof m._ts !== "number" || !isFinite(m._ts)) { continue; }
+            const ms = m._ts < 1e11 ? m._ts * 1000 : m._ts;
+            if (ms >= EARLIEST && ms <= LATEST && (newest === null || ms > newest)) { newest = Math.round(ms); }
+        }
+        return newest;
+    }
+    """#
+
+    /// What `callAsyncJavaScript` runs for one page of Keep's showing read,
+    /// with `frameId`, `before` (a row index, or null for the last page),
+    /// `versionIds` and `nonce`. The same GETs as the history page, the same
+    /// 15 s each, and with a nonce the page files an AbortController under it
+    /// in `globalThis.benchArtifactReads` (the artifact reader's own map, in
+    /// the same content world), so `abortArtifactRead(nonce)` ends the fetch.
+    /// Answers `{"outcome":"read","total","from","newest","found"}` (`found`
+    /// null or `benchFindShowingMessage`'s answer; `newest` the page's
+    /// largest `_ts`), `"unreadable"`, `"lost"`, `"refused"` or `"cancelled"`.
+    static let showingBody = showingProjection + "\n" + fetcher + "\n" + rowReader + #"""
+
+    // `typeof`: no AbortController (the tests' page) means a read that can't be aborted.
+    const readID = typeof nonce === "string" && /^[A-Za-z0-9-]{1,64}$/.test(nonce) ? nonce : null;
+    const controller = readID !== null && typeof AbortController === "function" ? new AbortController() : null;
+    const reads = controller === null ? null
+        : (globalThis.\#(ArtifactReaderScript.readsName) = globalThis.\#(ArtifactReaderScript.readsName) || Object.create(null));
+    if (controller !== null) { reads[readID] = controller; }
+    const aborted = () => controller !== null && controller.signal.aborted === true;
+    try {
+        const rows = await readRows(frameId, before, null, controller);
+        if (aborted()) { return JSON.stringify({ outcome: "cancelled" }); }
+        if (rows.outcome !== undefined) { return JSON.stringify(rows); }
+        let found = null;
+        try { found = benchFindShowingMessage({ total: rows.total, messages: rows.messages }, rows.base, versionIds); }
+        catch (e) { return JSON.stringify({ outcome: "unreadable" }); }
+        return JSON.stringify({ outcome: "read", total: rows.total, from: rows.base, newest: benchNewestTs(rows.messages), found: found });
+    } finally {
+        if (controller !== null && reads[readID] === controller) { delete reads[readID]; }
+    }
     """#
 
     /// What the page said.
@@ -538,6 +811,29 @@ enum HistoryReaderScript {
             guard let total = Pick.int(root["total"]), (0...maxIndex + 1).contains(total) else { return .unreadable }
             return .same(total: total)
         case "turn": return HistoryTurn(object: root["turn"]).map(Outcome.turn) ?? .unreadable
+        default: return .unreadable
+        }
+    }
+
+    // MARK: Keep's showing read
+
+    /// The page's answer to one page of the showing read, checked again here:
+    /// the page's own `from` and `total`, a `newest` time in range, and a
+    /// message whose index is on the page, whose `how` is one of the four and
+    /// whose `v` is one of `versions`. Anything else is unreadable.
+    static func showingOutcome(of data: Data, versions: [String]) -> ShowingPageRead {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let outcome = Pick.string(root["outcome"]) else { return .unreadable }
+        switch outcome {
+        case "lost": return .lost
+        case "cancelled": return .cancelled
+        case "read":
+            guard let total = Pick.int(root["total"]), (0...maxIndex + 1).contains(total),
+                  let from = Pick.int(root["from"]), (0...total).contains(from),
+                  let newest = Pick.optionalTime(root["newest"]) else { return .unreadable }
+            if Pick.isNull(root["found"]) { return .page(ShowingPage(total: total, from: from, newest: newest, found: nil)) }
+            guard let found = ShowingMessage(object: root["found"], rows: from..<total, versions: versions) else { return .unreadable }
+            return .page(ShowingPage(total: total, from: from, newest: newest, found: found))
         default: return .unreadable
         }
     }
@@ -749,6 +1045,125 @@ struct HistoryTurn: Equatable, Sendable {
     }
 }
 
+// MARK: Keep: the message that shows a figure
+
+/// How a message showed a version, from the surest way down.
+enum ShowingHow: String, Sendable {
+    /// `{{artifact:<v>}}` or `?v=<v>` is in its text.
+    case inline
+    /// It names the file in an image its text shows.
+    case image
+    /// It names the file, with no image of it in its text.
+    case mention
+    /// Claude saved the version in the step before it: the reply after the save,
+    /// which may show a newer version.
+    case saved
+}
+
+/// The assistant message that shows one of an artifact's versions.
+struct ShowingMessage: Equatable, Sendable {
+    /// Its row in the session's history.
+    let i: Int
+    /// When it was sent, when the row says.
+    let at: Date?
+    /// Its text, at most 20,000 characters.
+    let text: String
+    let how: ShowingHow
+    /// The version it shows.
+    let v: String
+
+    static let textLimit = 20_000
+
+    init(i: Int, at: Date?, text: String, how: ShowingHow, v: String) {
+        self.i = i
+        self.at = at
+        self.text = text
+        self.how = how
+        self.v = v
+    }
+
+    /// The page's `{i, at, text, how, v}`; the row must be one of `rows` and the
+    /// version one of `versions`.
+    init?(object: Any?, rows: Range<Int>, versions: [String]) {
+        guard let message = object as? [String: Any], let i = Pick.int(message["i"]), rows.contains(i),
+              let at = Pick.optionalTime(message["at"]),
+              let text = Pick.string(message["text"]), text.unicodeScalars.count <= Self.textLimit,
+              let how = Pick.string(message["how"]).flatMap(ShowingHow.init(rawValue:)),
+              let v = Pick.string(message["v"]), versions.contains(v) else { return nil }
+        self.init(i: i, at: at, text: text, how: how, v: v)
+    }
+}
+
+/// What looking for the message that shows a version came to.
+enum ShowingRead: Equatable, Sendable {
+    case found(ShowingMessage)
+    /// The walk ended, or reached messages older than the versions, with none.
+    case notFound
+    /// A page couldn't be read, or wasn't the shape Capsid reads.
+    case unreadable
+}
+
+/// One page of the showing read, as the page answered it.
+struct ShowingPage: Equatable, Sendable {
+    let total: Int
+    /// The first row of the page.
+    let from: Int
+    /// The largest `_ts` on the page, when any row has one.
+    let newest: Date?
+    let found: ShowingMessage?
+}
+
+enum ShowingPageRead: Equatable, Sendable {
+    case page(ShowingPage)
+    case unreadable
+    /// A 401: the page's session didn't take.
+    case lost
+    /// The read's nonce was aborted.
+    case cancelled
+}
+
+/// The walk behind `WebContainer.readShowing`: pages from the newest back,
+/// each asked for by `read(before)` (nil for the last page). Pure of the page.
+enum HistoryShowing {
+    /// At most this many pages of 50 rows.
+    static let pages = 6
+    /// Each older page covers this many rows of the one before it again, so the
+    /// reply after a save that the earlier page ended on is on this one.
+    static let overlap = 6
+    /// Most version ids one read takes.
+    static let maxVersions = 600
+
+    /// A nonce as the page files it: letters, digits and dashes, 1 to 64.
+    static func isNonce(_ text: String) -> Bool {
+        (1...64).contains(text.utf8.count) && text.utf8.allSatisfy {
+            (0x30...0x39).contains($0) || (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0) || $0 == 0x2D
+        }
+    }
+
+    /// The newest message that shows a version, else `.notFound` when six
+    /// pages, the start of the history or a page whose newest `_ts` is older
+    /// than `near` (the oldest version's time: the reply that shows a figure
+    /// follows its save) ends the walk. Throws `CancellationError` when the
+    /// task is cancelled or a page was aborted.
+    @MainActor
+    static func walk(near: Date?, read: @MainActor (_ before: Int?) async throws -> ShowingPageRead) async throws -> ShowingRead {
+        var before: Int?
+        for _ in 0..<pages {
+            try Task.checkCancellation()
+            switch try await read(before) {
+            case .unreadable, .lost: return .unreadable
+            case .cancelled: throw CancellationError()
+            case .page(let page):
+                if let found = page.found { return .found(found) }
+                if let near, let newest = page.newest, newest < near { return .notFound }
+                guard page.from > 0 else { return .notFound }
+                before = min(page.from + overlap, page.total)
+            }
+        }
+        return .notFound
+    }
+}
+
 // MARK: Reading through the page
 
 extension WebContainer {
@@ -790,5 +1205,37 @@ extension WebContainer {
         let outcome = HistoryReaderScript.outcome(of: Data(text.utf8))
         if outcome == .lost { sessionLost() }
         return outcome
+    }
+
+    /// Keep's read: the newest assistant message of the session that shows any
+    /// of `versions` (an artifact's version ids, oldest first), walking the
+    /// history's pages back from the end (`HistoryShowing.walk`), one
+    /// allowlisted GET and one `HistoryReaderScript.showingBody` run for each.
+    /// `near` is the oldest version's time. `nonce` is the caller's own: the
+    /// page files a controller under it, and `abortArtifactRead(nonce)` or
+    /// cancelling the task ends the walk with a `CancellationError`. Throws
+    /// when the page isn't up or an argument is out of shape (a frame id that
+    /// isn't 36 characters, no versions or more than 600, a version id that
+    /// isn't path-safe, a malformed nonce).
+    func readShowing(frameID: String, versions: [String], near: Date?, nonce: String) async throws -> ShowingRead {
+        guard status == .ready else { throw WebAPIError.notReady }
+        guard PlanCheck.isFrameID(frameID), HistoryShowing.isNonce(nonce),
+              (1...HistoryShowing.maxVersions).contains(versions.count),
+              versions.allSatisfy(PlanCheck.isVersionID) else { throw WebAPIError.notAllowed }
+        return try await withTaskCancellationHandler {
+            try await HistoryShowing.walk(near: near) { before in
+                let value = try await self.webView.callAsyncJavaScript(
+                    HistoryReaderScript.showingBody,
+                    arguments: ["frameId": frameID, "before": before.map { $0 as Any } ?? NSNull(),
+                                "versionIds": versions, "nonce": nonce],
+                    in: nil, contentWorld: .defaultClient)
+                guard let text = value as? String else { throw WebAPIError.badResponse }
+                let page = HistoryReaderScript.showingOutcome(of: Data(text.utf8), versions: versions)
+                if page == .lost { self.sessionLost() }
+                return page
+            }
+        } onCancel: {
+            Task { @MainActor in await self.abortArtifactRead(nonce) }
+        }
     }
 }

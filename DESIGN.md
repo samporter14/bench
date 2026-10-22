@@ -375,6 +375,14 @@ Every link goes through one function. The rules:
     `responseTooLarge`; a cancelled read ends as a `CancellationError`, and
     the compatibility probes say "no answer in time" and "the answer exceeded
     the read limit". The allowed paths and the 401 handling are as they were.
+  - **Keep's reads (since 1.0)** are not `apiGET`'s. The artifact reader (`Remote/ArtifactReader.swift`)
+    makes three more GETs from typed arguments, each an exact shape, checked in the page and again in Swift,
+    `no-store`, projected in the page, and read through a capped stream (1 or 2 MB):
+    `/api/artifacts/<36>/versions`, `/api/artifacts/versions/<36>?include_metadata=true` and
+    `/api/artifacts/versions/<36>/lineage?slim=1` (ids exactly `[0-9a-f-]{36}`; the fields kept are in Capsid
+    on your phone → Artifacts, Keep's reads). `apiGET`'s own prefix `/api/artifacts/versions/` is as wide as it
+    was and would still pass the last two unprojected, so nothing in Capsid uses it for them; narrowing it
+    to the plan file's one shape is open.
   - `apiPOST` is the **one write** (since 0.3.4). It accepts exactly one
     route, `^/frames/[0-9a-f-]{36}/approve-plan$` (`WebContainer.isWritablePath`),
     and its body is always exactly `{}`. It sends the `operon_csrf` cookie's
@@ -2866,7 +2874,7 @@ on it, and whether Diagnostics can check it now:
 | Kind | What |
 |---|---|
 | Page | the right-hand panel's tab markup (the strip, its toolbar, a tab, the button that shows it, its close button, how the shown tab is marked); the visible "Sign in" button; the page's own `Notification`; a session's address `/projects/<project>/frames/<session>`; the `?nonce=` sign-in; previews on another port |
-| Reads | `/api/usage`, `/api/frames/<id>/token-series`, `?shallow=true` (and a failed session's `output_data.error` in it, since 0.9.0), `/api/artifacts/versions/<v>`, and for the phone the thumbnails, the artifact list, `messages`, `trace-shallow`, `streaming`; `/api/csrf`; a 401 when signed out |
+| Reads | `/api/usage`, `/api/frames/<id>/token-series`, `?shallow=true` (and a failed session's `output_data.error` in it, since 0.9.0), `/api/artifacts/versions/<v>`, and for the phone the thumbnails, the artifact list, `messages`, `trace-shallow`, `streaming`; for Keep (since 1.0) an artifact's `/versions`, a version's `?include_metadata=true`, its `/lineage?slim=1` and the `_artifact_refs` and `_ts` of `messages`; `/api/csrf`; a 401 when signed out |
 | Writes | `approve-plan`, `resolve-input`, `/api/request`, `/api/projects/<p>/request`, `/api/projects/<p>/attachments`; the `operon_csrf` cookie sent back as `x-operon-csrf` |
 | Command line | the tool's place; `status` (`running`, `version`, `port`, `pid`, `daemon.data_dir`, `active_frames`, `active_conversations`); `url`; `serve --no-browser --detached` |
 | Database | `active-org.json`, `orgs/<org>/operon-cli.db`; the tables and columns above; the words and JSON keys stored inside (the frame statuses, `pending_input_requests`, `msg_json`'s `_ts`, `role`, `_intent_id`, `_tokens`) |
@@ -2895,13 +2903,20 @@ is looked at:
   cookie), answered through the real parsers: `PlanUsageModel.parse`, `TokenSeries.decode`, `PlanFrame`,
   `PlanDocument`, and the shape rules the readouts use. The session is the one the page shows; with none,
   these are not on screen now.
-The probes' environment holds a read and two looks and no write, so a probe can't send one. A 401 during a
+- **Keep's two pure reads** (since 1.0), on the shown session's plan artifact: **`GET /api/artifacts/<artifact>/versions`**
+  (at least one version, each with a number and a time) and **`GET /api/artifacts/versions/<v>?include_metadata=true`**
+  (an answer for the version asked, with a number and a checksum that is 64 hex digits or none). They go through
+  the typed artifact reader (`CompatProbeEnvironment.artifactRead`), not `apiGET`, because `/versions` carries
+  `file_path`, which must never reach Swift. The facts are read first: they name the artifact when the frame
+  doesn't. A plan without 36-character ids is not on screen now. The lineage is never probed.
+The probes' environment holds two reads and two looks and no write, so a probe can't send one. A 401 during a
 probe starts the same sign-in recovery as any read.
 
 **Checked only when used.** Listed with the feature that depends on them, never tried from Diagnostics: every
 write (they change things), and the phone's reads (they return what was said or made: `messages`, the
 artifact list and files, `trace-shallow`, `streaming`; `apiGET` has no path for messages, the list,
-`trace-shallow` or `streaming`), the page's notifications, previews, the tab right-click, the `?nonce=`
+`trace-shallow` or `streaming`), Keep's lineage (reading it can start a code reconstruction) and its showing
+read (what was said), the page's notifications, previews, the tab right-click, the `?nonce=`
 sign-in, `/api/csrf`, `claude-science url` and `serve`. Each line says why. Their first real use is the check, and a failure there leaves a breadcrumb where it can be told from
 an ordinary state.
 
@@ -2916,7 +2931,9 @@ strip that is wrong (more than one, no toolbar), a tab with no close button, no 
 script's answer not understood; a usage answer that can't be decoded or has none of the limits; a context answer
 that can't be decoded or has no window or no turns with a size; a shallow frame with no status (a stopped session's too, for its card's reason), a plan waiting
 with no plan file named, a plan file that isn't an object or has no summary; an Approve answered 404, 405 or a
-200 that isn't `accepted`. Never recorded, because they are ordinary: no tab strip (no tab is open), a
+200 that isn't `accepted`. Keep's two probes use two more phrases for their lines (`keepVersionsNotUnderstood` and
+`keepFactsNotUnderstood`: a list of versions or a version's details that isn't the shape Capsid reads); nothing
+records them yet. Never recorded, because they are ordinary: no tab strip (no tab is open), a
 signed-out 401 (and a 401 with no Sign in card on the page, which falls back to a fresh sign-in code by design,
 Daemon and sign-in; the probe says the button is not on screen now), a page that isn't up, a slow or failed read, `ok: false` from
 usage, a session with no turns yet, a sub-agent waiting rather than the root, the daemon refusing an Approve in
@@ -4268,6 +4285,25 @@ cut turn whole, ≤ 20,000 chars: `{"i","role","at","text"}`.
 results' `artifacts[]`, `send_user_message` attachments), keeping only
 `{v: version_id, a: artifact_id, name ≤255, kind, size}`.
 
+**Which message shows a version (Keep, since 1.0).** One more op beside the projection, in the same file and
+on the same allowlisted GET and 15 s: `benchFindShowingMessage(page, base, versionIds)` takes one page of raw
+rows and answers the newest assistant message that shows any of an artifact's version ids, as
+`{i, at, text ≤ 20,000, how, v}`, or null. `how` is the first of four that fits the message: `inline`
+(`{{artifact:<v>}}` or `?v=<v>` in its text), `image` (an `_artifact_refs` value for an id whose key is the last
+segment of a `![…](src)` in the text), `mention` (any `_artifact_refs` value for an id) or `saved` (a save or run
+tool's result lists the id in `artifacts[]`: the next assistant text after it, before the user's next turn,
+else the message that made the call). Each message takes its best way, and the newest message with one wins.
+It reads text blocks, tool names and ids, a save or run result's `artifacts[].version_id` and
+`_artifact_refs`; never thinking, tool input, any other result or images. A shape that doesn't match is
+unreadable, nothing shown is `null`. `WebContainer.readShowing(frameID:versions:near:nonce:)` walks the
+pages back from the newest, one script run each (the last 50 rows, then the 50 before each, every older page
+covering 6 rows of the one before it again so a save's reply is on the page that has the save), at most 6
+pages, and stops early when a page's newest `_ts` is older than `near`, the oldest version's time (a reply
+that shows a figure follows its save). It answers `found`, `notFound` or `unreadable`. The page files an
+`AbortController` under the caller's nonce in the artifact reader's own map, so `abortArtifactRead(nonce)` and
+cancelling the task end the fetch and the walk (a `CancellationError`). The page's fetch and its tail-then-
+earlier row read are the history page's own, shared.
+
 #### Artifacts
 
 `kind` is one of `image` (png, jpeg, gif, webp), `svg`, `markdown`, `text`
@@ -4304,6 +4340,26 @@ demo's files). The shared files only gained hooks marked `// Phase 3 files`.
   against that allowlist in the page (and by the same rule in Swift) before
   anything is fetched; `no-store`. The tests run the script in
   JavaScriptCore against a fake `fetch` that streams bytes.
+- **Keep's reads, since 1.0.** The same reader makes three more GETs for Keep, each from typed arguments,
+  checked in the page and in Swift, `no-store`, and projected in the page so nothing else reaches Swift. Ids
+  in all three are exactly `[0-9a-f-]{36}` (`PlanCheck.isUUIDLike`), so `/api/artifacts/<id>/versions` can't
+  be read as `/api/artifacts/versions/…`. A 404 is `missing`, a 401 `lost`, a body past its cap `tooBig`.
+  - `.versions(artifact:)`, `GET /api/artifacts/<36>/versions`: a bare array, oldest first, the newest 500
+    kept as `{v, n, frame, mime, size, at, parent}`; `file_path`, `agent_name` and `language` stay in the
+    page. Body ≤ 1 MB.
+  - `.facts(version:)`, `GET /api/artifacts/versions/<36>?include_metadata=true`: kept as `{v, a, n, name,
+    mime, size, at, sha, upload, code, codeCut, env}`. `sha` is 64 hex digits or null; `code` is the
+    reproduction code cut at 256 KB of UTF-8, never inside a character, and `codeCut` says so; `env` is the
+    snapshot's name, Python and at most 2,000 packages. The answer must be for the version asked, because an
+    artifact's id in that slot serves the artifact's latest version: the page and Swift both refuse another
+    `version_id`. Body ≤ 2 MB.
+  - `.lineage(version:)`, `GET /api/artifacts/versions/<36>/lineage?slim=1`: kept as `{v, code, codeCut, desc,
+    lang, pending, unavailable, cells, env, mapping, inputs}`, with at most 200 inputs `{v, a, name, file, how,
+    inferred, fetchable}` (`file` is a workspace path's last segment; `inferred` is `consensus: ast_only`;
+    `fetchable` is both ids). The page refuses a body whose `messages`, `environment_snapshot` or
+    `interactions` isn't null (they are, under `slim=1`). Reading it can start Claude Science's own code
+    reconstruction, so Diagnostics never does. Body ≤ 2 MB.
+  The list, the thumbnails, the downloads and the phone's routes are as they were.
 - **The list**: a bare array or `{"artifacts":[…]}`. Every row needs a
   string `id`, a path-safe `version_id`, string `filename` and
   `content_type` and a numeric `size_bytes`, or nothing is listed. Rows the

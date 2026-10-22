@@ -202,7 +202,9 @@ struct CompatPageHookTests {
 
 struct CompatEndpointTests {
     private static let session = "0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5"
-    private static let version = "ver-001"
+    // Made-up 36-character ids: Keep's reads take no others.
+    private static let version = "1c8d3a5f-2b3c-4d4e-9f00-b1c2d3e4f5a6"
+    private static let artifact = "6d1f0c2e-7a3b-4c8d-9e10-2b3c4d5e6f70"
     private static let project = "proj_a"
 
     /// An inventory token's path with sample ids in it.
@@ -210,6 +212,7 @@ struct CompatEndpointTests {
         token.drop { $0 != "/" }
             .replacingOccurrences(of: "<session>", with: Self.session)
             .replacingOccurrences(of: "<version>", with: Self.version)
+            .replacingOccurrences(of: "<artifact>", with: Self.artifact)
             .replacingOccurrences(of: "<project>", with: Self.project)
     }
 
@@ -218,7 +221,7 @@ struct CompatEndpointTests {
     /// The path Capsid really builds for each read, by inventory token, and
     /// whether the real gate for it lets that path through.
     private var reads: [(token: String, built: String, allowed: Bool)] {
-        let s = Self.session, v = Self.version
+        let s = Self.session, v = Self.version, a = Self.artifact
         return [
             ("GET /api/usage", "/api/usage", WebContainer.isReadablePath("/usage") && WebContainer.isReadablePath("/usage?fresh=1")),
             ("GET /api/frames/<session>/token-series", "/api" + ContextModel.seriesPath(for: s),
@@ -239,14 +242,31 @@ struct CompatEndpointTests {
              PermissionPaths.isAllowed(PermissionPaths.trace(s) ?? "")),
             ("GET /api/frames/<session>/streaming", PermissionPaths.streaming(s) ?? "",
              PermissionPaths.isAllowed(PermissionPaths.streaming(s) ?? "")),
+            // Keep's three reads, built by the typed reader and gated by its allowlist.
+            ("GET /api/artifacts/<artifact>/versions", ArtifactRead.versions(artifact: a).path ?? "",
+             ArtifactRead.isAllowedPath(ArtifactRead.versions(artifact: a).path ?? "")),
+            ("GET /api/artifacts/versions/<version>?include_metadata=true", ArtifactRead.facts(version: v).path ?? "",
+             ArtifactRead.isAllowedPath(ArtifactRead.facts(version: v).path ?? "")),
+            ("GET /api/artifacts/versions/<version>/lineage?slim=1", ArtifactRead.lineage(version: v).path ?? "",
+             ArtifactRead.isAllowedPath(ArtifactRead.lineage(version: v).path ?? "")),
         ]
     }
+
+    /// The reads that go through the typed artifact reader, which projects
+    /// them in the page. `apiGET` is not how they are read, and for the
+    /// versions list (it carries `file_path`) it must not be.
+    private let typedReads: Set<String> = [
+        "GET /api/artifacts/<artifact>/versions", "GET /api/artifacts/versions/<version>?include_metadata=true",
+        "GET /api/artifacts/versions/<version>/lineage?slim=1",
+    ]
 
     /// Reads that are not a path of their own.
     private let notPaths: Set<String> = [
         "GET /api/csrf", "401 on any /api read",
         // A field of the shallow read above, which is a path already listed.
         "output_data.error on GET /api/frames/<session>?shallow=true",
+        // Fields of the messages read above, kept by Keep's showing op.
+        "_artifact_refs and _ts on GET /api/frames/<session>/messages",
     ]
 
     @Test func everyReadInTheInventoryIsAPathCapsidBuildsAndItsGateAllows() {
@@ -275,6 +295,12 @@ struct CompatEndpointTests {
     @Test func theReadsTheProbesMakeAreAllOnesApiGETAllows() {
         for item in CompatInventory.readEndpoints where !notPaths.contains(item.token) {
             let sample = path(of: item.token).replacingOccurrences(of: "<width>", with: "120").replacingOccurrences(of: "<n>", with: "5")
+            if typedReads.contains(item.token) {
+                // Probed (or not) through the typed reader, whose own allowlist holds the shape.
+                #expect(ArtifactRead.isAllowedPath(sample), "\(item.token)")
+                #expect(item.file == "Remote/ArtifactReader.swift", "\(item.token)")
+                continue
+            }
             let readable = WebContainer.isReadablePath(String(sample.dropFirst("/api".count)))
             if item.check == .live {
                 #expect(readable, "\(item.token) is probed but apiGET would refuse it")
@@ -291,6 +317,29 @@ struct CompatEndpointTests {
         for prefix in WebContainer.readablePrefixes {
             #expect(CompatInventory.readEndpoints.contains { $0.token.contains("/api" + prefix) }, "\(prefix)")
         }
+    }
+
+    @Test func keepsReadsAreInTheInventoryWithTheirChecks() {
+        #expect(CompatFeature.keep.title == "Keep a figure with its answer, data and script")
+        func item(_ token: String) -> CompatDependency? { CompatInventory.readEndpoints.first { $0.token == token } }
+        let versions = item("GET /api/artifacts/<artifact>/versions")
+        let facts = item("GET /api/artifacts/versions/<version>?include_metadata=true")
+        let lineage = item("GET /api/artifacts/versions/<version>/lineage?slim=1")
+        let refs = item("_artifact_refs and _ts on GET /api/frames/<session>/messages")
+        // The two pure reads are looked at; the lineage can start a reconstruction and the messages are what was said.
+        #expect(versions?.check == .live && facts?.check == .live)
+        #expect(lineage?.check == .whenUsed("reading it can start Claude Science's own code reconstruction, so it is not read from here"))
+        #expect(refs?.check == .whenUsed("it is what was said, so it is never read from here"))
+        #expect([versions, facts, lineage, refs].allSatisfy { $0?.feature == .keep && $0?.kind == .readEndpoint })
+        #expect(refs?.file == "Remote/HistoryReader.swift")
+        // The reads the probes make are the live ones.
+        #expect(CompatProbes.Name.all.contains("GET /api/artifacts/<artifact>/versions"))
+        #expect(CompatProbes.Name.all.contains("GET /api/artifacts/versions/<version>?include_metadata=true"))
+        #expect(!CompatProbes.Name.all.contains("GET /api/artifacts/versions/<version>/lineage?slim=1"))
+        // The page never lists a field the inventory doesn't, for what Keep reads of a version.
+        #expect(facts?.detail.contains("reproduction_code") == true && facts?.detail.contains("python_version") == true)
+        #expect(lineage?.detail.contains("workspace_path") == true && lineage?.detail.contains("consensus") == true)
+        #expect(versions?.detail.contains("parent_version_id") == true && versions?.detail.contains("file_path") == true)
     }
 
     // MARK: Writes

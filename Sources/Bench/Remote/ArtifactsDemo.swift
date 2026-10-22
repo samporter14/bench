@@ -98,6 +98,9 @@ struct DemoArtifactLibrary: Sendable {
             guard let file = byVersion[version] else { return .unreadable }
             guard let bytes = file.bytes, bytes.count <= ArtifactReaderScript.Cap.download else { return .tooBig }
             return .bytes(bytes)
+        case .versions, .facts, .lineage:
+            // Keep's reads: the demo's files have no versions to list.
+            return .unreadable
         }
     }
 }
