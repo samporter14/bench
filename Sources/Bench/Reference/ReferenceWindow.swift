@@ -1,14 +1,14 @@
 // ReferenceWindow.swift — the reference reader (DESIGN.md, Reference): a
-// small read-only window with one of Claude's replies from a session, to keep
-// beside the work. The figures come first, full width, each with Keep…; then
-// what Claude said, as selectable text; above them, quietly, what the user
-// asked. The session's title is the window's, and its subtitle says the
-// project, when and which reply ("2 of 3"). The toolbar holds the rest: Earlier
-// and Later (⌥⌘← and ⌥⌘→ while the window is key), Copy with Source (⇧⌘C) and
-// Open Conversation. Window → Keep on Top floats the key one. Nothing here is
-// in the clay: the window reads, it never asks.
+// small read-only window with one of Claude's answers from a session, to keep
+// beside the work, drawn as the Capsid 1.0 mock-up has it (Solanum's ivory
+// page, SolanumSurface.swift). The title bar shows the session's title over
+// "<project> · read only", centred, and two round chevrons, Earlier and Later
+// (⌥⌘← and ⌥⌘→ while the window is key). The page: "Claude's answer · 8:47",
+// what the user asked, the figures on white cards with Keep… under each, then
+// what Claude said. At the foot, two pills: Copy with Source (⇧⌘C) and Open
+// Conversation. Window → Keep on Top floats the key one. Nothing here is in
+// the clay: the window reads, it never asks.
 import AppKit
-import Combine
 import SwiftUI
 
 /// The Window menu's Keep on Top: the key reference window, if any.
@@ -59,7 +59,6 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
 
     private var windows: [String: ReferenceWindow] = [:]
     private var models: [String: ReferenceModel] = [:]
-    private var watches: [String: AnyCancellable] = [:]
 
     func show(_ session: SessionStatus, dependencies: ReferenceDependencies? = nil) {
         if let window = windows[session.id] {
@@ -78,8 +77,14 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
                                      styleMask: [.titled, .closable, .resizable, .miniaturizable],
                                      backing: .buffered, defer: false)
         window.contentViewController = hosting
+        // The title stays the window's (the Window menu, Mission Control) but
+        // is drawn by the toolbar's centre, with its subtitle, as the
+        // mock-ups have it; the bar is the page's own band.
         window.title = session.displayTitle
-        window.subtitle = model.subtitle
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        window.backgroundColor = Solanum.pageColor
         window.setContentSize(Self.size)
         window.contentMinSize = NSSize(width: 360, height: 320)
         window.isReleasedWhenClosed = false
@@ -91,13 +96,6 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         if windows.values.contains(where: { $0.frame.origin == window.frame.origin }) {
             window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: window.frame.minX, y: window.frame.maxY)))
         }
-        // The subtitle follows the reply shown.
-        watches[session.id] = model.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak window, weak model] _ in
-                guard let window, let model else { return }
-                if window.subtitle != model.subtitle { window.subtitle = model.subtitle }
-            }
         windows[session.id] = window
         models[session.id] = model
         model.open()
@@ -108,6 +106,9 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
     /// The window a session shows in, for tests and the demo.
     func window(for sessionID: String) -> NSWindow? { windows[sessionID] }
 
+    /// The model a session's window shows, for the demo.
+    func model(for sessionID: String) -> ReferenceModel? { models[sessionID] }
+
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? ReferenceWindow,
               let id = windows.first(where: { $0.value === window })?.key else { return }
@@ -116,7 +117,6 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         models[id]?.close()
         models[id] = nil
         windows[id] = nil
-        watches[id] = nil
         if ReferenceCommands.shared.keyWindow === window { ReferenceCommands.shared.keyWindow = nil }
     }
 
@@ -153,50 +153,68 @@ struct ReferenceView: View {
     let selection: ReferenceSelection
     @State private var keeping: KeepModel?
 
-    /// The page's margin, and the space between its parts.
-    private static let margin: CGFloat = 20
-    private static let gap: CGFloat = 18
+    /// The page's margins and the space between its parts, after the mock-up.
+    private static let side: CGFloat = 24
+    private static let top: CGFloat = 20
+    private static let gap: CGFloat = 14
 
     var body: some View {
-        content
-            .frame(minWidth: 360, minHeight: 320)
-            .background(Color(nsColor: .textBackgroundColor))
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    ControlGroup {
-                        Button { model.earlier() } label: { Label("Earlier", systemImage: "chevron.left") }
-                            .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-                            .disabled(!model.canGoEarlier)
-                            .help("The reply before this one (Option-Command-Left Arrow)")
-                        Button { model.later() } label: { Label("Later", systemImage: "chevron.right") }
-                            .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-                            .disabled(!model.canGoLater)
-                            .help("The reply after this one (Option-Command-Right Arrow)")
-                    }
-                    .controlGroupStyle(.navigation)
+        VStack(spacing: 0) {
+            content
+            footer
+        }
+        .frame(minWidth: 360, minHeight: 320)
+        .background {
+            GeometryReader { proxy in
+                VStack(spacing: 0) {
+                    // The title bar's band and its hairline, under the toolbar.
+                    Solanum.bar
+                        .frame(height: proxy.safeAreaInsets.top)
+                        .overlay(alignment: .bottom) { Solanum.hairline.frame(height: 1) }
+                    Solanum.page
                 }
-                ToolbarItemGroup(placement: .primaryAction) {
-                    if model.phase == .reading, model.current != nil {
-                        ProgressView()
-                            .controlSize(.small)
-                            .accessibilityLabel("Reading")
-                    }
-                    Button { copy() } label: {
-                        Label(model.copied ? "Copied" : "Copy with Source",
-                              systemImage: model.copied ? "checkmark" : "doc.on.doc")
-                    }
-                    .keyboardShortcut("c", modifiers: [.command, .shift])
-                    .disabled(model.current == nil)
-                    .help("Copy with Source: the selection, or the whole reply, with where it came from (Shift-Command-C)")
-                    Button { model.openConversation() } label: {
-                        Label("Open Conversation", systemImage: "arrow.up.forward.square")
-                    }
-                    .help("Open Conversation: this session in the main window")
+                .ignoresSafeArea()
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 1) {
+                    Text(model.session.displayTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Solanum.ink)
+                    Text("\(model.session.projectName) · read only")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Solanum.muted)
                 }
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .fixedSize()
+                .accessibilityElement(children: .combine)
             }
-            .sheet(item: $keeping) { keep in
-                KeepSheet(model: keep, dismiss: { keeping = nil })
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 4) {
+                    Button { model.earlier() } label: { Label("Earlier", systemImage: "chevron.left") }
+                        .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                        .disabled(!model.canGoEarlier)
+                        .help("The answer before this one (Option-Command-Left Arrow)")
+                    Button { model.later() } label: { Label("Later", systemImage: "chevron.right") }
+                        .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                        .disabled(!model.canGoLater)
+                        .help("The answer after this one (Option-Command-Right Arrow)")
+                }
+                .buttonStyle(SolanumRoundStyle())
+                .fixedSize()
             }
+            .sharedBackgroundVisibility(.hidden)
+        }
+        // The system's own title would sit beside the centred one and push
+        // the chevrons into the overflow menu.
+        .toolbar(removing: .title)
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .sheet(item: $keeping) { keep in
+            KeepSheet(model: keep, dismiss: { keeping = nil })
+        }
     }
 
     @ViewBuilder
@@ -204,46 +222,62 @@ struct ReferenceView: View {
         if let answer = model.current {
             ScrollView {
                 VStack(alignment: .leading, spacing: Self.gap) {
+                    caption(answer)
                     if let question = answer.question { asked(question) }
                     ForEach(answer.figures, id: \.v) { file in figure(file) }
                     if !answer.parts.isEmpty {
                         ReferenceTextView(text: model.rendered(answer), selection: selection)
                     }
                     if model.readingRest || model.restMissing {
-                        Text(model.readingRest ? "Reading the rest\u{2026}" : "Part of this reply couldn\u{2019}t be read.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Text(model.readingRest ? "Reading the rest\u{2026}" : "Part of this answer couldn\u{2019}t be read.")
+                            .font(.system(size: Solanum.captionSize))
+                            .foregroundStyle(Solanum.muted)
                     }
                 }
-                .padding(Self.margin)
+                .padding(.horizontal, Self.side)
+                .padding(.top, Self.top)
+                .padding(.bottom, Self.side)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollContentBackground(.hidden)
             .id(answer.id)
         } else {
             empty
         }
     }
 
-    /// What the user asked: quiet, a hairline at its side, three lines at most.
+    /// "Claude's answer · 8:47 · 2 of 3", the count once the start is read,
+    /// and a small spinner while a page is.
+    private func caption(_ answer: ReferenceAnswer) -> some View {
+        HStack(spacing: 8) {
+            Text(model.caption)
+                .font(.system(size: Solanum.captionSize))
+                .foregroundStyle(Solanum.muted)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if model.phase == .reading {
+                ProgressView()
+                    .controlSize(.mini)
+                    .accessibilityLabel("Reading")
+            }
+        }
+    }
+
+    /// What the user asked: muted, three lines at most.
     private func asked(_ question: String) -> some View {
         Text(question)
-            .font(.callout)
-            .foregroundStyle(.secondary)
+            .font(.system(size: 13))
+            .foregroundStyle(Solanum.muted)
+            .lineSpacing(3)
             .lineLimit(3)
             .truncationMode(.tail)
             .textSelection(.enabled)
-            .padding(.leading, 10)
-            .overlay(alignment: .leading) {
-                Rectangle()
-                    .fill(.quaternary)
-                    .frame(width: 2)
-            }
             .accessibilityLabel("You asked: \(question)")
     }
 
-    /// A figure, the page's width, with its name and Keep… under it.
+    /// A figure on a white card, the page's width, its name and Keep… under it.
     private func figure(_ file: HistoryFile) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             ReferenceFigureView(store: model.thumbnails, file: file, failed: model.thumbnailFailed(file))
                 .onAppear { model.wantThumbnail(file) }
                 .contextMenu {
@@ -252,19 +286,35 @@ struct ReferenceView: View {
                 }
             HStack(spacing: 8) {
                 Text(file.name)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: Solanum.captionSize))
+                    .foregroundStyle(Solanum.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
-                Button { keep(file) } label: { Label("Keep\u{2026}", systemImage: "checkmark.seal") }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
+                Button("Keep\u{2026}") { keep(file) }
+                    .buttonStyle(SolanumPillStyle(small: true))
                     .help("Keep this figure, with what Claude said about it, in your Kept folder")
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Figure, \(file.name)")
+    }
+
+    /// Copy with Source and Open Conversation, as the mock-up's foot has them.
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Button(model.copied ? "Copied" : "Copy with Source") { copy() }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(model.current == nil)
+                .help("The selection, or the whole answer, with where it came from (Shift-Command-C)")
+            Spacer(minLength: 8)
+            Button("Open Conversation") { model.openConversation() }
+                .help("This session in the main window")
+        }
+        .buttonStyle(SolanumPillStyle())
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .overlay(alignment: .top) { Solanum.hairline.frame(height: 1) }
     }
 
     /// Reading, failed or nothing to show. As tall as the window lets it: a
@@ -274,23 +324,34 @@ struct ReferenceView: View {
             switch model.phase {
             case .reading:
                 ProgressView()
+                    .controlSize(.small)
                     .accessibilityLabel("Reading")
             case .failed(let sentence):
-                ContentUnavailableView {
-                    Label("Couldn\u{2019}t read this conversation", systemImage: "exclamationmark.triangle")
-                } description: {
+                VStack(spacing: 12) {
+                    Text("Couldn\u{2019}t read this conversation")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Solanum.ink)
                     Text(sentence)
-                } actions: {
+                        .font(.system(size: 13))
+                        .foregroundStyle(Solanum.muted)
+                        .multilineTextAlignment(.center)
                     Button("Try Again") { model.retry() }
+                        .buttonStyle(SolanumPillStyle())
+                        .padding(.top, 4)
                 }
+                .padding(.horizontal, 40)
             case .idle:
-                ContentUnavailableView {
-                    Label(model.reachedStart ? ReferenceRules.noAnswersYet : ReferenceRules.noAnswerNear,
-                          systemImage: "text.bubble")
-                } description: {
+                VStack(spacing: 8) {
+                    Text(model.reachedStart ? ReferenceRules.noAnswersYet : ReferenceRules.noAnswerNear)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Solanum.ink)
                     Text(model.reachedStart ? "Claude hasn\u{2019}t answered in this session."
                                             : "Earlier keeps looking back through the conversation.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Solanum.muted)
+                        .multilineTextAlignment(.center)
                 }
+                .padding(.horizontal, 40)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -307,8 +368,8 @@ struct ReferenceView: View {
     }
 }
 
-/// A figure at the page's width: the picture when it has come, else a quiet
-/// frame of the same shape as most charts.
+/// A figure on a white card at the page's width: the picture when it has
+/// come, else a quiet card of the shape most charts are.
 struct ReferenceFigureView: View {
     @ObservedObject var store: ShelfThumbnails
     let file: HistoryFile
@@ -326,23 +387,38 @@ struct ReferenceFigureView: View {
                     .aspectRatio(CGFloat(image.width) / CGFloat(max(image.height, 1)), contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: Self.maxHeight)
             } else {
-                Rectangle()
-                    .fill(.quaternary.opacity(0.4))
+                Color.clear
                     .aspectRatio(3 / 2, contentMode: .fit)
                     .overlay {
                         if failed {
                             Image(systemName: "photo")
                                 .font(.title2)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(Solanum.muted)
                         } else {
                             ProgressView().controlSize(.small)
                         }
                     }
             }
         }
-        .clipShape(.rect(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 0.5))
+        .background(Solanum.raised)
+        .clipShape(.rect(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Solanum.hairline, lineWidth: 1))
     }
+}
+
+/// The reader's type: the system font at the mock-up's 14 on 21, in
+/// Solanum's ink, links in ink (underlined in clay by the text view).
+extension AnswerStyle {
+    static let reference = AnswerStyle(
+        body: .systemFont(ofSize: Solanum.bodySize),
+        lineSpacing: Solanum.bodyLeading - 17,
+        headings: [.systemFont(ofSize: 18, weight: .semibold),
+                   .systemFont(ofSize: 16, weight: .semibold),
+                   .systemFont(ofSize: 14, weight: .semibold)],
+        code: .monospacedSystemFont(ofSize: 12.5, weight: .regular),
+        secondary: Solanum.mutedColor,
+        link: Solanum.inkColor,
+        ink: Solanum.inkColor)
 }
 
 /// The reply's text: a read-only, selectable text view as tall as its text
@@ -375,7 +451,11 @@ struct ReferenceTextView: NSViewRepresentable {
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.heightTracksTextView = false
-        textView.setAccessibilityLabel("Claude\u{2019}s reply")
+        textView.linkTextAttributes = [
+            .foregroundColor: Solanum.inkColor, .underlineStyle: NSUnderlineStyle.single.rawValue,
+            .underlineColor: NSColor(Theme.clay), .cursor: NSCursor.pointingHand,
+        ]
+        textView.setAccessibilityLabel("Claude\u{2019}s answer")
         selection.textView = textView
         return textView
     }

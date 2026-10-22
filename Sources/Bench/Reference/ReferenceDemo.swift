@@ -3,8 +3,8 @@
 // here. The history is shaped like a real one: Claude narrates, runs steps
 // (the figures sit on the steps that made them), then answers. Nothing is
 // read from Claude Science; Open Conversation and Copy with Source do their
-// ordinary things (the latter on the real pasteboard). `--step failed` opens
-// it on reads that fail.
+// ordinary things (the latter on the real pasteboard). `--step figures`
+// opens it on the answer with two figures, `--step failed` on reads that fail.
 import AppKit
 import Foundation
 
@@ -94,8 +94,16 @@ enum ReferenceDemo {
         return opening + filler
     }()
 
+    /// `answer` (the newest), `figures` (the one before it, with its two
+    /// figures) or `failed`.
     static func show(step: String, quiet: Bool) {
         ReferenceWindowController.shared.show(session, dependencies: dependencies(failing: step == "failed"))
+        guard step == "figures" else { return }
+        Task { @MainActor in
+            let model = ReferenceWindowController.shared.model(for: session.id)
+            for _ in 0..<50 where model?.current == nil { try? await Task.sleep(for: .milliseconds(100)) }
+            model?.earlier()
+        }
     }
 
     /// Made-up reads: a page is the `ReferenceModel.rows` rows before `before`

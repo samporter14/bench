@@ -1,0 +1,97 @@
+// SolanumSurface.swift — the 1.0 windows' surfaces, after the Capsid 1.0
+// mock-ups (DESIGN.md, Look → The 1.0 windows): Solanum's ivory page and
+// white raised cards (slate and its raised grey in the dark), hairline edges
+// instead of shadows, ink and muted ink for words, and two controls, a pill
+// and a round button, both white with a strong hairline. Settings, menus and
+// popovers stay the system's own; these are for the feature windows
+// (Reference first). Every colour follows the appearance it is drawn in, so
+// the Ivory and Slate setting reaches them with nothing passed down.
+import AppKit
+import SwiftUI
+
+enum Solanum {
+    // MARK: Colours (the design system's tokens, light and dark)
+
+    /// The page: ivory, or slate. Never pure white beside ivory.
+    static let pageColor = dynamic(light: rgb(0xFA, 0xF9, 0xF5), dark: rgb(0x14, 0x14, 0x13))
+    /// Cards and controls on the page: white, or the raised grey.
+    static let raisedColor = dynamic(light: rgb(0xFF, 0xFF, 0xFF), dark: rgb(0x26, 0x26, 0x24))
+    /// The title bar's band, a shade off the page.
+    static let barColor = dynamic(light: NSColor(srgbRed: 246 / 255, green: 245 / 255, blue: 240 / 255, alpha: 0.92),
+                                  dark: NSColor(srgbRed: 0x1C / 255, green: 0x1C / 255, blue: 0x1B / 255, alpha: 0.92))
+    static let inkColor = dynamic(light: rgb(0x14, 0x14, 0x13), dark: rgb(0xFA, 0xF9, 0xF5))
+    /// Captions, labels and secondary sentences.
+    static let mutedColor = dynamic(light: rgb(0x5E, 0x5D, 0x59), dark: rgb(0xB0, 0xAE, 0xA5))
+    /// Card and panel edges.
+    static let hairlineColor = dynamic(light: NSColor(srgbRed: 31 / 255, green: 30 / 255, blue: 29 / 255, alpha: 0.15),
+                                       dark: NSColor(srgbRed: 250 / 255, green: 249 / 255, blue: 245 / 255, alpha: 0.18))
+    /// Control edges, where 3:1 is the floor.
+    static let strongColor = dynamic(light: NSColor(srgbRed: 31 / 255, green: 30 / 255, blue: 29 / 255, alpha: 0.3),
+                                     dark: NSColor(srgbRed: 250 / 255, green: 249 / 255, blue: 245 / 255, alpha: 0.32))
+
+    static let page = Color(nsColor: pageColor)
+    static let raised = Color(nsColor: raisedColor)
+    static let bar = Color(nsColor: barColor)
+    static let ink = Color(nsColor: inkColor)
+    static let muted = Color(nsColor: mutedColor)
+    static let hairline = Color(nsColor: hairlineColor)
+    static let strong = Color(nsColor: strongColor)
+
+    // MARK: Type (the system font at the mock-ups' sizes)
+
+    /// Reading text: 14 on 21.
+    static let bodySize: CGFloat = 14
+    static let bodyLeading: CGFloat = 21
+    /// Captions and section labels.
+    static let captionSize: CGFloat = 12
+
+    private static func rgb(_ r: Int, _ g: Int, _ b: Int) -> NSColor {
+        NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1)
+    }
+
+    private static func dynamic(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+        }
+    }
+}
+
+/// A pill: white (raised) with a strong hairline, ink words. `small` is the
+/// 26-point one that sits under a figure.
+struct SolanumPillStyle: ButtonStyle {
+    var small = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: small ? 12 : 13))
+            .foregroundStyle(Solanum.ink)
+            .lineLimit(1)
+            .padding(.horizontal, small ? 10 : 14)
+            .frame(height: small ? 26 : 30)
+            .background(Capsule().fill(Solanum.raised))
+            .overlay(Capsule().fill(Solanum.hairline).opacity(configuration.isPressed ? 1 : 0))
+            .overlay(Capsule().strokeBorder(Solanum.strong, lineWidth: 1))
+            .opacity(isEnabled ? 1 : 0.45)
+            .contentShape(Capsule())
+    }
+}
+
+/// A round button, 28 points, white with a strong hairline: the reader's
+/// chevrons. Its glyph dims with the button.
+struct SolanumRoundStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .labelStyle(.iconOnly)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(isEnabled ? Solanum.ink : Solanum.muted)
+            .frame(width: 28, height: 28)
+            .background(Circle().fill(Solanum.raised))
+            .overlay(Circle().fill(Solanum.hairline).opacity(configuration.isPressed ? 1 : 0))
+            .overlay(Circle().strokeBorder(Solanum.strong, lineWidth: 1))
+            .opacity(isEnabled ? 1 : 0.6)
+            .contentShape(Circle())
+    }
+}

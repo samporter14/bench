@@ -84,7 +84,8 @@ enum Demo {
         /// nothing lands outside the temporary root.
         case kept
         /// The reference window (Reference/ReferenceDemo.swift) on a made-up
-        /// session whose pages and thumbnails are answered from here; with
+        /// session whose pages and pictures are answered from here; with
+        /// `--step figures`, on the answer with two figures, and with
         /// `--step failed`, on reads that fail. Nothing is read from Claude
         /// Science.
         case reference

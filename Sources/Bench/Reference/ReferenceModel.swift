@@ -101,7 +101,7 @@ struct ReferenceDependencies {
                 pasteboard.clearContents()
                 return pasteboard.setString(text, forType: .string)
             },
-            render: { AnswerMarkdown.render($0).text })
+            render: { AnswerMarkdown.render($0, style: .reference).text })
     }
 }
 
@@ -192,14 +192,16 @@ enum ReferenceRules {
         return ReferenceAnswer(id: last.index, question: question, at: at, parts: parts, figures: figures, complete: complete)
     }
 
-    /// "8:47 · Assay development": when Claude last spoke in the reply, then
-    /// the project. The time first, since a narrow window's title bar cuts
-    /// the end off. No count: Earlier and Later dim at the ends, and a count
-    /// of the replies read so far would read as the session's.
-    static func subtitle(project: String, at: Date?, now: Date,
-                         calendar: Calendar = .current, locale: Locale = .current) -> String {
-        guard let at else { return project }
-        return when(at, now: now, calendar: calendar, locale: locale) + " · " + project
+    /// "Claude's answer · 8:47 · 2 of 3": when Claude last spoke in the
+    /// reply, and its place among the session's replies once they are all
+    /// read (`final`); before that the place is left out, since a count of
+    /// the replies read so far would read as the session's.
+    static func caption(at: Date?, index: Int, count: Int, final: Bool, now: Date,
+                        calendar: Calendar = .current, locale: Locale = .current) -> String {
+        var parts = ["Claude\u{2019}s answer"]
+        if let at { parts.append(when(at, now: now, calendar: calendar, locale: locale)) }
+        if final { parts.append("\(index + 1) of \(count)") }
+        return parts.joined(separator: " · ")
     }
 
     /// The time alone on the day it is, else the day and month too. The
@@ -320,9 +322,13 @@ final class ReferenceModel: ObservableObject {
         return index + 1 < answers.count
     }
 
-    /// The window's subtitle: the time, then the project.
-    var subtitle: String {
-        ReferenceRules.subtitle(project: session.projectName, at: current?.at, now: dependencies.now())
+    /// The page's first line: "Claude's answer · 8:47 · 2 of 3", the count
+    /// only once the session's start has been read (before that it would
+    /// count only the answers read so far).
+    var caption: String {
+        guard let index = shownIndex else { return "Claude\u{2019}s answer" }
+        return ReferenceRules.caption(at: answers[index].at, index: index, count: answers.count, final: reachedStart,
+                                      now: dependencies.now())
     }
 
     /// Part of the shown reply's text is still being read whole.

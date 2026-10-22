@@ -136,7 +136,7 @@ struct ReferenceModelTests {
         #expect(shown.figures == [chart])
         #expect(shown.text == "Let me plot it.\n\nPlate 7 is low.")
         #expect(shown.complete)
-        #expect(model.subtitle.hasSuffix(" · Assay development"))
+        #expect(model.caption.hasSuffix(" · 2 of 2"))
         #expect(model.canGoEarlier)
         #expect(!model.canGoLater)
     }

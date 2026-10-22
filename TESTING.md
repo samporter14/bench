@@ -323,6 +323,39 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-22, M4 follow-up: answers with their figures, the mock-up's look, Codex's review
+
+Sam opened a real session as a reference and found it ugly, without figures,
+and saying "Open in Claude Science" for what opens in Capsid; he asked for the
+mock-ups' look. A Codex review of M2.1 and M3 came in at the same time.
+
+- ✅ **Why there were no figures:** a figure sits on the tool step that made
+  it, and the reader looked only at each Claude turn's own files. An answer is
+  now Claude's whole reply to one message, its words and every figure made on
+  the way (`ReferenceRules.answers`, `ReferenceRulesTests`, 9;
+  `ReferenceModelTests`, 15, including a reply longer than a page read back
+  until its question is in).
+- ✅ **The mock-up's look** (board 7 of "Capsid 1.0 mock-ups"): the ivory page,
+  a centred title over "<project> · read only", round chevrons, figure cards,
+  14-on-21 text, pills at the foot (`SolanumSurface.swift`). Captured in the
+  built app by window ID, light and dark, on the newest answer and on the one
+  with two figures (`--demo reference --step figures`). A first try left the
+  system title in the toolbar, which pushed the chevrons into the overflow
+  menu; `toolbar(removing: .title)` fixed it, seen in the next capture.
+- ✅ **Open Conversation** replaces "Open in Claude Science", in the window,
+  the figure's menu, README and DESIGN.
+- ✅ **Codex's five findings, all confirmed in the code, all fixed, fake
+  dependencies only:** the update handshake (`.previous` kept until swap.sh's
+  marker; the crash-after-clean-up test fails before the fix and passes
+  after), Keep's Try Again (load and keep retries), the answer pinned to its
+  version from the reference reader, checksum mismatches no longer silent,
+  and a partial retry not done until its README agrees. None of it was seen
+  live.
+- ✅ **The whole suite:** 2,295 tests in 298 suites pass (before the Keep
+  merge).
+- ⏳ **Live:** the restyled window on a real session, figures from a real
+  run, Keep… from a figure.
+
 ## 2026-10-22, Capsid 1.0 M4: the reference reader
 
 Claude's answers beside the work (the handoff's M4; DESIGN.md, Reference): a

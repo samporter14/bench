@@ -5,7 +5,8 @@
 # that Capsid to quit, moves the installed copy aside, moves the new one into
 # place and opens it. If the new copy doesn't start, the old one is put back
 # and opened. The installed app is never deleted here: the old copy sits at
-# <installed app>.previous until the new Capsid, once running, removes it.
+# <installed app>.previous until this script has written `installed` and
+# the new Capsid, seeing that marker, removes it.
 #
 #   zsh swap.sh <pid> <installed app> <new app> <state dir>
 #

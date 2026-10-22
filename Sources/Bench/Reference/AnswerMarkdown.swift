@@ -40,6 +40,8 @@ struct AnswerStyle: @unchecked Sendable {
     var code: NSFont
     var secondary: NSColor
     var link: NSColor
+    /// The words' own colour.
+    var ink: NSColor = .labelColor
 
     static let standard = AnswerStyle(
         body: .systemFont(ofSize: 13),
@@ -131,7 +133,7 @@ enum AnswerMarkdown {
         paragraph.lineSpacing = style.lineSpacing
         paragraph.paragraphSpacing = 8
         let text = NSAttributedString(string: raw, attributes: [
-            .font: style.body, .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph.copy(),
+            .font: style.body, .foregroundColor: style.ink, .paragraphStyle: paragraph.copy(),
         ])
         return AnswerDocument(text: text, unsupported: [])
     }
@@ -281,11 +283,11 @@ private struct Layout {
         }
         for container in containers { if case .listItem = container.kind { startedItems.insert(container.identity) } }
 
-        let text: NSColor = quoted ? style.secondary : .labelColor
+        let text: NSColor = quoted ? style.secondary : style.ink
         let (font, colour): (NSFont, NSColor) = switch kind {
         case .paragraph: (style.body, text)
         case .heading(let level): (style.heading(level: level), text)
-        case .code: (style.code, .labelColor)
+        case .code: (style.code, style.ink)
         case .rule, .table, .html: (style.body, style.secondary)
         }
         return Block(kind: kind, indent: indent, marker: marker, list: list, font: font, colour: colour)

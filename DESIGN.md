@@ -2590,6 +2590,21 @@ until the new one is running:
    0.9.8 didn't open", "The new copy didn't start, so Capsid put 0.9.7
    back."), with Release Notes.
 
+   The old copy is removed only after a handshake (a review found the gap,
+   since 1.0). swap.sh opens the new copy, waits until it runs, looks again
+   two seconds later (a copy that dies on launch is seen for an instant), and
+   only then writes `installed <version>`. The new copy's launch clean-up
+   used to remove `.previous` whenever it was there and older, so a copy that
+   reached its clean-up and then died inside those two seconds left swap.sh
+   with nothing to put back, and Applications with no Capsid. Now `settle`
+   removes `.previous` only once the marker reads `installed`; with an older
+   `.previous` and no marker yet it removes nothing (`.waiting`) and
+   `settleAndReport` looks again every 2 s for up to 30. If the marker never
+   comes, `.previous` stays, one line goes to the log, and the next update's
+   swap.sh moves it into the state folder (step 2). A `failed:` marker is
+   acted on at once. `SwapScriptTests` drives the real swap.sh through that
+   window: clean-up, then a crash, and the old copy is back whole.
+
 The confirmation now reads: "Capsid will download 0.9.8 from GitHub, check
 that it's signed the way this copy is, then quit and reopen. Your sessions
 keep running in Claude Science." Install is still offered only to the copy
@@ -4971,6 +4986,24 @@ same code.
 - **Not here**: the phone's history shows the attachment line as text until
   Phase 3's history projection learns to strip it (a "Photo" chip).
 
+## The 1.0 windows' surfaces (App/SolanumSurface.swift, since 1.0)
+
+The feature windows 1.0 adds are drawn after the Capsid 1.0 mock-ups (a Design
+canvas, "Capsid 1.0 mock-ups"), which Sam chose over the system's grey chrome
+for them: the first reference window, in the system's toolbar glass and grey
+bordered buttons, read as generic. Settings, menus, popovers and the main
+window stay the system's own (Look, native over brand). The surfaces are
+Solanum's tokens, light and dark: the page ivory #FAF9F5 (slate #141413),
+raised cards and controls white (#262624), ink #141413 (#FAF9F5), muted ink
+#5E5D59 (#B0AEA5), hairline edges at 15% (18%) and control edges at 30% (32%),
+never shadows; the title bar a shade off the page with a hairline under it.
+Type is the system font at the mock-ups' sizes: reading text 14 on 21,
+captions and labels 12. Two controls: a pill (30 pt, or 26 under a figure),
+white with a strong hairline and ink words, and a round 28-pt button for
+chevrons; both dim when disabled and darken by a hairline's tint when pressed.
+Clay stays what it is everywhere: one fill for the one action that asks, and
+never on a window that only reads.
+
 ## Keep (Kept/, since 1.0)
 
 Claude Science makes many drafts and versions, and a week later the one you
@@ -5220,34 +5253,41 @@ they are; Open Conversation inside the window goes through
 per session (`ReferenceWindowController.windows`); opening it again brings it
 forward.
 
-**The window** (`ReferenceWindow.swift`). A normal titled window, 440 by 620
-at first (`ReferenceWindowController.size`, no smaller than 360 × 320), on the
-text background colour, its frame remembered under one name
+**The window** (`ReferenceWindow.swift`), drawn as board 7 of the Capsid 1.0
+mock-ups has it, on the 1.0 windows' Solanum surfaces (`SolanumSurface.swift`,
+Look). A normal window, 440 by 620 at first (`ReferenceWindowController.size`,
+no smaller than 360 × 320), its frame remembered under one name
 (`CapsidReference`) when it closes (a demo's never), so the next opens where
-the last was (a second one open at the same place steps down). The title is
-the session's; the subtitle is when Claude last spoke in the reply, then the
-project ("8:47 · Assay development"), time first because a narrow title bar
-cuts the end off. No count of replies: Earlier and Later dim at the ends, and
-a count of the replies read so far would read as the session's. The toolbar:
-Earlier and Later as one navigation control at the leading edge (⌥⌘← and ⌥⌘→
-on the buttons themselves, so the keys work only while this window is key and
-never reach the page; ⌥⌘↓ is Next Waiting app-wide), and at the trailing edge
-Copy with Source (⇧⌘C) and Open Conversation as icons with their names in the
-help and to VoiceOver, plus a small spinner while a page is read. No footer.
-The page, 20 pt from the edges, 18 between its parts: what the user asked, in
-the secondary colour with a hairline at its side, three lines at most; then
-the figures, each the page's width (800-pixel pictures from the daemon, decoded
-into a store of the window's own, 48 MiB, `ReferenceModel.figureStore`;
-shorter than 520 pt, a quiet 3:2 frame with a spinner until the picture comes,
-a photo glyph if it can't be read), with its file name and a borderless Keep…
-under it (and Keep… and Open Conversation in its context menu); then Claude's
-words as selectable text in an `NSTextView` sized to its text, lined up with
-the figures (no inset), so the page scrolls as one
-(`ReferenceTextView.sizeThatFits`). Nothing in it is in the clay: the window
-reads, it never asks. Window → Keep on Top (`ReferenceCommands`) floats the
-key reference window (`level = .floating`), dim unless one is key; it is the
-only ordinary window that floats (the Reply window and the specimens panel are
-panels, floating by nature).
+the last was (a second one at the same place steps down). The title bar is the
+page's own band (transparent, full-size content, a hairline under it): the
+session's title, centred, over "<project> · read only" in muted ink, and at
+the trailing edge two round chevrons, Earlier and Later, with ⌥⌘← and ⌥⌘→ on
+the buttons themselves, so the keys work only while this window is key and
+never reach the page (⌥⌘↓ is Next Waiting app-wide). They are SwiftUI toolbar
+items with the shared glass hidden, and the system title is removed from the
+toolbar (`toolbar(removing: .title)`): beside the centred one it pushed the
+chevrons into the overflow menu. The page, ivory (slate in the dark), 24 pt
+from the sides and 20 from the top, 14 between its parts: the caption
+"Claude's answer · 8:47 · 2 of 3" (the time alone on the day it is, else the
+day and month too; the place only once row 0 has been read, since before that
+it would count only the answers read so far), with a small spinner while a page
+is read; what the user asked, muted, three lines at most; the figures, each on
+a white card the page's width with a hairline edge and 10-pt corners (800-pixel
+pictures from the daemon, decoded into a store of the window's own, 48 MiB,
+`ReferenceModel.figureStore`; shorter than 520 pt; a quiet 3:2 card with a
+spinner until the picture comes, a photo glyph if it can't be read), its file
+name under it and a small Keep… pill (and Keep… and Open Conversation in its
+context menu); then Claude's words as selectable text at 14 on 21 in Solanum's
+ink (`AnswerStyle.reference`; links in ink, underlined in clay) in an
+`NSTextView` sized to its text and lined up with the figures (no inset), so the
+page scrolls as one (`ReferenceTextView.sizeThatFits`). At the foot, under a
+hairline, two pills: Copy with Source (⇧⌘C) and Open Conversation. The first
+version said "Open in Claude Science", which named the wrong app: the
+conversation opens in Capsid's own window. Nothing in it is in the clay: the
+window reads, it never asks. Window → Keep on Top (`ReferenceCommands`) floats
+the key reference window (`level = .floating`), dim unless one is key; it is
+the only ordinary window that floats (the Reply window and the specimens panel
+are panels, floating by nature).
 
 **Copy with Source.** The selection, or the whole answer as drawn, then a
 blank line, then `— Claude, in “<session>” (<project>), 22 October 2026, 8:47`

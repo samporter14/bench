@@ -1,6 +1,6 @@
 // ReferenceRulesTests.swift — the reference reader's pure rules: how rows
 // become replies (a reply runs from one of the user's turns to the next, its
-// figures from every step, one per artifact), the subtitle, the time, the
+// figures from every step, one per artifact), the caption, the time, the
 // source line and the copied text.
 import AppKit
 import Foundation
@@ -103,13 +103,16 @@ struct ReferenceRulesTests {
         #expect(reply.figures.count == ReferenceRules.figureLimit)
     }
 
-    @Test func theSubtitleIsTheTimeThenTheProject() {
-        #expect(ReferenceRules.subtitle(project: "Assay development", at: Self.at, now: Self.now,
-                                        calendar: Self.calendar, locale: Self.locale)
-                == "8:47 · Assay development")
-        #expect(ReferenceRules.subtitle(project: "Assay development", at: nil, now: Self.now,
-                                        calendar: Self.calendar, locale: Self.locale)
-                == "Assay development")
+    @Test func theCaptionIsTheTimeAndThePlaceOnceTheStartIsRead() {
+        #expect(ReferenceRules.caption(at: Self.at, index: 1, count: 3, final: true, now: Self.now,
+                                       calendar: Self.calendar, locale: Self.locale)
+                == "Claude\u{2019}s answer · 8:47 · 2 of 3")
+        #expect(ReferenceRules.caption(at: Self.at, index: 0, count: 1, final: false, now: Self.now,
+                                       calendar: Self.calendar, locale: Self.locale)
+                == "Claude\u{2019}s answer · 8:47")
+        #expect(ReferenceRules.caption(at: nil, index: 2, count: 3, final: true, now: Self.now,
+                                       calendar: Self.calendar, locale: Self.locale)
+                == "Claude\u{2019}s answer · 3 of 3")
     }
 
     @Test func theTimeAloneOnTheDayElseTheDayToo() {
