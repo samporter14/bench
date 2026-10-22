@@ -4939,6 +4939,219 @@ same code.
 - **Not here**: the phone's history shows the attachment line as text until
   Phase 3's history projection learns to strip it (a "Photo" chip).
 
+## Keep (Kept/, since 1.0)
+
+Claude Science makes many drafts and versions, and a week later the one you
+meant to use is hard to find. **Keep** pins down the real one, with the text,
+data and code that go with it, in a folder you own; while writing a paper,
+the **Kept** window puts those results beside the manuscript. Sam's biggest
+complaint about Results, and 1.0's first feature.
+
+**Entry points.** In Results, every file row has a `checkmark.seal` button
+and **Keep…** in its context menu; **File → Keep…** (⌥⌘K) acts on the
+selected file. **File → Kept…** (⇧⌘K) opens the Kept window; a kept
+result's row in Results opens it on that result with a double-click. Neither
+key is one the page uses (it takes ⌘K for its search). None of it works in a
+demo but `--demo kept`.
+
+**The reads** (Remote/ArtifactReader.swift, Remote/HistoryReader.swift; the
+1.0 spikes' S2 found them). The list Results shows (`GET
+/api/frames/<root>/artifacts`) gives each artifact's **latest version
+project-wide**, which another session may have made, so Keep never takes the
+version from it. It reads, in the page and through the shelf's queue at
+foreground priority:
+
+1. the picked file's facts, `GET /api/artifacts/versions/<v>?include_metadata=true`
+   (the artifact id, the name, the daemon's sha256; an artifact id in that
+   slot quietly serves the latest version, so the answer must name the id
+   asked for);
+2. the artifact's versions, `GET /api/artifacts/<artifact>/versions` (oldest
+   first; `file_path` never leaves the page);
+3. the answer that shows one of them: the newest assistant message whose
+   text has `{{artifact:<v>}}` or `?v=<v>`, else whose `_artifact_refs` maps
+   a `![…](name)` in its text to one of the versions, else any ref, else the
+   save step that made it, walking the session's message pages backward from
+   the newest, at most six (each re-reading six rows of the one before, so a
+   save at a page's end finds its reply: about 270 rows), and no further
+   back than the oldest version's time (a showing reply follows a save). None
+   found: the session's last answer, labelled as such;
+4. the chosen version's provenance, `GET /api/artifacts/versions/<v>/lineage?slim=1`
+   (the inputs with their artifact and version ids, the mapping's state, and
+   the script, which is the page's own "Claude-generated reconstruction", not
+   a recording of what ran), then each input's facts for its name and size.
+   Reading lineage can start the daemon's reconstruction when the version has
+   none yet (a model call), so it is read once per sheet and polled six times
+   five seconds apart while `pending`, and it is never a Diagnostics probe.
+   The thumbnails in the strip are the shelf's own 120-px read.
+
+**The sheet** (Kept/KeepSheet.swift, Kept/KeepModel.swift): a `.sheet` on the
+Results window, 600 wide (its minimum width rose from 520 to 620 for it), a
+grouped `Form` with one clay button. Minimal on purpose: the common keep is
+Return.
+
+- **Name**, the file name without its extension, selected on open; Return
+  keeps.
+- **Which version is the real one**: a strip of tiles, oldest to newest, "v3 ·
+  8:09" under each picture (drawn on paper, never above its own pixels), the
+  one Claude's answer shows pre-selected and labelled "In the answer" in
+  secondary (a fact, not a demand; a version that vanished reads "Gone").
+  The chosen tile has a 2-pt `.primary` stroke: not clay, which is spent on
+  Keep and would read as a second primary; not the accent, a second hue; and
+  thickness carries the state under Increase Contrast. ← and → move the
+  choice. The footer says which and why: "Version 3 of 4, from 8:09. It's the
+  one Claude's answer shows, at 8:12."
+- **Keep with it**, three checkbox rows whose subtitles say what they hold,
+  and, when they can't be ticked, why, in the page's own words where it has
+  them (`KeepRules.rows`): *What Claude said about it* ("“All plates passed
+  except plate 7…” · the answer at 8:12"; the fallback is titled *What Claude
+  said last*; "Capsid couldn't find the answer that showed this version. The
+  figure and its provenance can still be kept."); *The data it was drawn
+  from* ("z_prime_by_plate.csv · 4 KB · listed in its provenance"; "No source
+  data recorded." with an ⓘ saying Capsid doesn't guess from file names;
+  "Claude Science is still working out what this was drawn from. Try again in
+  a minute."; inputs found only by static analysis are offered off, tagged
+  "inferred", with the page's tooltip behind the ⓘ; inputs over 8 MB or not
+  saved in Claude Science are listed and not copied); *The code that drew it*
+  ("z_prime.py · 2 KB · Claude-generated reconstruction"; "Generating
+  reproduction code…"; "No reproduction code — <model> is off for your
+  organization"; and the page's other sentences). A version you uploaded
+  shows one line instead of the data and code rows. There is no "raw input"
+  row in 1.0: the list projection drops `is_user_upload`, so Capsid can't tell
+  uploads apart without a read per file; a later cut can add it.
+- **Collection**, beside the name in the first section: a pop-up of the
+  root's subfolders plus New Collection… (an alert with a name), defaulting
+  to the collection last kept into for this project (`keptCollections`, by
+  project id), else the project's name, marked "(new)" until it exists. That
+  section's footer names the destination and what lands: "Into
+  ~/Documents/Kept/Assay development/Fig 2B · Z′ by plate: z_prime.png, data,
+  code and a README.md. About 92 KB." A taken name is said before Keep: "…is
+  already kept in Assay development, so this one will be “Fig 2B · Z′ by plate
+  2026-10-22 0912”." The Kept folder itself is in Settings → General → Kept,
+  not in the sheet: three sections, no scrolling at 740 points.
+- The status line: "Nothing in Claude Science changes. Capsid copies what's
+  ticked and checks each file." Then Cancel (Esc) and **Keep** (Return,
+  `.borderedProminent` in clay), dimmed until the versions are read and a
+  version is chosen.
+
+**What a keep does** (`KeepModel.perform`). The folder is made hidden beside
+its destination (`.<Name>.keeping-<uuid>`, so a Keep in progress never shows
+as a result) by `KeptDisk.prepare`, which also settles the name: `<Name>`, or
+`<Name> 2026-10-22 0912` when it is taken; Keep never overwrites. Each ticked
+file is fetched through the shelf's queue within the 8 MB cap (the figure
+first), its sha256 computed (CryptoKit) and compared with the daemon's
+checksum when it has one (a mismatch is logged, not refused: a reference
+artifact's checksum can be stale), and written atomically; the script is the
+reconstruction's text with `{{artifact:<v>}}` rewritten to `../data/<name>`
+for the inputs that were kept (the daemon's own script bundle does the same
+to its `inputs/`). README.md is written last and the folder renamed into
+place. "Keeping 2 of 4 files…" meanwhile; Cancel stops the reads and deletes
+the hidden folder. A figure that vanished mid-way: nothing is kept, the tile
+reads "Gone", and the sheet says "Version 3 isn't in Claude Science any more,
+so nothing was kept. Choose another version, or Cancel."; never another
+version in its place. A file that couldn't be copied is listed under
+`missing:` and the sheet stays: "Kept 3 of 4 files. The data it was drawn
+from wasn't copied.", the row saying why in clay-text, with **Try Again**
+(copies only what is missing, into the folder, and rewrites the README),
+**Show in Finder** and **Done**. Everything copied: the sheet closes and the
+Kept section shows the new row; no card, no toast.
+
+**On disk** (Kept/KeptFolder.swift, Kept/KeptReadme.swift, Kept/KeptDisk.swift).
+The root is `~/Documents/Kept` (`keptRoot`, a path; Sam's call between it and
+`~/Lab/Kept`: Documents is where a Mac keeps what a person owns, in Finder's
+sidebar and Spotlight's scope, at the price of macOS's one-time Documents
+prompt, which `NSDocumentsFolderUsageDescription` words as "Capsid keeps the
+results you choose in your Documents folder."). The layout:
+
+```
+<root>/<Collection>/<Name>/
+  <the figure's own file name>
+  data/…
+  code/…
+  README.md
+```
+
+README.md is YAML front matter the Kept window reads (`capsid_kept: 1`, the
+name, when, the project and session as ids and names, the figure with its
+artifact, version, index and sha256, the files with their roles, what is
+missing and why, the Claude Science and Capsid versions) and readable
+sections: the name as a heading; **Your legend** (empty, with an HTML comment
+saying where to write it); **What Claude said**, quoted, with "From Claude's
+answer at 8:12 AM on 22 October 2026." (dates written out, since the file may
+be read anywhere; the fallback says so); **Where it came from**, the session
+as a `bench://session?project=<id>&frame=<id>` link (`Router` now checks both
+ids before building an address from them), the project, "Version 3 of 4 of
+z_prime.png, kept on 22 October 2026 at 9:12 AM by Capsid 1.0, from Claude
+Science 0.1.70"; **Not copied**, only when something is; and one line of fine
+print: "Capsid changes only the “Your legend” section of this file, and only
+when you edit it in the Kept window." The parser is strict and fixed-shape:
+it reads what the renderer writes and nothing else, and a round trip is
+byte-identical. Every disk call runs off the main actor on one utility queue
+within a time limit (15 s plus 1 s per MiB per write, 15 s per look), with
+the saved files' sentences for a folder that doesn't answer;
+`KeptDiskCallsTests` allows file-system calls in `KeptDisk.swift` alone (and
+the Finder and open calls the windows make, which look at nothing). A root
+that isn't there yet (a new Mac) counts as empty and is made by the first
+keep; only a root whose parent is gone, or a file in its place, is "The Kept
+folder isn't there." The folder's own README and hidden names are refused as
+file names, and a rename that would replace a folder is refused too.
+Nothing about sessions is written anywhere but inside kept folders, and
+there is no index: the folders are the record (`KeptIndex` scans
+`<root>/*/*/README.md` when a window opens or a keep lands, skipping
+dot-folders and anything without the marker, and never in the background).
+
+**The Kept section** (Results/ResultsWindow.swift): the first section of
+Results' list, the five newest kept results (a 36-pt picture on paper, the
+name, "Paper draft · Oct 22"), then "Open Kept" with the count when there are
+more. A double-click opens the Kept window on it; the context menu has Open
+in Kept, Show in Finder and Open Conversation; the row drags the figure. The
+filter narrows it by name and file name. With nothing kept the section is
+left out: the seal on every row is the invitation.
+
+**The Kept window** (Kept/KeptWindow.swift; File → Kept…, ⇧⌘K): a
+`NavigationSplitView` with the system toolbar (a collection pop-up, Show in
+Finder, Open Conversation, search over names, legends and Claude's words),
+960 × 640, minimum 720 × 480, frame `CapsidKept`. The sidebar lists results
+by collection, newest first, a 40-pt picture each, with the root and the
+count at its foot. The detail: the figure, on paper, which drags into Pages,
+Word or Keynote and previews with Quick Look on a double-click or Space; the
+name; "Plate reader QC · Assay development · version 3 of 4, kept Oct 22";
+**Copy Figure** (the file and its image on the pasteboard) and **Copy
+Legend** (your legend, else Claude's words; the tooltip says so), each
+reading "Copied" for a moment at its own width; **Your legend**, a text field
+that saves itself a second after typing stops into the README's one section,
+refusing when the file changed in another app ("README.md was changed in
+another app." with Use Mine and Use Theirs) and never writing over an outside
+edit unasked; **What Claude said**, quiet, with its attribution; and the
+files with their sizes, each draggable, plus what wasn't copied. Nothing in
+the window needs you, so nothing in it is clay. There is no Delete: nothing
+in Capsid destroys what you chose to keep (Finder does).
+
+**Thumbnails** (Kept/KeptThumbnails.swift): kept files are on this Mac, so
+Quick Look draws them (`QLThumbnailGenerator`) at the size asked times the
+screen's scale, off the main actor, kept by path within 24 MB and let go when
+the window closes; a file iCloud has put away shows its kind's symbol and is
+never fetched for a picture.
+
+**Privacy.** Kept folders are files you chose to save, within the README's
+promise, which now names them. The reads are the page's own, allowlisted
+(`CompatInventory`, feature `keep`); the versions and facts reads are probed
+live on the shown session's plan artifact, lineage only when used.
+
+**Demo.** `--demo kept --step sheet` (the sheet filled from made-up reads, in
+a plain window), `sheet-partial` (after a keep in which the data couldn't be
+copied), `window` (the Kept window on three made-up folders in a temporary
+root) and `window-empty`. The root is deleted when Capsid quits.
+
+**Tests.** `KeepPlanTests` (the pre-selection, the tiles and their footer,
+every row's sentence and availability, the plan from the choices with
+nothing guessed, unique safe file names, the script's rewrite, the
+destination and outcome sentences, the record naming the chosen version),
+`KeptReadmeTests` (round trips with "Z′", the strict parser, a legend edit
+leaving every other byte alone), `KeptDiskTests` (the layout, the dated
+collision, abandon, scan, the outside-change refusal, the disk-calls scan),
+the reader tests for the three shapes and the showing op against a fake
+`fetch` (`RemoteArtifactsTests`, `HistoryReaderTests`), and the inventory's.
+
 ## 1.0 spikes (2026-10-22, read-only)
 
 Five research spikes for Capsid 1.0, run before any 1.0 code, against Claude

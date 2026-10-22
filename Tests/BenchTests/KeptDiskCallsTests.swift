@@ -65,6 +65,11 @@ struct KeptDiskCallsTests {
             "KeptDisk.swift: .write(to:": 4,
             // The rename that refuses to replace a folder.
             "KeptDisk.swift: renamex_np(": 1,
+            // Finder and the default app, asked to show or open a kept file (a UI call, not a look at the disk),
+            // and the temporary folder a demo names: none of these reads or writes anything.
+            "KeepModel.swift: NSWorkspace": 1,
+            "KeptDemo.swift: FileManager.default": 1,
+            "KeptWindow.swift: NSWorkspace": 6,
         ]
         let now = try found()
         #expect(now == allowed, "now: \(now.sorted { $0.key < $1.key })")

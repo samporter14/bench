@@ -44,7 +44,8 @@ final class ResultsWindowController: NSObject, NSWindowDelegate {
             window.contentViewController = hosting
             window.title = "Results"
             window.setContentSize(NSSize(width: 760, height: 580))
-            window.contentMinSize = NSSize(width: 520, height: 360)
+            // Wide enough for the Keep sheet (600) to sit inside it.
+            window.contentMinSize = NSSize(width: 620, height: 360)
             window.isReleasedWhenClosed = false
             window.setFrameAutosaveName("CapsidResults")
             window.delegate = self
@@ -72,6 +73,7 @@ final class ResultsWindowController: NSObject, NSWindowDelegate {
         // The panel shows a temporary copy that the shelf is about to delete.
         quickLook?.closePanel()
         (shelf ?? .shared).close()
+        KeptCommands.shared.selected = nil
     }
 }
 
@@ -90,10 +92,11 @@ struct ResultsToolbarButton: View {
 
 // MARK: The window's content
 
-/// What is selected in the list: a session's row, or a file's.
+/// What is selected in the list: a session's row, a file's, or a kept result's.
 enum ShelfSelection: Hashable {
     case session(String)
     case file(String)
+    case kept(String)
 }
 
 /// A search covers only file lists already loaded. Remove unmatched sessions
@@ -117,13 +120,22 @@ struct ResultsView: View {
     let quickLook: ResultsQuickLook
     @State private var search = ""
     @State private var selection: ShelfSelection?
+    /// What is kept (Kept/KeptIndex.swift), read when the window opens.
+    @ObservedObject private var kept = KeptIndex.shared
+    @StateObject private var keptThumbnails = KeptThumbnails()
+    @ObservedObject private var keepCommands = KeptCommands.shared
+    /// The Keep sheet, while one is up.
+    @State private var keeping: KeepModel?
+
+    /// How many kept results the section shows before "Open Kept".
+    static let keptShown = 5
 
     var body: some View {
         let groups = ShelfResultSearch.groups(shelf.groups, matching: search)
         VStack(spacing: 0) {
             header
             Divider()
-            if !search.isEmpty, groups.isEmpty {
+            if !search.isEmpty, groups.isEmpty, keptShownRows.isEmpty {
                 ContentUnavailableView {
                     Label("No matching files", systemImage: "magnifyingglass")
                 } description: {
@@ -145,13 +157,43 @@ struct ResultsView: View {
                 list(groups)
             }
         }
-        .frame(minWidth: 520, minHeight: 360)
+        .frame(minWidth: 620, minHeight: 360)
         .background(Color(nsColor: .windowBackgroundColor))
         // Opening Results for a card must reveal its session, even if the
         // previous visit left a filter that would hide it.
         .onChange(of: shelf.focused) { _, focus in
             if focus != nil { search = "" }
         }
+        .onAppear { kept.refresh() }
+        .onChange(of: shelf.takenAt) { kept.refresh() }
+        .onDisappear { keptThumbnails.removeAll() }
+        // The File menu's Keep… acts on the selected file.
+        .onChange(of: selection) { _, selection in
+            keepCommands.selected = subject(for: selection)
+        }
+        .onChange(of: keepCommands.requests) {
+            if let subject = subject(for: selection) { keep(subject) }
+        }
+        .sheet(item: $keeping) { model in
+            KeepSheet(model: model, dismiss: { keeping = nil })
+        }
+    }
+
+    /// The Keep sheet for one file: the reads go through this shelf's queue.
+    private func keep(_ subject: KeepSubject) {
+        guard keeping == nil else { return }
+        keeping = KeepModel(subject: subject, dependencies: .live(shelf: shelf))
+    }
+
+    /// The session and file a selection names, when it names a file.
+    private func subject(for selection: ShelfSelection?) -> KeepSubject? {
+        guard case .file(let version)? = selection else { return nil }
+        for item in shelf.sessions {
+            if let entry = item.results.entries?.first(where: { $0.version == version }) {
+                return KeepSubject(session: item.session, entry: entry)
+            }
+        }
+        return nil
     }
 
     // MARK: The header
@@ -188,6 +230,23 @@ struct ResultsView: View {
         let older = groups.filter { $0.coverage == .older }
         return ScrollViewReader { proxy in
             List(selection: $selection) {
+                if !keptShownRows.isEmpty {
+                    Section("Kept") {
+                        ForEach(keptShownRows) { result in
+                            keptRow(result)
+                                .tag(ShelfSelection.kept(result.id))
+                        }
+                        if kept.results.count > Self.keptShown || !search.isEmpty {
+                            HStack(spacing: 10) {
+                                Button("Open Kept") { KeptWindowController.shared.show() }
+                                Text(KeepRules.count(kept.results.count, "result") + " kept")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                }
                 if !recent.isEmpty {
                     Section("Recent sessions") {
                         ForEach(recent) { group in
@@ -216,6 +275,51 @@ struct ResultsView: View {
                     withAnimation { proxy.scrollTo(focus.sessionID, anchor: .top) }
                 }
             }
+        }
+    }
+
+    // MARK: Kept
+
+    /// The newest kept results, the first few; the filter narrows them by
+    /// name and by the figure's file name.
+    private var keptShownRows: [KeptResult] {
+        let matching = search.isEmpty ? kept.results : kept.results.filter {
+            $0.record.name.localizedCaseInsensitiveContains(search) || $0.record.figure.path.localizedCaseInsensitiveContains(search)
+        }
+        return Array(matching.prefix(Self.keptShown))
+    }
+
+    /// A kept result: its picture, its name, its collection and the day.
+    /// A double-click opens it in the Kept window.
+    private func keptRow(_ result: KeptResult) -> some View {
+        HStack(spacing: 10) {
+            KeptThumbnailView(store: keptThumbnails, url: result.figureURL, side: 36,
+                              kind: ArtifactKind.classify(name: result.record.figure.path, mime: nil))
+                .frame(width: 36, height: 36)
+                .clipShape(.rect(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 0.5))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(result.record.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(verbatim: "\(result.collection) · \(result.record.keptAt.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .accessibilityElement(children: .combine)
+            Spacer(minLength: 8)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { KeptWindowController.shared.show(select: result.folder) }
+        .onDrag { NSItemProvider(contentsOf: result.figureURL) ?? NSItemProvider() }
+        .contextMenu {
+            Button("Open in Kept") { KeptWindowController.shared.show(select: result.folder) }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([result.folder]) }
+            Divider()
+            Button("Open Conversation") { LabModel.shared.open(sessionID: result.record.sessionID) }
         }
     }
 
@@ -369,7 +473,8 @@ struct ResultsView: View {
                 .foregroundStyle(.secondary)
         case .loaded(let entries, _):
             ForEach(entries.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }, id: \.version) { entry in
-                ResultFileRow(shelf: shelf, entry: entry, session: item.session, onPreview: { preview(entry) })
+                ResultFileRow(shelf: shelf, entry: entry, session: item.session, onPreview: { preview(entry) },
+                              onKeep: { keep(KeepSubject(session: item.session, entry: entry)) })
                     .tag(ShelfSelection.file(entry.version))
             }
         case .failed(let failure):
@@ -419,6 +524,8 @@ struct ResultFileRow: View {
     let session: SessionStatus
     /// Preview: Quick Look on this file.
     let onPreview: () -> Void
+    /// Keep…: the sheet for this file (Kept/KeepSheet.swift).
+    let onKeep: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -451,6 +558,8 @@ struct ResultFileRow: View {
         // Dragged out, the file is fetched when it is dropped, not when the drag begins.
         .onDrag { ShelfDrag.provider(for: entry, shelf: shelf) }
         .contextMenu {
+            Button("Keep…") { onKeep() }
+                .disabled(Demo.mode != nil)
             Button("Preview") { onPreview() }
                 .disabled(shelf.preparing.contains(entry.version))
             if ShelfCopy.isOffered(entry.kind) {
@@ -469,6 +578,10 @@ struct ResultFileRow: View {
 
     private var actions: some View {
         HStack(spacing: 4) {
+            Button { onKeep() } label: { Image(systemName: "checkmark.seal") }
+                .help("Keep… (⌥⌘K): the real version, with Claude\u{2019}s words, its data and its code, in a folder you own")
+                .accessibilityLabel("Keep \(entry.name)")
+                .disabled(Demo.mode != nil)
             if shelf.preparing.contains(entry.version) {
                 ProgressView().controlSize(.small).accessibilityLabel("Getting \(entry.name)")
             } else {

@@ -323,6 +323,63 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-22, Capsid 1.0 M3: Keep, and the Kept window
+
+The first 1.0 feature (the handoff's M3; DESIGN.md, Keep). Keep saves the
+one real version of a figure with Claude's words about it, the data it was
+drawn from and the script that drew it, into `~/Documents/Kept/<collection>/<name>/`
+with a README; the Kept window puts those results beside a manuscript. Two
+Sonnet agents built the page reads (`g/keep-reads`) and the on-disk layer
+(`g/keep-disk`) in worktrees against a written contract; the sheet, the
+model, the Kept window, the Results section and the demo were written here.
+
+- ✅ **The whole suite:** 2,184 tests in 285 suites pass (`swift test --jobs
+  2`), 193 of them new: the reads' allowlist, projections and caps against
+  a fake `fetch` (SECRET markers never leave the page; an answer for another
+  version is refused; lineage with a conversation snapshot is refused), the
+  showing-message walk (the four ways, newest wins, thinking and tool inputs
+  never read, six pages with overlap, the stop at the oldest version's time,
+  abort by nonce), the README's byte-identical round trip with "Z′", CJK and
+  an emoji and its strict parser, the legend edit leaving every other byte,
+  the disk layer's layout, dated collisions, refusals, the held-disk
+  sentences and the scan that allows file-system calls in `KeptDisk.swift`
+  alone, the sheet's decisions (`KeepPlanTests`), and the inventory and
+  probe suites with the `keep` feature.
+- ✅ **The sheet, drawn offscreen** (`CAPSID_SNAPSHOT_DIR`, light and dark,
+  before and after a partial keep): three sections on one screen, the
+  answer's version ringed in the system's ink, "In the answer" in
+  secondary, clay on the checkboxes and on Keep alone (the collection pop-up
+  reads in primary), "Kept 2 of 3 files. The data it was drawn from wasn't
+  copied." with the row saying why in clay-text, Try Again prominent.
+- ✅ **`--demo kept --step sheet | sheet-partial | window | window-empty`**
+  captured by window ID (`shoot.sh`) at 12:30: the sheet filled from
+  made-up reads; the Kept window on three made-up folders in a temporary
+  root (sidebar by collection, the figure on paper, the source line, Copy
+  Figure and Copy Legend, the legend, Claude's words with their
+  attribution); the empty window. The later captures failed with "could not
+  create image from window" (the screen locked, or Screen Recording reset),
+  so the final layout was checked offscreen instead.
+- ⏳ **A real keep, end to end,** on a live session: the facts, versions,
+  lineage and showing-message reads against Claude Science 0.1.70 (the
+  shapes come from its shipped bundle, not from a running daemon), the
+  thumbnails in the strip, the sha256 against the daemon's checksum, the
+  folder in `~/Documents/Kept` and macOS's one-time Documents prompt, the
+  Kept section in Results, and the Kept window on it. Needs Sam and a
+  session with a figure; `Capsid --diagnose` with the window open now probes
+  the versions and facts reads on the shown session's plan artifact.
+- ⏳ **The legend's outside-edit refusal and Use Mine / Use Theirs** in the
+  real window; drag of the figure into Pages and Word; Quick Look on a kept
+  file; File → Keep… (⌥⌘K) from a selected row and Kept… (⇧⌘K) in the real
+  app; the Keep button's dimming while a probe fails (not wired: the probes
+  record no misses yet, M2.5's gate).
+- ⏳ **Idle cost** with the Kept window open: by design nothing polls (the
+  folders are read when a window opens or a keep lands), not measured.
+- Not in 1.0's first cut, said in DESIGN.md: the "raw input" row (the list
+  projection drops `is_user_upload`); Developer ID's effect on the Documents
+  prompt; a sweep of leftover hidden `.keeping-` folders.
+- Sam's calls still open: the Kept root (`~/Documents/Kept` built in) and
+  collections defaulting to the project's name (built in).
+
 ## 2026-10-22, Capsid 1.0 M2.1: updates install natively, and the old copy waits
 
 The first 1.0 milestone (the handoff's M2.1). Until now Install ran the

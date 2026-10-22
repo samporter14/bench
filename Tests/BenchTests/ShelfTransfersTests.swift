@@ -3156,8 +3156,9 @@ struct ResultsDiskCallsTests {
             // The Downloads folder's path for a panel to start in: a search-path lookup, not a look at the disk.
             "ResultsWindow.swift: FileManager.default": 1,
             // Open, Reveal in Finder and the Save All folder's Reveal: the path is handed to Finder or the
-            // default app, after a look (through the writer) that the file is there.
-            "ResultsWindow.swift: NSWorkspace": 3,
+            // default app, after a look (through the writer) that the file is there; and a kept result's
+            // Show in Finder (Kept), whose folder the Kept index read.
+            "ResultsWindow.swift: NSWorkspace": 4,
         ]
         #expect(found == allowed, "now: \(found.sorted { $0.key < $1.key })")
     }

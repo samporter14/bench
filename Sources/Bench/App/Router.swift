@@ -73,7 +73,10 @@ final class Router {
         case "open":
             if let text = value("url"), let target = URL(string: text) { open(target) } else { showWindow() }
         case "session":
+            // Ids as the database has them, and nothing else goes into the address
+            // (a kept folder's README carries such a link, and anyone can write one).
             if let project = value("project"), let frame = value("frame"),
+               BrowseSQL.isProjectID(project), PlanCheck.isFrameID(frame),
                let target = URL(string: "http://localhost:\(port ?? 8765)/projects/\(project)/frames/\(frame)") {
                 open(target)
             } else {

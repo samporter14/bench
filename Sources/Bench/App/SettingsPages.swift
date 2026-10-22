@@ -103,6 +103,8 @@ struct GeneralSettingsView: View {
 
             UpdatesSection()
 
+            KeptFolderSection()
+
             Section("Nidus") {
                 Toggle(isOn: $shareTaskWithNidus) {
                     Text("Share the task I'm viewing with Nidus")
@@ -120,7 +122,7 @@ struct GeneralSettingsView: View {
                 }
             }
         }
-        .settingsPage(height: 702)
+        .settingsPage(height: 790)
         .onChange(of: appearance) { BenchAppearance.apply() }
         .onChange(of: appIcon) { AppIconDock.shared.apply() }
     }

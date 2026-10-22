@@ -282,6 +282,8 @@ struct BenchCommands: Commands {
     @ObservedObject private var presenting = PresentingMode.shared
     /// What waits, for Next Waiting Session's dimming (Lab/NextWaiting.swift).
     @ObservedObject private var lab = LabModel.shared
+    /// The result selected in the Results window, for Keep… (Kept/KeptWindow.swift).
+    @ObservedObject private var kept = KeptCommands.shared
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
@@ -310,6 +312,14 @@ struct BenchCommands: Commands {
             // The files sessions made (Results/ResultsWindow.swift).
             Button("Results…") { ResultsWindowController.shared.show() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(Demo.mode != nil)
+            // Keep the selected result (Kept/KeepSheet.swift), and what is kept
+            // (Kept/KeptWindow.swift). Neither key is used by the page.
+            Button("Keep…") { kept.keepSelected() }
+                .keyboardShortcut("k", modifiers: [.command, .option])
+                .disabled(!kept.canKeep)
+            Button("Kept…") { KeptWindowController.shared.show() }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
                 .disabled(Demo.mode != nil)
             Divider()
             // The artifact tabs in Claude Science's right-hand panel. ⌥⌘W is

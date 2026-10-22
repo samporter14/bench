@@ -126,6 +126,13 @@ enum SettingsKey {
     /// Which limit the title bar's usage readout shows, a `TitleBarUsage`
     /// (since 0.9.1).
     static let titleBarUsage = "titleBarUsage"
+    /// Where Keep puts results (since 1.0): a path, empty for
+    /// `~/Documents/Kept` (`KeptSettings.root`). Not registered: absent
+    /// means the default.
+    static let keptRoot = "keptRoot"
+    /// The collection last kept into, by project id (since 1.0): a
+    /// settings-sized dictionary of opaque ids to folder names.
+    static let keptCollections = "keptCollections"
 
     static func register() {
         let defaults = UserDefaults.standard

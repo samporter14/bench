@@ -32,8 +32,9 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   in it, except when you press Approve on a plan's card, send an answer from
   a question's reply window, or answer, approve, send a message or start a
   session from a paired device. It saves nothing but its own settings
-  (among them which session you had open, as an id, to reopen it), and the
-  files you choose to save.
+  (among them which session you had open, as an id, to reopen it), the
+  files you choose to save, and the results you choose to keep (folders in
+  your Documents, each with a README that names its session).
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
 - **Know when it needs you.** While a session works, one of 541 little
@@ -138,6 +139,26 @@ Launchpad keep the Clay one, because macOS doesn't let an app change those
 without altering itself.
 
 <img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, a checkbox per category (Lab 130 of 131, Biology 211 of 214), a search field with an All, On and Off filter, and a grid of specimens under a Lab heading, each with a clay check when on">
+
+## Keep the real one
+
+Claude Science makes many drafts and versions, and a week later the one you
+meant to use is hard to find. In Results, every file has a **Keep…** button
+(the seal, or ⌥⌘K). It opens a sheet that shows the file's versions, with the
+one Claude's answer shows already chosen, and three things to keep with it:
+what Claude said about it, the data it was drawn from (as Claude Science's
+provenance records it; nothing is guessed from file names) and the script
+that drew it. Press Return, and the figure lands in a folder you own,
+`~/Documents/Kept/<collection>/<name>/`, with `data/`, `code/` and a README
+that says where it came from, which version it is and what Claude said, with
+a link back to the session. Keep never overwrites: a second keep under the
+same name gets a dated folder.
+
+**File → Kept…** (⇧⌘K) shows what you've kept, by collection (a paper is a
+collection), beside whatever you're writing: drag the figure into Pages,
+Word or Keynote, copy it or its legend, and write the legend you'll use in
+the paper, which Capsid saves into the README (and touches nothing else in
+it). The Kept folder is in Settings → General → Kept.
 
 ## Capsid on your phone
 

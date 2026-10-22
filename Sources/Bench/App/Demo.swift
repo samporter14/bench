@@ -76,7 +76,21 @@ enum Demo {
         /// ready with one device. Made up: no Tailscale, no files, no
         /// Keychain, and its buttons do nothing.
         case phoneSettings = "phone-settings"
+        /// Keep (Kept/KeptDemo.swift), with `--step`: `sheet` (the Keep sheet
+        /// filled from made-up reads, in a plain window), `sheet-partial`
+        /// (the same after a keep in which one file couldn't be copied),
+        /// `window` (the Kept window on made-up folders in a temporary root)
+        /// or `window-empty`. Nothing is read from Claude Science and
+        /// nothing lands outside the temporary root.
+        case kept
     }
+
+    /// `--step` with `--demo kept`; `sheet` when missing.
+    static let keptStep: String = {
+        let arguments = CommandLine.arguments
+        guard mode == .kept, let flag = arguments.firstIndex(of: "--step") else { return "sheet" }
+        return arguments.dropFirst(flag + 1).first ?? "sheet"
+    }()
 
     /// Nil in a normal launch.
     static let mode: Mode? = parse()
@@ -241,6 +255,8 @@ enum Demo {
             showRemote()
         case .phoneSettings?:
             showPage(PhoneSetupPage(model: phoneSettings(step: phoneStep), actions: .none), title: "Phone")
+        case .kept?:
+            KeptDemo.show(step: keptStep, quiet: isQuiet) { view, title in showPage(view, title: title) }
         case nil:
             break
         }

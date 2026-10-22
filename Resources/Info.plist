@@ -39,6 +39,8 @@
 	<string>27.0</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Claude Science may ask to use the camera.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Capsid keeps the results you choose in your Documents folder.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>

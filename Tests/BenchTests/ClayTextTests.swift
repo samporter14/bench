@@ -84,6 +84,9 @@ struct ClayTextTests {
         "Lab/ReplyWindow.swift: .foregroundStyle(Theme.clay)": 1,
         // A favourite's star.
         "Lab/SceneSettingsView.swift: .foregroundStyle(isFavorite ? AnyShapeStyle(Theme.clay) : AnyShapeStyle(.secondary))": 1,
+        // The warning or check glyph beside a keep's result line, and beside a legend that couldn't be saved (the words are primary).
+        "Kept/KeepSheet.swift: Image(systemName: symbol).foregroundStyle(Theme.clay).accessibilityHidden(true)": 1,
+        "Kept/KeptWindow.swift: Image(systemName: \"exclamationmark.triangle\").foregroundStyle(Theme.clay).accessibilityHidden(true)": 1,
     ]
 
     @Test func noWordsAreDrawnInTheClayFill() throws {
