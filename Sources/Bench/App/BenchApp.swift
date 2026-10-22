@@ -260,6 +260,9 @@ struct BenchToolbar: ViewModifier {
                     ResultsToolbarButton()
                 }
                 ToolbarItem {
+                    ShelfToolbarButton()
+                }
+                ToolbarItem {
                     ScenesToolbarButton()
                 }
             }

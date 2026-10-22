@@ -5,6 +5,9 @@ import WebKit
 
 struct BrowserView: View {
     @ObservedObject private var web = WebContainer.shared
+    /// The Keep sheet for a file picked in the conversation (Shelf/ConversationMenu.swift).
+    @ObservedObject private var sheets = ShelfSheetHost.shared
+    @State private var width: CGFloat = KeepSheet.width
 
     var body: some View {
         // The web view never moves in this tree: everything else is an overlay
@@ -15,6 +18,12 @@ struct BrowserView: View {
             }
             .overlay {
                 StatusOverlay(status: web.status, retriesOnItsOwn: web.retriesOnItsOwn, retry: web.start)
+            }
+            // The toast after Add to Shelf (Shelf/ShelfToast.swift).
+            .overlay { ShelfToastHost() }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .sheet(item: $sheets.keeping) { model in
+                KeepSheet(model: model, dismiss: { sheets.keeping = nil }, width: min(KeepSheet.width, max(360, width - 40)))
             }
     }
 }

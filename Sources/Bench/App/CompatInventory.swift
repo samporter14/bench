@@ -52,7 +52,7 @@ enum CompatKind: String, CaseIterable, Sendable {
 /// The Capsid features that lean on Claude Science, in the words the rest of
 /// the app uses for them. Also what a breadcrumb names (CompatBreadcrumbs).
 enum CompatFeature: String, CaseIterable, Sendable {
-    case closeTabs, tabMenu, signIn, notifications, sessionAddress, previews
+    case closeTabs, tabMenu, shelfMenu, signIn, notifications, sessionAddress, previews
     case usage, context, planCard, approve, errorCard, phone
     case start, sessions, activity, browse
     case keep
@@ -62,6 +62,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         switch self {
         case .closeTabs: "Close Other Tabs and Close All Tabs"
         case .tabMenu: "The tab right-click menu"
+        case .shelfMenu: "Add to Shelf from a figure or a file link in the conversation"
         case .signIn: "Signing back in"
         case .notifications: "Needs-input cards from the page's notifications"
         case .sessionAddress: "Open on a card, Quick Open, reopening where you were and the context ring"
@@ -162,6 +163,11 @@ extension CompatInventory {
              .closeTabs, "Web/PageTabs.swift", literal: true),
         hook(#"[data-testid="right-tab-strip"] [data-tab-id]"#, "the tab under a right-click",
              .tabMenu, "Web/TabContextMenu.swift",
+             check: .whenUsed("seen only on a right-click"), literal: true),
+        hook("/api/artifacts/versions/<version>, ?v=<version>", "the address of a figure or a file link on the page names its version, the same path the page asks for a file's bytes and thumbnails with; a page that draws them from another address gets no Shelf items",
+             .shelfMenu, "Shelf/ShelfAddress.swift", check: .whenUsed("seen only on a right-click")),
+        hook("img, a[href]", "the figure or the file link under a right-click: a picture's address (currentSrc) or a link's (href) names one version of a file, as /api/artifacts/versions/<version> (any of its tails, with or without ?thumbnail=) or ?v=<version>",
+             .shelfMenu, "Shelf/ConversationMenu.swift",
              check: .whenUsed("seen only on a right-click"), literal: true),
         hook("button, a", "the elements searched for the sign-in button",
              .signIn, "Web/WebContainer.swift", literal: true),
