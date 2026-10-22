@@ -328,8 +328,17 @@ yet checked live: a real failed session, and a real notification close.
 Capsid already had an update check, but it was off unless someone found the
 switch, and an update it did find was easy to miss and fiddly to install: the
 card had no button and said to use a menu. Sam chose to turn the check on by
-default, tell people subtly, and make installing one click away. Built on
-`feature/update-offer`; not released or installed yet.
+default, tell people subtly, and make installing one click away.
+
+- ✅ Released as v0.9.7 (tag on f7a323a) and installed from the release zip:
+  0.9.7 (45), CDHash `9573e055…`, the same as the download and the local
+  build. The first try at `gh release create` came before the push and
+  GitHub refused the target commit (422); nothing was made, and the second
+  worked.
+- ✅ Seen live: `checkForUpdates` was never set on this Mac, so the new
+  default turned the check on. It ran by itself 30 s after launch
+  (09:16:35) and said up to date (GitHub's latest was still 0.9.6), with no
+  card and no toolbar button.
 
 - `checkForUpdates` is registered on, in the welcome window and in Settings
   too. Someone who turned it off has a stored `false`, which still wins.
