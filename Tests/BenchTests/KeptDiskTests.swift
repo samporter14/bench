@@ -709,3 +709,194 @@ private final class OnQueue: @unchecked Sendable {
     var allOffMain: Bool { lock.withLock { !onMain.contains(true) } }
     var allUtility: Bool { lock.withLock { classes.allSatisfy { $0 == QOS_CLASS_UTILITY } } }
 }
+
+// MARK: The Trash
+
+/// A stand-in for the Trash, a folder in the scratch folder, that counts what it was asked.
+private final class FakeTrash: @unchecked Sendable {
+    let folder: URL
+    private let lock = NSLock()
+    private var asked: [URL] = []
+
+    init(in scratch: URL) throws {
+        folder = scratch.appending(path: "Trash", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
+    var requests: [URL] { lock.withLock { asked } }
+
+    func take(_ source: URL) throws -> URL? {
+        lock.withLock { asked.append(source) }
+        let target = folder.appending(path: "\(UUID().uuidString) \(source.lastPathComponent)", directoryHint: .isDirectory)
+        try FileManager.default.moveItem(at: source, to: target)
+        return target
+    }
+}
+
+@Suite(.serialized) @MainActor
+struct KeptDiskTrashTests {
+    private func inTrashScratch(_ body: (_ scratch: URL, _ root: URL, _ disk: KeptDisk, _ trash: FakeTrash) async throws -> Void) async throws {
+        let scratch = files.temporaryDirectory.appending(path: "capsid-tests-kept-trash-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try files.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? files.removeItem(at: scratch) }
+        let root = scratch.appending(path: "Kept", directoryHint: .isDirectory)
+        try files.createDirectory(at: root, withIntermediateDirectories: false)
+        let trash = try FakeTrash(in: scratch)
+        let disk = KeptDisk(root: { root }, trash: { try trash.take($0) })
+        try await body(scratch, root, disk, trash)
+    }
+
+    @Test func aKeptFolderGoesToTheTrashWholeAndIsNotThereAnyMore() async throws {
+        try await inTrashScratch { _, root, disk, trash in
+            let folder = try await keep(disk)
+            let trashed = try await disk.trash(folder)
+            #expect(trash.requests == [folder])
+            #expect(!files.fileExists(atPath: folder.path))
+            #expect(trashed.deletingLastPathComponent() == trash.folder)
+            // Everything came with it: nothing was deleted.
+            #expect(try listing(trashed) == ["README.md", "code", "code/plot_z_prime.py", "data", "data/z_prime_by_plate.csv", "z_prime.png"])
+            #expect(try Data(contentsOf: trashed.appending(path: "z_prime.png")) == png)
+            #expect(try await disk.scan().isEmpty)
+            _ = root
+        }
+    }
+
+    @Test func onlyAFolderThatIsAResultIsEverMoved() async throws {
+        try await inTrashScratch { scratch, root, disk, trash in
+            let collection = root.appending(path: "Assay development", directoryHint: .isDirectory)
+            // A folder with no README of ours, in the right place.
+            let plain = collection.appending(path: "Mine", directoryHint: .isDirectory)
+            try files.createDirectory(at: plain, withIntermediateDirectories: true)
+            try Data("my notes".utf8).write(to: plain.appending(path: "notes.txt"))
+            try Data("# Not ours\n".utf8).write(to: plain.appending(path: "README.md"))
+            // A kept folder in the wrong place: the collection itself, the Kept folder, and one outside it.
+            let kept = try await keep(disk)
+            let outside = scratch.appending(path: "Elsewhere", directoryHint: .isDirectory)
+            try files.createDirectory(at: outside, withIntermediateDirectories: true)
+            try Data(readme().utf8).write(to: outside.appending(path: "README.md"))
+            let deeper = kept.appending(path: "data", directoryHint: .isDirectory)
+            for refused in [plain, collection, root, outside, deeper, scratch] {
+                await #expect(throws: KeptDiskError.failed("This isn't a folder Capsid keeps.")) {
+                    _ = try await disk.trash(refused)
+                }
+            }
+            #expect(trash.requests.isEmpty)
+            #expect(files.fileExists(atPath: plain.appending(path: "notes.txt").path) && files.fileExists(atPath: kept.path))
+            #expect(files.fileExists(atPath: outside.path))
+        }
+    }
+
+    @Test func aFolderInProgressIsNotOneToMove() async throws {
+        try await inTrashScratch { _, _, disk, trash in
+            let destination = try await disk.prepare(collection: "Assay development", name: figureName, at: when)
+            try await disk.write(png, to: "z_prime.png", in: destination)
+            await #expect(throws: KeptDiskError.failed("This isn't a folder Capsid keeps.")) {
+                _ = try await disk.trash(destination.tempFolder)
+            }
+            #expect(trash.requests.isEmpty)
+        }
+    }
+
+    @Test func aFolderComesBackWhereItWasAndNeverOverAnotherFolder() async throws {
+        try await inTrashScratch { _, root, disk, trash in
+            let folder = try await keep(disk)
+            let trashed = try await disk.trash(folder)
+            let back = try await disk.restore(trashed, to: folder)
+            #expect(back == folder)
+            #expect(try listing(folder).contains("README.md"))
+            #expect(try listing(trash.folder).isEmpty)
+
+            // Something has the name now: the dated name, then a number; nothing is replaced.
+            let second = try await disk.trash(folder)
+            try files.createDirectory(at: folder, withIntermediateDirectories: false)
+            try Data("mine".utf8).write(to: folder.appending(path: "mine.txt"))
+            let dated = try await disk.restore(second, to: folder, at: when)
+            #expect(dated.lastPathComponent == KeptName.dated(figureName, at: when))
+            #expect(try Data(contentsOf: folder.appending(path: "mine.txt")) == Data("mine".utf8))
+            #expect(try listing(dated).contains("README.md"))
+            _ = root
+        }
+    }
+
+    @Test func aCollectionThatWentWhileItWasInTheTrashIsMadeAgain() async throws {
+        try await inTrashScratch { _, root, disk, _ in
+            let folder = try await keep(disk)
+            let trashed = try await disk.trash(folder)
+            try files.removeItem(at: folder.deletingLastPathComponent())
+            let back = try await disk.restore(trashed, to: folder)
+            #expect(back == folder)
+            #expect(try names(root) == ["Assay development"])
+        }
+    }
+
+    @Test func whatIsntInTheTrashAnyMoreOrIsntOursIsRefused() async throws {
+        try await inTrashScratch { scratch, root, disk, trash in
+            let folder = try await keep(disk)
+            let gone = trash.folder.appending(path: "nothing here", directoryHint: .isDirectory)
+            await #expect(throws: KeptDiskError.failed("It isn't in the Trash any more.")) {
+                _ = try await disk.restore(gone, to: folder)
+            }
+            let stranger = trash.folder.appending(path: "Stranger", directoryHint: .isDirectory)
+            try files.createDirectory(at: stranger, withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: stranger.appending(path: "a.txt"))
+            await #expect(throws: KeptDiskError.failed("It isn't in the Trash any more.")) {
+                _ = try await disk.restore(stranger, to: folder.deletingLastPathComponent().appending(path: "Other", directoryHint: .isDirectory))
+            }
+            // And never to a place outside the Kept folder.
+            let trashed = try await disk.trash(folder)
+            await #expect(throws: KeptDiskError.failed("This isn't a folder Capsid keeps.")) {
+                _ = try await disk.restore(trashed, to: scratch.appending(path: "Out", directoryHint: .isDirectory))
+            }
+            #expect(files.fileExists(atPath: trashed.path))
+            _ = root
+        }
+    }
+
+    @Test func aDiskWithNoTrashSaysSoInASentence() {
+        let error = CocoaError(.featureUnsupported)
+        #expect(KeptDiskError.from(error) == .failed("This disk has no Trash, so Capsid can't take it off from here. Remove the folder in Finder."))
+    }
+}
+
+// MARK: A look at a text file
+
+@Suite(.serialized) @MainActor
+struct KeptDiskPeekTests {
+    @Test func aKeptTextFileIsReadForItsCardAndNothingElseIs() async throws {
+        try await inScratch { scratch, root, disk in
+            let folder = try await keep(disk)
+            // The figure's bytes here are text; the README is text; a file with a NUL in it is not.
+            #expect(try await disk.peek(folder.appending(path: "z_prime.png")) == "made-up figure bytes")
+            let readme = try #require(try await disk.peek(folder.appending(path: "README.md")))
+            #expect(readme.hasPrefix("---\ncapsid_kept: 1\n"))
+            try Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x01, 0x02]).write(to: folder.appending(path: "binary.png"))
+            #expect(try await disk.peek(folder.appending(path: "binary.png")) == nil)
+            // Nothing, and a file that isn't there.
+            try Data().write(to: folder.appending(path: "empty.md"))
+            #expect(try await disk.peek(folder.appending(path: "empty.md")) == nil)
+            #expect(try await disk.peek(folder.appending(path: "nope.md")) == nil)
+            // Never a file outside the Kept folder, nor one whose path only starts like its root's.
+            let outside = scratch.appending(path: "Elsewhere.txt")
+            try Data("not kept".utf8).write(to: outside)
+            #expect(try await disk.peek(outside) == nil)
+            let sibling = scratch.appending(path: "Kept2", directoryHint: .isDirectory)
+            try files.createDirectory(at: sibling, withIntermediateDirectories: true)
+            try Data("sibling".utf8).write(to: sibling.appending(path: "a.txt"))
+            #expect(try await disk.peek(sibling.appending(path: "a.txt")) == nil)
+            _ = root
+        }
+    }
+
+    @Test func onlyTheFirstBytesAreReadAndACutInACharacterIsNotAReasonToRefuse() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk)
+            // "é" is two bytes: a limit of three cuts the second one in half.
+            try Data("aéé".utf8).write(to: folder.appending(path: "accents.md"))
+            #expect(try await disk.peek(folder.appending(path: "accents.md"), limit: 3) == "aé")
+            #expect(try await disk.peek(folder.appending(path: "accents.md"), limit: 2) == "a")
+            let long = String(repeating: "abcdefghij", count: 1_000)
+            try Data(long.utf8).write(to: folder.appending(path: "long.md"))
+            #expect(try await disk.peek(folder.appending(path: "long.md"))?.count == 2_000)
+        }
+    }
+}

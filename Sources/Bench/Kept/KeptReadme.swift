@@ -8,11 +8,14 @@
 // The renderer and the parser are a pair, and the parser is strict on purpose.
 // It is not a YAML parser: it reads only the shape the renderer writes (inline
 // maps for the project, the session and the figure, one `- { … }` row for each
-// file and each missing file, strings in double quotes, and one optional line,
-// `answer_shows_version:`, after the figure when Claude's words were kept with
-// another version than the one they show), in that order, and
-// answers nil for anything else, so a folder it can't read is never half shown
-// and is never touched. `render` then `parse` then `render` gives the same
+// file and each missing file, strings in double quotes, and four optional lines
+// after the figure, each only when there is something to say and in this order:
+// `answer_shows_version:` when Claude's words were kept with another version
+// than the one they show, and the Shelf's three, `source_row:` (the history row
+// of the message that showed the figure), `question:` (what the user asked in
+// that exchange) and `answer_at:` (when that message was sent)), in that order,
+// and answers nil for anything else, so a folder it can't read is never half
+// shown and is never touched. `render` then `parse` then `render` gives the same
 // bytes, which `KeptReadmeTests` checks with names in every script.
 //
 // Ownership: the record owns the front matter, the title line, the "Not
@@ -80,6 +83,14 @@ struct KeptRecord: Equatable, Sendable {
     /// Claude's words were kept with another version than the one they show:
     /// that version's number (`answer_shows_version:`, written only then).
     var answerShowsVersion: Int? = nil
+    /// The Shelf's three, each written only when known. The history row of the
+    /// message that showed the figure (`source_row:`), which "Show Where It
+    /// Came From" opens the reference reader at.
+    var sourceRow: Int? = nil
+    /// What the user asked in that exchange (`question:`).
+    var question: String? = nil
+    /// When the message that showed the figure was sent (`answer_at:`).
+    var answerAt: Date? = nil
 }
 
 /// The readable sections.
@@ -102,10 +113,15 @@ enum KeptReadme {
     static let originHeading = "## Where it came from"
     static let missingHeading = "## Not copied"
     static let checksumHeading = "## Checksums"
-    static let legendComment = "<!-- Write the legend here, or in Capsid’s Kept window. -->"
-    static let finePrint = "Capsid changes only the “Your legend” section of this file, and only when you edit it in the Kept window."
-    /// The one optional line of the front matter, right after `figure:`.
+    static let legendComment = "<!-- Write the legend here, or in Capsid’s Shelf window. -->"
+    /// What the comment said while the window was called Kept: read as an empty legend all the same.
+    static let legacyLegendComment = "<!-- Write the legend here, or in Capsid’s Kept window. -->"
+    static let finePrint = "Capsid changes only the “Your legend” section of this file, and only when you edit it in the Shelf window."
+    /// The optional lines of the front matter, right after `figure:`, in this order.
     static let answerShowsKey = "answer_shows_version"
+    static let sourceRowKey = "source_row"
+    static let questionKey = "question"
+    static let answerAtKey = "answer_at"
 
     // MARK: Rendering
 
@@ -121,6 +137,9 @@ enum KeptReadme {
         front.append("session: { id: \(quoted(record.sessionID)), title: \(quoted(record.sessionTitle)) }")
         front.append("figure: \(figureMap(record.figure))")
         if let shown = record.answerShowsVersion { front.append("\(answerShowsKey): \(shown)") }
+        if let row = record.sourceRow { front.append("\(sourceRowKey): \(row)") }
+        if let question = record.question { front.append("\(questionKey): \(quoted(question))") }
+        if let answerAt = record.answerAt { front.append("\(answerAtKey): \(rfc3339(answerAt, timeZone: timeZone))") }
         front += rows("files", record.files.map(fileMap))
         front += rows("missing", record.missing.map(missingMap))
         front.append("claude_science: \(quoted(record.claudeScience))")
@@ -411,7 +430,7 @@ enum KeptReadme {
         func bodyLines(of heading: String) -> [String] { sections.first { $0.heading == heading }?.lines ?? [] }
 
         let legendLines = trimmed(bodyLines(of: legendHeading))
-        let legend = legendLines == [legendComment] ? "" : unblock(legendLines)
+        let legend = legendLines == [legendComment] || legendLines == [legacyLegendComment] ? "" : unblock(legendLines)
 
         var said = trimmed(bodyLines(of: saidHeading))
         var quoted: [String] = []
@@ -524,6 +543,24 @@ enum KeptReadme {
             return .some(number)
         }
 
+        /// An optional `key: "<string>"` line, as `optionalNumber`.
+        func optionalString(_ key: String) -> String?? {
+            guard i < all.count, all[i].hasPrefix("\(key): ") else { return .some(nil) }
+            let raw = String(all[i].dropFirst(key.count + 2))
+            i += 1
+            guard let (text, end) = readQuoted(raw, from: raw.unicodeScalars.startIndex),
+                  end == raw.unicodeScalars.endIndex else { return nil }
+            return .some(text)
+        }
+        /// An optional `key: <time>` line, as `optionalNumber`.
+        func optionalDate(_ key: String) -> Date?? {
+            guard i < all.count, all[i].hasPrefix("\(key): ") else { return .some(nil) }
+            let raw = String(all[i].dropFirst(key.count + 2))
+            i += 1
+            guard let parsed = date(rfc3339: raw) else { return nil }
+            return .some(parsed)
+        }
+
         guard next() == "---", next() == "capsid_kept: 1",
               let name = string("name"),
               let keptAt = value("kept_at").flatMap(date(rfc3339:)),
@@ -533,6 +570,9 @@ enum KeptReadme {
               let figurePath = text(figureValues, "file"),
               let figure = file(figureValues, path: figurePath, role: .figure),
               let answerShows = optionalNumber(answerShowsKey),
+              let sourceRow = optionalNumber(sourceRowKey),
+              let question = optionalString(questionKey),
+              let answerAt = optionalDate(answerAtKey),
               let fileRows = list("files", [Field("path", .string), Field("role", .role)] + fileFields),
               let missingRows = list("missing", [Field("role", .role), Field("name", .string), Field("reason", .string)]),
               let claudeScience = string("claude_science"),
@@ -556,7 +596,7 @@ enum KeptReadme {
         let record = KeptRecord(name: name, keptAt: keptAt, projectID: projectID, projectName: projectName,
                                 sessionID: sessionID, sessionTitle: sessionTitle, figure: figure, files: files,
                                 missing: missing, claudeScience: claudeScience, capsid: capsid,
-                                answerShowsVersion: answerShows)
+                                answerShowsVersion: answerShows, sourceRow: sourceRow, question: question, answerAt: answerAt)
         return (record, i)
     }
 

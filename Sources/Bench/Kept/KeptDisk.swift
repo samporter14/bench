@@ -25,6 +25,11 @@
 // main-actor code, and `KeptDiskCallsTests` fails if any other file of
 // Kept/ makes one.
 //
+// Taking a folder off the shelf is the Trash's job and never a deletion:
+// `trash` moves a kept folder (its README is Capsid's, and it sits where a keep
+// puts one) to the Trash and says where it went, and `restore` puts it back
+// without replacing anything. Nothing here deletes a kept folder.
+//
 // A keep is built in a hidden folder beside the one it becomes
 // (`.<Name>.keeping-<uuid>`), README last, and then renamed into place: a
 // folder either has its README and all its files or isn't there. The rename
@@ -100,6 +105,8 @@ enum KeptDiskError: Error, LocalizedError, Equatable, Sendable {
                     return .denied("Capsid isn't allowed to change the Kept folder.")
                 case CocoaError.fileReadNoPermission.rawValue:
                     return .denied("Capsid isn't allowed to read the Kept folder.")
+                case CocoaError.featureUnsupported.rawValue:
+                    return .failed("This disk has no Trash, so Capsid can't take it off from here. Remove the folder in Finder.")
                 default: break
                 }
             }
@@ -150,6 +157,9 @@ final class KeptDisk {
     private let lookLimit: Duration
     private let wait: @MainActor (Duration) async -> Void
     private let run: (@escaping Work) -> Void
+    /// Moves a folder to the Trash and says where it went; nil is the system's.
+    /// Tests stand in for it, so they never fill the real Trash.
+    private let trasher: (@Sendable (URL) throws -> URL?)?
     private let stuck = StuckCount()
     private var busy = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
@@ -162,12 +172,14 @@ final class KeptDisk {
          limit: @escaping (Int) -> Duration = KeptDisk.limit(forBytes:),
          lookLimit: Duration = .seconds(15),
          wait: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) },
-         run: @escaping (@escaping Work) -> Void = KeptDisk.runOnDisk) {
+         run: @escaping (@escaping Work) -> Void = KeptDisk.runOnDisk,
+         trash: (@Sendable (URL) throws -> URL?)? = nil) {
         self.rootURL = root
         self.limit = limit
         self.lookLimit = lookLimit
         self.wait = wait
         self.run = run
+        self.trasher = trash
     }
 
     /// 15 s, and one more for each MiB: room for a disk to spin up, or a share
@@ -212,6 +224,16 @@ final class KeptDisk {
             try KeptDiskWork.readme(in: folder)
         }
         return (found.markdown, found.record, found.text)
+    }
+
+    /// The first `limit` bytes of a kept text file, as the card's picture of it:
+    /// nil for a file that isn't text (a NUL in it), isn't under the Kept folder,
+    /// or that iCloud has put away (never fetched for a picture).
+    func peek(_ file: URL, limit: Int = 2_000) async throws -> String? {
+        let root = rootURL()
+        return try await perform(.look, allowed: lookLimit) { wanted in
+            KeptDiskWork.peek(file, root: root, limit: limit)
+        }
     }
 
     /// Whether `<root>/<collection>/<name>` is there already: false when the
@@ -292,6 +314,29 @@ final class KeptDisk {
         let last = Data(markdown.utf8)
         return try await perform(.write, allowed: limit(last.count + legend.utf8.count)) { wanted in
             try KeptDiskWork.replaceLegend(in: folder, with: legend, lastRead: last)
+        }
+    }
+
+    // MARK: Taking a folder off the shelf
+
+    /// Moves a kept folder to the Trash and answers where it is there. Only a
+    /// folder a keep made: its README is Capsid's, and it is a result in a
+    /// collection of the Kept folder. Nothing is deleted.
+    func trash(_ folder: URL) async throws -> URL {
+        let root = rootURL()
+        let trasher = self.trasher
+        return try await perform(.write, allowed: limit(0)) { wanted in
+            try KeptDiskWork.trash(folder, root: root, using: trasher)
+        }
+    }
+
+    /// Puts a folder `trash` moved back where it was, or under the dated name
+    /// when that name is taken now; never over a folder that is there. Answers
+    /// where it is.
+    func restore(_ trashed: URL, to folder: URL, at date: Date = Date()) async throws -> URL {
+        let root = rootURL()
+        return try await perform(.write, allowed: limit(0)) { wanted in
+            try KeptDiskWork.restore(trashed, to: folder, root: root, at: date)
         }
     }
 
@@ -718,6 +763,70 @@ private enum KeptDiskWork {
     static func removeTemporary(_ folder: URL) {
         guard KeptName.isTemporary(folder.lastPathComponent), look(folder).isDirectory else { return }
         try? files.removeItem(at: folder)
+    }
+
+    // MARK: A look at a text file
+
+    static func peek(_ file: URL, root: URL, limit: Int) -> String? {
+        guard file.path.hasPrefix(root.path + "/") else { return nil }
+        // A file iCloud has put away isn't read: reading it would bring it back.
+        if let status = (try? file.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]))?.ubiquitousItemDownloadingStatus,
+           status != .current {
+            return nil
+        }
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: limit), !data.isEmpty, !data.contains(0) else { return nil }
+        // Cut at a whole character: a cut in the middle of one is not a reason to refuse.
+        for cut in 0...3 where data.count - cut > 0 {
+            if let text = String(data: data.prefix(data.count - cut), encoding: .utf8) { return text }
+        }
+        return nil
+    }
+
+    // MARK: The Trash
+
+    /// `<root>/<collection>/<name>`: the shape of a result and nothing else.
+    private static func isResult(_ folder: URL, in root: URL) -> Bool {
+        folder.deletingLastPathComponent().deletingLastPathComponent().path == root.path
+            && !KeptName.isTemporary(folder.lastPathComponent)
+    }
+
+    static func trash(_ folder: URL, root: URL, using trasher: (@Sendable (URL) throws -> URL?)?) throws -> URL {
+        guard isResult(folder, in: root), keptReadme(in: folder) != nil else { throw KeptDiskError.failed(notKept) }
+        if let trasher { return try trasher(folder) ?? folder }
+        var landed: NSURL?
+        try files.trashItem(at: folder, resultingItemURL: &landed)
+        return (landed as URL?) ?? folder
+    }
+
+    static func restore(_ trashed: URL, to folder: URL, root: URL, at date: Date) throws -> URL {
+        guard look(trashed).isDirectory, keptReadme(in: trashed) != nil else {
+            throw KeptDiskError.failed("It isn't in the Trash any more.")
+        }
+        guard isResult(folder, in: root) else { throw KeptDiskError.failed(notKept) }
+        let parent = folder.deletingLastPathComponent()
+        let here = look(parent)
+        if here.exists {
+            guard here.isDirectory else { throw KeptDiskError.failed("“\(parent.lastPathComponent)” in the Kept folder isn't a folder.") }
+        } else {
+            switch try rootState(root) {
+            case .missing: throw KeptDiskError.rootMissing
+            case .absent: try makeFolder(root)
+            case .ready: break
+            }
+            try makeFolder(parent)
+        }
+        let base = folder.lastPathComponent
+        let dated = KeptName.isDated(base) ? base : KeptName.dated(base, at: date)
+        var names = [base]
+        if dated != base { names.append(dated) }
+        names += (2...99).map { KeptName.numbered(dated, $0) }
+        for name in names {
+            let target = parent.appending(path: name, directoryHint: .isDirectory)
+            if try moveWithoutReplacing(trashed, to: target) { return target }
+        }
+        throw KeptDiskError.failed("No free name was left for this folder.")
     }
 
     // MARK: Changing READMEs

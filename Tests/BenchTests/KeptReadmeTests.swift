@@ -32,6 +32,17 @@ private func record(name: String = "Fig 2B · Z′ by plate", sessionTitle: Stri
         claudeScience: "0.1.70", capsid: "1.0")
 }
 
+/// A figure put on the shelf: no data, no code, and where it came from.
+private func shelved(row: Int? = 19, question: String? = "Plot Z′ by plate, and show me where plate 7 goes wrong.",
+                     answerAt: Date? = answeredAt) -> KeptRecord {
+    var shelved = record(missing: false)
+    shelved.files = []
+    shelved.sourceRow = row
+    shelved.question = question
+    shelved.answerAt = answerAt
+    return shelved
+}
+
 private func text(legend: String = "") -> KeptText {
     KeptText(legend: legend,
              claudeSaid: "The Z′ by plate is above 0.5 for all four plates.\n\nPlate 3 is the weakest.",
@@ -65,7 +76,7 @@ capsid: "1.0"
 
 ## Your legend
 
-<!-- Write the legend here, or in Capsid’s Kept window. -->
+<!-- Write the legend here, or in Capsid’s Shelf window. -->
 
 ## What Claude said
 
@@ -86,7 +97,7 @@ Version 3 of 4 of z_prime.png, kept on 22 October 2026 at 9:12 AM by Capsid 1.0,
 
 ---
 
-Capsid changes only the “Your legend” section of this file, and only when you edit it in the Kept window.
+Capsid changes only the “Your legend” section of this file, and only when you edit it in the Shelf window.
 
 """
 
@@ -211,6 +222,12 @@ struct KeptReadmeRoundTripTests {
             Case(label: "an answer that shows another version", record: otherVersion, text: text()),
             Case(label: "files that don't match their checksums", record: unmatched, text: text()),
             Case(label: "a file that doesn't match, nothing missing", record: { var r = unmatched; r.missing = []; return r }(), text: text()),
+            Case(label: "shelved: its row, what was asked and when the answer came", record: shelved(), text: text()),
+            Case(label: "shelved: a row only", record: shelved(question: nil, answerAt: nil), text: text()),
+            Case(label: "shelved: a question with quotes, a line break and every script",
+                 record: shelved(row: 0, question: "Plot “Z′” by plate \\ \"all\"\n日本語 العربية Ελληνικά\ttab"), text: text()),
+            Case(label: "shelved, with an answer that shows another version", record: { var r = shelved(); r.answerShowsVersion = 2; return r }(),
+                 text: text()),
         ]
     }
 
@@ -386,6 +403,66 @@ struct KeptReadmeRefusalTests {
             .replacingOccurrences(of: KeptReadme.checksumHeading, with: KeptReadme.missingHeading)
             .replacingOccurrences(of: "## placeholder", with: KeptReadme.checksumHeading)
         #expect(KeptReadme.parse(swapped) == nil)
+    }
+
+    @Test func theShelfsThreeLinesComeRightAfterTheFigureInOrderAndOnlyWhenKnown() throws {
+        let markdown = render(shelved(), text())
+        #expect(markdown.contains("bytes: 86016 }\nsource_row: 19\nquestion: \"Plot Z′ by plate, and show me where plate 7 goes wrong.\"\n"
+            + "answer_at: 2026-10-22T08:12:00-04:00\nfiles: []\n"))
+        let parsed = try #require(KeptReadme.parse(markdown)).record
+        #expect(parsed.sourceRow == 19)
+        #expect(parsed.question == "Plot Z′ by plate, and show me where plate 7 goes wrong.")
+        #expect(parsed.answerAt == answeredAt)
+        // Each is written only when it is known; a keep without them is as it was.
+        #expect(!good.contains("source_row") && !good.contains("\nquestion:") && !good.contains("answer_at"))
+        let rowOnly = render(shelved(question: nil, answerAt: nil), text())
+        #expect(rowOnly.contains("bytes: 86016 }\nsource_row: 19\nfiles: []\n"))
+        #expect(!rowOnly.contains("question:") && !rowOnly.contains("answer_at"))
+        let parsedRow = try #require(KeptReadme.parse(rowOnly)).record
+        #expect(parsedRow.sourceRow == 19 && parsedRow.question == nil && parsedRow.answerAt == nil)
+        // Row 0 is a row.
+        #expect(try #require(KeptReadme.parse(render(shelved(row: 0), text()))).record.sourceRow == 0)
+        // The answer's other version goes first.
+        var both = shelved()
+        both.answerShowsVersion = 2
+        #expect(render(both, text()).contains("bytes: 86016 }\nanswer_shows_version: 2\nsource_row: 19\n"))
+    }
+
+    @Test func theShelfsLinesAreStrictToo() {
+        let markdown = render(shelved(), text())
+        let row = "source_row: 19\n", question = "question: \"Plot Z′ by plate, and show me where plate 7 goes wrong.\"\n"
+        let at = "answer_at: 2026-10-22T08:12:00-04:00\n"
+        #expect(KeptReadme.parse(markdown) != nil)
+        // The row: not a number, signed, empty, padded, quoted.
+        for bad in ["source_row: nineteen\n", "source_row: -19\n", "source_row: \n", "source_row: 19 \n", "source_row: \"19\"\n"] {
+            #expect(KeptReadme.parse(markdown.replacingOccurrences(of: row, with: bad)) == nil, "\(bad)")
+        }
+        // The question: not quoted, an escape the renderer never writes, a quote left open, text after the quote.
+        for bad in ["question: Plot Z′ by plate\n", "question: \"Plot \\q\"\n", "question: \"Plot Z′\n", "question: \"Plot\" and more\n"] {
+            #expect(KeptReadme.parse(markdown.replacingOccurrences(of: question, with: bad)) == nil, "\(bad)")
+        }
+        // The time: not a real date, no offset.
+        for bad in ["answer_at: yesterday\n", "answer_at: 2026-02-30T08:12:00-04:00\n", "answer_at: 2026-10-22T08:12:00\n"] {
+            #expect(KeptReadme.parse(markdown.replacingOccurrences(of: at, with: bad)) == nil, "\(bad)")
+        }
+        // Out of order: the time before the question, the row after the question, any of them after `files:`.
+        #expect(KeptReadme.parse(markdown.replacingOccurrences(of: question + at, with: at + question)) == nil)
+        #expect(KeptReadme.parse(markdown.replacingOccurrences(of: row + question, with: question + row)) == nil)
+        #expect(KeptReadme.parse(markdown.replacingOccurrences(of: row, with: "").replacingOccurrences(of: "files: []\n", with: "files: []\n" + row)) == nil)
+        // Twice.
+        #expect(KeptReadme.parse(markdown.replacingOccurrences(of: row, with: row + row)) == nil)
+    }
+
+    @Test func theLegendCommentOfTheKeptWindowIsStillAnEmptyLegend() throws {
+        let old = render(record(), text()).replacingOccurrences(of: KeptReadme.legendComment, with: KeptReadme.legacyLegendComment)
+        #expect(old.contains("Kept window. -->"))
+        let parsed = try #require(KeptReadme.parse(old))
+        #expect(parsed.text.legend == "")
+        // Writing a legend there and emptying it again brings the new comment.
+        let written = try #require(KeptReadme.replacingLegend(in: old, with: "Plate 3 was re-run."))
+        #expect(!written.contains("Kept window. -->"))
+        let emptied = try #require(KeptReadme.replacingLegend(in: written, with: ""))
+        #expect(emptied.contains(KeptReadme.legendComment) && !emptied.contains(KeptReadme.legacyLegendComment))
     }
 
     @Test func anyOffsetIsRead() throws {

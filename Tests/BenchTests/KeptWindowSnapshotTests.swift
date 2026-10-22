@@ -1,7 +1,9 @@
 // KeptWindowSnapshotTests.swift — not a check: when `CAPSID_SNAPSHOT_DIR`
-// names a folder, draws the Kept window's content (the demo's made-up kept
-// results, in a temporary root) into it as PNGs, light and dark, so it can be
-// looked at without opening a window. Without it the test does nothing. The
+// names a folder, draws the Shelf window's content (the demo's made-up shelf,
+// in a temporary root) into it as PNGs, light and dark, so it can be looked at
+// without opening a window: the board's first row selected, an item kept with
+// data and code, the kinds one by one, a search that finds nothing, the empty
+// shelf, and a shelf that can't be read. Without it the test does nothing. The
 // title bar belongs to the window and is not drawn here.
 import AppKit
 import SwiftUI
@@ -10,27 +12,44 @@ import Testing
 
 @MainActor
 struct KeptWindowSnapshotTests {
-    @Test func theKeptWindowIsDrawnToPNGsWhenAsked() async throws {
-        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
-        let directory = URL(fileURLWithPath: path, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("kept-snapshot-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let disk = KeptDisk(root: { root })
-        await KeptDemo.seed(disk)
-        let index = KeptIndex(disk: disk, root: { root })
-        index.refresh()
-        for _ in 0..<100 where index.results.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
-        let thumbnails = KeptThumbnails()
+    /// The title bar the window draws around the content, as the mock-up has it
+    /// (the toolbar itself belongs to the window): the three dots, "Shelf", the
+    /// project pill and the search pill in a band under a hairline.
+    private struct Window<Content: View>: View {
+        let model: ShelfModel
+        let content: Content
+
+        var body: some View {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    ForEach([Color(red: 0.88, green: 0.38, blue: 0.35), Color(red: 0.91, green: 0.69, blue: 0.29), Color(red: 0.42, green: 0.75, blue: 0.36)], id: \.self) { color in
+                        Circle().fill(color).frame(width: 12, height: 12)
+                    }
+                    Text("Shelf").font(.system(size: 15, weight: .semibold)).foregroundStyle(Solanum.ink).padding(.leading, 8)
+                    ShelfProjectPill(model: model)
+                    Spacer()
+                    ShelfSearchPill(search: .constant(model.search))
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 52)
+                .background(Solanum.bar)
+                .overlay(alignment: .bottom) { Solanum.hairline.frame(height: 1) }
+                content
+            }
+            .background(Solanum.page)
+        }
+    }
+
+    /// Draws a view the size of the window into `name-light.png` and `name-dark.png`.
+    private func draw(_ content: ShelfView, size: NSSize, name: String, to directory: URL, settle: Int = 20) async throws {
+        let view = Window(model: content.model, content: content)
         for dark in [false, true] {
-            let view = KeptView(index: index, thumbnails: thumbnails, quickLook: KeptQuickLook(), initialSelection: nil)
             let host = NSHostingView(rootView: view)
             host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-            let size = NSSize(width: 760, height: 720)
             host.frame = CGRect(origin: .zero, size: size)
             host.layoutSubtreeIfNeeded()
             // Let the selection, the README read and the thumbnails land.
-            for _ in 0..<20 {
+            for _ in 0..<settle {
                 try await Task.sleep(for: .milliseconds(100))
                 host.layoutSubtreeIfNeeded()
             }
@@ -41,7 +60,60 @@ struct KeptWindowSnapshotTests {
             rep.size = size
             host.cacheDisplay(in: host.bounds, to: rep)
             let png = try #require(rep.representation(using: .png, properties: [:]))
-            try png.write(to: directory.appendingPathComponent("kept-window-\(dark ? "dark" : "light").png"))
+            try png.write(to: directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
         }
+    }
+
+    @Test func theShelfWindowIsDrawnToPNGsWhenAsked() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("shelf-snapshot-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let disk = KeptDisk(root: { root })
+        await KeptDemo.seed(disk)
+        let index = KeptIndex(disk: disk, root: { root })
+        let shelf = KeptDemo.shelf(index: index, root: root)
+        index.refresh()
+        for _ in 0..<100 where index.results.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
+        let size = NSSize(width: 880, height: 820)
+
+        // The board's window: the first card selected.
+        let model = ShelfModel(shelf: shelf)
+        try await draw(ShelfView(model: model, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size,
+                       name: "shelf-window", to: directory)
+
+        // The item kept with data and code: its legend and files below.
+        let kept = ShelfModel(shelf: shelf)
+        kept.selection = kept.items.first { $0.hasMore }?.id
+        try await draw(ShelfView(model: kept, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size,
+                       name: "shelf-window-kept", to: directory)
+
+        // A kind, a search with no match, a project.
+        let tables = ShelfModel(shelf: shelf)
+        tables.kind = .table
+        try await draw(ShelfView(model: tables, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size,
+                       name: "shelf-window-tables", to: directory)
+        let none = ShelfModel(shelf: shelf)
+        none.search = "zebrafish"
+        try await draw(ShelfView(model: none, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size,
+                       name: "shelf-window-no-match", to: directory, settle: 3)
+
+        // A small window, the narrowest and shortest the window allows.
+        try await draw(ShelfView(model: model, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: NSSize(width: 620, height: 480),
+                       name: "shelf-window-small", to: directory, settle: 8)
+
+        // Nothing on the shelf yet.
+        let emptyRoot = FileManager.default.temporaryDirectory.appendingPathComponent("shelf-snapshot-empty-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: emptyRoot) }
+        let emptyDisk = KeptDisk(root: { emptyRoot })
+        let emptyIndex = KeptIndex(disk: emptyDisk, root: { emptyRoot })
+        let emptyShelf = KeptDemo.shelf(index: emptyIndex, root: emptyRoot)
+        emptyIndex.refresh()
+        try await Task.sleep(for: .milliseconds(500))
+        try await draw(ShelfView(model: ShelfModel(shelf: emptyShelf), thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size,
+                       name: "shelf-window-empty", to: directory, settle: 3)
     }
 }
