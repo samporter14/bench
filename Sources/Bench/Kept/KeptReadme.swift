@@ -8,7 +8,9 @@
 // The renderer and the parser are a pair, and the parser is strict on purpose.
 // It is not a YAML parser: it reads only the shape the renderer writes (inline
 // maps for the project, the session and the figure, one `- { … }` row for each
-// file and each missing file, strings in double quotes), in that order, and
+// file and each missing file, strings in double quotes, and one optional line,
+// `answer_shows_version:`, after the figure when Claude's words were kept with
+// another version than the one they show), in that order, and
 // answers nil for anything else, so a folder it can't read is never half shown
 // and is never touched. `render` then `parse` then `render` gives the same
 // bytes, which `KeptReadmeTests` checks with names in every script.
@@ -71,6 +73,9 @@ struct KeptRecord: Equatable, Sendable {
     var missing: [KeptMissing]
     var claudeScience: String
     var capsid: String
+    /// Claude's words were kept with another version than the one they show:
+    /// that version's number (`answer_shows_version:`, written only then).
+    var answerShowsVersion: Int? = nil
 }
 
 /// The readable sections.
@@ -94,6 +99,8 @@ enum KeptReadme {
     static let missingHeading = "## Not copied"
     static let legendComment = "<!-- Write the legend here, or in Capsid’s Kept window. -->"
     static let finePrint = "Capsid changes only the “Your legend” section of this file, and only when you edit it in the Kept window."
+    /// The one optional line of the front matter, right after `figure:`.
+    static let answerShowsKey = "answer_shows_version"
 
     // MARK: Rendering
 
@@ -108,6 +115,7 @@ enum KeptReadme {
         front.append("project: { id: \(quoted(record.projectID)), name: \(quoted(record.projectName)) }")
         front.append("session: { id: \(quoted(record.sessionID)), title: \(quoted(record.sessionTitle)) }")
         front.append("figure: \(figureMap(record.figure))")
+        if let shown = record.answerShowsVersion { front.append("\(answerShowsKey): \(shown)") }
         front += rows("files", record.files.map(fileMap))
         front += rows("missing", record.missing.map(missingMap))
         front.append("claude_science: \(quoted(record.claudeScience))")
@@ -474,6 +482,16 @@ enum KeptReadme {
                             index: number(values, "index"), of: number(values, "of"), sha256: text(values, "sha256"),
                             bytes: bytes)
         }
+        /// An optional `key: <digits>` line. Not there: `.some(nil)`, and the
+        /// line is left for the next key. There but not a number: nil.
+        func optionalNumber(_ key: String) -> Int?? {
+            guard i < all.count, all[i].hasPrefix("\(key): ") else { return .some(nil) }
+            let digits = all[i].dropFirst(key.count + 2)
+            i += 1
+            guard !digits.isEmpty, digits.unicodeScalars.allSatisfy({ ("0"..."9").contains($0) }),
+                  let number = Int(digits) else { return nil }
+            return .some(number)
+        }
 
         guard next() == "---", next() == "capsid_kept: 1",
               let name = string("name"),
@@ -483,6 +501,7 @@ enum KeptReadme {
               let figureValues = map("figure", [Field("file", .string)] + fileFields),
               let figurePath = text(figureValues, "file"),
               let figure = file(figureValues, path: figurePath, role: .figure),
+              let answerShows = optionalNumber(answerShowsKey),
               let fileRows = list("files", [Field("path", .string), Field("role", .role)] + fileFields),
               let missingRows = list("missing", [Field("role", .role), Field("name", .string), Field("reason", .string)]),
               let claudeScience = string("claude_science"),
@@ -505,7 +524,8 @@ enum KeptReadme {
         }
         let record = KeptRecord(name: name, keptAt: keptAt, projectID: projectID, projectName: projectName,
                                 sessionID: sessionID, sessionTitle: sessionTitle, figure: figure, files: files,
-                                missing: missing, claudeScience: claudeScience, capsid: capsid)
+                                missing: missing, claudeScience: claudeScience, capsid: capsid,
+                                answerShowsVersion: answerShows)
         return (record, i)
     }
 

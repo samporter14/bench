@@ -192,6 +192,8 @@ struct KeptReadmeRoundTripTests {
         var bare = record(missing: false)
         bare.files = []
         bare.figure = KeptFile(path: "z_prime.png", role: .figure, bytes: 0)
+        var otherVersion = record()
+        otherVersion.answerShowsVersion = 4
         let said = KeptText(legend: "Plate 3 \"re-run\" with the \\ new lot.\n\nSecond paragraph · Z′ > 0.5.",
                             claudeSaid: "He wrote \"Z′ > 0.5\" and a path C:\\plates\n> a quote inside the quote\n\n  indented\n日本語 🧪",
                             attribution: KeptReadme.attribution(answerAt: answeredAt, timeZone: zone, locale: english),
@@ -203,6 +205,7 @@ struct KeptReadmeRoundTripTests {
             Case(label: "nothing missing, nothing else kept", record: bare, text: text()),
             Case(label: "quotes, backslashes, a middle dot and every script", record: odd, text: said),
             Case(label: "no answer found", record: record(), text: KeptText(legend: "", claudeSaid: "", attribution: "", origin: "")),
+            Case(label: "an answer that shows another version", record: otherVersion, text: text()),
         ]
     }
 
@@ -334,6 +337,26 @@ struct KeptReadmeRefusalTests {
         #expect(KeptReadme.parse(good.replacingOccurrences(of: "2026-10-22T09:12:00-04:00", with: "2026-02-30T09:12:00-04:00")) == nil)
         #expect(KeptReadme.parse(good.replacingOccurrences(of: "2026-10-22T09:12:00-04:00", with: "yesterday")) == nil)
         #expect(KeptReadme.parse(good.replacingOccurrences(of: "2026-10-22T09:12:00-04:00", with: "2026-10-22T09:12:00")) == nil)
+    }
+
+    @Test func theAnswersOtherVersionIsOneNumberRightAfterTheFigure() throws {
+        var other = record()
+        other.answerShowsVersion = 4
+        let markdown = render(other, text())
+        #expect(markdown.contains("bytes: 86016 }\nanswer_shows_version: 4\nfiles:\n"))
+        #expect(try #require(KeptReadme.parse(markdown)).record.answerShowsVersion == 4)
+        // Without it, the line isn't there and nothing else moves.
+        #expect(!good.contains("answer_shows_version"))
+        #expect(KeptReadme.parse(good)?.record.answerShowsVersion == nil)
+        let line = "answer_shows_version: 4\n"
+        for bad in ["answer_shows_version: four\n", "answer_shows_version: \"4\"\n", "answer_shows_version: -4\n",
+                    "answer_shows_version: \n", "answer_shows_version: 4 \n"] {
+            #expect(KeptReadme.parse(markdown.replacingOccurrences(of: line, with: bad)) == nil, "\(bad)")
+        }
+        // Anywhere but after the figure is out of order.
+        let moved = markdown.replacingOccurrences(of: line, with: "")
+            .replacingOccurrences(of: "claude_science: ", with: line + "claude_science: ")
+        #expect(KeptReadme.parse(moved) == nil)
     }
 
     @Test func anyOffsetIsRead() throws {

@@ -242,20 +242,20 @@ struct KeepSheet: View {
         switch model.phase {
         case .partial(let outcome):
             Button("Done") { dismiss() }
-                .keyboardShortcut(outcome.missing.isEmpty ? .defaultAction : .cancelAction)
+                .keyboardShortcut(outcome.isComplete ? .defaultAction : .cancelAction)
             Button("Try Again") { model.retry() }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.clay)
                 .keyboardShortcut(.defaultAction)
-        case .failed(_, let retryable):
+        case .failed(_, let retry):
             Button("Cancel") { model.cancel(); dismiss() }
                 .keyboardShortcut(.cancelAction)
-            if retryable {
-                Button("Try Again") { model.keep() }
+            if retry != nil {
+                Button("Try Again") { model.tryAgain() }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.clay)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!model.canKeep)
+                    .disabled(!model.canTryAgain)
             } else {
                 Button("Keep") { model.keep() }
                     .buttonStyle(.borderedProminent)

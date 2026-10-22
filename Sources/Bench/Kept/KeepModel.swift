@@ -2,11 +2,14 @@
 // the reads that fill it (the file's facts, the artifact's versions, the
 // answer that shows one, the chosen version's provenance), the choices, and
 // the keep itself: each file fetched through the shelf's queue, checked
-// against the daemon's checksum, written into a hidden folder beside its
-// destination, the README last, then the folder renamed into place. What
-// couldn't be copied is listed, never guessed, and Try Again copies only
-// that. Every step that touches the page or the disk is a dependency, so the
-// demo and the tests run the whole sheet on made-up data.
+// against the daemon's checksum (bytes that don't match are never written),
+// written into a hidden folder beside its destination, the README last, then
+// the folder renamed into place. What couldn't be copied is listed, never
+// guessed, and Try Again copies only that and then rewrites the README: it
+// isn't done until the README agrees with the folder. A failure before
+// anything landed says what Try Again will do (read again, or keep again).
+// Every step that touches the page or the disk is a dependency, so the demo
+// and the tests run the whole sheet on made-up data.
 import AppKit
 import CryptoKit
 import Foundation
@@ -23,11 +26,20 @@ enum KeepPhase: Equatable, Sendable {
     case keeping(done: Int, total: Int)
     /// Everything copied: the sheet closes.
     case kept(KeepOutcome)
-    /// Some files weren't: the sheet stays with Try Again.
+    /// Some files weren't, or README.md couldn't be updated to list them: the
+    /// sheet stays with Try Again.
     case partial(KeepOutcome)
-    /// Nothing was kept. `retryable` offers Try Again (a read that failed);
-    /// otherwise Cancel, or another version.
-    case failed(String, retryable: Bool)
+    /// Nothing was kept. `retry` says what Try Again does (a read that failed,
+    /// in the loading or in the keeping); nil offers Cancel, or another version.
+    case failed(String, retry: KeepRetry?)
+}
+
+/// What Try Again does after a failure.
+enum KeepRetry: Equatable, Sendable {
+    /// The sheet's first read failed: everything is read again from the start.
+    case load
+    /// The keep failed before anything landed: it runs again with the same choices.
+    case keep
 }
 
 /// Every step of a keep that reaches the page or the disk.
@@ -121,6 +133,9 @@ final class KeepModel: ObservableObject, Identifiable {
     @Published private(set) var readingProvenance = false
     /// After a partial keep: the folder, for Try Again and Show in Finder.
     @Published private(set) var folder: URL?
+    /// Files a Try Again put in the folder that its README doesn't list yet
+    /// (rewriting it failed): the next Try Again adds them.
+    private var unrecorded: [KeptFile] = []
 
     private var openTask: Task<Void, Never>?
     private var chosenTask: Task<Void, Never>?
@@ -149,16 +164,34 @@ final class KeepModel: ObservableObject, Identifiable {
 
     var versionSentence: String { KeepRules.versionSentence(tiles: tiles, chosen: choices.version, showing: sources.showing) }
 
+    /// The rows for the chosen version, as the sources stand.
+    private func currentRows() -> [KeepRow] { KeepRules.rows(sources: sources, chosen: choices.version) }
+
     var destinationSentence: String {
         KeepRules.destinationSentence(root: root, collection: choices.collection, folderName: folderName, plan: plan,
                                       nameTaken: nameTaken, requested: KeptName.sanitized(choices.name))
     }
 
     /// Keep is on when a version is chosen and read, the name isn't empty,
-    /// and nothing is under way.
+    /// and nothing is under way. After a failure Try Again can't help with
+    /// (the version went, the folder refused), Keep is on again for another
+    /// version or another go.
     var canKeep: Bool {
-        guard case .ready = phase, plan != nil, !readingProvenance else { return false }
+        switch phase {
+        case .ready, .failed(_, retry: nil): break
+        default: return false
+        }
+        guard plan != nil, !readingProvenance, keepTask == nil else { return false }
         return !choices.name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Try Again after a failure: the reads from the start, or the keep again.
+    var canTryAgain: Bool {
+        guard case .failed(_, let retry?) = phase else { return false }
+        switch retry {
+        case .load: return true
+        case .keep: return plan != nil && keepTask == nil
+        }
     }
 
     // MARK: Reading
@@ -179,18 +212,18 @@ final class KeepModel: ObservableObject, Identifiable {
         case .answered(.facts(let facts)):
             sources.facts = facts
         case .answered(.missing):
-            phase = .failed(ShelfFailure.missing.sentence, retryable: false)
+            phase = .failed(ShelfFailure.missing.sentence, retry: nil)
             return
         case .answered(.cancelled), .cancelled:
             return
         case .answered(let other):
-            phase = .failed(ShelfFailure(other).sentence, retryable: true)
+            phase = .failed(ShelfFailure(other).sentence, retry: .load)
             return
         case .timedOut:
-            phase = .failed(ShelfFailure.timedOut.sentence, retryable: true)
+            phase = .failed(ShelfFailure.timedOut.sentence, retry: .load)
             return
         case .notReady:
-            phase = .failed(ShelfFailure.notReady.sentence, retryable: true)
+            phase = .failed(ShelfFailure.notReady.sentence, retry: .load)
             return
         }
         if Task.isCancelled { return }
@@ -217,13 +250,20 @@ final class KeepModel: ObservableObject, Identifiable {
         }
         if Task.isCancelled { return }
         wantThumbnails()
-        // 3. The answer that shows one of them, else the last answer.
-        let ids = sources.versions.map(\.v)
-        let near = sources.versions.compactMap(\.at).min()
-        if case .found(let message) = await dependencies.showing(subject.session.id, ids, near) {
-            sources.showing = message
-        } else if !Task.isCancelled {
-            sources.lastAnswer = await dependencies.lastAnswer(subject.session.id)
+        // 3. The answer that shows one of them: the one Keep… was pressed in
+        // when the caller knows it (never searched for: a newer answer may show
+        // another version), else the one found, else the last answer.
+        if let pinned = subject.pinned {
+            // `i` is the message's row in the history, which this answer wasn't read from.
+            sources.showing = ShowingMessage(i: -1, at: pinned.at, text: pinned.text, how: .image, v: entry.version)
+        } else {
+            let ids = sources.versions.map(\.v)
+            let near = sources.versions.compactMap(\.at).min()
+            if case .found(let message) = await dependencies.showing(subject.session.id, ids, near) {
+                sources.showing = message
+            } else if !Task.isCancelled {
+                sources.lastAnswer = await dependencies.lastAnswer(subject.session.id)
+            }
         }
         if Task.isCancelled { return }
         tiles = KeepRules.tiles(versions: sources.versions, showing: sources.showing, gone: sources.gone)
@@ -231,9 +271,31 @@ final class KeepModel: ObservableObject, Identifiable {
         collections = (try? await dependencies.disk.listCollections()) ?? []
         if Task.isCancelled { return }
         phase = .ready
-        // 5. The chosen version: its provenance.
+        // 5. The chosen version: its provenance. A pinned answer shows the
+        // subject's own version, so that one is preselected.
         choose(KeepRules.preselect(versions: sources.versions, showing: sources.showing))
         checkName()
+    }
+
+    /// Try Again after a failure: a failed first read reads everything again
+    /// from the start; a failed keep (nothing landed) keeps again with the
+    /// same choices.
+    func tryAgain() {
+        guard canTryAgain, case .failed(_, let retry?) = phase else { return }
+        switch retry {
+        case .load:
+            openTask?.cancel()
+            openTask = nil
+            chosenTask?.cancel()
+            sources = KeepSources()
+            tiles = []
+            rows = []
+            phase = .reading
+            open()
+        case .keep:
+            phase = .ready
+            keep()
+        }
     }
 
     /// The tiles' pictures, through the shelf's store, newest first.
@@ -262,7 +324,10 @@ final class KeepModel: ObservableObject, Identifiable {
         sources.lineageFailed = false
         sources.chosenFacts = nil
         sources.inputFacts = [:]
-        rows = KeepRules.rows(sources: sources)
+        rows = currentRows()
+        // The answer's row doesn't wait for the provenance: off for a version
+        // the answer doesn't show, on again for the one it does.
+        if let answer = rows.first(where: { $0.kind == .answer }) { choices.withAnswer = answer.onByDefault }
         guard let version else { return }
         readingProvenance = true
         chosenTask = Task { [weak self] in
@@ -281,7 +346,7 @@ final class KeepModel: ObservableObject, Identifiable {
         }
         if Task.isCancelled { return }
         if KeepRules.isUpload(sources) {
-            rows = KeepRules.rows(sources: sources)
+            rows = currentRows()
             return
         }
         switch await dependencies.read(.lineage(version: version)) {
@@ -293,7 +358,7 @@ final class KeepModel: ObservableObject, Identifiable {
             sources.lineageFailed = true
         }
         if Task.isCancelled { return }
-        rows = KeepRules.rows(sources: sources)
+        rows = currentRows()
         applyRowDefaults()
         // Each copyable input's name and size, a few at a time.
         if let lineage = sources.lineage {
@@ -304,7 +369,7 @@ final class KeepModel: ObservableObject, Identifiable {
                 }
                 if Task.isCancelled { return }
             }
-            rows = KeepRules.rows(sources: sources)
+            rows = currentRows()
         }
         // The provenance's mapping may still be pending: once more in a while.
         if sources.lineage?.pending == true || sources.lineage?.mappingStatus == "pending" {
@@ -314,7 +379,7 @@ final class KeepModel: ObservableObject, Identifiable {
                 if Task.isCancelled { return }
                 guard case .answered(.lineage(let again)) = await dependencies.read(.lineage(version: version)) else { return }
                 sources.lineage = again
-                rows = KeepRules.rows(sources: sources)
+                rows = currentRows()
                 if !again.pending, again.mappingStatus != "pending" { return }
             }
         }
@@ -405,11 +470,12 @@ final class KeepModel: ObservableObject, Identifiable {
     private func perform(_ plan: KeepPlan) async {
         let d = dependencies
         let keptAt = d.now()
+        unrecorded = []
         let destination: KeptDestination
         do {
             destination = try await d.disk.prepare(collection: choices.collection, name: KeptName.sanitized(choices.name), at: keptAt)
         } catch {
-            phase = .failed(KeptDiskError.sentence(error), retryable: false)
+            phase = .failed(KeptDiskError.sentence(error), retry: nil)
             return
         }
         var copied: [KeptFile] = []
@@ -431,15 +497,22 @@ final class KeepModel: ObservableObject, Identifiable {
                 tiles = KeepRules.tiles(versions: sources.versions, showing: sources.showing, gone: sources.gone)
                 let n = tiles.first { $0.v == item.version }?.n ?? 0
                 phase = .failed("Version \(n) isn\u{2019}t in Claude Science any more, so nothing was kept. Choose another version, or Cancel.",
-                                retryable: false)
+                                retry: nil)
                 return
             case .gone:
                 missing.append(KeptMissing(role: item.role, name: item.name, reason: ShelfFailure.missing.sentence))
             case .tooBig:
                 missing.append(KeptMissing(role: item.role, name: item.name, reason: "too big to keep here (over 8 MB)"))
+            case .mismatched where item.role == .figure:
+                // Not this version's bytes: nothing is kept, and none of them are written.
+                await d.disk.abandon(destination)
+                phase = .failed(KeepRules.figureChecksumSentence, retry: .keep)
+                return
+            case .mismatched:
+                missing.append(KeptMissing(role: item.role, name: item.name, reason: KeepRules.checksumReason))
             case .failed(let sentence) where item.role == .figure:
                 await d.disk.abandon(destination)
-                phase = .failed(sentence, retryable: true)
+                phase = .failed(sentence, retry: .keep)
                 return
             case .failed(let sentence):
                 missing.append(KeptMissing(role: item.role, name: item.name, reason: sentence))
@@ -459,7 +532,7 @@ final class KeepModel: ObservableObject, Identifiable {
             folder = try await d.disk.finish(destination, readme: KeptReadme.render(record, text: text))
         } catch {
             await d.disk.abandon(destination)
-            phase = .failed(KeptDiskError.sentence(error), retryable: false)
+            phase = .failed(KeptDiskError.sentence(error), retry: nil)
             return
         }
         self.folder = folder
@@ -472,30 +545,33 @@ final class KeepModel: ObservableObject, Identifiable {
     }
 
     /// Try Again after a partial keep: only what is missing, into the folder
-    /// that exists, and the README rewritten.
+    /// that exists, and the README rewritten; when nothing is missing but the
+    /// README couldn't be rewritten last time, only that.
     func retry() {
         guard case .partial(let outcome) = phase, let plan, let folder, keepTask == nil else { return }
         let wanted = plan.files.filter { item in outcome.missing.contains { $0.name == item.name && $0.role == item.role } }
-        guard !wanted.isEmpty else { return }
+        guard !wanted.isEmpty || outcome.recordFailed != nil else { return }
         phase = .keeping(done: outcome.kept, total: outcome.total)
         keepTask = Task { [weak self] in
-            await self?.performRetry(plan: plan, folder: folder, outcome: outcome, wanted: wanted)
+            await self?.performRetry(folder: folder, outcome: outcome, wanted: wanted)
             self?.keepTask = nil
         }
     }
 
-    private func performRetry(plan: KeepPlan, folder: URL, outcome: KeepOutcome, wanted: [KeepItem]) async {
+    /// The copies, then the README: a retry isn't over until README.md lists
+    /// what is in the folder. Cancel stops the copies, not the README.
+    private func performRetry(folder: URL, outcome: KeepOutcome, wanted: [KeepItem]) async {
         let d = dependencies
         var missing = outcome.missing
-        var copied: [KeptFile] = []
+        var landed = unrecorded
         var kept = outcome.kept
-        for item in wanted {
-            if Task.isCancelled { phase = .partial(outcome); return }
+        copying: for item in wanted {
+            if Task.isCancelled { break }
             switch await fetch(item) {
             case .bytes(let data):
                 do {
                     try await d.disk.writeInto(folder, data, relativePath: item.relativePath)
-                    copied.append(KeptFile(path: item.relativePath, role: item.role, artifact: item.artifact, version: item.version,
+                    landed.append(KeptFile(path: item.relativePath, role: item.role, artifact: item.artifact, version: item.version,
                                            index: nil, of: nil, sha256: d.disk.sha256(of: data), bytes: data.count))
                     missing.removeAll { $0.name == item.name && $0.role == item.role }
                     kept += 1
@@ -505,24 +581,42 @@ final class KeepModel: ObservableObject, Identifiable {
                 }
             case .gone: replaceReason(&missing, item, ShelfFailure.missing.sentence)
             case .tooBig: replaceReason(&missing, item, "too big to keep here (over 8 MB)")
+            case .mismatched: replaceReason(&missing, item, KeepRules.checksumReason)
             case .failed(let sentence): replaceReason(&missing, item, sentence)
-            case .cancelled:
-                phase = .partial(outcome)
-                return
+            case .cancelled: break copying
             }
         }
-        // The README, with what is there now.
-        if let read = try? await d.disk.readme(at: folder) {
-            var record = read.record
-            record.files += copied
-            record.missing = missing
-            let markdown = KeptReadme.render(record, text: read.text)
-            try? await d.disk.replaceReadme(at: folder, markdown: markdown)
-        }
+        // The README, with what is there now, even after a Cancel.
+        let recordFailed = await rewriteReadme(at: folder, adding: landed, missing: missing)
+        unrecorded = recordFailed == nil ? [] : landed
         let result = KeepOutcome(folder: folder, collection: outcome.collection, folderName: outcome.folderName,
-                                 kept: kept, total: outcome.total, missing: missing)
+                                 kept: kept, total: outcome.total, missing: missing, recordFailed: recordFailed)
+        if let recordFailed { log.error("A kept folder's README couldn't be updated: \(recordFailed, privacy: .public)") }
         d.didKeep(result)
         phase = result.isComplete ? .kept(result) : .partial(result)
+    }
+
+    /// README.md read and written again with `landed` added to its files and
+    /// `missing` as its missing list. Nil when it was; else why not, in a
+    /// sentence. It runs as a task of its own: the disk makes no look for a
+    /// task that was cancelled, and a Cancel that stopped the copies must
+    /// still leave a README that agrees with the folder.
+    private func rewriteReadme(at folder: URL, adding landed: [KeptFile], missing: [KeptMissing]) async -> String? {
+        let disk = dependencies.disk
+        let rewrite = Task { @MainActor () -> String? in
+            do {
+                let read = try await disk.readme(at: folder)
+                var record = read.record
+                let listed = Set(record.files.map(\.path))
+                record.files += landed.filter { !listed.contains($0.path) }
+                record.missing = missing
+                try await disk.replaceReadme(at: folder, markdown: KeptReadme.render(record, text: read.text))
+                return nil
+            } catch {
+                return KeptDiskError.sentence(error)
+            }
+        }
+        return await rewrite.value
     }
 
     private func replaceReason(_ missing: inout [KeptMissing], _ item: KeepItem, _ reason: String) {
@@ -531,12 +625,14 @@ final class KeepModel: ObservableObject, Identifiable {
     }
 
     private enum Fetched {
-        case bytes(Data), gone, tooBig, failed(String), cancelled
+        /// `mismatched`: the bytes aren't the ones the daemon's checksum is for.
+        case bytes(Data), gone, tooBig, mismatched, failed(String), cancelled
     }
 
     /// A file's bytes: the script from the text it is, the rest through the
     /// shelf's queue and the 8 MB cap, checked against the daemon's checksum
-    /// when it has one.
+    /// when it has one. A version's bytes never change, so bytes that don't
+    /// match aren't that version's and are never written.
     private func fetch(_ item: KeepItem) async -> Fetched {
         switch item.source {
         case .text(let text):
@@ -546,8 +642,9 @@ final class KeepModel: ObservableObject, Identifiable {
             switch await dependencies.read(.download(version: version)) {
             case .answered(.bytes(let data)):
                 guard case .success(let bytes) = ArtifactGate.downloadBytes(data) else { return .tooBig }
-                if let sha = item.sha, sha != dependencies.disk.sha256(of: bytes) {
-                    log.error("A kept file's bytes don't match the daemon's checksum")
+                if let sha = item.sha, sha.lowercased() != dependencies.disk.sha256(of: bytes) {
+                    log.error("A kept file's bytes don't match the daemon's checksum: not kept")
+                    return .mismatched
                 }
                 return .bytes(bytes)
             case .answered(.tooBig): return .tooBig
