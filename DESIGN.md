@@ -4807,3 +4807,320 @@ same code.
   writes do.
 - **Not here**: the phone's history shows the attachment line as text until
   Phase 3's history projection learns to strip it (a "Photo" chip).
+
+## 1.0 spikes (2026-10-22, read-only)
+
+Five research spikes for Capsid 1.0, run before any 1.0 code, against Claude
+Science **0.1.70** (`BUILD.json`: release, public, darwin-arm64, built
+2026-10-22; the only runtime on disk). Evidence came from the shipped static
+files only: the web bundle (`~/.claude-science/runtime/0.1.70-release/web-dist`),
+the drizzle migrations beside it, `strings` of the `claude-science` binary (a
+Bun binary that embeds the daemon's own JavaScript, so its route handlers are
+readable), the public docs, and Capsid's code. No database was opened, no
+auth-shaped file was read, no call went to the daemon, nothing was built or
+launched. The full write-ups, with byte offsets for every finding, were handed
+to Sam beside the 1.0 handoff; this section keeps the decisions, the reads each
+feature would add, and what only a live check can settle. Capsid's inventory
+still says it was last walked against Claude Science 0.1.63; nothing in the
+0.1.63 → 0.1.70 changelog touches the paths below, but that is an inference.
+
+### Baseline corrections
+
+- The handoff said 0.1.69; the Mac runs 0.1.70, and the launcher at
+  `/Applications/Claude Science.app` is still the browser-tab one
+  (`com.anthropic.operon`, 0.1.70). It ships its own copy of the CLI at
+  `Contents/Resources/bin/claude-science`, byte-identical to
+  `~/.claude-science/bin/claude-science`.
+- The checkout was one commit past the handoff's baseline (the 0.9.7 TESTING
+  note), clean, with every branch merged and no worktree. The handoff's file
+  map matches the code.
+
+### S1. Companion mode: can Capsid read and act beside Claude Science's own window?
+
+**Probably yes.** Nothing in 0.1.70 enforces "one tab at a time". The page's
+only `BroadcastChannel` (`operon-notif-suppression`) and its `storage`
+listeners exist to keep several tabs in step; its WebSocket client reconnects
+on any close and has no "you were replaced" path; the daemon keeps one bearer
+and one CSRF secret per boot, shared by every client, and its WebSocket
+registry evicts nothing. The belief came from the CLI's banner, which says a
+sign-in link "logs one browser tab in, then expires": that is the single-use
+nonce, not a tab lock. Principle 4 and the README have repeated the sentence
+since the first commit with no source; a two-minute live check (a Safari tab on
+the daemon's address beside Capsid's window) settles it.
+
+In own-window mode the daemon is the same program, started by the app as a
+child (`serve --stdio`, usually with `--adopt-install`; `status` then reports
+`daemon.launch_context: app-child` and `daemon.boot: serving`). It still binds
+`127.0.0.1:<port>` (the "dual-access" port when asked for, else an ephemeral
+one), still serves the web UI and `/api` to any cookie-authenticated localhost
+client, still writes the lockfile `status` reads, and the data folder stays
+`~/.claude-science` (the move writes a `pre-app/` backup; only window
+settings, logs and page storage go to `~/Library/Application Support/Claude
+Science`). The official window never uses the cookie: it sends a bearer header
+or goes through the shell's bridge port, both exempt from CSRF, so a second
+cookie-signed client doesn't disturb it.
+
+A hidden `WKWebView` on the default data store can therefore load a daemon
+document that is not the app (`/health`, auth-exempt JSON) and make every read
+and write Capsid makes today from its script world, with the same CSRF dance.
+Sign-in without the bundle: load `/api/me?nonce=<code>`, which answers the
+daemon's own small page with one "Sign in" button (the text `SignInScript`
+already matches) and ends on JSON. Two things only a live test can settle:
+whether every own-window launch uses the staged boot (a plain `--stdio` boot
+starts no control socket, so `claude-science url` gives no code, and with
+`require_token` forced on Capsid cannot sign in at all), and which port the
+daemon gets (either works, since `status` reports it).
+
+The switch itself is gated twice: by the remote flag `operon_mac_app_move`,
+and by a trigger that runs only at the first boot after an in-app "Restart to
+update" (`--app` with `--_restart-parent-pid`), with no session running and the
+launcher owned by the account. Sam's daemon runs with `--app` alone, so the
+check has never run here; no switch traces exist. The launcher already holds
+the own-window logic and honours `OPERON_NO_WINDOW` (undocumented; noted, not
+recommended).
+
+Nothing on disk can send the official window to a session: the launcher
+declares no URL scheme, no AppleScript, and the CLI opens the app only with
+`open -g <path>`. The web route for a session is
+`/projects/<project>/frames/<frame>`; after the switch, check the new app's
+`Info.plist` and shell binary for URL handling before giving up on deep links.
+
+**Decisions for the code that follows (M2, M9):**
+
+- Never run `serve` when the installed app is `com.anthropic.claudescience` or
+  `status` says `app-child`: the app adopts a running daemon (exit 73) and would
+  be pinned to whatever version `~/.local/bin` holds.
+- Read `daemon.launch_context`, `daemon.boot`, `daemon.url_host` and
+  `daemon.require_token` from `status` (`parseCLIStatus` ignores them today),
+  and drop its 8765 default for a missing port, which is wrong for an
+  ephemeral one. Honour `url_host` in `WebContainer.canonical()`, which forces
+  `localhost` and can reach another program when the daemon moved to
+  `127.0.0.1`.
+- Prefer the app's `Contents/Resources/bin/claude-science` over `~/.local/bin`
+  once the own-window app is installed: inside a bundle the CLI stops
+  maintaining that link.
+- A page hook for the handover dialog (`[data-testid="restarting-dialog"]`,
+  "Claude Science now opens in its own window"): when it shows, stop the
+  reconnect retries and switch to companion mode.
+- Fallback if the live test finds no sign-in code: the read-only companion.
+  Everything from the database keeps working (panel, cards with their reasons,
+  badge, Mac notifications, Next Waiting, Activity, Quick Open, the phone's
+  state and browse); the usage readout, context ring, plan preview, every write
+  and the phone's history and files stop, and every action becomes "Open in
+  Claude Science" (activate the app in the background; no deep link until one
+  exists).
+- Doubled notifications: the official window's suppression can't see Capsid,
+  so a finish may notify twice. Decide who owns them in the live test.
+- The hidden view needs its own navigation delegate (Capsid's response policy
+  turns JSON it can't show into a download) and its own 401 recovery
+  (`sessionLost()` presses a button on the main page, which the hidden
+  document doesn't have).
+
+### S2. Keep: versions, provenance, the text behind a figure
+
+**The one thing to know first.** `GET /api/frames/<root>/artifacts`, the list
+Results and the phone read, returns one row per artifact, and that row is the
+artifact's **latest version project-wide**, which another session may have
+made. Keep must never take "the version" from that list. The daemon's own zip
+of a conversation swaps in "the version this conversation contributed" for the
+same reason.
+
+What Keep can get, each through a GET the page already makes for itself:
+
+| Want | Read | Notes |
+|---|---|---|
+| Every version of an artifact | `GET /api/artifacts/<artifact>/versions` | a bare array, oldest first: `version_id`, `version_number`, `frame_id` (the frame that saved it; null for a copy or a user edit), `content_type`, `size_bytes`, `created_at`, `parent_version_id`, and `file_path`, an absolute path the page must drop. No name, no checksum. The page's version stepper and its "compare against" use it. |
+| A version's facts | `GET /api/artifacts/versions/<v>?include_metadata=true` | `version_id` (must equal the one asked for: an artifact id in that slot quietly serves the latest version), `artifact_id`, `version_number`, `filename`, `content_type`, `size_bytes`, `created_at`, `checksum` (sha256 hex of the bytes, or null), `is_user_upload`, `reproduction_code`, `environment`. No side effect. |
+| The bytes | `GET /api/artifacts/versions/<v>` (allowed today) | honest `Content-Length`, `Accept-Ranges: bytes`, one Range at a time (206/416), so a streamed-to-disk path past 8 MB is possible later. Swift checks sha256 against the checksum. |
+| The data it was drawn from | `GET /api/artifacts/versions/<v>/lineage?slim=1` | `dependency_mappings.inputs[]` as `{filename?, artifact_id?, version_id?, workspace_path?, consensus?}`; `mapping_status` can be `pending`; `consensus: ast_only` is what the page shows dimmed as "inferred". Inputs with no ids (workspace files, refused reads) can't be fetched. **Reading it can start the daemon's own code reconstruction** (a model call, a database write, a `lineage_ready` broadcast) when the version has none yet, so it is `whenUsed`, never a Diagnostics probe, asked once per Keep and polled at most 6 × 5 s as the page does. Under `slim=1` the `messages`, `environment_snapshot` and `interactions` fields are null; refuse a body where they aren't. |
+| The script | the same lineage read's `code`, or the facts read's `reproduction_code` | it is the page's "Claude-generated reconstruction", not the code that ran (the cells as run are `GET /api/frames/<f>/execution-log?versionId=<v>`, with stdout and stderr). It holds `{{artifact:<vid>}}` tokens that Keep must rewrite to the names of the inputs it saved, as the daemon's script bundle does. |
+| The answer that showed it | `GET /api/frames/<root>/messages?from=<n>&limit=<≤50>` (the phone's allowlisted read) | an assistant row's `_artifact_refs` maps each file name its text shows **or merely names** to `{artifact_id, version_id}` as it stood when the message was written; `_ts` (milliseconds; may be missing). Match "shown" against the text's `![…](…)` sources, `{{artifact:<vid>}}` or `?v=<vid>`; a plain mention is the last resort; the save step (a `save_artifacts` or run tool result listing the version) is the fallback, as the page's own "View in context" uses. No daemon lookup from a version to a message exists, so Keep scans pages, seeded at the page whose `_ts` brackets the version's `created_at` (messages are stamped monotonically), at most six pages. |
+| The daemon's own packs | `GET /api/artifacts/<v>/script-bundle` (script, inputs, environment.yml, run.sh) and `GET /api/frames/<f>/bundle?scope=sliced&versionId=<v>` (notebooks and every output of the frames involved) | streamed zips with no `Content-Length`; the sliced bundle can be large. Not for Keep's first cut. |
+
+An allowlist finding to fix regardless: `WebContainer.readablePrefixes` lets
+`apiGET` read anything under `/artifacts/versions/`, which today includes
+unslimmed lineage (with its conversation snapshot), `/verification` and
+`/annotations`, straight into Swift. Narrow it to exactly the plan-file read
+it exists for, and give Keep typed, projected shapes in `ArtifactReader`.
+
+The list projection should gain `version_number`, `checksum` and a
+`ref` flag (`ref_host_path` set: a reference to a file on this Mac, served as
+it is now, with no immutable cache and possibly no checksum), keeping the path
+in the page. Ids are UUIDs (`text(36)`); the new shapes take `[0-9a-f-]{36}`,
+which also keeps `/api/artifacts/<id>/…` from ever matching
+`/api/artifacts/versions/…`.
+
+Proposed `CompatInventory` entries (feature `keep`): the versions and facts
+reads as `.live` probes on the shown session's plan artifact (both are pure
+reads), lineage and the script bundle as `whenUsed`, and `_artifact_refs` on
+the messages read as `whenUsed` ("it is what was said"). Bump `checkedWith` to
+0.1.70 once the whole inventory has been walked against this bundle.
+
+What the sheet says when something is missing, reusing the page's own
+sentences where it has them: the version gone (404/410): "This version isn't
+in Claude Science any more."; a reference file whose bytes no longer match
+its checksum: kept as it is now, with a warning; no showing message found:
+"Capsid couldn't find the answer that showed this version. The figure and its
+provenance can still be kept."; a user upload: no data or script rows; mapping
+`pending`: "Claude Science is still working out what this was drawn from. Try
+again in a minute."; inputs empty and complete: "Claude Science recorded no
+input files for this version."; only `ast_only` inputs: offered off by
+default, tagged "inferred"; an input without ids: listed, not copyable; no
+code: the page's own "No reproduction code…" sentences. A version that isn't
+the latest: "Keeping version n of m, the one this answer showed. A newer
+version exists."
+
+### S3. Plan progress ("Step 3 of 7 · Normalize counts")
+
+**Go, narrowly: show "Step n of m" with the page's own arithmetic; add the
+title only when it is unambiguous; show nothing otherwise.** The plan file is
+JSON (`phases[] → delegations[] → steps[{title, description}]`, plus
+`task_summary` and `feasibility`); steps have no ids and are keyed by exact
+title, made unique only when the plan is first generated. Progress is the
+model's own `update_step_status` calls, written as
+`context_data._step_statuses[title] = {status, updated_at, notes?}` on the
+frame that did the work: the root for its own steps, a child frame per
+delegated track (its `_plan_claims` lists the titles it owns and the plan
+version). Child statuses are never copied to the root. The page shows exactly
+this: a chip "Plan — step N of M", where `done` counts `completed` or
+`skipped` and N is `min(done + 1, total)`, merged from the root plus its direct
+children's claims for the current version, only when the plan is approved and
+has `phases`; and per-step icons in the plan tab. The daemon blocks a turn
+from ending while steps are unmarked, but gives up after three denials, so
+statuses can lag or be missing mid-run: the page then says "step 1" forever.
+Capsid's guard: nothing until at least one status exists.
+
+Reads: the shallow root read the card already makes carries the root's
+statuses, but a delegated plan needs the children, which the page's own lean
+tree gives in one read, `GET /api/frames/<root>/trace-shallow?include_messages=false`
+(already allowlisted for the phone's permission queue, but not for `apiGET`,
+which needs one new exact shape). The root in that tree is "fat" and carries
+`_plan_json` with every step's description, and each child's claims repeat
+their descriptions, so the projection must run in the page and return only the
+status words, the counts and one title; the database poll can't supply this
+(`context_data` may live in `frame_blobs`, and SQLite has no cap on what a
+query extracts). Rate: only running sessions on screen, at least 15 s apart per
+session, one in flight, plus one read when a plan leaves awaiting-approval.
+Title rule: exactly one step `in_progress`, unique in the plan, at plan-order
+index n. Flip to omit if the live checks find `in_progress` reported rarely or
+late, or the tree read too heavy. A zero-API fallback for the shown session
+only: the chip's text (`data-testid="plan-status-chip"`) read as the tab strip
+is.
+
+### S4. Reviewer findings and mid-run messages
+
+**Reviewer findings: readable with one new route.** They are rows of a
+dedicated `verification_checks` table (`verdict` pass|warn|fail|inconclusive,
+`status` open|claimed|resolved|unaddressed, `rebuttal`, `reflag_count`,
+`source_ref` naming the message by index), served by
+`GET /api/frames/<root>/verification`; no existing read carries them. Reviewer
+runs are child frames with `agent_name` REVIEWER or AUDITOR, hidden, so the
+helper count is unaffected. Count the way the page does: a finding is `fail`
+or `warn`; it stands while `open`, `claimed` or `unaddressed` and not withdrawn
+(`unaddressed` with a rebuttal and `reflag_count` under 4). At turn end open
+findings become `unaddressed`, so counting only `open` shows 0. `severity` is
+declared and never rendered: not for a card. The page shows findings only
+inside the transcript and on an artifact's Review tab, never in the session
+list, so a "Reviewer: 2 findings" line on the Finished card surfaces what the
+page shows, at a level it doesn't. Recommended read: the route projected in
+the page to counts only (`{standing, fixed, running, reviews}`), gated like the
+failure reason by "Show plans, questions and requests on the card"; a SQL
+alternative over the table exists but re-derives the rule. Whether findings
+land before `completed` is written needs the live check. The `[Auditor]`
+notice row in transcripts is already hidden by Capsid's projections.
+
+**Mid-run notes never reach the notification bridge.** The page has one
+`new Notification(`, fired for five session statuses only. A note is a
+`send_user_message` tool call in the root's transcript (shown by the page as
+"Message to you"); the field `SessionReader` reads for the phone's `toYou`,
+`context_data._sent_user_messages`, is written **only for sub-agent frames**
+(both write sites guard on non-root), so on 0.1.70 the phone's root "Messages
+to you" is empty by construction. The working path is `HistoryReader`, which
+already projects the tool call. A metadata-only wake-up is possible in SQLite
+(a presence test over new `frame_messages` rows, never text); the text comes
+from one allowlisted `/messages?from=-12&limit=12` page, projected in the
+page, behind the same card setting. The changelog's "progress notes" (0.1.49)
+are derived from thinking blocks and stay out.
+
+### S5. What reading another session costs the live page
+
+A history page today is 50 rows: one GET for an earlier page, two sequential
+GETs for the newest (a 12-row tail, then up to 38 before it), one synchronous
+`JSON.parse` of the raw rows (tool results, thinking and all) and one
+projection pass on the **WebContent main thread**, the composer's thread; at
+most 60 items and 64 KB come back. Nothing yields, nothing pauses while the
+user types, nothing watches the DOM. History, turn, session and live reads
+have deadlines (15 s; 8 s for session and live, which DESIGN.md's phone
+section mis-states as 15) but no byte cap and no abort once inside the page;
+only `apiGET` and the artifact reader have those. Every limit today is per
+phone device or per session, so a Mac-side reader bypasses all of it.
+
+Nothing is logged about read time or size (the route line is `info`, not
+persisted), so no live number exists. A synthetic run of Capsid's own
+projection strings under the OS's JavaScriptCore (made-up pages, an Apple M4)
+gives a floor: a typical 50-row page blocks about 1 ms warm, 3 ms cold; a 7 MB
+page 5 to 8 ms; the one bad shape, a text-heavy page over the 64 KB output cap,
+10 to 18 ms (42 ms cold max), because the trim loop re-stringifies and
+re-counts the whole remainder for every row it drops. A scratch copy that
+counts each row once gave identical output and about 3.5 ms. The only in-repo
+calibration (8 MB of base64 "held it ~50 ms") suggests the live page runs
+about 2.5× slower than bare JavaScriptCore; that is one unreplicated figure.
+
+Proposed for 1.0, judgement unless marked: fix the trim loop first (linear
+byte accounting; output byte-identical); 25-row pages for the reference
+reader (the wire allows 1 to 50; the script hard-codes 50); a 2 MiB streamed
+byte cap on history and session GETs with the `apiGET` mechanism; reads that
+carry a nonce and abort like the artifact reader's; one history page in
+flight, two reads in a Mac-side queue modelled on `ShelfTransfers` (foreground
+before Since You Left, 30 s from start, abort on close); reuse `HistoryPages`'
+30 s cache; no polling. Since You Left needs no history page: `readSession(id,
+turns: false)` is one GET whose `reply` is already the last answer, up to
+4,000 characters, so six sessions cost six small blocks. The typing rule: gate
+the **start** of a read on no key in the main window for about 400 ms (a local
+`NSEvent` monitor recording only the time, never the key), foreground reads
+waiting at most 2 s, background reads until quiet; a block in progress can't
+be interrupted, so bound its length instead; yield once in the page before
+parse and before projection (`requestIdleCallback` with a 1 s timeout if
+present, else `setTimeout(0)`), never a focus check, since the composer holds
+focus whenever the window is key. A measurement protocol for Sam (event-loop
+lag and keydown-to-frame in the page's console, Safari Timelines, interleaved
+A/B runs including a hidden window) and a small go-phase change (page-measured
+milliseconds logged at `.notice` in a new `reading` category) were handed over
+with the spike.
+
+### What the spikes change in the plan
+
+- M2 gains four small safety items the spikes found: narrow `apiGET`'s
+  `/artifacts/versions/` prefix; read the new `status` keys and drop the port
+  default; never `serve` beside the own-window app; fix the phone's root
+  `toYou` to read `/messages`.
+- M3's reads are the versions, facts and lineage shapes above, plus one new
+  in-page history op that finds the showing message; the figure's sha256 is
+  checked against the daemon's checksum, and the README records the version
+  the answer showed, never the list's latest.
+- M4 starts with the trim-loop fix, abortable reads and a byte cap before any
+  reader window exists.
+- M5 reads six shallow frames, not six history pages.
+- M6 may show step progress, number first, title behind the guard.
+- M7's reviewer line is one projected count read; its notes card reads the
+  transcript, not the bridge.
+- M9 is "probably possible"; its live test decides, and a read-only fallback
+  is specified.
+
+### Live checks after go
+
+Each needs Sam, a throwaway session, and notes that keep counts and key names
+only. S1: the two-page check (a Safari tab beside Capsid); after a switch,
+`status` from both CLIs, `claude-science url` once (a printed link proves the
+control socket), the new app's `Info.plist` and shell strings for URL
+handling, one approve from the card while the official window watches, who
+notifies, and that Capsid starts no daemon when the app quits. S2: whether a
+helper agent's figure carries `_artifact_refs` on the root's reply; the
+lineage side effect and whether it draws on usage; sha256 against `checksum`;
+whether `/versions` lists intermediate versions; a Range read through the
+page. S3: that the shallow and tree reads carry the fields, sizes and latency
+for 0, 3 and 10 helpers, how often and how late models report `in_progress`,
+parity with the page's chip. S4: the findings body on a reviewed session,
+whether they land before `completed`, the root-note case (no
+`_sent_user_messages` on the root, the tool call in the last 12 messages, no
+notification). S5: the protocol above, before and after the trim fix.
