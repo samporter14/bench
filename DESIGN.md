@@ -5065,12 +5065,13 @@ data and code that go with it, in a folder you own; while writing a paper,
 the **Kept** window puts those results beside the manuscript. Sam's biggest
 complaint about Results, and 1.0's first feature.
 
-**Entry points.** In Results, every file row has a `checkmark.seal` button
-and **Keep…** in its context menu; **File → Keep…** (⌥⌘K) acts on the
-selected file. **File → Kept…** (⇧⌘K) opens the Kept window; a kept
-result's row in Results opens it on that result with a double-click. Neither
-key is one the page uses (it takes ⌘K for its search). None of it works in a
-demo but `--demo kept`.
+**Entry points.** Since the Shelf (below), the one-click way in is **Add to
+Shelf** (the seal on every file row in Results, the conversation's right-click
+menu, the reference window, File → Add to Shelf ⌥⌘S); this sheet is **Keep
+with Data and Code…** (each file's context menu, File → Keep with Data and
+Code… ⌥⌘K on the selected file), the heavier way in, for a paper. **File →
+Shelf…** (⇧⌘K) opens the Shelf window. None of the keys is one the page uses
+(it takes ⌘K for its search). None of it works in a demo but `--demo kept`.
 
 **The reads** (Remote/ArtifactReader.swift, Remote/HistoryReader.swift; the
 1.0 spikes' S2 found them). The list Results shows (`GET
@@ -5269,31 +5270,7 @@ in Kept, Show in Finder and Open Conversation; the row drags the figure. The
 filter narrows it by name and file name. With nothing kept the section is
 left out: the seal on every row is the invitation.
 
-**The Kept window** (Kept/KeptWindow.swift; File → Kept…, ⇧⌘K), drawn as
-board 9 of the 1.0 mock-ups on the 1.0 windows' surfaces (Look): 760 × 720,
-minimum 620 × 480, frame `CapsidKept`, a transparent title bar over the page
-with "Kept" and a collection pill ("All Collections" or one by name, a menu)
-at its leading edge and a pill search field (names, legends, Claude's words)
-at its trailing one, the system title removed from the toolbar. The list, 236
-pt wide with a hairline edge, holds the results by collection, newest first,
-each a 44 × 34 picture on a white card with its name and the day it was
-kept; the selection is a tint of ink, never the accent, and ↑ ↓ move it; the
-root and the count sit at its foot. The first result is selected when the
-window opens, whether the results were read then or before. The detail, a
-page: the figure on a white card, which drags into Pages, Word or Keynote and
-previews with Quick Look on a double-click or Space; the name; "Plate reader
-QC · Assay development · version 3 of 4, kept Oct 22"; a row of pills,
-**Copy Figure** (the file and its image on the pasteboard), **Copy Legend**
-(your legend, else Claude's words; the tooltip says so), each reading
-"Copied" for a moment, **Show in Finder** and **Open Conversation**; **Your
-legend**, a white field that saves itself a second after typing stops into
-the README's one section, refusing when the file changed in another app
-("README.md was changed in another app." with Use Mine and Use Theirs) and
-never writing over an outside edit unasked; **What Claude said**, with its
-attribution; and the files with their sizes, each draggable, plus what
-wasn't copied. Nothing in the window needs you, so nothing in it is clay.
-There is no Delete: nothing in Capsid destroys what you chose to keep
-(Finder does). `KeptWindowSnapshotTests` draws the content offscreen.
+**The Kept window** is the Shelf window since the Shelf (below).
 
 **Thumbnails** (Kept/KeptThumbnails.swift): kept files are on this Mac, so
 Quick Look draws them (`QLThumbnailGenerator`) at the size asked times the
@@ -5320,6 +5297,102 @@ leaving every other byte alone), `KeptDiskTests` (the layout, the dated
 collision, abandon, scan, the outside-change refusal, the disk-calls scan),
 the reader tests for the three shapes and the showing op against a fake
 `fetch` (`RemoteArtifactsTests`, `HistoryReaderTests`), and the inventory's.
+
+## Shelf (Kept/Shelf*.swift, Shelf/, since 1.0)
+
+Sam's priority, in his words: Claude Science makes so many figures, documents
+and tables that the one you meant is lost, and nothing links back to where in
+the conversation it came from. Drawn as boards 10 and 11 of the 1.0 mock-ups
+(Sam: "perfect"). The Shelf is the Kept window renamed, with a one-click way
+in from wherever a file shows, and a way back to the exact reply.
+
+**What a shelved item is.** A small kept folder in the project's collection
+under the Kept root (default `~/Documents/Kept`, so earlier keeps still show):
+the file and a README with Claude's words and where it came from, no data or
+code (that is Keep with Data and Code…, the sheet above). `Shelf.add` reads
+the file's facts, the answer that showed it and what was asked, then copies
+the file through the Results shelf's queue with the 8 MB cap and the checksum
+rules. The answer the caller gives (the reference reader's reply) wins; else
+the message that showed this version (Keep's showing read, with its row);
+else the session's last answer, which the README says. What was asked is read
+up to two history pages back from the row. Any kind of file: a figure, a
+Markdown note, a csv or spreadsheet, html. The same version id anywhere under
+the root is already on the shelf and answers with that folder; one add runs per
+version at a time, a second ask getting the first's outcome. Undo and Remove
+move folders to the Trash and never delete; Put Back never replaces a folder.
+The README gains optional front-matter lines after `answer_shows_version`,
+each only when known: `source_row` (the history row of the message that
+showed it), `question` and `answer_at`; "Where it came from" says it in words
+("From Claude's answer at 8:47 on 22 October 2026, message 19 in the
+session's history. You asked: “…”"). The legend comment and fine print say
+"Shelf window"; files with the old comment still read as an empty legend.
+
+**The ways in.**
+- *The conversation* (board 10). Right-click a figure or a file link in Claude
+  Science's page and Capsid adds its group to WebKit's menu, after the
+  element's own items: **Add to Shelf** (⌥⌘S shown), Keep with Data and Code…,
+  Open as Reference, then Show in Results. WebKit's menu says what kind of thing
+  was clicked, never its address, so a user script (own content world
+  `capsid-shelf`, a capturing `contextmenu` listener, main frame on the
+  daemon's origin only) posts the nearest `img, a[href]`'s resolved address and
+  its alt text or link text; a pick is used once, within a second. The address
+  names the file when it is `/api/artifacts/versions/<v>` (no tail, or
+  download, raw, content, file, thumbnail, with or without `?thumbnail=`) or
+  carries `?v=` (also `version`, `version_id`, `versionId`), `<v>` 36
+  characters; anything else gets no items. The page's words are only a
+  stand-in name until the daemon's facts give the file's own; nothing read from
+  the page is logged. Both are in the compatibility inventory, checked only
+  when used. Board 10's in-page "Shelf" pill on a file chip is left out: there
+  is no verified stable hook on the page's chips.
+- *The toast* (board 10): a dark glass pill at the bottom centre of the main
+  window, 96 points above its foot: a clay check, "On your shelf: <name>",
+  Undo and Show Shelf (ivory), about four seconds, held while the pointer is
+  on it; "Already on your shelf" with Show Shelf; "Adding to your shelf…"
+  while the file is fetched; a failure's sentence alone for six seconds.
+- *The toolbar*: "Shelf · 12" beside Results (the board's shelf glyph and the
+  live count; "Shelf" alone when empty), opening the Shelf window.
+- *Results*: each file's seal is Add to Shelf (a spinner, then "On Shelf ✓";
+  a failure as a clay-text sentence under the file); its menu has Add to Shelf
+  (or Show on Shelf), Keep with Data and Code…, Preview, Copy, Save…; the
+  section of kept results is "On your shelf", with Open Shelf.
+- *The reference window* (board 11, right): under each figure a small Add to
+  Shelf pill ("On Shelf ✓" once shelved); a shelved figure wears a slate "✓ On
+  your shelf" chip at its top left and a 2-point ink ring; other files of the
+  reply sit in quiet rows under the words with the same pill. Adding from here
+  passes the reply's words and time, its last row and what was asked.
+
+**The way back.** `ReferenceWindowController.show(sessionID:projectID:title:
+projectName:at:mark:)` opens (or moves) the session's reference window to the
+reply that holds history row `at` (a reply's rows run from its user message to
+the row before the next one, so a folded run of tool steps still belongs to
+it), reading back until that reply's question is in, up to 80 pages of 25
+rows, and saying so if it stops short ("That reply is further back than
+Capsid reads at once. Earlier keeps looking."); it scrolls to the marked file.
+With no row, the newest reply that shows the file. A draft that a later
+version replaced shows as that draft.
+
+**The Shelf window** (board 11, left): 880 × 820, minimum 620 × 480, frame
+`CapsidShelf`; "Shelf" with a project pill ("All projects"; collections are
+projects) and a search pill in the title bar; chips "All · 12 / Figures · 7 /
+Documents · 3 / Tables · 2", counting what the project and the search leave
+(the chosen chip ink with page-coloured words); a grid of four cards a row,
+newest first, with Quick Look pictures (a note's or table's first lines are
+drawn instead, since Quick Look's page of them is too small to read), the
+chosen card a 2-point ink stroke; and the detail card at the foot: a 260 ×
+170 preview, the name, "From Claude's answer at 8:47 in “Plate reader QC” ·
+Assay development · version 3", what was asked, Claude's words (three lines,
+More), and **Show Where It Came From** (clay), Copy, Keep with Data and Code…
+(the Keep sheet pinned to that answer, sized to the window) and Remove (to the
+Trash, with a dark Undo pill for eight seconds). An item kept with data and
+code also shows its legend field and files below, so nothing the Kept window
+had is lost; a figure shelved and later kept with data and code is one item,
+shown from the richer folder. ↑↓←→ move, Space is Quick Look, a card drags
+out as a file. Empty: "Nothing on your shelf yet" and "Right-click a figure in
+a conversation and choose Add to Shelf." Settings → General → "Shelf folder".
+
+`--demo kept --step window` shows the Shelf with ten made-up items of every
+kind; `--demo reference --step shelved` the reference window with a shelved
+figure.
 
 ## Reference (Reference/, since 1.0)
 
@@ -5380,8 +5453,8 @@ a white card the page's width with a hairline edge and 10-pt corners (800-pixel
 pictures from the daemon, decoded into a store of the window's own, 48 MiB,
 `ReferenceModel.figureStore`; shorter than 520 pt; a quiet 3:2 card with a
 spinner until the picture comes, a photo glyph if it can't be read), its file
-name under it and a small Keep… pill (and Keep… and Open Conversation in its
-context menu); then Claude's words as selectable text at 14 on 21 in Solanum's
+name under it and a small Add to Shelf pill (and Add to Shelf, Keep with Data
+and Code… and Open Conversation in its context menu); then Claude's words as selectable text at 14 on 21 in Solanum's
 ink (`AnswerStyle.reference`; links in ink, underlined in clay) in an
 `NSTextView` sized to its text and lined up with the figures (no inset), so the
 page scrolls as one (`ReferenceTextView.sizeThatFits`). At the foot, under a

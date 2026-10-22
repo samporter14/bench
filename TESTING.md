@@ -323,6 +323,31 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-22, the Shelf (Sam's priority #1, boards 10 and 11)
+
+Built by two Sonnet agents against a contract written first (`Kept/Shelf.swift`
+and `ReferenceWindowController.show(…at:mark:)`), merged on `g/reference`.
+
+- ✅ **The Shelf** (`ShelfTests`, `ShelfRulesTests`, `KeptDiskTrashTests`,
+  `KeptDiskPeekTests`, `KeptReadmeTests`): adding with the answer given, found
+  or the last-answer fallback; already on the shelf; a failed download; one
+  add per version; the README's new lines round-tripping; the Trash and Put
+  Back; kinds and counts; the window's filters. The window drawn offscreen,
+  light and dark, against board 11.
+- ✅ **The ways in** (`ShelfAddressTests`, `ConversationMenuTests`,
+  `ConversationShelfTests`, `ShelfToastTests`, `ShelfReferenceTests`,
+  `ShelfWaysInTests`): every address shape, the menu only on artifact images
+  and links, the toast's states, Results' rows, the reference mark, and
+  landing on the right reply (ten pages back, inside a reply that starts
+  earlier, past the 80-page cap). The toast and the marked reference window
+  offscreen against boards 10 and 11.
+- ✅ **The whole suite:** 2,899 tests in 377 suites pass.
+- ⏳ **Live:** whether the page's figures carry a version in their address
+  (`img.currentSrc`; if it is a `blob:` the menu shows no items), where the
+  group lands in the real menu, ⌥⌘S, the toast over the page, Show Where It
+  Came From on a real item several screens back, a real Quick Look of xlsx and
+  docx, the Trash.
+
 ## 2026-10-22, M9a: surviving Claude Science's own window
 
 - ✅ `ScienceSwitchTests` and `ScienceSwitchWiringTests`: detection (both

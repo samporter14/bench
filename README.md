@@ -140,25 +140,22 @@ without altering itself.
 
 <img src="docs/scene-picker.png" width="520" alt="Settings, Specimens tab: a size picker, a checkbox per category (Lab 130 of 131, Biology 211 of 214), a search field with an All, On and Off filter, and a grid of specimens under a Lab heading, each with a clay check when on">
 
-## Keep the real one
+## Your shelf
 
-Claude Science makes many drafts and versions, and a week later the one you
-meant to use is hard to find. In Results, every file has a **Keep…** button
-(the seal, or ⌥⌘K). It opens a sheet that shows the file's versions, with the
-one Claude's answer shows already chosen, and three things to keep with it:
-what Claude said about it, the data it was drawn from (as Claude Science's
-provenance records it; nothing is guessed from file names) and the script
-that drew it. Press Return, and the figure lands in a folder you own,
-`~/Documents/Kept/<collection>/<name>/`, with `data/`, `code/` and a README
-that says where it came from, which version it is and what Claude said, with
-a link back to the session. Keep never overwrites: a second keep under the
-same name gets a dated folder.
+Claude Science makes a lot of figures, notes and tables, and the one you
+meant is easy to lose. **Right-click any figure or file in a conversation and
+choose Add to Shelf** (or click the seal on a file in Results, or the pill
+under a figure in the reference window). It's copied onto your shelf with what
+Claude said about it and exactly where it came from. **The Shelf** (⇧⌘K, or
+the Shelf button in the toolbar) shows everything you've shelved, by project
+and kind, with search; pick one and **Show Where It Came From** opens the very
+answer it came from, with the figure marked. Shelved files live in folders you
+own, `~/Documents/Kept/<project>/`, each with a README that says where it came
+from; Remove puts one in the Trash.
 
-**File → Kept…** (⇧⌘K) shows what you've kept, by collection (a paper is a
-collection), beside whatever you're writing: drag the figure into Pages,
-Word or Keynote, copy it or its legend, and write the legend you'll use in
-the paper, which Capsid saves into the README (and touches nothing else in
-it). The Kept folder is in Settings → General → Kept.
+When a figure is going into a paper, **Keep with Data and Code…** (⌥⌘K) keeps
+the real version with the data it was drawn from and the script that drew it,
+and the Shelf lets you write the legend you'll use beside it.
 
 ## An answer beside the work
 
