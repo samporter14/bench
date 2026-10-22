@@ -317,6 +317,59 @@ the session that was on screen when Capsid quit, or crashed.
   real web view; its decisions are `LastSession`'s and are tested. See the
   checklist.
 
+**Beside Claude Science's own window (since 1.0; Web/DaemonPolicy.swift,
+App/ScienceInstall.swift, Web/HandoverWatch.swift).** Claude Science can switch
+from a browser tab to its own app window. After that the app starts the daemon
+as its child, on a port that `status` reports. Sam's call: Capsid keeps its own
+window beside it (the official window has no known features Capsid lacks); the
+menu-bar companion is optional and after 1.0. Capsid reads the bundle id of
+Claude Science.app in /Applications and ~/Applications each time it needs it
+(the switch happens at an in-app restart while Capsid runs):
+`com.anthropic.operon` opens a browser tab; `com.anthropic.claudescience` opens
+its own window, and wins if either place has it; anything else, a Safari web
+app included, is not Anthropic's app. It notes whether ~/Library/Application
+Support/Claude Science exists, and never looks inside.
+
+`status` is read for `daemon.launch_context`, `boot`, `url_host` and
+`require_token`, each of exactly its type or ignored. A missing port is
+unknown, not 8765; a running daemon with no port is a failure that passes
+("Claude Science is running but hasn't said which port it uses yet.").
+
+Capsid never runs `serve` when the own-window app is installed, when the last
+running status said `app-child` (even after the app quit), or after the page
+showed the handover dialog this run (`StartPlan.decide`, tested over every
+combination). The window then says "Claude Science runs its own server now.
+Open Claude Science to start it." with Open Claude Science (which opens the app
+in the background) and Try again; the usual status-only tries sign in as soon
+as the app's daemon answers. The tool inside the own-window app comes first
+once that app is installed. Pages load from the host `url_host` names
+(`localhost` or `127.0.0.1`, else `localhost`).
+
+Signing in to a daemon the app started loads `/api/me?nonce=<code>`, presses
+its one Sign in button, lets it end on JSON (shown in place, never saved), then
+loads the page. With `require_token` true, or no code from `claude-science url`
+(asked twice, 1.5 s apart, after the cookie was refused), Capsid stops retrying
+and only reads: "Capsid can't sign in to Claude Science's own server.
+Everything from your sessions' database keeps working; actions open Claude
+Science." with Open Claude Science and Try again, and one card says it once.
+Cards, panel, badge, notifications, Next Waiting, Activity, Quick Open and the
+phone's state keep working from the database; the usage readout, context ring,
+plan preview and every write are off through the same "page ready" gates as
+ever; Open on a card, Next Waiting or a notification brings Claude Science
+forward (`Router.openInScience`).
+
+When the page shows `[data-testid="restarting-dialog"]` (a document-end
+observer that never reads the dialog's words, posts once and disconnects),
+Capsid stops its reconnect tries, posts one card ("Claude Science now opens in
+its own window. Capsid keeps working beside it. It no longer starts Claude
+Science's server: open Claude Science to start it."), and for about a quarter
+of an hour asks `status` for a different daemon (another pid, port or starter)
+to sign in to. Diagnostics gains the install lines, the four status keys, what
+Capsid would do about starting a daemon and how it would sign in. What only the
+live switch can settle: whether every own-window launch gives a sign-in code,
+the port, the `/api/me` page's shape, whether the app adopts the running daemon,
+and doubled notifications.
+
 ## Web routing policy (Web/)
 
 Every link goes through one function. The rules:

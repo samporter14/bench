@@ -323,6 +323,17 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-22, M9a: surviving Claude Science's own window
+
+- ✅ `ScienceSwitchTests` and `ScienceSwitchWiringTests`: detection (both
+  places, the Safari web app, an unreadable id), status parsing (old and new
+  shapes, the missing port, wrong types), the serve decision over every
+  combination, the CLI order, the canonical host, the sign-in plan, the
+  notices word for word, and the handover script in JavaScriptCore. Nothing
+  started, stopped or asked a real daemon.
+- ✅ The whole suite after the merge: 2,717 tests in 357 suites pass.
+- ⏳ Only the live switch can settle the rest (DESIGN, Daemon and sign-in).
+
 ## 2026-10-22, Capsid 1.0 M6, M7, M8 and the Keep sheet
 
 Built by four Sonnet agents in worktrees from one shared brief (the boards'
