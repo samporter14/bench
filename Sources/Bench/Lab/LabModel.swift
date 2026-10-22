@@ -279,12 +279,9 @@ final class LabModel: ObservableObject {
     /// (LabPanelController), finishes are held with a Nidus focus session's,
     /// and no sound plays or Mac notification is made.
     var isQuiet: () -> Bool = { PresentingMode.shared.isQuiet }
-    /// Plays the needs-input sound, when the setting is on; tests count it.
-    var playChime: () -> Void = {
-        if UserDefaults.standard.bool(forKey: SettingsKey.soundOnNeedsInput) {
-            NSSound(named: "Glass")?.play()
-        }
-    }
+    /// Plays the sound of what happened (a question, a plan, a failure, a
+    /// finish: `PanelSound`), when the setting is on; tests count them.
+    var playSound: (PanelSound) -> Void = { PanelSound.play($0) }
     /// Finishes held during a focus session or while presenting, shown as one
     /// card after it.
     private(set) var heldFinishes: [SessionStatus] = []
@@ -677,7 +674,8 @@ final class LabModel: ObservableObject {
 
     /// Internal for tests, which feed it made-up snapshots.
     func update(from snapshot: ScienceSnapshot) {
-        var alert = false
+        // The sounds of the cards this read raises: one is played, the most urgent.
+        var sounds: [PanelSound] = []
         for transition in engine.advance(to: snapshot) {
             switch transition {
             case .needsInput(let session):
@@ -686,19 +684,19 @@ final class LabModel: ObservableObject {
                 forgetReminder(session.id)
                 planHolds.remove(session.id)
                 supersedePageNotifications(by: session)
-                if raise(.needsInput(session)) { alert = true }
+                if let sound = raiseWithSound(.needsInput(session)) { sounds.append(sound) }
                 remember(LabEvent(.needsInput(session.waitingReason), session: session))
             case .failed(let session):
                 supersedePageNotifications(by: session)
-                if raise(.failed(session)) { alert = true }
+                if let sound = raiseWithSound(.failed(session)) { sounds.append(sound) }
                 remember(LabEvent(.failed, session: session))
             case .finished(let session):
                 supersedePageNotifications(by: session)
                 remember(LabEvent(.finished, session: session))
                 if holdsFinishes() || isQuiet() {
                     if !heldFinishes.contains(where: { $0.id == session.id }) { heldFinishes.append(session) }
-                } else {
-                    raise(.finished(session))
+                } else if let sound = raiseWithSound(.finished(session)) {
+                    sounds.append(sound)
                 }
             case .started:
                 break
@@ -740,7 +738,7 @@ final class LabModel: ObservableObject {
         let parkedByID = Dictionary(parked.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let standing = SessionStanding(snapshot.sessions)
         if daemonDown {
-            if alert, !firstRead { chime() }
+            if !firstRead { chime(sounds) }
             return
         }
         for case .needsInput(let session) in cards {
@@ -760,7 +758,7 @@ final class LabModel: ObservableObject {
             dismiss(.failed(session))
         }
 
-        if alert, !firstRead { chime() }
+        if !firstRead { chime(sounds) }
         // Only a read that worked ends the first one: Bench may start before
         // the daemon, and what waits then is not news when it first reads it.
         if snapshot.readError == nil {
@@ -772,10 +770,16 @@ final class LabModel: ObservableObject {
         }
     }
 
-    /// The needs-input sound, when the setting is on and Capsid isn't quiet.
-    private func chime() {
-        guard !isQuiet() else { return }
-        playChime()
+    /// The sound of this read's most urgent card (`PanelSound.loudest`), when
+    /// Capsid isn't quiet. The setting is the sound's own to check.
+    private func chime(_ sounds: [PanelSound]) {
+        guard !isQuiet(), let sound = PanelSound.loudest(sounds) else { return }
+        playSound(sound)
+    }
+
+    /// Raises a card; its sound if it is new, or none.
+    private func raiseWithSound(_ card: LabCard) -> PanelSound? {
+        raise(card) ? PanelSound.sound(for: card) : nil
     }
 
     // MARK: Cards
@@ -841,7 +845,8 @@ final class LabModel: ObservableObject {
         guard reminders.removeValue(forKey: id) != nil else { return }
         guard let session = waiting.first(where: { $0.id == id }) else { return }
         // Show Now (`chiming` false) is the user asking: no sound, no notification.
-        if raise(.needsInput(session), announcing: chiming), chiming { chime() }
+        let card = LabCard.needsInput(session)
+        if raise(card, announcing: chiming), chiming, let sound = PanelSound.sound(for: card) { chime([sound]) }
     }
 
     private func forgetReminder(_ id: String) {
@@ -874,11 +879,11 @@ final class LabModel: ObservableObject {
         due.forEach(forgetReminder)
         // The most recently active session first, as the queue is. One that
         // no longer waits has nothing to come back for.
-        var alert = false
+        var sounds: [PanelSound] = []
         for session in waiting where due.contains(session.id) {
-            if raise(.needsInput(session)) { alert = true }
+            if let sound = raiseWithSound(.needsInput(session)) { sounds.append(sound) }
         }
-        if alert { chime() }
+        chime(sounds)
         releaseHeldFinishes()
     }
 

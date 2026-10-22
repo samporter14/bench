@@ -416,7 +416,7 @@ struct PresentingHoldTests {
         let switches = Switches()
         let model = model(switches)
         var sounds = 0
-        model.playChime = { sounds += 1 }
+        model.playSound = { _ in sounds += 1 }
         model.ingest(Fixture.snapshot(Fixture.session("a", .running), Fixture.session("b", .running)))
         switches.presenting = true
         model.ingest(Fixture.snapshot(Fixture.session("a", .needsInput, reason: .question), Fixture.session("b", .running)))
@@ -433,7 +433,7 @@ struct PresentingHoldTests {
             let switches = Switches()
             let model = model(switches)
             var sounds = 0
-            model.playChime = { sounds += 1 }
+            model.playSound = { _ in sounds += 1 }
             switches.focusing = true
             model.ingest(Fixture.snapshot(Fixture.session("a", .running)))
             model.ingest(Fixture.snapshot(Fixture.session("a", .needsInput, reason: .question)))

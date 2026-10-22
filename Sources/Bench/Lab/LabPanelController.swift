@@ -107,6 +107,8 @@ final class LabPanelController {
     func start() {
         guard subscriptions.isEmpty else { return }
         let center = NotificationCenter.default
+        // A note Claude sent mid-run comes as a quiet card (Lab/MidRunNoteCards.swift).
+        MidRunNoteCards.shared.start(model: model)
 
         // Any change to any default posts this, from any thread; the map is cheap.
         let preferences = center.publisher(for: UserDefaults.didChangeNotification)
@@ -194,6 +196,8 @@ final class LabPanelController {
         panel.isReleasedWhenClosed = false
         self.panel = panel
         fitted = false
+        // A capture can't hover: the stack demo opens as if the pointer were over it.
+        if Demo.mode == .stack, PanelDemo.hoversStack { hover.isInside = true }
 
         place(panel.frame.size)
         panel.alphaValue = 0

@@ -6,7 +6,10 @@ import SwiftUI
 struct WorkingGlyph: View {
     let tint: Color
     var rotation: Rotation = .full
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    /// Stills, as Reduce Motion asks, for a view that is drawn once (a snapshot).
+    @Environment(\.stillSpecimens) private var stillSpecimens
+    private var reduceMotion: Bool { systemReduceMotion || stillSpecimens }
     /// Nobody has touched the Mac for ten minutes: a still, not the rotation.
     @ObservedObject private var hold = SpecimenHold.shared
 
@@ -14,12 +17,19 @@ struct WorkingGlyph: View {
     /// panel's caption line names it.
     static var still: LabScene? { LabScenes.catalogue.first }
 
+    /// The specimen under Reduce Motion for what plays: the one specimen of a
+    /// rotation of one (a specimen picked for its session, SessionSpecimen),
+    /// else the flask.
+    static func still(in rotation: Rotation) -> LabScene? {
+        rotation.scenes.count == 1 ? rotation.scenes[0] : still
+    }
+
     var body: some View {
         // The ZStack keeps the view's identity across the switch, so the
         // watching below starts and stops with the glyph, not with each face.
         ZStack {
             if reduceMotion {
-                StillSpecimen(tint: tint)
+                StillSpecimen(tint: tint, scene: Self.still(in: rotation))
             } else if hold.holds {
                 // The scene the rotation was in when the hold began, at the
                 // middle of it, as a covered window's specimen is held.
@@ -29,6 +39,20 @@ struct WorkingGlyph: View {
             }
         }
         .modifier(WatchesHold(active: !reduceMotion))
+    }
+}
+
+private struct StillSpecimensKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Every specimen below draws a still, as under Reduce Motion: for a
+    /// picture of the panel taken offscreen, where a playing layer would not
+    /// be painted. The system's own setting can't be set from a test.
+    var stillSpecimens: Bool {
+        get { self[StillSpecimensKey.self] }
+        set { self[StillSpecimensKey.self] = newValue }
     }
 }
 

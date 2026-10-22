@@ -27,6 +27,8 @@ extension ColorScheme {
 struct TurnClockText: View {
     let prefix: String
     let since: Date?
+    /// False draws the clock alone, for a row with room for nothing else.
+    var showsPrefix = true
     @ObservedObject private var hold = SpecimenHold.shared
 
     var body: some View {
@@ -35,7 +37,8 @@ struct TurnClockText: View {
         ZStack {
             if let since {
                 TimelineView(.periodic(from: since, by: hold.holds ? 60 : 1)) { context in
-                    Text("\(prefix) · \(ElapsedClock.format(context.date.timeIntervalSince(since)))")
+                    let clock = ElapsedClock.format(context.date.timeIntervalSince(since))
+                    Text(showsPrefix ? "\(prefix) · \(clock)" : clock)
                         .monospacedDigit()
                 }
                 // A new timeline, so the clock is right at once when the hold ends.
@@ -55,13 +58,15 @@ struct TurnClockText: View {
 /// the well is a still flask, so the line names that.
 struct SpecimenCaptionLine: View {
     let rotation: Rotation
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.stillSpecimens) private var stillSpecimens
+    private var reduceMotion: Bool { systemReduceMotion || stillSpecimens }
     /// While the specimen holds a still (SpecimenHold) the line names it.
     @ObservedObject private var hold = SpecimenHold.shared
 
     var body: some View {
         if reduceMotion {
-            line(WorkingGlyph.still)
+            line(WorkingGlyph.still(in: rotation))
         } else {
             TimelineView(SceneBoundarySchedule(rotation: rotation)) { timeline in
                 line(hold.scene(in: rotation, at: timeline.date))
@@ -103,15 +108,30 @@ struct LabPanelView: View {
     /// A failure card's reason, and Copy (Lab/FailureReason.swift).
     @ObservedObject private var failures = FailureReasoner.shared
     @ObservedObject private var usagePause = UsagePauseModel.shared
+    /// A plan's progress, a reviewer's findings, a note Claude sent
+    /// (Lab/PanelInsights.swift).
+    @ObservedObject private var insights: PanelInsights
+    /// The Finished card's files and pictures (Lab/FinishedResults.swift).
+    @ObservedObject private var finished: FinishedResults
     /// What a card offers and does (Lab/CardActions.swift), over the same model and states.
     private var actions: CardActions { CardActions(model: model, plans: plans, questions: questions) }
     /// Reports the window size the content wants, whenever it changes.
     let onFit: (CGSize) -> Void
 
+    init(model: LabModel, hover: PanelHover, insights: PanelInsights = .shared, finished: FinishedResults = .shared,
+         onFit: @escaping (CGSize) -> Void) {
+        self.model = model
+        self.hover = hover
+        self.insights = insights
+        self.finished = finished
+        self.onFit = onFit
+    }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(SettingsKey.showPanel) private var showWorking = true
     @AppStorage(SettingsKey.showCards) private var showCards = true
     @AppStorage(SettingsKey.showSpecimenCaption) private var showSpecimenCaption = false
+    @AppStorage(SettingsKey.matchSpecimenToSession) private var matchSpecimen = true
     @AppStorage(SettingsKey.panelCorner) private var corner = PanelCorner.bottomRight
     @Environment(\.colorScheme) private var colorScheme
     @State private var entered = false
@@ -128,13 +148,13 @@ struct LabPanelView: View {
             if case .working = self { true } else { false }
         }
 
-        /// Actionable cards use the full width for their question, plan or
-        /// error. Their compact status glyph doesn't follow specimen size.
-        /// Faces with a specimen well still grow and shrink with that well.
+        /// A question or a plan uses the full width for its text. Its compact
+        /// status glyph doesn't follow specimen size. Faces with a well
+        /// (working, finished, stopped with an error) grow and shrink with it.
         func width(well: CGFloat) -> CGFloat {
             switch self {
             case .working: 336 + (well - Theme.sceneSize)
-            case .card(.needsInput, _), .card(.failed, _): 360
+            case .card(.needsInput, _): 360
             case .card: 360 + (well - Theme.sceneSize)
             }
         }
@@ -170,7 +190,18 @@ struct LabPanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: corner.alignment)
         .onChange(of: current, initial: true) { _, face in
             if let face { held = face }
+            // The running session the panel shows is read for its progress.
+            if case .working(let session, _)? = face {
+                insights.showing([session], from: .panel)
+            } else {
+                insights.showing([], from: .panel)
+            }
         }
+        // A card that needs you has come to the top: VoiceOver says so.
+        .onChange(of: showCards ? model.cards.first.flatMap(PanelSpeech.announcement(for:)) : nil, initial: true) { _, text in
+            if let text { PanelAnnouncer.say(text) }
+        }
+        .onDisappear { insights.showing([], from: .panel) }
         // The panel is never the key window, and a prominent button greys out
         // in one that is not; it is meant to look live.
         .environment(\.appearsActive, true)
@@ -193,7 +224,7 @@ struct LabPanelView: View {
         }
         .padding(Self.margin)
         .fixedSize()
-        .animation(reduceMotion ? nil : Theme.spring, value: face.motionKey)
+        .animation(reduceMotion ? nil : Theme.spring, value: face.motionKey + (stackIsOpen(face) ? "-open" : ""))
         .onGeometryChange(for: CGSize.self) { $0.size } action: { onFit($0) }
         .scaleEffect(entered || reduceMotion ? 1 : 0.94, anchor: corner.anchor)
         .onAppear {
@@ -211,13 +242,27 @@ struct LabPanelView: View {
                     dismissButton(face)
                 }
             }
-            .glassEffect(.regular, in: .rect(cornerRadius: Theme.panelCorner))
+            .modifier(PanelSurface(corner: Theme.panelCorner))
             .contentShape(.rect(cornerRadius: Theme.panelCorner))
             .onTapGesture { open(face) }
             .accessibilityAction(named: "Open") { open(face) }
             .accessibilityAction(named: "Dismiss") { dismiss(face) }
-            .modifier(PlayingSpecimenMenu(active: face.isWorking && model.problem == nil, rotation: settings.rotation))
+            .modifier(PlayingSpecimenMenu(active: face.isWorking && model.problem == nil, rotation: rotation(of: face)))
         }
+    }
+
+    /// The rotation the face plays: a session's own specimen, picked for its
+    /// words when one fits (Lab/SessionSpecimen.swift), else what the user chose.
+    private func rotation(of face: Face) -> Rotation {
+        if case .working(let session, _) = face { return SessionSpecimen.of(session, matching: matchSpecimen).rotation }
+        return settings.rotation
+    }
+
+    /// Whether the working panel is open into a row per session: two or more
+    /// work, and the pointer is over it.
+    private func stackIsOpen(_ face: Face) -> Bool {
+        guard case .working(_, let others) = face, model.problem == nil else { return false }
+        return PanelStack.expands(working: others + 1, hovering: hover.isInside)
     }
 
     private func open(_ face: Face) {
@@ -280,19 +325,69 @@ struct LabPanelView: View {
                 title(session.displayTitle)
                 detail(pause.sentence())
             }
+        } else if PanelStack.expands(working: others + 1, hovering: hover.isInside) {
+            stackContent(session)
         } else {
-            Row(side: wellSide, well: WorkingGlyph(tint: colorScheme.sceneInk, rotation: settings.rotation)) {
-                caption("Working", dot: true, trailing: others > 0 ? "+\(others) more" : nil, showsEvery: true)
-                title(session.displayTitle)
-                TurnClockText(prefix: session.projectName, since: session.startedAt)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if showSpecimenCaption {
-                    SpecimenCaptionLine(rotation: settings.rotation)
+            let specimen = SessionSpecimen.of(session, matching: matchSpecimen)
+            let progress = insights.progress[session.id]
+            VStack(alignment: .leading, spacing: 12) {
+                Row(side: wellSide, well: WorkingGlyph(tint: colorScheme.sceneInk, rotation: specimen.rotation)) {
+                    caption("Working", dot: true, trailing: others > 0 ? "+\(others) more" : nil)
+                    title(session.displayTitle)
+                    TurnClockText(prefix: session.projectName, since: session.startedAt)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                // Under the well, across the card: how far the plan has got,
+                // and which specimen is playing and why.
+                if progress != nil || showSpecimenCaption {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let progress { PanelProgressBlock(progress: progress) }
+                        if showSpecimenCaption { specimenCaption(specimen) }
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 2)
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(PanelSpeech.working(
+                title: session.displayTitle, project: session.projectName, since: session.startedAt, others: others,
+                progress: progress, specimen: showSpecimenCaption ? specimen.picked?.caption : nil))
+            .accessibilityAction(named: "Show every session") { showEverySession() }
         }
+    }
+
+    /// The specimen that's playing: the reason it was picked for this
+    /// session, or its name and a few words about it, following the rotation.
+    @ViewBuilder
+    private func specimenCaption(_ specimen: SessionSpecimen) -> some View {
+        if let picked = specimen.picked {
+            Text(verbatim: picked.caption)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(2, reservesSpace: true)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            SpecimenCaptionLine(rotation: specimen.rotation)
+        }
+    }
+
+    /// Two or more work and the pointer is over the panel: a row for each,
+    /// which opens it, in place of the one and its "+N more".
+    private func stackContent(_ head: SessionStatus) -> some View {
+        let sessions = [head] + model.working.filter { $0.id != head.id }
+        return VStack(alignment: .leading, spacing: 8) {
+            caption("Working", dot: true, trailing: "\(sessions.count) sessions")
+            PanelStackRows(sessions: sessions, tint: colorScheme.sceneInk, matching: matchSpecimen,
+                           open: { model.open($0) }, showAll: showEverySession)
+        }
+    }
+
+    /// The Dock's activity menu, under the pointer, without bringing Capsid forward.
+    private func showEverySession() {
+        ActivityMenu.shared.make().popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     @ViewBuilder
@@ -315,43 +410,42 @@ struct LabPanelView: View {
                 if let question { questionLines(question, sessionID: session.id, offer: offer) }
                 needsInputButtons(offer, card: card, session: session)
             }
+            // One sentence, its buttons named actions.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(PanelSpeech.asking(
+                heading: reason.sentence, title: session.displayTitle, project: session.projectName,
+                detail: [Self.spokenAsk(plan: plan, question: question), offer.problem, Self.spokenDone(offer)]
+                    .compactMap { $0 }.joined(separator: ". ")))
+            .accessibilityActions { needsInputActions(offer, card: card, session: session) }
         case .failed(let session):
             // Why it stopped, once it has been read; until then, or when
             // there is none, the card is as it always was.
             let reason = failures.reason(for: session.id)
-            actionCard(session, heading: "Stopped with an error", position: position) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 19, weight: .regular))
-                    .foregroundStyle(Theme.clayText)
-            } content: {
+            VStack(alignment: .leading, spacing: 12) {
+                Row(side: wellSide, well: ContaminatedPlateWell(tint: colorScheme.sceneInk)) {
+                    caption("Stopped with an error", style: Theme.clayText, weight: .semibold, trailing: position)
+                    title(session.displayTitle)
+                    detail(Self.ranFor(session))
+                }
                 if let reason { reasonLine(reason) }
-                buttons {
+                buttons(top: 0, size: .large) {
                     Button("Open") { model.open(card) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
-                    Button("Dismiss") { model.dismiss(card) }
-                        .buttonStyle(.glass)
+                        .panelButton(prominent: true)
                     if reason != nil {
                         CopyReasonButton { failures.copy(session.id) }
                     }
+                    Button("Dismiss") { model.dismiss(card) }
+                        .panelButton()
                 }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 2)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(PanelSpeech.failed(title: session.displayTitle, project: session.projectName,
+                                                  duration: session.duration, reason: reason?.line))
+            .accessibilityAction(named: "Copy") { _ = failures.copy(session.id) }
         case .finished(let session):
-            Row(side: wellSide, well: finishedFlask) {
-                caption("Finished", trailing: position)
-                title(session.displayTitle)
-                detail(Self.summary(of: session))
-                buttons {
-                    Button("Open") { model.open(card) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
-                    // The files it made, in Results, on this session.
-                    Button("Results") { ResultsWindowController.shared.show(focusing: session) }
-                        .buttonStyle(.glass)
-                        .disabled(Demo.mode != nil)
-                        .help("Show the files this session made")
-                }
-            }
+            finishedCard(session, card: card, position: position)
         case .web(let notification):
             // Claude Science's title is the caption; a notification with no
             // body has nothing under it, so its title takes the body's place.
@@ -361,10 +455,13 @@ struct LabPanelView: View {
                 title(hasBody ? notification.body : notification.title)
                 buttons {
                     Button("Open") { model.open(card) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
+                        .panelButton(prominent: true)
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(hasBody ? "\(notification.title). \(notification.body)" : "Claude Science. \(notification.title)")
+        case .notice(let notice) where notice.midRunNote != nil:
+            noteCard(notice, card: card, position: position)
         case .notice(let notice):
             Row(side: wellSide, well: symbol(notice.symbol)) {
                 caption(notice.caption, trailing: position)
@@ -373,16 +470,19 @@ struct LabPanelView: View {
                 if case .openSession = notice.action {
                     buttons {
                         Button("Open") { model.open(card) }
-                            .buttonStyle(.glassProminent)
-                            .tint(Theme.clay)
+                            .panelButton(prominent: true)
                     }
                 } else if case .installUpdate = notice.action {
                     buttons {
                         Button("Install\u{2026}") { model.open(card) }
-                            .buttonStyle(.glassProminent)
-                            .tint(Theme.clay)
+                            .panelButton(prominent: true)
                     }
                 }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel([notice.caption, notice.title, notice.detail].filter { !$0.isEmpty }.joined(separator: ". "))
+            .accessibilityActions {
+                if case .installUpdate = notice.action { Button("Install\u{2026}") { model.open(card) } }
             }
         case .saved(let url):
             Row(side: wellSide, well: symbol("arrow.down.circle")) {
@@ -390,23 +490,160 @@ struct LabPanelView: View {
                 title(url.lastPathComponent)
                 buttons {
                     Button("Show in Finder") { model.open(card) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
+                        .panelButton(prominent: true)
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Saved. \(url.lastPathComponent)")
+            .accessibilityAction(named: "Show in Finder") { model.open(card) }
         }
     }
 
-    /// The first line of why a session stopped, with room to wrap once;
-    /// the tooltip shows more of it, and Copy all of it.
+    /// What a question or plan card asks, in words, for VoiceOver.
+    private static func spokenAsk(plan: PlanCardState?, question: QuestionCardState?) -> String? {
+        switch plan {
+        case .ready(let preview)?, .approving(let preview)?, .approved(let preview)?, .problem(_, let preview)?:
+            return preview.summary
+        default: break
+        }
+        switch question {
+        case .ready(let ask)?: return ask.items.first?.question
+        case .permission(let request)?: return RemotePermission.words(for: request).title
+        default: return nil
+        }
+    }
+
+    /// "Approved", "Sent": what a card says in place of its buttons once it went.
+    private static func spokenDone(_ offer: CardOffer) -> String? {
+        if case .done(let text) = offer.lead { return text }
+        return nil
+    }
+
+    /// A needs-input card's buttons as VoiceOver's named actions, from what it
+    /// offers (`CardOffer`), by the same calls as the buttons. Open is the
+    /// whole panel's own named action, so it is not offered twice.
+    @ViewBuilder
+    private func needsInputActions(_ offer: CardOffer, card: LabCard, session: SessionStatus) -> some View {
+        if case .button(let lead) = offer.lead, lead != .open, lead != .openInCapsid {
+            Button(lead.title) { actions.perform(lead, for: session) }
+        }
+        if offer.hasDeny { Button(CardAction.deny.title) { actions.perform(.deny, for: session) } }
+        if offer.canRequestChanges { Button(CardAction.requestChanges.title) { actions.perform(.requestChanges, for: session) } }
+        Button("Later") { model.remind(card, .fiveMinutes) }
+    }
+
+    /// The first line of why a session stopped, as a paragraph under the
+    /// card's head, 13 on 19 across its whole width, up to three lines; the
+    /// tooltip shows more of it, and Copy all of it.
     private func reasonLine(_ reason: FailureReason) -> some View {
         Text(verbatim: reason.line)
-            .font(.system(size: 12))
-            .lineLimit(2)
+            .font(.system(size: 13))
+            .lineSpacing(Self.reasonLeading - Self.reasonNaturalLeading)
+            .lineLimit(3)
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, 4)
+            .padding(.horizontal, 4)
             .help(reason.tooltip)
+    }
+
+    /// The board's 13-point text on 19 points of line, and the 15.5 the
+    /// system font gives 13 points by itself.
+    static let reasonLeading: CGFloat = 19
+    static let reasonNaturalLeading: CGFloat = 15.5
+
+    /// "Example project · 7:58": the project, and how long it ran before it stopped.
+    static func ranFor(_ session: SessionStatus) -> String {
+        session.duration.map { "\(session.projectName) · \(ElapsedClock.format($0))" } ?? session.projectName
+    }
+
+    /// The Finished card (Lab/FinishedResults.swift): the plate that fills, the
+    /// session's pictures and file count, what the reviewer found, and Results,
+    /// Open and, when there is one figure, Keep…
+    private func finishedCard(_ session: SessionStatus, card: LabCard, position: String?) -> some View {
+        let listing = finished.listing(for: session.id)
+        let offer = FinishedOffer.of(listing)
+        let files = FinishedCardText.files(listing)
+        let reviewer = insights.reviewers[session.id]?.line
+        var pictures: [ArtifactEntry] = []
+        if case .loaded(let entries) = listing { pictures = FinishedResults.pictures(in: entries) }
+        return VStack(alignment: .leading, spacing: 12) {
+            Row(side: wellSide, well: FinishedPlateWell(tint: colorScheme.sceneInk)) {
+                caption("Finished", style: Theme.clayText, weight: .semibold, trailing: position)
+                title(session.displayTitle)
+                detail(FinishedCardText.meta(project: session.projectName, duration: session.duration))
+            }
+            if FinishedMediaRow.shows(pictures: pictures, files: files, reviewer: reviewer) {
+                FinishedMediaRow(pictures: pictures, store: finished.thumbnails, files: files, reviewer: reviewer)
+                    .padding(.horizontal, 4)
+            }
+            buttons(top: 0, size: .large) {
+                if offer.lead == .results {
+                    resultsButton(session).panelButton(prominent: true)
+                    Button("Open") { model.open(card) }.panelButton()
+                } else {
+                    Button("Open") { model.open(card) }.panelButton(prominent: true)
+                    if offer.hasResults { resultsButton(session).panelButton() }
+                }
+                if let entry = offer.keepable {
+                    Button("Keep\u{2026}") { keep(entry, of: session) }
+                        .panelButton()
+                        .help("Keep this figure with its words, its data and its code")
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 2)
+        }
+        // Only the card on top is here, so only its files are read.
+        .task(id: session.id) {
+            insights.wantReviewers(for: session)
+            await finished.load(session)
+        }
+        .onDisappear { finished.forget(session.id) }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(FinishedCardText.spoken(
+            title: session.displayTitle, project: session.projectName, duration: session.duration,
+            files: files, reviewer: reviewer))
+        .accessibilityAction(named: "Results") { showResults(session) }
+        .accessibilityAction(named: "Keep\u{2026}") { if let entry = offer.keepable { keep(entry, of: session) } }
+    }
+
+    private func resultsButton(_ session: SessionStatus) -> some View {
+        // The files it made, in Results, on this session.
+        Button("Results") { showResults(session) }
+            .help("Show the files this session made")
+    }
+
+    /// A demo reads and opens nothing.
+    private func showResults(_ session: SessionStatus) {
+        guard Demo.mode == nil else { return }
+        ResultsWindowController.shared.show(focusing: session)
+    }
+
+    private func keep(_ entry: ArtifactEntry, of session: SessionStatus) {
+        guard Demo.mode == nil else { return }
+        KeepFromCardController.shared.show(KeepSubject(session: session, entry: entry))
+    }
+
+    /// A note Claude sent while it worked: quiet, timed, with Open.
+    private func noteCard(_ notice: LabNotice, card: LabCard, position: String?) -> some View {
+        let note = notice.midRunNote
+        let text = note?.text ?? notice.title
+        return Row(side: wellSide, well: symbol(notice.symbol)) {
+            caption(notice.caption, trailing: position)
+            Text(verbatim: text)
+                .font(.system(size: 13))
+                .lineSpacing(2.5)
+                .lineLimit(4)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+            detail(notice.detail)
+            buttons {
+                Button("Open") { model.open(card) }
+                    .panelButton()
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(PanelSpeech.note(text: text, title: notice.detail, project: ""))
     }
 
     /// The plan under the title: its summary in three lines, then its steps
@@ -607,7 +844,7 @@ struct LabPanelView: View {
                     .accessibilityLabel(label)
                 if offer.hasOpen {
                     Button("Open") { model.open(card) }
-                        .buttonStyle(.glass)
+                        .panelButton()
                 }
                 later(card)
             }
@@ -616,21 +853,19 @@ struct LabPanelView: View {
                 switch lead {
                 case .open, .openInCapsid:
                     Button(lead.title) { model.open(card) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
+                        .panelButton(prominent: true)
                 default:
                     Button(lead.title) { actions.perform(lead, for: session) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Theme.clay)
+                        .panelButton(prominent: true)
                         .help(lead.help ?? "")
                 }
                 if offer.hasOpen {
                     Button("Open") { model.open(card) }
-                        .buttonStyle(.glass)
+                        .panelButton()
                 }
                 if offer.hasDeny {
                     Button(CardAction.deny.title) { actions.perform(.deny, for: session) }
-                        .buttonStyle(.glass)
+                        .panelButton()
                         .help(CardAction.deny.help ?? "")
                 }
                 later(card, withOpen: offer.laterHasOpen)
@@ -714,19 +949,12 @@ struct LabPanelView: View {
                 well
                     .frame(width: side, height: side)
                     .background(Color.primary.opacity(0.06))
-                    .clipShape(.rect(cornerRadius: Theme.panelCorner - Theme.panelPadding))
+                    .clipShape(.rect(cornerRadius: side * 0.2))
                 VStack(alignment: .leading, spacing: 3) {
                     column
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-        }
-    }
-
-    /// The finished flask's settled still: `elapsed` far past its animation.
-    private var finishedFlask: some View {
-        Canvas { context, size in
-            FinishGlyph.draw(in: &context, size: size, elapsed: 10, tint: colorScheme.sceneInk)
         }
     }
 
@@ -742,10 +970,10 @@ struct LabPanelView: View {
     /// every session, the Dock's menu, under the pointer: the panel can't
     /// show them all, and the app needn't come to the front to.
     private func caption(_ text: String, dot: Bool = false, style: some ShapeStyle = .secondary,
-                         weight: Font.Weight = .medium, trailing: String? = nil, showsEvery: Bool = false) -> some View {
-        HStack(spacing: 5) {
+                         weight: Font.Weight = .semibold, trailing: String? = nil, showsEvery: Bool = false) -> some View {
+        HStack(spacing: 6) {
             if dot {
-                Circle().fill(Theme.clay).frame(width: 6, height: 6)
+                Circle().fill(Theme.clay).frame(width: 8, height: 8)
             }
             Text(text)
                 .foregroundStyle(style)
@@ -775,7 +1003,7 @@ struct LabPanelView: View {
                     .lineLimit(1)
             }
         }
-        .font(.system(size: 11, weight: weight))
+        .font(.system(size: 12, weight: weight))
     }
 
     private func title(_ text: String) -> some View {
@@ -792,10 +1020,15 @@ struct LabPanelView: View {
             .lineLimit(1)
     }
 
-    private func buttons<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    /// A row of buttons. The cards that ask keep them small; the three
+    /// moments with a well (working, finished, stopped) set them as the
+    /// board does, 28 points tall in 13-point words.
+    private func buttons<Content: View>(top: CGFloat = 8, size: ControlSize = .small,
+                                        @ViewBuilder _ content: () -> Content) -> some View {
         HStack(spacing: 8, content: content)
-            .controlSize(.small)
-            .padding(.top, 8)
+            .controlSize(size)
+            .font(size == .large ? .system(size: 13) : nil)
+            .padding(.top, top)
     }
 
     /// Copy, on a failure card that has a reason: it says "Copied" for a moment.
@@ -808,7 +1041,7 @@ struct LabPanelView: View {
             Button(copied ? "Copied" : "Copy") {
                 if copy() { copied = true }
             }
-            .buttonStyle(.glass)
+            .panelButton()
             .help("Copy the whole error")
             .task(id: copied) {
                 guard copied else { return }
@@ -816,14 +1049,5 @@ struct LabPanelView: View {
                 copied = false
             }
         }
-    }
-
-    /// "12m · 1.2M tokens": what the turn took, when known.
-    private static func summary(of session: SessionStatus) -> String {
-        let parts = [
-            session.duration.map(TimeSpan.short),
-            session.tokens.flatMap { $0 > 0 ? ActivityMetric.tokens.describe($0) : nil },
-        ].compactMap { $0 }
-        return parts.isEmpty ? session.projectName : parts.joined(separator: " · ")
     }
 }
