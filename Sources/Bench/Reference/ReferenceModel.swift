@@ -32,6 +32,27 @@ struct ReferenceAnswer: Equatable, Sendable, Identifiable {
     let figures: [HistoryFile]
     /// The user's message that began it has been read (or the history's start).
     let complete: Bool
+    /// The files that aren't pictures (a document, a table, a page, a
+    /// notebook), in order, one per artifact (the last version of each): what
+    /// the Shelf takes beside the figures.
+    var files: [HistoryFile] = []
+    /// Every version of a picture the reply showed, drafts included, in the
+    /// order they came: `figures` keeps one per artifact, and the shelf may
+    /// hold an earlier draft of it.
+    var pictureVersions: [HistoryFile] = []
+    /// The last history row that belongs to the reply: the one before the next
+    /// user message's row, so a run of steps that ends the reply (a run
+    /// folded into one item, whose id is its first row) still holds its later
+    /// rows. Nil for the newest reply read: it runs to the end.
+    var rowEnd: Int? = nil
+
+    /// The picture or file in this reply that has `version` (a draft too).
+    func file(version: String) -> HistoryFile? {
+        pictureVersions.first { $0.v == version } ?? files.first { $0.v == version }
+    }
+
+    /// Whether the reply showed this version of anything.
+    func shows(version: String) -> Bool { file(version: version) != nil }
 
     /// The words as one text, a paragraph between turns.
     var text: String { parts.map(\.text).joined(separator: "\n\n") }
@@ -45,6 +66,20 @@ enum ReferencePage: Equatable, Sendable {
     case unreadable
     /// The page's body was over the reader's 2 MiB cap (`HistoryReaderScript.bodyCap`).
     case tooBig
+}
+
+/// Where Show Where It Came From wants the window: the history row of the
+/// message that showed the file, the version to mark, either or both.
+struct ReferenceLanding: Equatable, Sendable {
+    var row: Int?
+    var mark: String?
+}
+
+/// A request to scroll the page to a card, by its id (the file's version);
+/// the token tells a second request for the same card from the first.
+struct ReferenceScroll: Equatable, Sendable {
+    let id: String
+    let token: Int
 }
 
 /// What the reader reads with and acts through. Tests fake every piece.
@@ -64,6 +99,10 @@ struct ReferenceDependencies {
     /// An answer's text as the window draws it.
     var render: @MainActor (String) -> NSAttributedString
     var now: @Sendable () -> Date = { Date() }
+    /// The shelf the figures and files are put on, and asked about for "On
+    /// Shelf ✓" and the mark. Nil is the real one (`ShelfAccess.live`); tests
+    /// and snapshots stand a made-up shelf in.
+    var shelf: ShelfAccess? = nil
 
     /// The page's own readers (Remote/HistoryReader.swift): 25 rows a page,
     /// each read under a nonce so cancelling its task aborts the fetch.
@@ -117,8 +156,10 @@ enum ReferenceRules {
     static let noAnswerNear = "No answer in the newest messages"
     /// The user's message, as the reply shows it: its first lines.
     static let questionLimit = 400
-    /// Figures a reply shows at most.
+    /// Figures a reply shows at most; files of other kinds likewise.
     static let figureLimit = 24
+    /// Versions of pictures a reply remembers at most, drafts included.
+    static let versionLimit = 96
 
     /// Claude's replies in the rows read, oldest first. A reply begins at one
     /// of the user's turns and runs to the next; the rows before the first of
@@ -139,8 +180,10 @@ enum ReferenceRules {
         if !current.isEmpty { groups.append(current) }
         // Every group but the first begins with the user's turn; the first is
         // whole when it does too, or when it begins the history.
-        return groups.compactMap { group in
-            answer(group, complete: isUsersTurn(group[0]) || reachedStart, whole: whole)
+        return groups.enumerated().compactMap { index, group in
+            // The rows up to the next user message are this reply's.
+            let end = index + 1 < groups.count ? groups[index + 1][0].index - 1 : nil
+            return answer(group, complete: isUsersTurn(group[0]) || reachedStart, whole: whole, end: end)
         }
     }
 
@@ -149,21 +192,32 @@ enum ReferenceRules {
         return false
     }
 
-    private static func answer(_ group: [HistoryItem], complete: Bool, whole: [Int: String]) -> ReferenceAnswer? {
+    private static func answer(_ group: [HistoryItem], complete: Bool, whole: [Int: String], end: Int?) -> ReferenceAnswer? {
         guard let last = group.last else { return nil }
         var question: String?
         var parts: [ReferenceAnswer.Part] = []
         var at: Date?
         var figures: [HistoryFile] = []
         var place: [String: Int] = [:]
+        var others: [HistoryFile] = []
+        var otherPlace: [String: Int] = [:]
+        var versions: [HistoryFile] = []
         func add(_ files: [HistoryFile]) {
-            for file in files where ArtifactGate.thumb(kind: file.kind) == nil {
+            for file in files {
                 let key = file.a ?? file.v
-                if let index = place[key] {
-                    figures[index] = file
-                } else if figures.count < figureLimit {
-                    place[key] = figures.count
-                    figures.append(file)
+                if ArtifactGate.thumb(kind: file.kind) == nil {
+                    if !versions.contains(where: { $0.v == file.v }), versions.count < versionLimit { versions.append(file) }
+                    if let index = place[key] {
+                        figures[index] = file
+                    } else if figures.count < figureLimit {
+                        place[key] = figures.count
+                        figures.append(file)
+                    }
+                } else if let index = otherPlace[key] {
+                    others[index] = file
+                } else if others.count < figureLimit {
+                    otherPlace[key] = others.count
+                    others.append(file)
                 }
             }
         }
@@ -189,7 +243,8 @@ enum ReferenceRules {
             }
         }
         guard !parts.isEmpty || !figures.isEmpty else { return nil }
-        return ReferenceAnswer(id: last.index, question: question, at: at, parts: parts, figures: figures, complete: complete)
+        return ReferenceAnswer(id: last.index, question: question, at: at, parts: parts, figures: figures, complete: complete,
+                               files: others, pictureVersions: versions, rowEnd: end)
     }
 
     /// "Claude's answer · 8:47 · 2 of 3": when Claude last spoke in the
@@ -263,8 +318,15 @@ final class ReferenceModel: ObservableObject {
         ShelfThumbnails(budget: 48 * 1_024 * 1_024, decoder: { ShelfThumbnails.decode($0, side: 1_200) })
     }
 
+    /// Pages a landing reads at most (`land`): 80 of 25 rows, 2,000 rows back.
+    static let landingPages = 80
+    /// What a landing says when the reply it wanted is further back than that.
+    static let tooFarSentence = "That reply is further back than Capsid reads at once. Earlier keeps looking."
+
     let session: SessionStatus
     let thumbnails: ShelfThumbnails
+    /// The shelf the window asks about and adds to.
+    let shelf: ShelfAccess
     private let dependencies: ReferenceDependencies
     private let gate: ReadingGate
 
@@ -279,8 +341,27 @@ final class ReferenceModel: ObservableObject {
     @Published private(set) var restFailed: Set<Int> = []
     /// Copy with Source just copied: the button says so for a moment.
     @Published private(set) var copied = false
+    /// The version a landing came for (Show Where It Came From): its card is
+    /// scrolled to, and shown as that version even where the reply went on to
+    /// a later draft of the same figure.
+    @Published private(set) var marked: String?
+    /// Asks the page to scroll to a card: set when a landing finishes.
+    @Published private(set) var scrollRequest: ReferenceScroll?
+    /// Said under the caption when a landing stopped short.
+    @Published private(set) var landingNote: String?
+    /// Versions being added to the shelf from this window.
+    @Published private(set) var shelving: Set<String> = []
+    /// What went wrong with an add, by version: a sentence under the figure.
+    @Published private(set) var shelfProblems: [String: String] = [:]
     /// The lowest row read so far; the next page ends before it.
     private(set) var from: Int?
+    /// Pages merged, all told.
+    private var pageCount = 0
+    /// The landing under way, if any, and the page count it began at.
+    private var goal: ReferenceLanding?
+    private var landingStart = 0
+    /// Where each version this window put on the shelf landed.
+    private var placements: [String: URL] = [:]
     /// The rows read, as items, by their index.
     private var items: [Int: HistoryItem] = [:]
     /// Turns read whole since their page cut them.
@@ -301,6 +382,7 @@ final class ReferenceModel: ObservableObject {
         self.dependencies = dependencies
         self.gate = gate
         self.thumbnails = thumbnails
+        shelf = dependencies.shelf ?? .live
     }
 
     // MARK: What is shown
@@ -355,8 +437,14 @@ final class ReferenceModel: ObservableObject {
     // MARK: Moving
 
     /// The newest reply, read when the window opens: pages are read until it
-    /// and its start are in.
-    func open() {
+    /// and its start are in. With `row` or `mark` (Show Where It Came From) the
+    /// window opens on the reply that holds that row, or shows that file,
+    /// instead: see `land`.
+    func open(at row: Int? = nil, mark: String? = nil) {
+        if row != nil || mark != nil {
+            land(at: row, mark: mark)
+            return
+        }
         guard pageTask == nil, shownID == nil else { return }
         look(until: { [unowned self] in answers.last?.complete == true }) { [unowned self] in
             if let newest = answers.last { show(newest.id) }
@@ -366,7 +454,97 @@ final class ReferenceModel: ObservableObject {
     func retry() {
         guard case .failed = phase else { return }
         phase = .idle
-        if shownID == nil { open() } else { completeShown() }
+        if goal != nil {
+            landStep()
+        } else if shownID == nil {
+            open()
+        } else {
+            completeShown()
+        }
+    }
+
+    // MARK: Landing
+
+    /// Goes to the reply that holds history row `row` (a reply's rows run from
+    /// its user message to the one before the next user message), reading back
+    /// as far as that takes, and scrolls to `mark`, the version shelved; with
+    /// no row, to the newest reply that shows `mark`; with neither, the newest.
+    /// A window already on another reply moves. The reply it lands on is
+    /// complete (its question read), and the card for `mark` is shown as that
+    /// version and marked "On your shelf" if it is on the shelf.
+    func land(at row: Int?, mark: String?) {
+        marked = mark
+        landingNote = nil
+        scrollRequest = nil
+        goal = ReferenceLanding(row: row, mark: mark)
+        landingStart = pageCount
+        // A look already reading (the window just opened) calls `landStep` when it ends.
+        landStep()
+    }
+
+    /// A landing is still reading toward its reply.
+    var isLanding: Bool { goal != nil }
+
+    /// What the rows read so far settle for a landing.
+    private enum Landed {
+        case found(ReferenceAnswer)
+        case needMore
+        case nothing
+    }
+
+    private func landed(_ goal: ReferenceLanding) -> Landed {
+        func settled(_ answer: ReferenceAnswer) -> Landed { answer.complete ? .found(answer) : .needMore }
+        if let row = goal.row {
+            // Every row from `row` up must be read, or an older reply might be
+            // the one that holds it.
+            guard reachedStart || (from ?? Int.max) <= row else { return .needMore }
+            guard let answer = answers.first(where: { max($0.id, $0.rowEnd ?? Int.max) >= row }) ?? answers.last else {
+                return reachedStart ? .nothing : .needMore
+            }
+            return settled(answer)
+        }
+        if let mark = goal.mark {
+            if let answer = answers.last(where: { $0.shows(version: mark) }) { return settled(answer) }
+            // Not in what is read: further back, or not in this session's replies at all.
+            guard reachedStart else { return .needMore }
+            return answers.last.map(settled) ?? .nothing
+        }
+        guard let answer = answers.last else { return reachedStart ? .nothing : .needMore }
+        return settled(answer)
+    }
+
+    private func landStep() {
+        guard let goal, pageTask == nil else { return }
+        switch landed(goal) {
+        case .found(let answer):
+            self.goal = nil
+            show(answer.id)
+            if let mark = goal.mark, answer.shows(version: mark) {
+                scrollRequest = ReferenceScroll(id: mark, token: (scrollRequest?.token ?? 0) + 1)
+            }
+        case .nothing:
+            self.goal = nil
+        case .needMore:
+            let remaining = Self.landingPages - (pageCount - landingStart)
+            guard remaining > 0 else {
+                // As far as one landing reads: the oldest reply read, and a word.
+                self.goal = nil
+                landingNote = Self.tooFarSentence
+                if let nearest = answers.first(where: \.complete) ?? answers.first { show(nearest.id) }
+                return
+            }
+            look(until: { [unowned self] in
+                if case .needMore = landed(goal) { false } else { true }
+            }, pages: min(Self.pagesPerLook, remaining)) { [unowned self] in landStep() }
+        }
+    }
+
+    /// The pictures a reply shows, with the landing's version in the place of
+    /// the later draft of the same figure.
+    func figures(of answer: ReferenceAnswer) -> [HistoryFile] {
+        guard let marked, let wanted = answer.pictureVersions.first(where: { $0.v == marked }) else { return answer.figures }
+        let artifact = wanted.a ?? wanted.v
+        return answer.figures.map { ($0.a ?? $0.v) == artifact ? wanted : $0 }
     }
 
     func earlier() {
@@ -404,6 +582,7 @@ final class ReferenceModel: ObservableObject {
     /// The window closed: nothing more is read, and what lands is dropped.
     func close() {
         token += 1
+        goal = nil
         pageTask?.cancel()
         pageTask = nil
         for task in wholeTasks.values { task.cancel() }
@@ -418,7 +597,8 @@ final class ReferenceModel: ObservableObject {
 
     /// Reads pages back from `from` until `done` holds, row 0 is reached, or
     /// `pagesPerLook` pages have been read; then `then`.
-    private func look(until done: @escaping @MainActor () -> Bool, then: @escaping @MainActor () -> Void) {
+    private func look(until done: @escaping @MainActor () -> Bool, pages: Int = ReferenceModel.pagesPerLook,
+                      then: @escaping @MainActor () -> Void) {
         guard pageTask == nil else { return }
         guard !reachedStart else {
             then()
@@ -428,10 +608,10 @@ final class ReferenceModel: ObservableObject {
         phase = .reading
         pageTask = Task { [weak self] in
             guard let self else { return }
-            defer { if self.token == token { self.pageTask = nil } }
+            // The look is over before `then` runs, so `then` may start another.
             var looked = 0
             // Nothing read yet always reads; after that, until `done` or the start.
-            while looked < Self.pagesPerLook, !reachedStart, from == nil || !done() {
+            while looked < pages, !reachedStart, from == nil || !done() {
                 let before = from
                 let read: ReferencePage
                 do {
@@ -439,19 +619,23 @@ final class ReferenceModel: ObservableObject {
                         try await dependencies.readPage(session.id, before)
                     }
                 } catch is CancellationError {
+                    endLook(token)
                     return
                 } catch {
                     guard self.token == token else { return }
                     phase = .failed(ReferenceRules.failureSentence)
+                    endLook(token)
                     return
                 }
                 guard self.token == token else { return }
                 switch read {
                 case .unreadable:
                     phase = .failed(ReferenceRules.failureSentence)
+                    endLook(token)
                     return
                 case .tooBig:
                     phase = .failed(ReferenceRules.tooBigSentence)
+                    endLook(token)
                     return
                 case .page(let page):
                     looked += 1
@@ -459,13 +643,22 @@ final class ReferenceModel: ObservableObject {
                 }
             }
             phase = .idle
+            endLook(token)
             then()
+            // A landing asked for while this look was reading carries on.
+            landStep()
         }
+    }
+
+    /// A look is over: its task is let go, unless the window closed meanwhile.
+    private func endLook(_ token: Int) {
+        if self.token == token { pageTask = nil }
     }
 
     /// Takes a page in and works the replies out again; the shown one keeps
     /// its id.
     private func merge(_ page: HistoryPage) {
+        pageCount += 1
         for item in page.items { items[item.index] = item }
         if let from, page.from >= from {
             // A page that didn't move back (a shape the page shouldn't give): stop here.
@@ -555,13 +748,65 @@ final class ReferenceModel: ObservableObject {
         dependencies.open(session)
     }
 
-    /// Keep… on a figure: the Keep sheet's subject for it, pinned to this
-    /// answer, so the sheet keeps this version with these words rather than
-    /// whatever newer answer shows another.
+    /// The reply that shows `file`: the one on the page when it does, else the
+    /// newest read that does.
+    private func answer(showing file: HistoryFile) -> ReferenceAnswer? {
+        if let current, current.shows(version: file.v) { return current }
+        return answers.last { $0.shows(version: file.v) } ?? current
+    }
+
+    /// Keep with Data and Code… on a figure: the Keep sheet's subject for it,
+    /// pinned to this answer, so the sheet keeps this version with these words
+    /// rather than whatever newer answer shows another.
     func keepSubject(_ file: HistoryFile) -> KeepSubject {
-        KeepSubject(session: session,
-                    entry: ArtifactEntry(version: file.v, artifact: file.a, name: file.name, mime: nil,
-                                         size: file.size ?? 0, at: current?.at),
-                    pinned: current.map { KeepPinnedAnswer(text: $0.text, at: $0.at) })
+        let reply = answer(showing: file)
+        return KeepSubject(session: session,
+                           entry: ArtifactEntry(version: file.v, artifact: file.a, name: file.name, mime: nil,
+                                                size: file.size ?? 0, at: reply?.at),
+                           pinned: reply.map { KeepPinnedAnswer(text: $0.text, at: $0.at) })
+    }
+
+    // MARK: The shelf
+
+    /// What the shelf is told: this file, this reply's words and time, the
+    /// reply's last row (the shelf finds the way back with it) and what the
+    /// user asked.
+    func shelfSource(_ file: HistoryFile) -> ShelfSource {
+        let reply = answer(showing: file)
+        return ShelfSource(session: session,
+                           entry: ArtifactEntry(version: file.v, artifact: file.a, name: file.name, mime: nil,
+                                                size: file.size ?? 0, at: reply?.at),
+                           answer: reply.map { KeepPinnedAnswer(text: $0.text, at: $0.at) },
+                           row: reply?.id, question: reply?.question)
+    }
+
+    /// Where a file stands on the shelf, for its pill and its mark.
+    func shelfMark(_ file: HistoryFile) -> ShelfMark {
+        shelving.contains(file.v) ? .adding : ShelfMark(file.v, in: shelf)
+    }
+
+    /// Add to Shelf on a figure or a file. One at a time per file; a failure
+    /// is a sentence under the file until the next try.
+    @discardableResult
+    func addToShelf(_ file: HistoryFile) async -> ShelfAddOutcome? {
+        guard shelfMark(file) == .off, !shelving.contains(file.v) else { return nil }
+        let version = file.v
+        let source = shelfSource(file)
+        shelving.insert(version)
+        shelfProblems[version] = nil
+        defer { shelving.remove(version) }
+        let token = self.token
+        let outcome = await shelf.add(source)
+        guard self.token == token else { return outcome }
+        switch outcome {
+        case .added(let placement), .alreadyOnShelf(let placement): placements[version] = placement.folder
+        case .failed(let sentence): shelfProblems[version] = sentence
+        }
+        return outcome
+    }
+
+    /// "On Shelf ✓": the Shelf window, on the item when this window put it there.
+    func showOnShelf(_ file: HistoryFile) {
+        shelf.show(placements[file.v])
     }
 }
