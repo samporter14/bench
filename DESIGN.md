@@ -380,9 +380,9 @@ Every link goes through one function. The rules:
     `no-store`, projected in the page, and read through a capped stream (1 or 2 MB):
     `/api/artifacts/<36>/versions`, `/api/artifacts/versions/<36>?include_metadata=true` and
     `/api/artifacts/versions/<36>/lineage?slim=1` (ids exactly `[0-9a-f-]{36}`; the fields kept are in Capsid
-    on your phone → Artifacts, Keep's reads). `apiGET`'s own prefix `/api/artifacts/versions/` is as wide as it
-    was and would still pass the last two unprojected, so nothing in Capsid uses it for them; narrowing it
-    to the plan file's one shape is open.
+    on your phone → Artifacts, Keep's reads). `apiGET`'s own `/api/artifacts/versions/` is now exactly the
+    plan file, `/artifacts/versions/<id>` and nothing after the id (until 1.0 it was a prefix, which would
+    have passed the last two unprojected into Swift; the 1.0 spikes' S2 found it).
   - `apiPOST` is the **one write** (since 0.3.4). It accepts exactly one
     route, `^/frames/[0-9a-f-]{36}/approve-plan$` (`WebContainer.isWritablePath`),
     and its body is always exactly `{}`. It sends the `operon_csrf` cookie's

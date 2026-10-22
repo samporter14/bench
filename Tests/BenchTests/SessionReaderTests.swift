@@ -432,6 +432,15 @@ struct ReadablePathTests {
         "/frames/",
         "/me",
         "/csrf",
+        // Under the plan file's prefix only the file itself (since 1.0): the facts,
+        // lineage and review reads are typed and projected in the page.
+        "/artifacts/versions/",
+        "/artifacts/versions/ver-001?include_metadata=true",
+        "/artifacts/versions/ver-001/lineage?slim=1",
+        "/artifacts/versions/ver-001/lineage",
+        "/artifacts/versions/ver-001/verification",
+        "/artifacts/versions/ver-001/annotations",
+        "/artifacts/ver-001/versions",
     ])
     func everythingElseUnderFramesIsRefused(_ path: String) {
         #expect(!WebContainer.isReadablePath(path))

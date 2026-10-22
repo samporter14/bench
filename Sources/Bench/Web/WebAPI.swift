@@ -123,15 +123,21 @@ struct APIWriteResult: Equatable, Sendable {
 
 extension WebContainer {
     /// The API paths Bench may read in full, under the daemon's `/api`.
-    nonisolated static let readablePrefixes = ["/usage", "/artifacts/versions/"]
+    nonisolated static let readablePrefixes = ["/usage"]
 
-    /// What `apiGET` may read: usage and plan files as before, and a frame
-    /// exactly as `^/frames/[0-9a-f-]{36}\?shallow=true$` (a plan's card) or
-    /// `/frames/<id>/token-series` (the context ring; one id-shaped path
-    /// segment). Never `/frames/<id>/messages`, nor anything with `..`.
+    /// What `apiGET` may read: usage as before, a plan file exactly as
+    /// `/artifacts/versions/<id>` (since 1.0 nothing else under that prefix:
+    /// `?include_metadata=true`, `/lineage`, `/verification` and `/annotations`
+    /// are the typed, projected reads of `ArtifactReader`, never read whole
+    /// into Swift), and a frame exactly as `^/frames/[0-9a-f-]{36}\?shallow=true$`
+    /// (a plan's card) or `/frames/<id>/token-series` (the context ring; one
+    /// id-shaped path segment). Never `/frames/<id>/messages`, nor anything
+    /// with `..`.
     nonisolated static func isReadablePath(_ path: String) -> Bool {
         guard !path.contains("..") else { return false }
         if readablePrefixes.contains(where: path.hasPrefix) { return true }
+        let versions = "/artifacts/versions/"
+        if path.hasPrefix(versions) { return PlanCheck.isVersionID(String(path.dropFirst(versions.count))) }
         let head = "/frames/", shallow = "?shallow=true", series = "/token-series"
         guard path.hasPrefix(head) else { return false }
         let rest = path.dropFirst(head.count)
