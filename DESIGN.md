@@ -5049,54 +5049,60 @@ foreground priority:
    five seconds apart while `pending`, and it is never a Diagnostics probe.
    The thumbnails in the strip are the shelf's own 120-px read.
 
-**The sheet** (Kept/KeepSheet.swift, Kept/KeepModel.swift): a `.sheet` on the
-Results window, 600 wide (its minimum width rose from 520 to 620 for it), a
-grouped `Form` with one clay button. Minimal on purpose: the common keep is
+**The sheet** (Kept/KeepSheet.swift, Kept/KeepModel.swift), drawn as board 8 of the
+1.0 mock-ups on the Solanum surfaces: a white sheet (raised grey in Slate), 28
+and 24 of padding and 18 between sections, one clay button. It is as wide as
+its window allows (`KeepSheet(model:dismiss:width:)`): 600 from Results (its
+minimum width is 620), the reference window's own width from there; board 8
+draws it 760 wide in a large window, and a sheet wider than its window hangs
+off both sides. The body scrolls under a pinned footer when the screen is
+short, with a hairline above the footer while it does; the sheet grows to fit,
+up to 740 points or the screen less 100. Minimal on purpose: the common keep is
 Return.
 
-- **Name**, the file name without its extension, selected on open; Return
-  keeps.
-- **Which version is the real one**: a strip of tiles, oldest to newest, "v3 ·
-  8:09" under each picture (drawn on paper, never above its own pixels), the
-  one Claude's answer shows pre-selected and labelled "In the answer" in
-  secondary (a fact, not a demand; a version that vanished reads "Gone").
-  The chosen tile has a 2-pt `.primary` stroke: not clay, which is spent on
-  Keep and would read as a second primary; not the accent, a second hue; and
-  thickness carries the state under Increase Contrast. ← and → move the
-  choice. The footer says which and why: "Version 3 of 4, from 8:09. It's the
-  one Claude's answer shows, at 8:12."
-- **Keep with it**, three checkbox rows whose subtitles say what they hold,
-  and, when they can't be ticked, why, in the page's own words where it has
-  them (`KeepRules.rows`): *What Claude said about it* ("“All plates passed
-  except plate 7…” · the answer at 8:12"; the fallback is titled *What Claude
-  said last*; "Capsid couldn't find the answer that showed this version. The
-  figure and its provenance can still be kept."); *The data it was drawn
-  from* ("z_prime_by_plate.csv · 4 KB · listed in its provenance"; "No source
-  data recorded." with an ⓘ saying Capsid doesn't guess from file names;
-  "Claude Science is still working out what this was drawn from. Try again in
-  a minute."; inputs found only by static analysis are offered off, tagged
-  "inferred", with the page's tooltip behind the ⓘ; inputs over 8 MB or not
-  saved in Claude Science are listed and not copied); *The code that drew it*
-  ("z_prime.py · 2 KB · Claude-generated reconstruction"; "Generating
-  reproduction code…"; "No reproduction code — <model> is off for your
-  organization"; and the page's other sentences). A version you uploaded
-  shows one line instead of the data and code rows. There is no "raw input"
-  row in 1.0: the list projection drops `is_user_upload`, so Capsid can't tell
-  uploads apart without a read per file; a later cut can add it.
-- **Collection**, beside the name in the first section: a pop-up of the
-  root's subfolders plus New Collection… (an alert with a name), defaulting
-  to the collection last kept into for this project (`keptCollections`, by
-  project id), else the project's name, marked "(new)" until it exists. That
-  section's footer names the destination and what lands: "Into
-  ~/Documents/Kept/Assay development/Fig 2B · Z′ by plate: z_prime.png, data,
-  code and a README.md. About 92 KB." A taken name is said before Keep: "…is
-  already kept in Assay development, so this one will be “Fig 2B · Z′ by plate
-  2026-10-22 0912”." The Kept folder itself is in Settings → General → Kept,
-  not in the sheet: three sections, no scrolling at 740 points.
-- The status line: "Nothing in Claude Science changes. Capsid copies what's
-  ticked and checks each file." Then Cancel (Esc) and **Keep** (Return,
-  `.borderedProminent` in clay), dimmed until the versions are read and a
-  version is chosen.
+- **Name**, the file name without its extension, in a 32-point field (an ink
+  edge while focused), selected on open; Return keeps. A taken name is said
+  under it before Keep: "“Fig 2B” is already kept in Assay development, so
+  this one will be “Fig 2B 2026-10-22 0912”."
+- **Which version is the real one**: tiles in a four-column grid, oldest to
+  newest, each a picture on paper (never above its own pixels) and "v3 · 8:09
+  · in the answer", or the label with the fact under it when the tile is too
+  narrow. The one Claude's answer shows is pre-selected; a version that
+  vanished reads "gone". The chosen tile is white with a 2-point ink stroke,
+  the others ivory with a hairline: not clay, which is spent on Keep, and not
+  the accent; thickness carries the state under Increase Contrast. ← and →
+  move the choice. Under the tiles: "Version 3 of 4, from 8:09. It's the one
+  Claude's answer shows, at 8:12."
+- **Keep with it**, native checkboxes in ink (the one clay element is Keep),
+  whose subtitles say what they hold and, when they can't be ticked, why, in
+  the page's own words where it has them (`KeepRules.rows`): *What Claude said
+  about it* ("“All plates passed except plate 7…” · the answer at 8:12"; the
+  fallback is titled *What Claude said last*; "Capsid couldn't find the answer
+  that showed this version. The figure and its provenance can still be
+  kept."); *The data it was drawn from* ("z_prime_by_plate.csv · 4 KB · listed
+  in its provenance"; "No source data recorded." with an ⓘ saying Capsid
+  doesn't guess from file names; "Claude Science is still working out what
+  this was drawn from. Try again in a minute."; inputs found only by static
+  analysis are offered off, tagged "inferred"; inputs over 8 MB or not saved
+  in Claude Science are listed and not copied); *The code that drew it*
+  ("z_prime.py · 2 KB · Claude-generated reconstruction", and the page's other
+  sentences). A version you uploaded shows one line instead of the data and
+  code rows. There is no "raw input" row in 1.0: the list projection drops
+  `is_user_upload`.
+- **Where it lands**: an ivory box with a folder, the path, and what goes in it
+  ("z_prime.png · data/ · code/ · README.md with the text, sources and
+  versions · about 92 KB"; with the answer unticked, "README.md with the
+  sources and versions"). A small "Change…" pill beside it opens a menu of the
+  Kept folder's collections, the current one ticked, and New Collection… (an
+  alert with a name). It defaults to the collection last kept into for this
+  project (`keptCollections`, by project id), else the project's name, marked
+  "(new)" until it exists. The folder itself is in Settings.
+- **The footer**: "Nothing in Claude Science changes. Capsid copies what's
+  ticked and checks each file." on the left, then Cancel (Esc) and **Keep**
+  (Return, a clay pill), dimmed until the versions are read and one is chosen.
+  After a keep: Show in Finder where files landed, Done, and Try Again as the
+  one clay button when something is missing; after a clean keep with a
+  checksum warning, Done is the clay button.
 
 **What a keep does** (`KeepModel.perform`). The folder is made hidden beside
 its destination (`.<Name>.keeping-<uuid>`, so a Keep in progress never shows
@@ -5422,6 +5428,173 @@ its attributes, the link filter, the placeholders and their ranges, a
 trim's identity with the old rule, the rows argument, the nonce and abort, the
 cap, the yields, the timing, the phone's 503), and `ReferenceSnapshotTests`
 (draws the content to PNGs, light and dark, when `CAPSID_SNAPSHOT_DIR` is set).
+
+## Quick Start (QuickStart/, since 1.0)
+
+Board 4 of the 1.0 mock-ups. A small floating panel for a request in one
+sentence, from any app: a global key (⌃⌥⌘Space by default), File → Quick
+Start…, Finder's Services menu ("Start Session in Capsid…" on files, "Start
+Session from Selection in Capsid…" on text) and Shortcuts. It is
+non-activating, like Spotlight: the app you were in stays in front. It sits on
+the screen under the pointer, 568 wide, ivory glass (slate in the dark) with
+20-point corners and a strong hairline; Esc, Cancel, a send that went and
+switching apps close it. It holds the Capsid mark beside a 19-point request
+field; dropped files as white chips (name, size, ×) and a dashed "Drop more
+files"; Project chips (the three most recent, the chosen one slate with ivory
+words, Other… for the rest); "Ask for a plan first" (a slate checkbox: never
+the accent); recipes; and at the foot one sentence, Cancel and **Start ↩**
+(the clay pill). ⌘1–⌘9 fill the panel from the first nine recipes without
+sending.
+
+↩ starts a session in the chosen project through the phone's new-session
+writer (`RemoteBrowser.start`), with an intent id kept the same across a retry
+of an unchanged request, so a session whose answer was lost is found, not made
+twice. ⇧↩ sends the same words as a message to the session the main window
+shows (`RemoteSessions`: a fresh read, `RemoteDecide.message`, queued when
+Claude is busy). The foot says which: "A new session in Assay development, on
+your plan. ⇧↩ sends it to the session you're viewing." or, with ⇧ down, "A
+message to “Plate reader QC” in Assay development, on your plan. It waits its
+turn if Claude is busy." Errors say what happened in one line and keep the
+text; files already uploaded stay in the project and a retry reuses them for
+ten minutes.
+
+**Files.** Any file of a kind Capsid knows (documents, tables, images, text,
+code, common lab data; about 60 extensions), up to 20 MiB each, 8 at a time,
+40 MiB in all, uploaded to the project before the request: the phone's
+`/api/projects/<pid>/attachments` upload with its own in-page shape (`kind:
+"file"`), and one attachment line per file in the request, written only
+through `messageWithFiles` / `newSessionWithFiles`, which the page checks
+strictly. The photo route is unchanged. The limits are Capsid's; the daemon's
+own are unknown.
+
+**Recipes** (`SettingsKey.recipes`, JSON; Settings → Recipes, a grouped
+Form): a name, a project or any, words, plan first; reordered in Settings.
+**Global keys** use Carbon `RegisterEventHotKey` (no Accessibility
+permission); Settings → General → Keyboard picks them (None, ⌃⌥⌘Space,
+⌃⌥Space, ⌃⌥⌘R, ⌃⌥⌘N) and says so under the pop-up when another app holds one.
+⌃⌥Space is macOS's own "next input source" key when that is on. Reply's key
+(⌃⌥⌘R) opens Reply on the top needs-input card (a plan opens Request Changes,
+never an approval) and does nothing when none waits.
+
+**Shortcuts** (App Intents, `AppShortcutsProvider`): Start Session, Run Recipe,
+Send Message, Sessions Needing Me, Open Session, Set Quiet While Presenting.
+Project, Session and Recipe entities are asked for from the database each time
+and never kept. The first three ask for confirmation unless Settings → General
+→ Shortcuts → "Let Shortcuts start sessions and send messages" is on (off by
+default). SwiftPM doesn't extract App Intents metadata;
+`Scripts/appintents-metadata.sh` does (seven intents in the bundle). Whether
+Shortcuts lists them for a self-signed build is unverified.
+
+`--demo quick-start`: made-up projects, recipes and a file; Start shows its
+sent state and sends nothing; no key is registered.
+
+## The panel's moments and what it knows (Lab/, since 1.0)
+
+Board 6 of the 1.0 mock-ups: the panel's three moments, in its own glass.
+
+**Working.** Under the well and its three lines: when the session's plan has
+been read (`LabInsights`, below), "Step 4 of 6 · Check against published
+screens" (12 pt) over a 4-point bar (clay on ink at 18%); without a plan,
+nothing. With "Name the specimen that's playing" on, the last line (11 pt,
+muted, two lines kept) says which specimen plays: "CRISPR, picked because the
+session is about gene editing" when the title picked it, else its name and
+caption as before. The activity list shows the same line, with a 2-point bar,
+under a working row's project. The panel and the list both say which running
+sessions are on screen (`PanelInsights` joins them).
+
+**Topic-matched specimens.** Settings → Specimens has "Match the specimen to
+the session" (`matchSpecimenToSession`, on by default: the handoff's proposal,
+Sam's call). A session's title is folded (case, accents, width), split into
+words, and a simple plural (-s, -es, -ies) stripped from each; a specimen is
+picked when the title names it, or one of its `SpecimenNotes` topics, as
+consecutive words (`SpecimenTopics.match`), a named specimen before topic-only
+ones. Only what already plays is offered, so categories off, Only favorites,
+Don't Play and Play Only all hold. Among the matches the same session always
+gets the same specimen (FNV-1a over the session id through a mixing step,
+never Swift's per-process `hashValue`). Nothing is stored. It applies to the
+panel's well, its stack rows and its menu; the toolbar capsule and the menu
+bar keep the rotation.
+
+**Finished.** The well is a well plate (`FilledPlate`): its wells fill one
+after another and two clay sparkles pop in, 1.3 s, then it rests; under Reduce
+Motion, or while nobody is at the Mac, that last frame at once. When the card
+is on top, Capsid reads the session's files once and up to three pictures
+(`FinishedResults`: its own queue of one, pictures within 1 MiB, withdrawn
+when the card goes): up to three figures 72 × 52 on ivory, "3 files", and
+"Reviewer: no findings" or "Reviewer: 2 findings". Buttons: **Results** (clay)
+then **Open** when the session made files; **Open** alone, in clay, when it
+made none or the list couldn't be read; **Keep…** when it made exactly one
+figure. The line under the title is "project · 21m".
+
+**Stopped with an error.** A still culture plate with one stray clay colony
+(`ContaminatedPlate`), "Stopped with an error" in clay-text, the reason as a
+paragraph (13 on 19, up to three lines; Copy has all of it), and **Open**
+(clay), **Copy**, **Dismiss**. (This card has a well again, reversing 0.9.3's
+"cards that ask have no well" for it alone.)
+
+**Notes.** A note Claude sent mid-run ("Claude says", up to four lines, the
+session beneath, **Open**) is a notice: it queues behind the cards about
+sessions, lasts 10 s, makes no sound and no Mac notification, and shows only
+where cards do and "Show plans, questions and requests on the card" is on.
+
+**Sound.** One setting covers four short system sounds, picked to be told
+apart (placeholders until someone designs them): Glass for a question or any
+request, Submarine for a plan, Basso for a failure, Hero at half volume for a
+finish. One read plays one sound, the most urgent. A held finish (Nidus focus,
+presenting) is silent.
+
+**The stack.** With two or more sessions working, the panel shows one with
+"+N more" as plain words; with the pointer over it, it opens into one row per
+session (its specimen small, title, clock; five at most, then "and N more",
+which opens the activity list), and a press on a row opens that session.
+
+**VoiceOver.** Each card reads as one sentence ("Finished. Plate reader QC.
+Assay development, 21 minutes. 3 files. Reviewer: no findings") with its
+buttons as named actions; a card that needs you, or a failure, is announced as
+it comes to the top, once within ten seconds.
+
+**What it knows** (`Lab/LabInsights.swift`, `Remote/InsightReader.swift`).
+Three reads, all held in memory, off with "Show plans, questions and requests
+on the card" or the cards, in a demo, and while the page isn't ready:
+
+- *Plan progress.* The number is Claude Science's own arithmetic: the steps
+  whose status is completed or skipped, plus one, of an approved plan with
+  phases. Capsid reads the page's lean tree, `GET
+  /api/frames/<session>/trace-shallow?include_messages=false`, and projects it
+  inside the page, so the plan's descriptions never reach Swift: a step
+  number, a total and at most one title come back. Statuses merge the
+  session's own and, for each direct child, those its `_plan_claims` list for
+  the current plan version. Stricter than the page: nothing until a step has
+  reported something other than pending, nothing once every step is done, and
+  a status word the page doesn't know counts for nothing (a breadcrumb). The
+  title shows only when exactly one step is in progress, its title is in the
+  plan once, and its place is the step shown. A running session on screen is
+  read at most every 15 s, one read in flight across everything; a session
+  with no plan to follow every 60 s; one that returns after being found
+  without an approved plan within 5 s.
+- *Reviewer counts.* `GET
+  /api/frames/<session>/verification?resolved_limit=0&actionable_limit=500`,
+  projected in the page to four integers (standing, fixed, running,
+  completed). A finding is a `fail` or `warn` check; it stands while open or
+  claimed, and while unaddressed (what an open finding becomes at a turn's
+  end) unless withdrawn (a rebuttal and fewer than four re-flags). Read once
+  per finished session, again if it ran since.
+- *Mid-run notes.* `send_user_message` notes never reach the notification
+  bridge, so the history reader's newest page is read at most every 30 s per
+  running session on screen (an unchanged history costs one 12-row GET). The
+  first read only sets the baseline: nothing from before Capsid looked ever
+  appears. A note is plain text of at most 300 characters.
+
+`apiGET`'s list is not widened: the insight reader has its own in-page list of
+exactly those two paths, checked in the page and in Swift; both are in the
+compatibility inventory with probes that answer counts only, and Diagnostics
+lines. What only a live session can settle: whether the tree's root carries
+`_plan_json` (else every approved plan answers "plan missing" and the panel
+shows nothing), how often models report a step in progress, and whether
+findings land before `completed`.
+
+`--demo progress`, `--demo finished` (`--one-figure` offers Keep…), `--demo
+note`, `--demo stack` (`--hover` opens it): made-up insights; nothing is read.
 
 ## 1.0 spikes (2026-10-22, read-only)
 

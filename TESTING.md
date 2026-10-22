@@ -323,6 +323,40 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-22, Capsid 1.0 M6, M7, M8 and the Keep sheet
+
+Built by four Sonnet agents in worktrees from one shared brief (the boards'
+HTML, the Solanum kit, file ownership, a data contract), merged in order
+(data, Keep sheet, Quick Start, panel) on `g/reference`.
+
+- ✅ **Data** (`LabInsightsTests`, `InsightReaderTests`, `SpecimenTopicsTests`):
+  plan progress, reviewer counts and mid-run notes, projected in the page on
+  made-up trees with "SECRET" in every description and finding (none comes
+  back); rates, gates and wake-ups on an injected clock; the topic matcher's
+  words, plurals, phrases and determinism. Probes and Diagnostics lines added.
+- ✅ **The Keep sheet as board 8**, seven states light and dark offscreen; its
+  width now follows its window (600 from Results, the window's own from the
+  reference reader).
+- ✅ **Quick Start as board 4** (`QuickStart*Tests`, 120 tests): the writers
+  driven with fakes (intent-id dedupe, plan first, a queued message, file
+  refusals), recipes, keys, services, the Shortcuts gate; the panel light and
+  dark offscreen. `Metadata.appintents` in the built app lists 7 intents.
+- ✅ **The panel as board 6** (`PanelMomentsTests`): working with progress and
+  the matched specimen, finished with figures and the reviewer line, stopped
+  with the culture plate, the note card, the stack, sounds, VoiceOver
+  sentences; flat stand-ins offscreen (glass doesn't draw offscreen).
+- ✅ **The whole suite:** 2,616 tests in 342 suites pass. A Nidus writer timing
+  test (`aPreparedWriteSupersededByClearNeverCommits`) failed in some full
+  runs while four agents compiled, and passed alone every time: a flake under
+  load, older than this work.
+- ✅ **Installed** (CDHash a372b81f…).
+- ⏳ **Live:** the global keys taking ⌃⌥⌘Space and ⌃⌥⌘R; Quick Start's panel,
+  blur and drag-and-drop; a real start, message and upload of each file
+  kind; Services in Finder without a logout; Shortcuts listing the actions
+  (self-signed); the panel's glass and clay buttons, the stack's hover, the
+  sounds, VoiceOver; plan progress on a real plan (whether the tree's root
+  carries the plan), reviewer counts, notes.
+
 ## 2026-10-22, M4 follow-up: answers with their figures, the mock-up's look, Codex's review
 
 Sam opened a real session as a reference and found it ugly, without figures,

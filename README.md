@@ -175,6 +175,30 @@ Keep on Top** floats the window over your document; Open Conversation takes
 you to the session itself. The window reads the conversation the way the
 phone does, a page at a time, waits while you type, and writes nothing.
 
+## Start from anywhere
+
+**Quick Start** (⌃⌥⌘Space, or File → Quick Start…) is a small panel over
+whatever you're doing: type a request, drop files in, pick the project, and
+press Return for a new session (Shift-Return sends it to the session you're
+looking at instead). Save the requests you make often as **recipes**
+(Settings → Recipes) and fill them with ⌘1 to ⌘9. Finder's Services menu
+starts a session with the files or text you've selected, and Shortcuts has
+actions to start a session, run a recipe, send a message or list the sessions
+that need you; they ask before they start or send anything unless you allow it
+in Settings.
+
+## The panel, while it works
+
+The specimen that plays is matched to what the session is about when one of
+yours fits (a session about a gel plays the gel; Settings → Specimens). While
+Claude follows a plan, the panel says which step it's on ("Step 4 of 6 · Check
+against published screens") with a thin bar. When a session finishes, the
+card shows its figures, how many files it made and what the reviewer found,
+with Results and, for a single figure, Keep…. When one stops with an error,
+it says why. A note Claude sends while it works comes up as a quiet card. A
+question, a plan, a failure and a finish each have their own sound. With two
+or more sessions working, hover over the panel to see them all.
+
 ## Capsid on your phone
 
 Use Claude Science from your iPhone, iPad or another computer while you're
