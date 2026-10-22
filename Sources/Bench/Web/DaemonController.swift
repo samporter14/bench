@@ -16,11 +16,21 @@ enum DaemonError: Error {
         case .cliMissing:
             return "Can't find the claude-science tool. Install Claude Science, then try again."
         case .statusFailed:
-            return "Can't read Claude Science's status. Try again in a moment."
+            return "Can't read Claude Science's status."
         case .launchFailed(let reason):
             return "Couldn't start Claude Science: \(reason)"
         case .didNotStart:
             return "Claude Science didn't start within \(Int(DaemonController.startTimeout)) seconds."
+        }
+    }
+
+    /// Whether it may pass by itself, so the window keeps trying
+    /// (Web/StartRetry.swift): a daemon too busy to answer, or one still
+    /// coming up. A missing tool or a failed launch needs the user.
+    var isTemporary: Bool {
+        switch self {
+        case .statusFailed, .didNotStart: true
+        case .cliMissing, .launchFailed: false
         }
     }
 }
@@ -56,6 +66,14 @@ enum DaemonController {
     /// A fresh single-use sign-in code, or nil when the CLI can't give one.
     static func freshNonce() async -> String? {
         try? await offMain { fetchLoginNonce() }
+    }
+
+    /// The daemon's status when it answers that it is running, else nil (not
+    /// running, or no answer). Never starts one: the window's automatic
+    /// retries use this, and during an update `status` can say "not running"
+    /// while the new daemon waits for the port.
+    static func runningStatus() async -> CLIStatus? {
+        try? await status()
     }
 
     /// `nil` means "the daemon is not running".

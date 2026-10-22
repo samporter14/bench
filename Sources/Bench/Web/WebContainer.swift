@@ -21,9 +21,15 @@ final class WebContainer: ObservableObject, WebPageWindow {
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
     @Published private(set) var status: Status = .starting {
-        // Close Other Tabs and Close All Tabs wait for a ready page.
-        didSet { if status != oldValue { PageTabCommands.shared.refresh() } }
+        didSet {
+            // Close Other Tabs and Close All Tabs wait for a ready page.
+            if status != oldValue { PageTabCommands.shared.refresh() }
+            if status == .ready { retry.stop(resetting: true) }
+            if case .failed = status {} else { retriesOnItsOwn = false }
+        }
     }
+    /// The failure on show is being retried on its own (Web/StartRetry.swift).
+    @Published private(set) var retriesOnItsOwn = false
     /// The session the page is showing (`/projects/<p>/frames/<id>`), or nil
     /// anywhere else: what the context ring is about.
     @Published private(set) var currentFrameID: String?
@@ -57,6 +63,9 @@ final class WebContainer: ObservableObject, WebPageWindow {
     private var addressWatch: AnyCancellable?
 
     private static let signInRetryInterval = Duration.seconds(30)
+    /// Tries again, quietly, after a failure that may pass by itself.
+    private lazy var retry = StartRetry(stillFailed: { [unowned self] in waitingToRetry },
+                                        attach: { [unowned self] daemon in begin(found: daemon) })
 
     private init() {
         // A web view copies its configuration when it is made, so all of it is
@@ -101,32 +110,63 @@ final class WebContainer: ObservableObject, WebPageWindow {
     // MARK: Starting
 
     /// Starts the daemon if needed, signs in, and registers Router.navigate
-    /// and Router.clickWebNotification. Also the "Try again" button.
-    ///
-    /// Only one start runs at a time. A second one would ask `status` while
-    /// the first one's daemon is still booting, hear "not running", and run
-    /// `serve` again on top of it.
+    /// and Router.clickWebNotification. Also the "Try again" button, which
+    /// starts the automatic retries' waits over.
     func start() {
         Router.shared.navigate = { [weak self] url in self?.load(url) }
         Router.shared.clickWebNotification = { [weak self] id in
             guard let self else { return }
             notifications.click(id, in: webView)
         }
+        guard startTask == nil else { return }
+        retry.stop(resetting: true)
+        begin(found: nil)
+    }
 
+    /// Only one start runs at a time. A second one would ask `status` while
+    /// the first one's daemon is still booting, hear "not running", and run
+    /// `serve` again on top of it. With `found`, the daemon has already
+    /// answered (an automatic retry), so nothing is started, only signed in to.
+    private func begin(found: CLIStatus?) {
         guard startTask == nil else { return }
         status = .starting
         lastSignInRetry = nil
         startTask = Task {
             defer { startTask = nil }
             do {
-                let daemon = try await DaemonController.ensureRunning()
+                let daemon: CLIStatus
+                if let found {
+                    daemon = found
+                } else {
+                    daemon = try await DaemonController.ensureRunning()
+                }
                 await signIn(port: daemon.port)
             } catch {
-                let sentence = (error as? DaemonError)?.sentence ?? "Couldn't reach Claude Science. Try again."
+                let failure = error as? DaemonError
+                let sentence = failure?.sentence ?? "Couldn't reach Claude Science. Try again."
                 Logger.web.error("Start failed: \(sentence, privacy: .public)")
-                status = .failed(sentence)
+                fail(sentence, temporary: failure?.isTemporary ?? false)
             }
         }
+    }
+
+    /// Shows a failure. One that may pass by itself (Claude Science too busy
+    /// to answer) is retried on its own until it answers (Web/StartRetry.swift);
+    /// any other waits for Try again.
+    private func fail(_ sentence: String, temporary: Bool) {
+        status = .failed(sentence)
+        retriesOnItsOwn = temporary
+        if temporary {
+            retry.begin()
+        } else {
+            retry.stop(resetting: false)
+        }
+    }
+
+    /// The window still shows a failure, and no start is under way.
+    private var waitingToRetry: Bool {
+        guard case .failed = status else { return false }
+        return startTask == nil
     }
 
     /// Loads the daemon's page with a fresh sign-in code. Without one (the CLI
@@ -137,7 +177,7 @@ final class WebContainer: ObservableObject, WebPageWindow {
         defer { signingIn = false }
         self.port = port
         guard let root = URL(string: "http://localhost:\(port)/") else {
-            status = .failed("Couldn't build Claude Science's address.")
+            fail("Couldn't build Claude Science's address.", temporary: false)
             return
         }
         // Reopen where the user was (Web/LastSession.swift), unless a link
@@ -204,13 +244,15 @@ final class WebContainer: ObservableObject, WebPageWindow {
         if let last = lastSignInRetry, now - last < Self.signInRetryInterval {
             Logger.web.error("The daemon refused the sign-in again")
             guard status == .starting else { return false }
-            status = .failed("Claude Science didn't accept the sign-in. Try again.")
+            fail("Claude Science didn't accept the sign-in. Try again.", temporary: false)
             return true
         }
         lastSignInRetry = now
         Task {
+            // `claude-science url` asks the daemon too, so a frozen daemon
+            // fails here as well: a failure that may pass.
             guard let nonce = await DaemonController.freshNonce() else {
-                status = .failed("Couldn't get a sign-in code from Claude Science. Try again.")
+                fail("Couldn't get a sign-in code from Claude Science.", temporary: true)
                 return
             }
             webView.load(URLRequest(url: addingLoginNonce(nonce, to: url)))
@@ -283,11 +325,10 @@ final class WebContainer: ObservableObject, WebPageWindow {
         guard failedURL == nil || WebRoute.classify(failedURL, daemonPort: port) == .daemon else { return }
 
         Logger.web.error("Main frame failed: \(failure.localizedDescription, privacy: .public)")
-        let unreachable = [NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut, NSURLErrorCannotFindHost]
-        if isNetworkError, unreachable.contains(failure.code), let port {
-            status = .failed("Claude Science isn't responding on port \(port).")
+        if StartRetry.isUnreachable(failure), let port {
+            fail("Claude Science isn't responding on port \(port).", temporary: true)
         } else {
-            status = .failed("Couldn't open Claude Science: \(failure.localizedDescription)")
+            fail("Couldn't open Claude Science: \(failure.localizedDescription)", temporary: false)
         }
     }
 

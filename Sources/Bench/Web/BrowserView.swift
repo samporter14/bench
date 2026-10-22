@@ -14,7 +14,7 @@ struct BrowserView: View {
                 FindOverlay(finder: web.finder)
             }
             .overlay {
-                StatusOverlay(status: web.status, retry: web.start)
+                StatusOverlay(status: web.status, retriesOnItsOwn: web.retriesOnItsOwn, retry: web.start)
             }
     }
 }
@@ -32,6 +32,7 @@ struct WebViewHost: NSViewRepresentable {
 /// the web view's blank page never shows through.
 private struct StatusOverlay: View {
     let status: WebContainer.Status
+    let retriesOnItsOwn: Bool
     let retry: () -> Void
 
     var body: some View {
@@ -50,11 +51,18 @@ private struct StatusOverlay: View {
             .background(.background)
         case .failed(let message):
             VStack(spacing: 14) {
-                Text(message)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 360)
+                VStack(spacing: 4) {
+                    Text(message)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    if retriesOnItsOwn {
+                        Text("Capsid reconnects by itself as soon as Claude Science answers.")
+                            .font(.footnote)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
                 Button("Try again", action: retry)
                     .buttonStyle(.glassProminent)
                     .tint(Theme.clay)

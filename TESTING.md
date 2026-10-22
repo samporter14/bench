@@ -323,6 +323,35 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-21, Capsid 0.9.6: the window reconnects on its own
+
+Claude Science 0.1.69 installed itself at 21:42 while another session ran
+Simulator UI tests; its cold start froze the daemon twice (60 and 65 s, its
+own stall reports) and requests took up to 158 s. Capsid's log: usage and
+context reads timed out (21:44, 21:47), the main frame timed out (21:50,
+"isn't responding on port 8765"), a Try again failed on `status`'s 5 s limit
+(21:53), and nothing read again until 22:14. Nothing Capsid relies on changed
+in 0.1.69: every page hook is in its web bundle, every route and field in the
+binary, every column in its migrations, and no migration ran.
+
+- `StartRetry` retries a failure that may pass (DESIGN.md, Daemon and
+  sign-in, Reconnecting): waits 5, 10, 20, 40 s, a minute ×15, then five
+  minutes; asks `status` quietly and signs in only to a daemon that answers
+  "running"; never runs `serve`. Try again and a ready page start the waits
+  over. The failure overlay adds one line saying it reconnects by itself.
+- `DaemonError.statusFailed` no longer says "Try again in a moment."
+- 9 tests (`StartRetryTests`): the waits, which errors are retried, a try
+  signs in once the daemon answers, a second begin does nothing, Try again
+  during a wait ends it with no question asked, a window no longer failing
+  is left alone, a sign-in that fails again keeps the waits growing.
+- ⏳ Not seen live: it needs a daemon that stops answering, and we never stop
+  or freeze Claude Science on purpose. Watch for it the next time Claude
+  Science updates while Capsid is open.
+
+Automated:
+
+- ✅ `swift test`: 1,985 tests in 255 suites, all passing (on the branch).
+
 ## 2026-10-21, Capsid 0.9.5: six app icons
 
 Sam asked for an ivory icon and a choice of colours. Solanum's brand book

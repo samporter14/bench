@@ -217,6 +217,22 @@ clay-text (Look).
   up to 20 s.
 - Never run `stop` or `serve` while it is running, never pass
   port/data-dir flags, never restart it.
+- **Reconnecting (Web/StartRetry.swift, since 0.9.6).** A failure that may
+  pass by itself is retried on its own: `status` failing or timing out, a
+  daemon that didn't come up in 20 s, no sign-in code, and a main frame that
+  can't connect or times out. The overlay keeps Try again and adds "Capsid
+  reconnects by itself as soon as Claude Science answers." Waits: 5, 10, 20,
+  40 s, then a minute for 15 tries, then five minutes; Try again and a ready
+  page start them over. A try asks `status` with nothing changing on screen,
+  and only a daemon that answers "running" gets "Starting…" and the sign-in
+  (which reopens the remembered session as usual). **A try never runs
+  `serve`**: during an update `status` can say "not running" while the new
+  daemon waits for the port (2026-10-21 log: "port 8765 is busy (predecessor
+  still shutting down?)"), so starting one stays with Try again and launch.
+  Not retried: a missing tool, a failed launch, a refused sign-in, or a page
+  that answered with an error. Why: on 2026-10-21 the 0.1.69 cold start, on a
+  Mac busy with Simulator tests, froze the daemon for 60 and 65 s; Capsid
+  showed "isn't responding" and then a Try again failed after `status`'s 5 s.
 - Port: `status.port`. Daemon origins are `http://localhost:<port>` and
   `http://127.0.0.1:<port>`. Any other localhost or 127.0.0.1 port is a
   **preview origin** (Claude Science serves generated HTML previews on a
