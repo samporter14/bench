@@ -45,6 +45,40 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Claude Science uses the microphone for voice input.</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Start Session in Capsid…</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>startSessionWithFiles</string>
+			<key>NSPortName</key>
+			<string>Capsid</string>
+			<key>NSSendFileTypes</key>
+			<array>
+				<string>public.item</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Start Session from Selection in Capsid…</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>startSessionWithText</string>
+			<key>NSPortName</key>
+			<string>Capsid</string>
+			<key>NSSendTypes</key>
+			<array>
+				<string>NSStringPboardType</string>
+				<string>public.utf8-plain-text</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

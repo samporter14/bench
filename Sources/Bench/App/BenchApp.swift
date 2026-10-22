@@ -86,6 +86,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Capsid on your phone, if it was on (Remote/RemoteController.swift).
         RemoteController.shared.start()
         MenuBarSpecimen.shared.start()
+        // Quick Start's and Reply's keys from any app, and Finder's Services
+        // (QuickStart/). A demo returned above and registers none of it.
+        GlobalKeys.shared.actions = [
+            .quickStart: { QuickStartController.shared.toggle() },
+            .reply: { ReplyKey.openTopCard() },
+        ]
+        GlobalKeys.shared.start()
+        QuickStartServices.shared.register()
         // ⌘⇧O reaches Quick Open before the page: a web view offers key
         // equivalents to the page first, and a page that binds ⌘⇧O itself
         // would keep it from the menu.
@@ -286,6 +294,8 @@ struct BenchCommands: Commands {
     @ObservedObject private var kept = KeptCommands.shared
     /// The key reference window, for Keep on Top (Reference/ReferenceWindow.swift).
     @ObservedObject private var reference = ReferenceCommands.shared
+    /// The key shown beside Quick Start… (QuickStart/GlobalHotKey.swift).
+    @AppStorage(SettingsKey.quickStartKey) private var quickStartKey = GlobalHotKey.Slot.quickStart.fallback.rawValue
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
@@ -300,6 +310,11 @@ struct BenchCommands: Commands {
                 .disabled(Demo.mode != nil)
         }
         CommandGroup(after: .newItem) {
+            // A request in a sentence, from any app by its global key (the key shown
+            // is the one chosen in Settings → General → Keyboard; none shows none).
+            Button("Quick Start…") { QuickStartController.shared.show() }
+                .keyboardShortcut(GlobalHotKey.Choice.parse(quickStartKey, fallback: GlobalHotKey.Slot.quickStart.fallback).menuShortcut)
+                .disabled(Demo.mode != nil)
             // A demo has no main window to show it on.
             Button("Open Session…") { QuickOpenPresenter.shared.show() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])

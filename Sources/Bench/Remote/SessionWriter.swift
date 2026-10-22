@@ -41,12 +41,19 @@ enum RemoteWrite: Equatable, Sendable {
     /// to such a session as a change request, and the session keeps its own
     /// plan mode; the plan stays unapproved until Approve. Plain text only.
     case planFeedback(frame: String, agent: String, projectID: String, text: String, intentID: String)
+    /// `message`, whose text may end in one to eight attachment lines, one
+    /// to a line, of files Quick Start uploaded first (QuickStart/QuickStartFlow.swift).
+    /// Not a photo's: the page gives a photo's request and this one their own
+    /// shapes.
+    case messageWithFiles(frame: String, agent: String, projectID: String?, text: String, intentID: String)
+    /// `newSession`, with the same room for the attachment lines.
+    case newSessionWithFiles(project: String, text: String, planMode: Bool, intentID: String)
 
     /// The script's arguments: every name always there, null when unused.
     var arguments: [String: Any] {
         var all: [String: Any] = ["kind": "", "frameId": "", "toolId": NSNull(), "mode": NSNull(), "answers": NSNull(),
                                   "agent": NSNull(), "projectId": NSNull(), "text": NSNull(), "intentId": NSNull(),
-                                  "planMode": NSNull(), "attachment": false] // Phase 3 browse
+                                  "planMode": NSNull(), "attachment": false, "files": false] // Phase 3 browse
         all["requestId"] = NSNull() // Phase 4 permissions
         all["decision"] = NSNull() // Phase 4 permissions
         switch self {
@@ -92,6 +99,21 @@ enum RemoteWrite: Equatable, Sendable {
             all["projectId"] = projectID
             all["text"] = text
             all["intentId"] = intentID
+        case .messageWithFiles(let frame, let agent, let projectID, let text, let intentID):
+            all["kind"] = "message"
+            all["frameId"] = frame
+            all["agent"] = agent
+            all["projectId"] = projectID ?? NSNull()
+            all["text"] = text
+            all["intentId"] = intentID
+            all["files"] = true
+        case .newSessionWithFiles(let project, let text, let planMode, let intentID):
+            all["kind"] = "newSession"
+            all["projectId"] = project
+            all["text"] = text
+            all["planMode"] = planMode
+            all["intentId"] = intentID
+            all["files"] = true
         }
         return all
     }
@@ -197,9 +219,14 @@ enum SessionWriterScript {
             return REFERENCES.some(prefix => v.indexOf(prefix) >= 0 || squeezed.indexOf(prefix) >= 0);
         };
         const LINE = /\{"type":"attachment","id":"[0-9A-Fa-f-]{36}","version_id":"[0-9A-Fa-f-]{36}","filename":"phone-photo-[0-9]{8}-[0-9]{6}\.jpg","artifact_ref":"\{\{artifact:[0-9A-Fa-f-]{36}\}\}","content_type":"image\/jpeg","size_bytes":[0-9]{1,8}\}$/;
-        const request = (v, attachment) => {
+        // Quick Start's files: one to eight lines of the same shape, one to a line, after the text and a blank
+        // line. A name has no quote, backslash, brace or control character; a type is `type/subtype`.
+        const FILE_LINE = /\{"type":"attachment","id":"[0-9A-Fa-f-]{36}","version_id":"[0-9A-Fa-f-]{36}","filename":"[^"\\{}\u0000-\u001f\u007f]{1,120}","artifact_ref":"\{\{artifact:[0-9A-Fa-f-]{36}\}\}","content_type":"[a-z0-9][a-z0-9.+-]{0,60}\/[a-z0-9][a-z0-9.+-]{0,100}","size_bytes":[0-9]{1,9}\}/.source;
+        const FILE_LINES = new RegExp("(?:" + FILE_LINE + ")(?:\\n(?:" + FILE_LINE + ")){0,7}$");
+        const request = (v, attachment, files) => {
             if (typeof v !== "string") { return false; }
-            const found = attachment === true ? LINE.exec(v) : null;
+            if (attachment === true && files === true) { return false; }
+            const found = attachment === true ? LINE.exec(v) : (files === true ? FILE_LINES.exec(v) : null);
             if (found === null) { return text(v, 1, 4000) && !hasReference(v); }
             const head = v.slice(0, found.index);
             return head === "" || (head.endsWith("\n\n") && text(head.slice(0, -2), 1, 4000) && !hasReference(head));
@@ -207,7 +234,7 @@ enum SessionWriterScript {
         // Phase 3 browse: a new session in a project, to the server's default agent.
         if (isObject(a) && a.kind === "newSession") {
             if (typeof a.projectId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(a.projectId)) { return null; }
-            if (!request(a.text, a.attachment) || typeof a.planMode !== "boolean") { return null; }
+            if (!request(a.text, a.attachment, a.files) || typeof a.planMode !== "boolean") { return null; }
             if (typeof a.intentId !== "string"
                 || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a.intentId)) { return null; }
             return { path: "/api/projects/" + a.projectId + "/request",
@@ -237,7 +264,7 @@ enum SessionWriterScript {
                      body: { responses: [{ tool_id: a.toolId, action: "answer", answers: Object.fromEntries(entries) }] } };
         }
         if (a.kind === "message") {
-            if (!text(a.agent, 1, 200) || !request(a.text, a.attachment)) { return null; }
+            if (!text(a.agent, 1, 200) || !request(a.text, a.attachment, a.files)) { return null; }
             if (typeof a.intentId !== "string"
                 || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a.intentId)) { return null; }
             if (a.projectId !== null && a.projectId !== undefined && !text(a.projectId, 1, 200)) { return null; }
@@ -294,6 +321,7 @@ enum SessionWriterScript {
     const write = benchBuildWrite({ kind: kind, frameId: frameId, toolId: toolId, mode: mode, answers: answers,
                                     agent: agent, projectId: projectId, text: text, intentId: intentId,
                                     planMode: planMode, attachment: attachment, // Phase 4 photos
+                                    files: typeof files === "boolean" ? files : false, // Quick Start
                                     requestId: requestId, decision: decision }); // Phase 4 permissions
     if (write === null) { return JSON.stringify({ refused: true }); }
     const secret = () => {

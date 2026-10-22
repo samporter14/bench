@@ -14,6 +14,7 @@
 //   build/Capsid.app/Contents/MacOS/Capsid --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
 //   build/Capsid.app/Contents/MacOS/Capsid --demo welcome --page 2
 //   build/Capsid.app/Contents/MacOS/Capsid --demo remote --quiet
+//   build/Capsid.app/Contents/MacOS/Capsid --demo quick-start
 //   open -g -n build/Capsid.app --args --demo phone-settings --step 3 --quiet -ApplePersistenceIgnoreState YES
 //
 // Add `--quiet` (and launch with `open -g -n build/Capsid.app --args …`) to keep
@@ -89,6 +90,10 @@ enum Demo {
         /// `--step failed`, on reads that fail. Nothing is read from Claude
         /// Science.
         case reference
+        /// Quick Start (QuickStart/QuickStartDemo.swift): its panel on made-up
+        /// projects, recipes and a file; Start shows its sent state and sends
+        /// nothing. No global key is registered.
+        case quickStart = "quick-start"
     }
 
     /// `--step` with `--demo kept`; `sheet` when missing.
@@ -272,6 +277,8 @@ enum Demo {
             KeptDemo.show(step: keptStep, quiet: isQuiet) { view, title in showPage(view, title: title) }
         case .reference?:
             ReferenceDemo.show(step: referenceStep, quiet: isQuiet)
+        case .quickStart?:
+            QuickStartDemo.show()
         case nil:
             break
         }

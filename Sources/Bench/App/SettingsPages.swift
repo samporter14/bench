@@ -1,8 +1,9 @@
 // SettingsPages.swift — Settings (⌘,), a tab for each kind of choice
 // (DESIGN.md, Settings): General (who Bench is, the theme, help), Panel (the
 // specimen and where it sits), Alerts (what reaches you when a session needs
-// you), Usage (heads-up about your plan), Specimens (what plays) and Phone
-// (Capsid on your phone, Remote/PhoneSettings.swift). Each page is a grouped
+// you), Usage (heads-up about your plan), Specimens (what plays), Recipes
+// (Quick Start's, QuickStart/QuickStartSettings.swift) and Phone (Capsid on
+// your phone, Remote/PhoneSettings.swift). Each page is a grouped
 // form, as System Settings is.
 import SwiftUI
 
@@ -18,6 +19,7 @@ struct SettingsView: View {
             Tab("Alerts", systemImage: "bell.badge", value: "alerts") { AlertSettingsView() }
             Tab("Usage", systemImage: "gauge.with.dots.needle.50percent", value: "usage") { UsageSettingsView() }
             Tab("Specimens", systemImage: "flask", value: "scenes") { SceneSettingsView() }
+            Tab("Recipes", systemImage: "list.bullet.rectangle", value: "recipes") { RecipesSettingsView() }
             Tab("Phone", systemImage: "iphone", value: "phone") { PhoneSettingsView() }
         }
     }
@@ -105,6 +107,11 @@ struct GeneralSettingsView: View {
 
             KeptFolderSection()
 
+            // The two global keys and the Shortcuts switch (QuickStart/QuickStartSettings.swift).
+            KeyboardSettingsSection()
+
+            ShortcutsSettingsSection()
+
             Section("Nidus") {
                 Toggle(isOn: $shareTaskWithNidus) {
                     Text("Share the task I'm viewing with Nidus")
@@ -122,7 +129,7 @@ struct GeneralSettingsView: View {
                 }
             }
         }
-        .settingsPage(height: 790)
+        .settingsPage(height: 1010)
         .onChange(of: appearance) { BenchAppearance.apply() }
         .onChange(of: appIcon) { AppIconDock.shared.apply() }
     }
