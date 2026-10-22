@@ -375,6 +375,10 @@ the Markdown on Opus), merged; the window, the model and the gate here.
   review caught that Option-Return in a text field inserts a line break and
   never submits, so the first draft's `onSubmit` check could not have fired.
   Builds; the Quick Open suites pass. Not yet pressed on the real sheet.
+- ✅ **Installed** (2026-10-22 16:24, Sam's new rule: install as you build): the
+  `g/reference` build replaced /Applications/Capsid.app (the 0.9.7 copy went to
+  the Trash), signed by Solanum Code Signing, CDHash 4ec8ff62…, no quarantine;
+  it still calls itself 0.9.7, so the update check says up to date.
 - ⏳ **Not live:** no real session was read yet (Sam: right-click a session in
   the activity list → Open as Reference). The `reading` log line's numbers,
   the typing gate against real key presses, ⌥⌘←/→ in the key window, Keep on
