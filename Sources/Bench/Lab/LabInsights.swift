@@ -171,6 +171,11 @@ final class LabInsights: ObservableObject {
     /// Plan progress is read for a session no sooner than this after the last
     /// read of it began.
     static let progressInterval: TimeInterval = 15
+    /// A session whose last answer was that it has no plan to follow (no
+    /// approved plan, no phases, or every step done) is asked again no sooner
+    /// than this: such an answer only changes when a plan is approved, which
+    /// takes the session off the running list and back, and that starts again.
+    static let noPlanInterval: TimeInterval = 60
     /// Its transcript is looked at for a new note no sooner than this.
     static let noteInterval: TimeInterval = 30
     /// The most sessions on screen that are followed, in the order given.
@@ -243,6 +248,8 @@ final class LabInsights: ObservableObject {
     /// When each session's last read of that kind began.
     private var lastProgress: [String: Date] = [:]
     private var lastNotes: [String: Date] = [:]
+    /// The sessions whose last progress answer was "no plan to follow".
+    private var withoutPlan: Set<String> = []
     /// Where a session's transcript was when it was first looked at, and how
     /// long it was at the last look.
     private struct NoteWatch {
@@ -268,6 +275,7 @@ final class LabInsights: ObservableObject {
     /// The one read in flight, if any, and the wait for the next one due.
     private var inFlight: Task<Void, Never>?
     private var timer: Task<Void, Never>?
+    private var timerDue: Date?
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
@@ -290,6 +298,7 @@ final class LabInsights: ObservableObject {
         let kept = progress.filter { ids.contains($0.key) }
         if kept.count != progress.count { progress = kept }
         watches = watches.filter { ids.contains($0.key) }
+        withoutPlan = withoutPlan.intersection(ids)
         onScreen = Array(running)
         pump()
     }
@@ -338,16 +347,14 @@ final class LabInsights: ObservableObject {
     /// Starts the read that is due, if none is in flight; else waits for the
     /// next one to come due.
     private func pump() {
-        timer?.cancel()
-        timer = nil
         guard !dependencies.isDemo() else { return }
         guard dependencies.isEnabled() else { return reset() }
         guard inFlight == nil else { return }
+        let now = dependencies.now()
         guard dependencies.isReady() else {
-            if !onScreen.isEmpty || !reviewerQueue.isEmpty { arm(after: Self.notReadyRetry) }
+            if !onScreen.isEmpty || !reviewerQueue.isEmpty { arm(at: now.addingTimeInterval(Self.notReadyRetry), now: now) }
             return
         }
-        let now = dependencies.now()
         forgetOldReads(before: now)
         if !reviewerQueue.isEmpty {
             start(.reviewers(reviewerQueue.removeFirst()), at: now)
@@ -358,25 +365,37 @@ final class LabInsights: ObservableObject {
             if next == nil || due < next!.due { next = (due, job) }
         }
         for session in onScreen {
-            consider(lastProgress[session.id].map { $0.addingTimeInterval(Self.progressInterval) } ?? .distantPast, .progress(session))
+            let wait = withoutPlan.contains(session.id) ? Self.noPlanInterval : Self.progressInterval
+            consider(lastProgress[session.id].map { $0.addingTimeInterval(wait) } ?? .distantPast, .progress(session))
             consider(lastNotes[session.id].map { $0.addingTimeInterval(Self.noteInterval) } ?? .distantPast, .notes(session))
         }
         guard let next else { return }
-        if next.due <= now { start(next.job, at: now) } else { arm(after: next.due.timeIntervalSince(now)) }
+        if next.due <= now { start(next.job, at: now) } else { arm(at: next.due, now: now) }
     }
 
-    private func arm(after seconds: TimeInterval) {
+    /// Wakes `pump` at `due`, unless a wake-up at or before then is already
+    /// waiting: the panel says what is on screen as often as it redraws, and
+    /// that must not make a new wait each time.
+    private func arm(at due: Date, now: Date) {
+        if timer != nil, let timerDue, timerDue <= due { return }
         timer?.cancel()
+        timerDue = due
         let wait = dependencies.sleep
+        let seconds = max(0.05, due.timeIntervalSince(now))
         timer = Task { [weak self] in
-            await wait(.seconds(max(0.05, seconds)))
+            await wait(.seconds(seconds))
             guard !Task.isCancelled, let self else { return }
             self.timer = nil
+            self.timerDue = nil
             self.pump()
         }
     }
 
     private func start(_ job: Job, at now: Date) {
+        // The read in hand ends in a `pump`, which waits again if need be.
+        timer?.cancel()
+        timer = nil
+        timerDue = nil
         switch job {
         case .progress(let session): lastProgress[session.id] = now
         case .notes(let session): lastNotes[session.id] = now
@@ -398,10 +417,12 @@ final class LabInsights: ObservableObject {
     private func reset() {
         timer?.cancel()
         timer = nil
+        timerDue = nil
         inFlight?.cancel()
         onScreen = []
         lastProgress = [:]
         lastNotes = [:]
+        withoutPlan = []
         watches = [:]
         reviewerQueue = []
         reviewerAsked = [:]
@@ -442,16 +463,21 @@ final class LabInsights: ObservableObject {
         switch read {
         case .progress(let value, let facts):
             set(facts.running ? value : nil)
+            withoutPlan.remove(id)
             if facts.unknown > 0 { dependencies.breadcrumbs.record(.progressStatusNotUnderstood) }
         case .idle(let why, let facts):
             set(nil)
+            // Waiting for a first status is a state that changes; the others change with a new plan.
+            if why == .noStatuses { withoutPlan.remove(id) } else { withoutPlan.insert(id) }
             if why == .planMissing { dependencies.breadcrumbs.record(.progressTreeWithoutPlan) }
             if facts.unknown > 0 { dependencies.breadcrumbs.record(.progressStatusNotUnderstood) }
         case .unreadable:
             set(nil)
+            withoutPlan.insert(id)
             dependencies.breadcrumbs.record(.progressTreeNotUnderstood)
         case .missing:
             set(nil)
+            withoutPlan.insert(id)
         case .lost, .tooBig, .cancelled:
             // Not an answer: what was shown stays until the next read.
             break
@@ -486,7 +512,9 @@ final class LabInsights: ObservableObject {
             watch.total = total
         case .page(let page):
             if let baseline = watch.baseline {
-                let fresh = newNotes(in: page, of: id, since: baseline)
+                // A history that is shorter than it was (rolled back) starts the count again.
+                watch.baseline = min(baseline, page.total)
+                let fresh = newNotes(in: page, of: id, since: min(baseline, page.total))
                 if !fresh.isEmpty {
                     notes.insert(contentsOf: fresh.reversed(), at: 0)
                     while notes.count > Self.maxNotes { remember(seen: notes.removeLast().id) }

@@ -40,6 +40,11 @@ private final class Fake {
     /// What the history answers, by session, in turn (the last repeats).
     var pages: [String: [RemoteBrowser.HistoryRead]] = [:]
 
+    /// When true, a wait ends at once with the clock moved on by it: time passing by itself.
+    var sleepAdvances = false
+    private(set) var sleeps = 0
+    /// The clock at each read, by kind and session ("progress:<id>").
+    private(set) var times: [String: [Date]] = [:]
     private(set) var log: [String] = []
     private(set) var known: [(id: String, total: Int?)] = []
     private(set) var concurrent = 0
@@ -55,6 +60,7 @@ private final class Fake {
     private func around(_ line: String, nonce: String) async {
         if !HistoryShowing.isNonce(nonce) { badNonce = true }
         log.append(line)
+        times[line, default: []].append(date)
         concurrent += 1
         mostAtOnce = max(mostAtOnce, concurrent)
         // A read takes a moment: a second one started meanwhile would overlap it.
@@ -69,8 +75,16 @@ private final class Fake {
             isReady: { [unowned self] in self.ready },
             isDemo: { [unowned self] in self.demo },
             now: { [unowned self] in self.date },
-            // The wake-up never comes by itself: a test moves the clock and says so.
-            sleep: { _ in try? await Task.sleep(for: .seconds(3600)) },
+            // The wake-up never comes by itself unless asked: a test moves the clock and says so.
+            sleep: { [unowned self] duration in
+                self.sleeps += 1
+                if self.sleepAdvances {
+                    let parts = duration.components
+                    self.date = self.date.addingTimeInterval(Double(parts.seconds) + Double(parts.attoseconds) / 1e18)
+                    return
+                }
+                try? await Task.sleep(for: .seconds(3600))
+            },
             readProgress: { [unowned self] id, nonce in
                 await self.around("progress:\(id)", nonce: nonce)
                 if let error = self.progressError { throw error }
@@ -152,6 +166,41 @@ struct LabInsightsProgressTests {
         #expect(fake.mostAtOnce == 1)
     }
 
+    @Test func sayingWhatIsOnScreenAgainAndAgainMakesNoNewWait() async {
+        let insights = makeInsights(fake)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        let waits = fake.sleeps
+        #expect(waits == 1)
+        for _ in 0..<50 { insights.showing(running: [session(a)]) }
+        await insights.settled()
+        #expect(fake.sleeps == waits)
+        #expect(fake.asked("progress").count == 1)
+    }
+
+    @Test func timePassingByItselfReadsAtTheIntervalsAndNoSoonerAndStopsWhenTheSessionLeaves() async {
+        fake.sleepAdvances = true
+        let insights = makeInsights(fake)
+        insights.showing(running: [session(a)])
+        for _ in 0..<2_000 where fake.times["progress:\(a)", default: []].count < 4 { await Task.yield() }
+        insights.showing(running: [])
+        await insights.settled()
+        let progress = fake.times["progress:\(a)", default: []]
+        let notes = fake.times["notes:\(a)", default: []]
+        #expect(progress.count >= 4)
+        #expect(notes.count >= 2)
+        for (earlier, later) in zip(progress, progress.dropFirst()) {
+            #expect(later.timeIntervalSince(earlier) >= LabInsights.progressInterval - 0.001)
+        }
+        for (earlier, later) in zip(notes, notes.dropFirst()) {
+            #expect(later.timeIntervalSince(earlier) >= LabInsights.noteInterval - 0.001)
+        }
+        // Gone from the screen: no more wakes read anything.
+        let reads = fake.log.count
+        for _ in 0..<50 { await Task.yield() }
+        #expect(fake.log.count == reads)
+    }
+
     @Test func oneReadIsInFlightAtATimeWhateverTheSessions() async {
         let insights = makeInsights(fake)
         insights.showing(running: [session(a), session(b), session(c)])
@@ -213,7 +262,7 @@ struct LabInsightsProgressTests {
         let insights = makeInsights(fake)
         func next(_ read: PlanProgressRead) async {
             fake.progress = read
-            fake.advance(LabInsights.progressInterval)
+            fake.advance(LabInsights.noPlanInterval)
             insights.showing(running: [session(a)])
             await insights.settled()
         }
@@ -237,7 +286,7 @@ struct LabInsightsProgressTests {
         let insights = makeInsights(fake)
         func next(_ read: PlanProgressRead) async {
             fake.progress = read
-            fake.advance(LabInsights.progressInterval)
+            fake.advance(LabInsights.noPlanInterval)
             insights.showing(running: [session(a)])
             await insights.settled()
         }
@@ -260,7 +309,7 @@ struct LabInsightsProgressTests {
         let insights = makeInsights(fake)
         func next(_ read: PlanProgressRead) async {
             fake.progress = read
-            fake.advance(LabInsights.progressInterval)
+            fake.advance(LabInsights.noPlanInterval)
             insights.showing(running: [session(a)])
             await insights.settled()
         }
@@ -274,6 +323,53 @@ struct LabInsightsProgressTests {
         // The number is still the page's own, so it is shown.
         #expect(insights.progress[a] == stepFour)
         #expect(CompatMiss.progressTreeNotUnderstood.feature == .planProgress)
+    }
+
+    @Test func aSessionWithNoPlanToFollowIsAskedLessOften() async {
+        let insights = makeInsights(fake)
+        fake.progress = .idle(.notApproved, facts)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        for seconds in [15.0, 30, 59.5] {
+            fake.date = start.addingTimeInterval(seconds)
+            insights.showing(running: [session(a)])
+            await insights.settled()
+        }
+        #expect(fake.asked("progress").count == 1)
+        fake.date = start.addingTimeInterval(60)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        #expect(fake.asked("progress").count == 2)
+
+        // Coming back to the screen (a plan was approved) is the end of the wait, if the usual 15 s are up.
+        insights.showing(running: [])
+        fake.date = start.addingTimeInterval(80)
+        fake.progress = .progress(stepFour, facts)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        #expect(fake.asked("progress").count == 3)
+        #expect(insights.progress[a] == stepFour)
+        // A session being followed is asked every 15 s again.
+        fake.date = start.addingTimeInterval(95)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        #expect(fake.asked("progress").count == 4)
+    }
+
+    @Test func theWaitForANoPlanAnswerAppliesToEveryReasonButWaitingForAFirstStatus() async {
+        for (read, waits) in [(PlanProgressRead.idle(.notApproved, facts), true), (.idle(.noPlan, facts), true), (.idle(.planMissing, facts), true),
+                              (.idle(.complete, facts), true), (.unreadable, true), (.missing, true), (.idle(.noStatuses, facts), false),
+                              (.progress(stepFour, facts), false), (.lost, false), (.tooBig, false)] {
+            let daemon = Fake()
+            let insights = makeInsights(daemon)
+            daemon.progress = read
+            insights.showing(running: [session(a)])
+            await insights.settled()
+            daemon.advance(LabInsights.progressInterval)
+            insights.showing(running: [session(a)])
+            await insights.settled()
+            #expect(daemon.asked("progress").count == (waits ? 1 : 2), "\(read)")
+        }
     }
 
     @Test func aSessionThatLeftWhileItsReadWasUnderWayGetsNothing() async {
@@ -606,6 +702,16 @@ struct LabInsightsNotesTests {
         await look(insights)
         #expect(insights.notes.isEmpty)
         #expect(fake.known.map(\.total) == [nil, nil])
+    }
+
+    @Test func aHistoryThatGrowsShorterStartsTheCountAgain() async {
+        fake.pages[a] = [history(total: 10, notes: []), history(total: 6, notes: []), history(total: 9, notes: [(7, "Said after the roll-back.")])]
+        let insights = makeInsights(fake)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        await look(insights)
+        await look(insights)
+        #expect(insights.notes.map(\.id) == ["\(a)#7"])
     }
 
     @Test func notesFromSeveralSessionsAreNewestFirst() async {
