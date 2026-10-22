@@ -356,6 +356,51 @@ struct LabInsightsProgressTests {
         #expect(fake.asked("progress").count == 4)
     }
 
+    @Test func aPlanThatWasJustApprovedIsReadSoonAfterTheSessionRunsAgain() async {
+        let insights = makeInsights(fake)
+        // Found with no approved plan: the session waits for approval, so it leaves the running list.
+        fake.progress = .idle(.notApproved, facts)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        fake.advance(2)
+        insights.showing(running: [])
+        // It runs again 3 s after its last read: too soon. At 5 s, it is read, well before the 15 s.
+        fake.advance(1)
+        fake.progress = .progress(stepFour, facts)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        #expect(fake.asked("progress").count == 1)
+        fake.advance(2)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        #expect(fake.asked("progress").count == 2)
+        #expect(insights.progress[a] == stepFour)
+        // Once is all it gets: the next is 15 s on.
+        fake.advance(10)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        #expect(fake.asked("progress").count == 2)
+        fake.advance(5)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        #expect(fake.asked("progress").count == 3)
+    }
+
+    @Test func aSessionThatWasFollowingAPlanWaitsOutItsFifteenSecondsWhenItComesBack() async {
+        let insights = makeInsights(fake)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        insights.showing(running: [])
+        fake.advance(6)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        #expect(fake.asked("progress").count == 1)
+        fake.advance(9)
+        insights.showing(running: [session(a)])
+        await insights.settled()
+        #expect(fake.asked("progress").count == 2)
+    }
+
     @Test func theWaitForANoPlanAnswerAppliesToEveryReasonButWaitingForAFirstStatus() async {
         for (read, waits) in [(PlanProgressRead.idle(.notApproved, facts), true), (.idle(.noPlan, facts), true), (.idle(.planMissing, facts), true),
                               (.idle(.complete, facts), true), (.unreadable, true), (.missing, true), (.idle(.noStatuses, facts), false),

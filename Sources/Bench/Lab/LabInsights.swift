@@ -176,6 +176,11 @@ final class LabInsights: ObservableObject {
     /// than this: such an answer only changes when a plan is approved, which
     /// takes the session off the running list and back, and that starts again.
     static let noPlanInterval: TimeInterval = 60
+    /// A session that comes back onto the running list after its last answer
+    /// was "the plan isn't approved" is probably a plan that was just approved
+    /// (a session waiting for approval is not running): it is read this soon
+    /// after its last read, not 15 s.
+    static let approvalFloor: TimeInterval = 5
     /// Its transcript is looked at for a new note no sooner than this.
     static let noteInterval: TimeInterval = 30
     /// The most sessions on screen that are followed, in the order given.
@@ -250,6 +255,11 @@ final class LabInsights: ObservableObject {
     private var lastNotes: [String: Date] = [:]
     /// The sessions whose last progress answer was "no plan to follow".
     private var withoutPlan: Set<String> = []
+    /// The last answer that was "nothing to show", by session: what a session
+    /// that comes back was last waiting for. Kept while it is off the screen.
+    private var lastIdle: [String: PlanProgressWhy] = [:]
+    /// Sessions that came back after waiting for a plan to be approved.
+    private var comeBack: Set<String> = []
     /// Where a session's transcript was when it was first looked at, and how
     /// long it was at the last look.
     private struct NoteWatch {
@@ -286,15 +296,19 @@ final class LabInsights: ObservableObject {
     /// The panel (and the activity list) says which running sessions are on
     /// screen. Reads at most every 15 s per session, one in flight, only while
     /// the page is ready, and only while "Show plans, questions and requests
-    /// on the card" is on. A session that leaves the list loses its progress;
-    /// one that comes back is read at once (as a plan that was approved
-    /// is), unless it was read less than 15 s ago.
+    /// on the card" is on. A session that leaves the list loses its progress
+    /// and its place in the transcript. One that comes back is read when its
+    /// 15 s are up, or 5 s after its last read if it was last found to have
+    /// no approved plan: a session waiting for approval is not running, so
+    /// that is a plan that was just approved.
     func showing(running sessions: [SessionStatus]) {
         guard !dependencies.isDemo() else { return }
         guard dependencies.isEnabled() else { return reset() }
         var seenIDs: Set<String> = []
         let running = sessions.filter { $0.state == .running && seenIDs.insert($0.id).inserted }.prefix(Self.maxFollowed)
         let ids = Set(running.map(\.id))
+        let before = Set(onScreen.map(\.id))
+        comeBack = comeBack.intersection(ids).union(ids.subtracting(before).filter { lastIdle[$0] == .notApproved })
         let kept = progress.filter { ids.contains($0.key) }
         if kept.count != progress.count { progress = kept }
         watches = watches.filter { ids.contains($0.key) }
@@ -365,7 +379,8 @@ final class LabInsights: ObservableObject {
             if next == nil || due < next!.due { next = (due, job) }
         }
         for session in onScreen {
-            let wait = withoutPlan.contains(session.id) ? Self.noPlanInterval : Self.progressInterval
+            let wait = comeBack.contains(session.id) ? Self.approvalFloor
+                : withoutPlan.contains(session.id) ? Self.noPlanInterval : Self.progressInterval
             consider(lastProgress[session.id].map { $0.addingTimeInterval(wait) } ?? .distantPast, .progress(session))
             consider(lastNotes[session.id].map { $0.addingTimeInterval(Self.noteInterval) } ?? .distantPast, .notes(session))
         }
@@ -397,7 +412,9 @@ final class LabInsights: ObservableObject {
         timer = nil
         timerDue = nil
         switch job {
-        case .progress(let session): lastProgress[session.id] = now
+        case .progress(let session):
+            lastProgress[session.id] = now
+            comeBack.remove(session.id)
         case .notes(let session): lastNotes[session.id] = now
         case .reviewers: break
         }
@@ -423,6 +440,8 @@ final class LabInsights: ObservableObject {
         lastProgress = [:]
         lastNotes = [:]
         withoutPlan = []
+        lastIdle = [:]
+        comeBack = []
         watches = [:]
         reviewerQueue = []
         reviewerAsked = [:]
@@ -437,6 +456,7 @@ final class LabInsights: ObservableObject {
         let cutoff = now.addingTimeInterval(-Self.remembersReadsFor)
         lastProgress = lastProgress.filter { live.contains($0.key) || $0.value > cutoff }
         lastNotes = lastNotes.filter { live.contains($0.key) || $0.value > cutoff }
+        lastIdle = lastIdle.filter { live.contains($0.key) || lastProgress[$0.key] != nil }
     }
 
     private func isShowing(_ id: String) -> Bool {
@@ -464,9 +484,11 @@ final class LabInsights: ObservableObject {
         case .progress(let value, let facts):
             set(facts.running ? value : nil)
             withoutPlan.remove(id)
+            lastIdle[id] = nil
             if facts.unknown > 0 { dependencies.breadcrumbs.record(.progressStatusNotUnderstood) }
         case .idle(let why, let facts):
             set(nil)
+            lastIdle[id] = why
             // Waiting for a first status is a state that changes; the others change with a new plan.
             if why == .noStatuses { withoutPlan.remove(id) } else { withoutPlan.insert(id) }
             if why == .planMissing { dependencies.breadcrumbs.record(.progressTreeWithoutPlan) }
@@ -474,10 +496,12 @@ final class LabInsights: ObservableObject {
         case .unreadable:
             set(nil)
             withoutPlan.insert(id)
+            lastIdle[id] = nil
             dependencies.breadcrumbs.record(.progressTreeNotUnderstood)
         case .missing:
             set(nil)
             withoutPlan.insert(id)
+            lastIdle[id] = nil
         case .lost, .tooBig, .cancelled:
             // Not an answer: what was shown stays until the next read.
             break
