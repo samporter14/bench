@@ -1,20 +1,54 @@
-// RemotePhotoUpload.swift — the photo's upload to Claude Science, made from
-// inside the page the way the other writes are (SessionWriter.swift): the
-// page's cookie session and CSRF secret carry it, and Bench never holds
-// either. One route and no other, `POST /api/projects/<pid>/attachments`
-// (the composer's paperclip), multipart with one `file` part.
+// RemotePhotoUpload.swift — an upload to Claude Science, made from inside the
+// page the way the other writes are (SessionWriter.swift): the page's cookie
+// session and CSRF secret carry it, and Bench never holds either. One route
+// and no other, `POST /api/projects/<pid>/attachments` (the composer's
+// paperclip), multipart with one `file` part.
+//
+// Two kinds go up. A phone's photo (the default, and the only kind before
+// Quick Start): the one file name Bench gives a photo and `image/jpeg`, 3 MiB
+// at most. A file from the Mac (`kind: "file"`, Quick Start): a name of up to
+// 120 characters with no path, brace, quote or control character in it, a
+// content type of the shape `type/subtype`, 20 MiB at most. Which types Quick
+// Start sends is Swift's rule (QuickStart/AttachmentRules.swift); the page
+// holds the shape.
 //
 // The page builds the path and the form from typed arguments, never from a
 // string Swift put together, and checks them again there: a project id of
-// the shape `^[A-Za-z0-9_-]{1,64}$`, the one file name Bench gives a photo,
-// `image/jpeg`, and base64 whose length agrees with the size. The reply is
-// held to the same gate before anything comes back: 200, JSON, UUID `id` and
-// `version_id`, the same file name and content type, and `size_bytes` equal
-// to what was sent. Only those five fields reach Swift. `file_path` (an
-// absolute path on the Mac) and `root_frame_id` (the project's hidden uploads
-// frame, not a session) are dropped.
+// the shape `^[A-Za-z0-9_-]{1,64}$`, the kind's name and type, and base64
+// whose length agrees with the size. The reply is held to the same gate
+// before anything comes back: 200, JSON, UUID `id` and `version_id`, the same
+// file name and content type, and `size_bytes` equal to what was sent. Only
+// those five fields reach Swift. `file_path` (an absolute path on the Mac) and
+// `root_frame_id` (the project's hidden uploads frame, not a session) are
+// dropped.
 import Foundation
 import WebKit
+
+// MARK: What goes up
+
+/// A file as the upload sends it: its bytes, the name it will have in the
+/// project and its content type.
+struct UploadFile: Equatable, Sendable {
+    enum Kind: String, Sendable {
+        /// A phone's photo: `PhotoImage`'s JPEG, named by `PhotoImage.fileName`.
+        case photo
+        /// A file from the Mac, as Quick Start sends one.
+        case file
+    }
+
+    let data: Data
+    let name: String
+    let contentType: String
+    let kind: Kind
+
+    /// The most a file from the Mac may be: `FILE_MAX` in the page's script,
+    /// which a test holds to this.
+    static let maxFileBytes = 20 * 1024 * 1024
+}
+
+extension PhotoFile {
+    var upload: UploadFile { UploadFile(data: data, name: name, contentType: contentType, kind: .photo) }
+}
 
 // MARK: What the page says
 
@@ -36,6 +70,11 @@ struct PhotoUploadReply: Equatable, Sendable {
     /// isn't one; an upload that doesn't match what was sent is a reply with
     /// none.
     init?(object: Any?, sent: PhotoFile) {
+        self.init(object: object, sent: sent.upload)
+    }
+
+    /// The same for any file.
+    init?(object: Any?, sent: UploadFile) {
         guard let fields = object as? [String: Any], let status = Pick.int(fields["status"]), (100...599).contains(status),
               let code = Pick.string(fields["code"]) else { return nil }
         guard code.isEmpty || RemoteWriteResult.isCode(code) else { return nil }
@@ -57,17 +96,31 @@ struct PhotoUploadReply: Equatable, Sendable {
 enum PhotoUploadScript {
     /// `benchBuildUpload(args)` → `{path, filename, contentType, size, data}`,
     /// or null when the arguments don't make the one upload. Pure: no fetch,
-    /// no DOM. `MAX_BYTES` is `PhotoImage.maxBytes` (3 MiB), a test holds
-    /// the two together.
+    /// no DOM. `MAX_BYTES` is `PhotoImage.maxBytes` (3 MiB) and `FILE_MAX` is
+    /// `UploadFile.maxFileBytes` (20 MiB); a test holds each pair together.
     static let builder = #"""
     function benchBuildUpload(a) {
         "use strict";
         const MAX_BYTES = 3145728;
+        const FILE_MAX = 20971520;
         if (a === null || typeof a !== "object" || Array.isArray(a)) { return null; }
         if (typeof a.projectId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(a.projectId)) { return null; }
-        if (typeof a.filename !== "string" || !/^phone-photo-[0-9]{8}-[0-9]{6}\.jpg$/.test(a.filename)) { return null; }
-        if (a.contentType !== "image/jpeg") { return null; }
-        if (typeof a.size !== "number" || !Number.isInteger(a.size) || a.size < 1 || a.size > MAX_BYTES) { return null; }
+        // No kind is a photo: what every caller before Quick Start sends.
+        const kind = a.kind === undefined ? "photo" : a.kind;
+        let max = MAX_BYTES;
+        if (kind === "photo") {
+            if (typeof a.filename !== "string" || !/^phone-photo-[0-9]{8}-[0-9]{6}\.jpg$/.test(a.filename)) { return null; }
+            if (a.contentType !== "image/jpeg") { return null; }
+        } else if (kind === "file") {
+            max = FILE_MAX;
+            if (typeof a.filename !== "string" || a.filename === "." || a.filename === ".." || a.filename !== a.filename.trim()
+                || !/^[^\/\\"{}:*?<>|\u0000-\u001f\u007f]{1,120}$/.test(a.filename)) { return null; }
+            if (typeof a.contentType !== "string"
+                || !/^[a-z0-9][a-z0-9.+-]{0,60}\/[a-z0-9][a-z0-9.+-]{0,100}$/.test(a.contentType)) { return null; }
+        } else {
+            return null;
+        }
+        if (typeof a.size !== "number" || !Number.isInteger(a.size) || a.size < 1 || a.size > max) { return null; }
         if (typeof a.data !== "string" || a.data.length !== 4 * Math.ceil(a.size / 3)
             || !/^[A-Za-z0-9+\/]+={0,2}$/.test(a.data)) { return null; }
         return { path: "/api/projects/" + a.projectId + "/attachments", filename: a.filename,
@@ -108,8 +161,9 @@ enum PhotoUploadScript {
     /// `Content-Type` is left to `fetch`, which adds the boundary.
     static let body = builder + "\n" + summarizer + #"""
 
+    // `kind` is only there for a file from the Mac; a photo's callers leave it out.
     const build = benchBuildUpload({ projectId: projectId, filename: filename, contentType: contentType,
-                                     data: data, size: size });
+                                     data: data, size: size, kind: typeof kind === "string" ? kind : "photo" });
     if (build === null) { return JSON.stringify({ refused: true }); }
     let blob = null;
     try {
@@ -156,12 +210,22 @@ enum PhotoUploadScript {
 
     /// The script's arguments for a photo going to `project`.
     static func arguments(project: String, photo: PhotoFile) -> [String: Any] {
-        ["projectId": project, "filename": photo.name, "contentType": photo.contentType,
-         "data": photo.data.base64EncodedString(), "size": photo.data.count]
+        arguments(project: project, file: photo.upload)
+    }
+
+    /// The script's arguments for any file going to `project`.
+    static func arguments(project: String, file: UploadFile) -> [String: Any] {
+        ["projectId": project, "filename": file.name, "contentType": file.contentType,
+         "data": file.data.base64EncodedString(), "size": file.data.count, "kind": file.kind.rawValue]
     }
 
     /// The page's answer, checked again here against what was sent.
     static func result(of data: Data, sent: PhotoFile) throws -> PhotoUploadReply {
+        try result(of: data, sent: sent.upload)
+    }
+
+    /// The same for any file.
+    static func result(of data: Data, sent: UploadFile) throws -> PhotoUploadReply {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw WebAPIError.badResponse
         }
@@ -180,12 +244,18 @@ extension WebContainer {
     /// and tried once more. Any status comes back as a reply; a 401 also
     /// starts signing in again.
     func uploadPhoto(project: String, photo: PhotoFile) async throws -> PhotoUploadReply {
+        try await uploadFile(project: project, file: photo.upload)
+    }
+
+    /// The same for any file (`UploadFile`): a photo, or a file Quick Start
+    /// sends from the Mac.
+    func uploadFile(project: String, file: UploadFile) async throws -> PhotoUploadReply {
         guard status == .ready else { throw WebAPIError.notReady }
         let value = try await webView.callAsyncJavaScript(PhotoUploadScript.body,
-                                                          arguments: PhotoUploadScript.arguments(project: project, photo: photo),
+                                                          arguments: PhotoUploadScript.arguments(project: project, file: file),
                                                           in: nil, contentWorld: .defaultClient)
         guard let text = value as? String else { throw WebAPIError.badResponse }
-        let reply = try PhotoUploadScript.result(of: Data(text.utf8), sent: photo)
+        let reply = try PhotoUploadScript.result(of: Data(text.utf8), sent: file)
         if reply.status == 401 { sessionLost() }
         return reply
     }

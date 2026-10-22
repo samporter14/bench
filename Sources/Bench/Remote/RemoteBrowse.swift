@@ -167,6 +167,9 @@ struct NewSessionRequest: Equatable, Sendable {
     let planFirst: Bool
     /// The text ends in a photo's attachment line: the photo flow's alone.
     var attachment = false
+    /// The text ends in one to eight attachment lines of files from the Mac:
+    /// Quick Start's alone.
+    var files = false
 
     /// Text trimmed, 1…4,000 characters, with none of the UI's reference
     /// prefixes (400 `reference`, `RemoteActionRequest.refusal`); the phone's
@@ -629,8 +632,11 @@ final class RemoteBrowser {
     /// session was made. Phase 4's photo route comes here too, with the
     /// attachment line in the request and its own `title`.
     func start(_ project: String, request: NewSessionRequest, title: String? = nil) async -> RemoteActionReply? {
-        let reply = await dependencies.create(.newSession(project: project, text: request.text, planMode: request.planFirst,
-                                                          intentID: request.intentID, attachment: request.attachment))
+        let write: RemoteWrite = request.files
+            ? .newSessionWithFiles(project: project, text: request.text, planMode: request.planFirst, intentID: request.intentID)
+            : .newSession(project: project, text: request.text, planMode: request.planFirst,
+                          intentID: request.intentID, attachment: request.attachment)
+        let reply = await dependencies.create(write)
         if let reply, reply.status == 200, reply.isJSON, reply.bodyStatus == "accepted", let id = reply.rootFrameID {
             return started(id, project: project, request: request, title: title)
         }
