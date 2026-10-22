@@ -25,11 +25,36 @@ final class WebContainer: ObservableObject, WebPageWindow {
             // Close Other Tabs and Close All Tabs wait for a ready page.
             if status != oldValue { PageTabCommands.shared.refresh() }
             if status == .ready { retry.stop(resetting: true) }
-            if case .failed = status {} else { retriesOnItsOwn = false }
+            if case .failed = status {} else {
+                retriesOnItsOwn = false
+                companion = .none
+            }
         }
     }
     /// The failure on show is being retried on its own (Web/StartRetry.swift).
     @Published private(set) var retriesOnItsOwn = false
+    /// How Capsid stands beside Claude Science's own app, when it does
+    /// (Web/DaemonPolicy.swift). Only a failure carries one, so every feature
+    /// that waits for `status == .ready` is already off while it is not
+    /// `.none`; the window's overlay reads it to offer Open Claude Science.
+    @Published private(set) var companion: Companion = .none {
+        didSet {
+            // While Capsid only reads, opening anything means opening Claude Science.
+            if case .readOnly = companion {
+                Router.shared.openInScience = { ScienceApp.open(.show) }
+            } else {
+                Router.shared.openInScience = nil
+            }
+        }
+    }
+
+    enum Companion: Equatable {
+        case none
+        /// Claude Science's app starts the daemon: Capsid waits for it.
+        case waitingForApp
+        /// Capsid can't sign in to the daemon: the database only.
+        case readOnly(ReadOnlyReason)
+    }
     /// The session the page is showing (`/projects/<p>/frames/<id>`), or nil
     /// anywhere else: what the context ring is about.
     @Published private(set) var currentFrameID: String?
@@ -42,11 +67,18 @@ final class WebContainer: ObservableObject, WebPageWindow {
     private(set) lazy var tabCloser = PageTabCloser { [unowned self] request in await self.closeTabs(request) }
     /// The daemon's port, once known.
     private(set) var port: Int?
+    /// The host its address uses (`daemon.url_host`), once known.
+    private(set) var host = DaemonHost.usual
+    /// The daemon the window signed in to, for the handover to compare with.
+    private var signedInDaemon: CLIStatus?
+    /// The card for "Capsid only reads" shows once a run.
+    private var readOnlyAnnounced = false
 
     // WebKit holds its delegates weakly, so they live here.
     private let navigationDelegate = MainNavigationDelegate()
     private let uiDelegate = WebUIDelegate(role: .main)
     private let notifications: NotificationBridge
+    private let handoverWatch: HandoverWatch
 
     /// The start in progress, if any.
     private var startTask: Task<Void, Never>?
@@ -66,6 +98,27 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// Tries again, quietly, after a failure that may pass by itself.
     private lazy var retry = StartRetry(stillFailed: { [unowned self] in waitingToRetry },
                                         attach: { [unowned self] daemon in begin(found: daemon) })
+    /// The page said Claude Science now opens in its own window (Web/HandoverWatch.swift).
+    private lazy var handover: Handover = Handover(
+        stopRetries: { [unowned self] in retry.stop(resetting: true) },
+        post: { LabModel.shared.post($0) },
+        watchForDaemon: { [unowned self] in newDaemonWatch.begin() })
+    /// Asks `status` for the daemon the app starts, and signs in to it. Like
+    /// `retry`, it only ever asks: it never starts one.
+    private lazy var newDaemonWatch: StartRetry = StartRetry(
+        probe: { [unowned self] in
+            guard let now = await DaemonController.runningStatus() else { return nil }
+            let old = await MainActor.run { signedInDaemon }
+            return Handover.isNewDaemon(now, than: old) ? now : nil
+        },
+        // For about a quarter of an hour at most: a dialog with no new daemon behind it asks nothing more.
+        stillFailed: { [unowned self] in
+            handover.waitingForNewDaemon && newDaemonWatch.attempt < StartRetry.firstWaits.count + StartRetry.minuteTries
+        },
+        attach: { [unowned self] daemon in
+            handover.waitingForNewDaemon = false
+            begin(found: daemon)
+        })
 
     private init() {
         // A web view copies its configuration when it is made, so all of it is
@@ -74,6 +127,10 @@ final class WebContainer: ObservableObject, WebPageWindow {
         let bridge = NotificationBridge(daemonPort: { WebContainer.shared.port })
         bridge.install(on: configuration.userContentController)
         notifications = bridge
+        // Hears the page's "now opens in its own window" dialog.
+        let watch = HandoverWatch(daemonPort: { WebContainer.shared.port }, shown: { WebContainer.shared.handoverShown() })
+        watch.install(on: configuration.userContentController)
+        handoverWatch = watch
         // Which tab a right-click was on, for the menu's tab items (Web/TabContextMenu.swift).
         let tabMenu = TabContextMenu(daemonPort: { WebContainer.shared.port }, run: { request in
             Task { await WebContainer.shared.tabCloser.close(request) }
@@ -120,6 +177,8 @@ final class WebContainer: ObservableObject, WebPageWindow {
         }
         guard startTask == nil else { return }
         retry.stop(resetting: true)
+        newDaemonWatch.stop(resetting: true)
+        handover.waitingForNewDaemon = false
         begin(found: nil)
     }
 
@@ -138,14 +197,15 @@ final class WebContainer: ObservableObject, WebPageWindow {
                 if let found {
                     daemon = found
                 } else {
-                    daemon = try await DaemonController.ensureRunning()
+                    daemon = try await DaemonController.ensureRunning(handoverSeen: handover.seen)
                 }
-                await signIn(port: daemon.port)
+                await signIn(daemon: daemon)
             } catch {
                 let failure = error as? DaemonError
                 let sentence = failure?.sentence ?? "Couldn't reach Claude Science. Try again."
                 Logger.web.error("Start failed: \(sentence, privacy: .public)")
-                fail(sentence, temporary: failure?.isTemporary ?? false)
+                fail(sentence, temporary: failure?.isTemporary ?? false,
+                     companion: failure == .appOwnsServer ? .waitingForApp : .none)
             }
         }
     }
@@ -153,9 +213,10 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// Shows a failure. One that may pass by itself (Claude Science too busy
     /// to answer) is retried on its own until it answers (Web/StartRetry.swift);
     /// any other waits for Try again.
-    private func fail(_ sentence: String, temporary: Bool) {
+    private func fail(_ sentence: String, temporary: Bool, companion: Companion = .none) {
         status = .failed(sentence)
         retriesOnItsOwn = temporary
+        self.companion = companion
         if temporary {
             retry.begin()
         } else {
@@ -169,33 +230,118 @@ final class WebContainer: ObservableObject, WebPageWindow {
         return startTask == nil
     }
 
-    /// Loads the daemon's page with a fresh sign-in code. Without one (the CLI
-    /// gave none) it loads the page anyway: the cookie from last time may
-    /// still work, and if not, the 401 asks for a code again.
-    private func signIn(port: Int) async {
+    /// Signs in to the daemon that answered (`SignInPlan` decides how) and
+    /// loads its page. With a sign-in code, the page loads with it; without
+    /// one (the CLI gave none) it loads anyway: the cookie from last time may
+    /// still work, and if not, the 401 asks for a code again. A daemon that
+    /// Claude Science's own app started is signed in to through its own small
+    /// page first, and when there is no way in at all Capsid only reads.
+    private func signIn(daemon: CLIStatus) async {
+        guard let port = daemon.port else {
+            // Running, but no port is named: Capsid doesn't guess one.
+            fail(DaemonError.noPort.sentence, temporary: true)
+            return
+        }
         signingIn = true
         defer { signingIn = false }
         self.port = port
-        guard let root = URL(string: "http://localhost:\(port)/") else {
+        host = DaemonHost.name(for: daemon.urlHost)
+        signedInDaemon = daemon
+        guard let root = URL(string: "http://\(host):\(port)/") else {
             fail("Couldn't build Claude Science's address.", temporary: false)
             return
         }
         // Reopen where the user was (Web/LastSession.swift), unless a link
         // already asked for somewhere. The database is asked while the
-        // sign-in code is fetched, so a launch waits for neither.
-        async let code = DaemonController.freshNonce()
+        // sign-in code is fetched, so a launch waits for neither. A daemon
+        // that says it needs a token isn't asked for a code at all.
+        let owned = await appOwned()
+        async let code = Self.codeIfWanted(daemon.requireToken != true)
         let remembered = pendingURL == nil
-            ? await lastSession.reopenURL(port: port, isKnown: LastSession.databaseKnows) : nil
+            ? await lastSession.reopenURL(port: port, host: host, isKnown: LastSession.databaseKnows) : nil
         let nonce = await code
         // A link that came before the port was known was built for the usual
         // one; it belongs on the port the daemon actually uses. One that comes
         // while the above runs waits for this, and wins over the remembered
         // session.
-        let link = pendingURL.map { Self.canonical(Self.moving($0, toPort: port)) }
+        let link = pendingURL.map { Self.canonical(Self.moving($0, toPort: port), host: host) }
         pendingURL = nil
         let destination = LastSession.launchDestination(link: link, remembered: remembered, root: root, port: port)
 
-        webView.load(URLRequest(url: nonce.map { addingLoginNonce($0, to: destination) } ?? destination))
+        switch SignInPlan.decide(requireToken: daemon.requireToken, appOwned: owned, nonce: nonce) {
+        case .readOnly(let reason):
+            enterReadOnly(reason)
+        case .page(let nonce):
+            webView.load(URLRequest(url: nonce.map { addingLoginNonce($0, to: destination) } ?? destination))
+        case .apiMe(let nonce):
+            await signInThroughAPIMe(nonce: nonce, port: port)
+            webView.load(URLRequest(url: destination))
+        }
+    }
+
+    private static func codeIfWanted(_ wanted: Bool) async -> String? {
+        wanted ? await DaemonController.freshNonce() : nil
+    }
+
+    /// Whether the daemon belongs to Claude Science's own app (`SignInPlan.appOwned`).
+    /// The install is looked at off the main thread.
+    private func appOwned() async -> Bool {
+        SignInPlan.appOwned(daemon: signedInDaemon, install: await DaemonController.installedOpens(), handoverSeen: handover.seen)
+    }
+
+    /// The daemon's own sign-in page, for a daemon the app started: load
+    /// `/api/me?nonce=<code>`, press its one Sign in button, and let it end on
+    /// its JSON. Every step is bounded and none is final: whatever happens,
+    /// the page loads next, and a 401 there asks for a new code the usual way.
+    private func signInThroughAPIMe(nonce: String, port: Int) async {
+        guard let url = SignInPlan.apiMeURL(host: host, port: port, nonce: nonce) else { return }
+        webView.load(URLRequest(url: url))
+        await settleOnSignInStep(upTo: .seconds(10))
+        let answer = try? await webView.callAsyncJavaScript(SignInScript.press, arguments: [:], in: nil,
+                                                            contentWorld: .defaultClient)
+        let pressed = (answer as? Bool) == true
+        Logger.web.info("The sign-in page's button \(pressed ? "was pressed" : "did not show", privacy: .public)")
+        if pressed { await settleOnSignInStep(upTo: .seconds(5), expectingAnswer: true) }
+    }
+
+    /// Waits for the web view to stop loading on the sign-in step's address
+    /// (or, after the button, to stop loading at all), or `limit`.
+    private func settleOnSignInStep(upTo limit: Duration, expectingAnswer: Bool = false) async {
+        let deadline = ContinuousClock.now + limit
+        while ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(250))
+            if !webView.isLoading, expectingAnswer || SignInPlan.isSignInStep(webView.url) { return }
+        }
+    }
+
+    /// There is no way in: Capsid reads the database only, and says so once.
+    private func enterReadOnly(_ reason: ReadOnlyReason) {
+        Logger.web.notice("Only reading: \(reason.phrase, privacy: .public)")
+        fail(CompanionSentence.readOnly, temporary: false, companion: .readOnly(reason))
+        if !readOnlyAnnounced {
+            readOnlyAnnounced = true
+            LabModel.shared.post(CompanionSentence.readOnlyNotice)
+        }
+    }
+
+    /// The Open Claude Science button. While the window waits for the app's
+    /// daemon, the button starts the app in the background (Capsid stays in
+    /// front, and the quick tries start over, since the user just started it);
+    /// while Capsid only reads, it is the way to the session, so the app comes forward.
+    func openScience() {
+        if companion == .waitingForApp {
+            ScienceApp.open(.startServer)
+            retry.stop(resetting: true)
+            retry.begin()
+        } else {
+            ScienceApp.open(.show)
+        }
+    }
+
+    /// The page showed the dialog that says Claude Science now opens in its
+    /// own window (Web/HandoverWatch.swift).
+    func handoverShown() {
+        handover.dialogShown()
     }
 
     /// `url` on `port`, when it is a localhost address on another one.
@@ -215,7 +361,7 @@ final class WebContainer: ObservableObject, WebPageWindow {
             pendingURL = url
             return
         }
-        webView.load(URLRequest(url: Self.canonical(url)))
+        webView.load(URLRequest(url: Self.canonical(url, host: host)))
     }
 
     func goBack() { webView.goBack() }
@@ -240,6 +386,13 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// Science is up it is just a page the daemon won't give us, so the 401
     /// shows as it is instead of covering a working app.
     func signInRejected(at url: URL) -> Bool {
+        // The daemon's own sign-in step refused its code: that leg is over, and
+        // the page loads next with the usual route (a 401 there comes back
+        // here). It takes none of this function's one-per-30-seconds.
+        if SignInPlan.isSignInStep(url) {
+            Logger.web.notice("The sign-in page refused its code")
+            return false
+        }
         let now = ContinuousClock.now
         if let last = lastSignInRetry, now - last < Self.signInRetryInterval {
             Logger.web.error("The daemon refused the sign-in again")
@@ -250,9 +403,20 @@ final class WebContainer: ObservableObject, WebPageWindow {
         lastSignInRetry = now
         Task {
             // `claude-science url` asks the daemon too, so a frozen daemon
-            // fails here as well: a failure that may pass.
-            guard let nonce = await DaemonController.freshNonce() else {
-                fail("Couldn't get a sign-in code from Claude Science.", temporary: true)
+            // fails here as well: a failure that may pass. Beside Claude
+            // Science's own app a missing code is asked for once more before
+            // it is taken to mean there is none.
+            let owned = await appOwned()
+            var nonce = await DaemonController.freshNonce()
+            if nonce == nil, owned {
+                try? await Task.sleep(for: .milliseconds(1500))
+                nonce = await DaemonController.freshNonce()
+            }
+            guard let nonce else {
+                switch SignInPlan.outcomeWithoutCode(appOwned: owned) {
+                case .readOnly(let reason): enterReadOnly(reason)
+                case .retryLater: fail("Couldn't get a sign-in code from Claude Science.", temporary: true)
+                }
                 return
             }
             webView.load(URLRequest(url: addingLoginNonce(nonce, to: url)))
@@ -283,7 +447,7 @@ final class WebContainer: ObservableObject, WebPageWindow {
             // nothing is noted for Diagnostics.
             Logger.web.info("An API read was refused and no Sign in button showed; signing in again")
             guard let nonce = await DaemonController.freshNonce() else { return }
-            webView.load(URLRequest(url: addingLoginNonce(nonce, to: Self.canonical(url))))
+            webView.load(URLRequest(url: addingLoginNonce(nonce, to: Self.canonical(url, host: host))))
         }
     }
 
@@ -305,6 +469,8 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// The first daemon page to finish loading means we are in.
     func mainFrameFinished(at url: URL?) {
         guard WebRoute.classify(url, daemonPort: port) == .daemon else { return }
+        // The daemon's own sign-in step (`/api/me`) is not the page.
+        guard !SignInPlan.isSignInStep(url) else { return }
         status = .ready
     }
 
@@ -326,7 +492,13 @@ final class WebContainer: ObservableObject, WebPageWindow {
 
         Logger.web.error("Main frame failed: \(failure.localizedDescription, privacy: .public)")
         if StartRetry.isUnreachable(failure), let port {
-            fail("Claude Science isn't responding on port \(port).", temporary: true)
+            if handover.seen {
+                // The daemon went when the app took over: not a daemon that
+                // is slow, but one the app starts. The same status-only tries wait for it.
+                fail(CompanionSentence.waitingForApp, temporary: true, companion: .waitingForApp)
+            } else {
+                fail("Claude Science isn't responding on port \(port).", temporary: true)
+            }
         } else {
             fail("Couldn't open Claude Science: \(failure.localizedDescription)", temporary: false)
         }
@@ -340,11 +512,12 @@ final class WebContainer: ObservableObject, WebPageWindow {
     }
 
     /// Cookies are kept per host, so 127.0.0.1 and localhost would be two
-    /// sign-ins. Everything Bench loads uses localhost.
-    private static func canonical(_ url: URL) -> URL {
-        guard url.host == "127.0.0.1", var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
-        parts.host = "localhost"
-        return parts.url ?? url
+    /// sign-ins. Everything Capsid loads uses the one host the daemon names
+    /// (`daemon.url_host`; `localhost` when it names none): a daemon that moved
+    /// to 127.0.0.1 would answer a page asked for on `localhost` with
+    /// whatever else listens there.
+    static func canonical(_ url: URL, host: String = DaemonHost.usual) -> URL {
+        DaemonHost.canonical(url, host: host)
     }
 
     // MARK: Zoom

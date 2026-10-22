@@ -14,7 +14,8 @@ struct BrowserView: View {
                 FindOverlay(finder: web.finder)
             }
             .overlay {
-                StatusOverlay(status: web.status, retriesOnItsOwn: web.retriesOnItsOwn, retry: web.start)
+                StatusOverlay(status: web.status, retriesOnItsOwn: web.retriesOnItsOwn, companion: web.companion,
+                              retry: web.start, openScience: web.openScience)
             }
     }
 }
@@ -33,7 +34,11 @@ struct WebViewHost: NSViewRepresentable {
 private struct StatusOverlay: View {
     let status: WebContainer.Status
     let retriesOnItsOwn: Bool
+    /// Beside Claude Science's own app (Web/DaemonPolicy.swift): the button
+    /// that asks is Open Claude Science, with Try again beside it.
+    let companion: WebContainer.Companion
     let retry: () -> Void
+    let openScience: () -> Void
 
     var body: some View {
         switch status {
@@ -63,9 +68,19 @@ private struct StatusOverlay: View {
                 }
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
-                Button("Try again", action: retry)
-                    .buttonStyle(.glassProminent)
-                    .tint(Theme.clay)
+                if companion == .none {
+                    Button("Try again", action: retry)
+                        .buttonStyle(.glassProminent)
+                        .tint(Theme.clay)
+                } else {
+                    HStack(spacing: 10) {
+                        Button(CompanionSentence.openButton, action: openScience)
+                            .buttonStyle(.glassProminent)
+                            .tint(Theme.clay)
+                        Button("Try again", action: retry)
+                            .buttonStyle(.glass)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.background)

@@ -41,6 +41,8 @@ struct LastSession {
     /// nothing about where the user is.
     func note(url: URL?, daemonPort: Int?) {
         guard !isDemo, WebRoute.classify(url, daemonPort: daemonPort) == .daemon else { return }
+        // The daemon's own sign-in step (`/api/me`) is where the user is not.
+        guard !SignInPlan.isSignInStep(url) else { return }
         if let route = NidusTaskSelection.route(url: url, daemonPort: daemonPort) {
             keep("\(route.projectID)/\(route.frameID)")
         } else {
@@ -62,12 +64,12 @@ struct LastSession {
     // MARK: Reopening
 
     /// The address to open at launch in place of the home page: the session
-    /// that was showing, on the daemon's port, when `isKnown` says the
+    /// that was showing, on the daemon's host and port, when `isKnown` says the
     /// database still has it. Nil (the home page) for none kept, one the
     /// database doesn't know or can't be asked about, and in a demo.
-    func reopenURL(port: Int, isKnown: (Route) async -> Bool) async -> URL? {
+    func reopenURL(port: Int, host: String = DaemonHost.usual, isKnown: (Route) async -> Bool) async -> URL? {
         guard let route, await isKnown(route) else { return nil }
-        return URL(string: "http://localhost:\(port)/projects/\(route.projectID)/frames/\(route.frameID)")
+        return URL(string: "http://\(host):\(port)/projects/\(route.projectID)/frames/\(route.frameID)")
     }
 
     /// The live `isKnown`: the database has `route` as a root session of that

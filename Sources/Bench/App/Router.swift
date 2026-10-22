@@ -24,7 +24,8 @@ struct WebNotification: Identifiable, Equatable, Sendable {
 @MainActor
 final class Router {
     static let shared = Router()
-    private init() {}
+    /// Internal so the tests make their own; the app uses `shared`.
+    init() {}
 
     // MARK: Registered by the web layer
 
@@ -43,15 +44,22 @@ final class Router {
     var webNotificationClosed: (String) -> Void = { _ in }
     /// A download finished saving.
     var downloadSaved: (URL) -> Void = { _ in }
+    /// Set by the web layer while Capsid can't sign in to Claude Science's
+    /// own server (WebContainer.Companion.readOnly): then there is no page of
+    /// ours to open anything in, so opening a session or a notification
+    /// opens Claude Science itself.
+    var openInScience: (() -> Void)?
 
     // MARK: Called by anyone
 
     func open(_ url: URL) {
+        if let openInScience { return openInScience() }
         showWindow()
         navigate(url)
     }
 
     func open(_ session: SessionStatus) {
+        if let openInScience { return openInScience() }
         guard let url = session.deepLink else {
             showWindow()
             return
@@ -60,6 +68,7 @@ final class Router {
     }
 
     func open(_ notification: WebNotification) {
+        if let openInScience { return openInScience() }
         showWindow()
         clickWebNotification(notification.id)
     }

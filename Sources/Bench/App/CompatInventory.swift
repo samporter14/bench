@@ -55,6 +55,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
     case closeTabs, tabMenu, signIn, notifications, sessionAddress, previews
     case usage, context, planCard, approve, errorCard, phone
     case start, sessions, activity, browse
+    case handover
     case keep
     case planProgress, reviewer, notes
 
@@ -76,6 +77,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .sessions: "Sessions in the Lab"
         case .activity: "The usage graph and the week in review"
         case .browse: "Quick Open, Results and the phone's project list"
+        case .handover: "Staying with Claude Science when it opens in its own window"
         case .keep: "Keep a figure with its answer, data and script"
         case .planProgress: "Step n of m under a running session"
         case .reviewer: "The reviewer's findings on a finished card"
@@ -169,6 +171,10 @@ extension CompatInventory {
              .signIn, "Web/WebContainer.swift", literal: true),
         hook("?nonce=<code>", "the page signs in with a one-time code on any of its addresses",
              .signIn, "Shared/Core/CLIStatus.swift", check: .whenUsed("seen only while signing in")),
+        hook("/api/me?nonce=<code>", "a daemon the app started answers with its own small page, one Sign in button, and ends on JSON",
+             .signIn, "Web/DaemonPolicy.swift", check: .whenUsed("seen only while signing in to a daemon the app started")),
+        hook(#"[data-testid="restarting-dialog"]"#, "the dialog the page shows when Claude Science moves to its own window; Capsid only notes that it is on screen, never its words",
+             .handover, "Web/HandoverWatch.swift", check: .whenUsed("seen only when Claude Science moves to its own window"), literal: true),
         hook("window.Notification", "the page makes its desktop notifications with new Notification(title, {body, tag, requireInteraction}) and listens for click",
              .notifications, "Web/NotificationBridge.swift", check: .whenUsed("seen only when a session needs you")),
         hook("/projects/<project>/frames/<session>", "a session's page has this address",
@@ -266,20 +272,30 @@ extension CompatInventory {
     }
 
     static let commandLine: [CompatDependency] = [
-        cli("claude-science", "the tool is in ~/.local/bin, ~/.claude-science/bin, /opt/homebrew/bin, /usr/local/bin or on PATH",
+        cli("claude-science", "the tool is in the own-window app's Contents/Resources/bin (first, once that app is installed), else ~/.local/bin, ~/.claude-science/bin, /opt/homebrew/bin, /usr/local/bin or on PATH",
             .start, "Shared/Core/CLIStatus.swift"),
         cli("status.running", "a true or false: only an explicit false lets Capsid start a daemon",
             .start, "Shared/Core/CLIStatus.swift"),
         cli("status.version", "the running version, shown here and compared with the one Capsid was checked with",
             .start, "Shared/Core/CLIStatus.swift"),
-        cli("status.port", "the port the daemon serves on", .start, "Shared/Core/CLIStatus.swift"),
+        cli("status.port", "the port the daemon serves on; unknown when status names none, and Capsid guesses no other",
+            .start, "Shared/Core/CLIStatus.swift"),
         cli("status.pid", "the daemon's process, so later checks ask the kernel instead", .start, "Shared/Core/CLIStatus.swift"),
         cli("status.daemon.data_dir", "where the daemon keeps its data", .sessions, "Shared/Core/CLIStatus.swift"),
         cli("status.daemon.active_frames", "a count, used only when the database can't be read", .sessions, "Shared/Core/CLIStatus.swift"),
         cli("status.daemon.active_conversations", "a count, kept for completeness", .sessions, "Shared/Core/CLIStatus.swift"),
+        cli("status.daemon.launch_context", #"who started the daemon: "app-child" when Claude Science's own app did, which Capsid never starts a daemon beside"#,
+            .start, "Shared/Core/CLIStatus.swift"),
+        cli("status.daemon.boot", #"how far the start has come: "serving" once it is up; shown in Diagnostics"#,
+            .start, "Shared/Core/CLIStatus.swift"),
+        cli("status.daemon.url_host", #"the host its address uses: "localhost" or "127.0.0.1", which Capsid loads every page from"#,
+            .signIn, "Shared/Core/CLIStatus.swift"),
+        cli("status.daemon.require_token", "true when the daemon insists on a token, which only the app has: Capsid then only reads the database",
+            .signIn, "Shared/Core/CLIStatus.swift"),
         cli("url", "prints the sign-in address, with a nonce query item", .signIn, "Shared/Core/CLIStatus.swift",
             check: .whenUsed("run only when signing in")),
-        cli("serve --no-browser --detached", "starts the daemon", .start, "Web/DaemonController.swift",
+        cli("serve --no-browser --detached", "starts the daemon; never run beside the own-window app (com.anthropic.claudescience) or after status said app-child",
+            .start, "Web/DaemonController.swift",
             check: .whenUsed("it starts a daemon, so Diagnostics never runs it")),
     ]
 
