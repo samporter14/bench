@@ -5,11 +5,16 @@ import Foundation
 import os
 
 /// Why the daemon couldn't be reached, as a sentence for the failure overlay.
-enum DaemonError: Error {
+enum DaemonError: Error, Equatable {
     case cliMissing
     case statusFailed
     case launchFailed(String)
     case didNotStart
+    /// Claude Science's own app starts its daemon; Capsid waits for it
+    /// (`StartPlan.waitForApp`).
+    case appOwnsServer
+    /// The daemon runs but `status` names no port, and Capsid doesn't guess.
+    case noPort
 
     var sentence: String {
         switch self {
@@ -21,6 +26,10 @@ enum DaemonError: Error {
             return "Couldn't start Claude Science: \(reason)"
         case .didNotStart:
             return "Claude Science didn't start within \(Int(DaemonController.startTimeout)) seconds."
+        case .appOwnsServer:
+            return CompanionSentence.waitingForApp
+        case .noPort:
+            return "Claude Science is running but hasn't said which port it uses yet."
         }
     }
 
@@ -29,7 +38,7 @@ enum DaemonError: Error {
     /// coming up. A missing tool or a failed launch needs the user.
     var isTemporary: Bool {
         switch self {
-        case .statusFailed, .didNotStart: true
+        case .statusFailed, .didNotStart, .appOwnsServer, .noPort: true
         case .cliMissing, .launchFailed: false
         }
     }
@@ -41,10 +50,26 @@ enum DaemonController {
 
     /// The running daemon's status. If it isn't running, starts it once and
     /// polls until it is. `serve` is only ever run after `status` has said
-    /// plainly that nothing is running: any other failure stops here, since a
-    /// second daemon on top of a running one is worse than an error.
-    static func ensureRunning() async throws -> CLIStatus {
-        if let running = try await status() { return running }
+    /// plainly that nothing is running, and never beside Claude Science's own
+    /// app (`StartPlan`): any other failure stops here, since a second daemon
+    /// on top of a running one is worse than an error. `handoverSeen`: the page
+    /// showed the dialog that says Claude Science now opens in its own window.
+    static func ensureRunning(handoverSeen: Bool = false) async throws -> CLIStatus {
+        let answer = try await statusAnswer()
+        let install = await installedOpens()
+        let plan = StartPlan.decide(answer, install: install, lastLaunchContext: ScienceLaunchContext.current,
+                                    handoverSeen: handoverSeen)
+        switch plan {
+        case .attach(let running):
+            return running
+        case .giveUp:
+            throw DaemonError.statusFailed
+        case .waitForApp(let reason):
+            Logger.web.info("Not starting a daemon: Claude Science's app starts its own (\(String(describing: reason), privacy: .public))")
+            throw DaemonError.appOwnsServer
+        case .serve:
+            break
+        }
 
         try await offMain { try launchDetached() }
         Logger.web.info("Started the daemon; waiting for it")
@@ -53,14 +78,20 @@ enum DaemonController {
         while ContinuousClock.now < deadline {
             try await Task.sleep(for: pollInterval)
             // A status command that fails while the daemon comes up is not
-            // final, so only `cliMissing` ends the wait early.
+            // final, so only `cliMissing` ends the wait early. One that runs
+            // without a port isn't up yet.
             do {
-                if let running = try await status() { return running }
+                if let running = try await status(), running.port != nil { return running }
             } catch DaemonError.statusFailed {
                 continue
             }
         }
         throw DaemonError.didNotStart
+    }
+
+    /// How Claude Science opens on this Mac, looked at off the main thread.
+    static func installedOpens() async -> ScienceInstall.Opens {
+        await offMainValue { ScienceInstall.current().opens }
     }
 
     /// A fresh single-use sign-in code, or nil when the CLI can't give one.
@@ -78,10 +109,18 @@ enum DaemonController {
 
     /// `nil` means "the daemon is not running".
     private static func status() async throws -> CLIStatus? {
+        switch try await statusAnswer() {
+        case .running(let running): return running
+        case .notRunning, .failed: return nil
+        }
+    }
+
+    /// Asks `status`: running, plainly not running, or an error.
+    private static func statusAnswer() async throws -> StatusAnswer {
         do {
-            return try await offMain { try fetchCLIStatus() }
+            return .running(try await offMain { try fetchCLIStatus() })
         } catch ScienceError.daemonNotRunning {
-            return nil
+            return .notRunning
         } catch ScienceError.cliMissing {
             throw DaemonError.cliMissing
         } catch {
@@ -114,6 +153,14 @@ enum DaemonController {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 continuation.resume(with: Result { try work() })
+            }
+        }
+    }
+
+    private static func offMainValue<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: work())
             }
         }
     }

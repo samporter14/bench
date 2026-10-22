@@ -38,6 +38,9 @@ final class MainNavigationDelegate: NSObject, WKNavigationDelegate {
            container?.signInRejected(at: url) == true {
             return .cancel
         }
+        // The daemon's own sign-in step (`/api/me`) ends on JSON: it is shown
+        // in place, never saved as a file.
+        if navigationResponse.isForMainFrame, SignInPlan.isSignInStep(navigationResponse.response.url) { return .allow }
         return Downloads.policy(for: navigationResponse) ?? .allow
     }
 

@@ -133,7 +133,8 @@ struct CompatInventoryShapeTests {
 struct CompatPageHookTests {
     /// Every page script that looks at Claude Science's markup.
     private var scripts: [String] {
-        [PageTabsScript.body, PageTabsScript.probe, TabContextMenu.script, SignInScript.press, SignInScript.look]
+        [PageTabsScript.body, PageTabsScript.probe, TabContextMenu.script, SignInScript.press, SignInScript.look,
+         HandoverWatch.script]
     }
 
     private var literalTokens: Set<String> {
@@ -175,7 +176,8 @@ struct CompatPageHookTests {
 
     @Test func noOtherFileReadsTheMarkupOfThePage() {
         // Capsid's own phone page (RemoteWebApp) is its own markup.
-        let known: Set<String> = ["Remote/RemoteWebApp.swift", "Web/PageTabs.swift", "Web/TabContextMenu.swift", "Web/WebContainer.swift"]
+        let known: Set<String> = ["Remote/RemoteWebApp.swift", "Web/HandoverWatch.swift", "Web/PageTabs.swift", "Web/TabContextMenu.swift",
+                                  "Web/WebContainer.swift"]
         let found = Repo.files(matching: #"querySelector|\.closest\(|getElementById|getElementsBy"#)
         #expect(found == known, "now: \(found.sorted())")
     }
@@ -184,8 +186,8 @@ struct CompatPageHookTests {
         let known: Set<String> = [
             "Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/InsightReader.swift", "Remote/RemoteLive.swift",
             "Remote/RemotePhotoUpload.swift", "Remote/SessionReader.swift", "Remote/SessionWriter.swift",
-            "Web/NotificationBridge.swift", "Web/PageTabs.swift", "Web/TabContextMenu.swift", "Web/WebAPI.swift",
-            "Web/WebContainer.swift",
+            "Web/HandoverWatch.swift", "Web/NotificationBridge.swift", "Web/PageTabs.swift", "Web/TabContextMenu.swift",
+            "Web/WebAPI.swift", "Web/WebContainer.swift",
         ]
         let found = Repo.files(matching: #"callAsyncJavaScript\(|evaluateJavaScript\(|WKUserScript\("#)
         #expect(found == known, "now: \(found.sorted())")
@@ -496,7 +498,8 @@ struct CompatCommandLineTests {
         #expect(parsed.activeFrames == 3)
         #expect(parsed.activeConversations == 2)
         let tokens = Set(CompatInventory.commandLine.map(\.token))
-        for field in ["running", "version", "port", "pid", "daemon.data_dir", "daemon.active_frames", "daemon.active_conversations"] {
+        for field in ["running", "version", "port", "pid", "daemon.data_dir", "daemon.active_frames", "daemon.active_conversations",
+                      "daemon.launch_context", "daemon.boot", "daemon.url_host", "daemon.require_token"] {
             #expect(tokens.contains("status.\(field)"), "\(field)")
         }
     }

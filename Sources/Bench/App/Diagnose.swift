@@ -47,19 +47,27 @@ enum Diagnose {
         out.append("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
         out.append("This copy of Capsid: \(tilde(Bundle.main.bundlePath))")
 
+        // 0. Which app Claude Science opens in: a browser tab or its own window
+        // (App/ScienceInstall.swift). It decides where the tool is looked for first
+        // and whether Capsid ever starts a daemon.
+        let install = ScienceInstall.current()
+        out.append(contentsOf: install.lines())
+
         // 1. The command-line tool, which starts and describes the daemon.
-        guard let cli = resolveCLI() else {
-            out.append("✗ claude-science: not found in ~/.local/bin, ~/.claude-science/bin, /usr/local/bin, /opt/homebrew/bin or PATH")
+        guard let cli = resolveCLI(install: install) else {
+            out.append("✗ claude-science: not found in Claude Science's app, ~/.local/bin, ~/.claude-science/bin, /usr/local/bin, /opt/homebrew/bin or PATH")
             return out
         }
         out.append("✓ claude-science: \(tilde(cli.path))")
         do {
             let status = try fetchCLIStatus()
-            out.append("✓ Claude Science is running: version \(status.version), port \(status.port)")
+            out.append("✓ Claude Science is running: version \(status.version), port \(status.port.map(String.init) ?? "not reported")")
             out.append("  its data folder: \(status.dataDir.map(tilde) ?? "not reported")")
+            out.append(contentsOf: daemonLines(status: status, install: install.opens))
             out.append(contentsOf: ScienceVersion.lines(running: status.version))
         } catch let error as ScienceError {
             out.append("✗ Claude Science status: \(error.label) (\(detail(error)))")
+            out.append(startLine(status: nil, install: install.opens))
             out.append(ScienceVersion.checkedOnlyLine())
         } catch {
             out.append("✗ Claude Science status: \(error)")
@@ -130,6 +138,66 @@ enum Diagnose {
             out.append("✗ Project names: \(error)")
         }
         return out
+    }
+
+    /// What `status` said about who started the daemon and how Capsid signs in
+    /// to it (the four keys Claude Science's own app added), then what Capsid
+    /// does about starting one. Fixed words and the daemon's own short words;
+    /// nothing from the page.
+    static func daemonLines(status: CLIStatus, install: ScienceInstall.Opens) -> [String] {
+        var out: [String] = []
+        let started: String
+        switch status.launchContext {
+        case CLIStatus.appChild?: started = "Claude Science's own app (its child)"
+        case let other?: started = "not the app (\(other))"
+        case nil: started = "not reported"
+        }
+        out.append("  started by: \(started)")
+        out.append("  boot: \(status.boot ?? "not reported")")
+        var address = DaemonHost.name(for: status.urlHost)
+        if let named = status.urlHost, DaemonHost.name(for: named) != named {
+            address += " (it names \(named); Capsid uses \(address))"
+        } else if status.urlHost == nil {
+            address += " (it names none)"
+        }
+        out.append("  address host: \(address)")
+        let token = status.requireToken.map { $0 ? "yes" : "no" } ?? "not reported"
+        out.append("  requires a token to sign in: \(token)")
+        out.append(startLine(status: status, install: install))
+        let owned = SignInPlan.appOwned(daemon: status, install: install, handoverSeen: false)
+        let signIn: String
+        if status.requireToken == true {
+            signIn = "• Signing in: Capsid can't (the daemon requires a token), so it would only read the database"
+        } else if owned {
+            signIn = "• Signing in: through the daemon's own page with a code from claude-science url; with none, Capsid only reads the database"
+        } else {
+            signIn = "• Signing in: with a code from claude-science url"
+        }
+        out.append(signIn)
+        return out
+    }
+
+    /// Whether Capsid would start a daemon if none ran.
+    static func startLine(status: CLIStatus?, install: ScienceInstall.Opens) -> String {
+        // The status in hand speaks for itself; with none, the last one seen does.
+        let context = status != nil ? status?.launchContext : ScienceLaunchContext.current
+        return switch StartPlan.decide(.notRunning, install: install, lastLaunchContext: context, handoverSeen: false) {
+        case .waitForApp: "• Capsid starts Claude Science's server: never, its own app starts it"
+        default: "• Capsid starts Claude Science's server: only when none is running, and waits for it"
+        }
+    }
+
+    /// The main window's side of it, from the open window (the command line
+    /// has none).
+    @MainActor
+    static func windowLines(companion: WebContainer.Companion) -> [String] {
+        let line: String
+        switch companion {
+        case .none: line = "• The main window: signed in, or signing in"
+        case .waitingForApp: line = "• The main window: waiting for Claude Science's own app to start its server"
+        case .readOnly(let reason): line = "• The main window: only reading the database (\(reason.phrase))"
+        }
+        return ["", line]
     }
 
     /// The layout step, one line per table. The list is the inventory's
@@ -257,7 +325,7 @@ private struct DiagnosticsView: View {
             let report = await Task.detached(priority: .userInitiated) { Diagnose.report() }.value
             // The first part is on screen while the page is looked at.
             lines = report
-            lines = report + (await Diagnose.pageReport())
+            lines = report + Diagnose.windowLines(companion: WebContainer.shared.companion) + (await Diagnose.pageReport())
             running = false
         }
     }

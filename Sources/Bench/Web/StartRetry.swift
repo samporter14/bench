@@ -13,7 +13,11 @@
 //
 // This file is the timing and nothing else. The status, the wait and what the
 // window is doing come in as closures, so the rules are tested without a
-// daemon; `WebContainer` owns the one this app uses.
+// daemon; `WebContainer` owns the two this app uses: the window's own, and the
+// one that waits for the daemon Claude Science's own app starts after the page
+// shows its "now opens in its own window" dialog (Web/HandoverWatch.swift).
+// Neither starts anything. Whether Capsid may start a daemon at all is
+// `StartPlan`'s rule (Web/DaemonPolicy.swift): never beside that app.
 import Foundation
 
 @MainActor
