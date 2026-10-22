@@ -30,7 +30,9 @@ struct KeepSheet: View {
             nameFocused = true
         }
         .onChange(of: model.phase) { _, phase in
-            if case .kept = phase { dismiss() }
+            // Kept with nothing to say: the sheet closes. Kept with files that
+            // don't match their checksums: it stays to say so, until Done.
+            if case .kept(let outcome) = phase, outcome.closesSheet { dismiss() }
         }
         .alert("New collection", isPresented: Binding(get: { newCollection != nil }, set: { if !$0 { newCollection = nil } })) {
             TextField("Name", text: Binding(get: { newCollection ?? "" }, set: { newCollection = $0 }))
@@ -201,7 +203,7 @@ struct KeepSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             status
             HStack(spacing: 8) {
-                if case .partial = model.phase {
+                if model.shownOutcome != nil {
                     Button("Show in Finder") { model.showInFinder() }
                 }
                 Spacer(minLength: 8)
@@ -231,7 +233,7 @@ struct KeepSheet: View {
             }
             .accessibilityElement(children: .combine)
         case .kept(let outcome), .partial(let outcome):
-            line(KeepRules.outcomeSentence(outcome), symbol: outcome.isComplete ? "checkmark.circle.fill" : "exclamationmark.triangle")
+            line(KeepRules.outcomeSentence(outcome), symbol: outcome.closesSheet ? "checkmark.circle.fill" : "exclamationmark.triangle")
         case .failed(let sentence, _):
             line(sentence, symbol: "exclamationmark.triangle")
         }
@@ -240,22 +242,27 @@ struct KeepSheet: View {
     @ViewBuilder
     private var buttons: some View {
         switch model.phase {
+        case .kept:
+            Button("Done") { dismiss() }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.clay)
+                .keyboardShortcut(.defaultAction)
         case .partial(let outcome):
             Button("Done") { dismiss() }
-                .keyboardShortcut(outcome.missing.isEmpty ? .defaultAction : .cancelAction)
+                .keyboardShortcut(outcome.isComplete ? .defaultAction : .cancelAction)
             Button("Try Again") { model.retry() }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.clay)
                 .keyboardShortcut(.defaultAction)
-        case .failed(_, let retryable):
+        case .failed(_, let retry):
             Button("Cancel") { model.cancel(); dismiss() }
                 .keyboardShortcut(.cancelAction)
-            if retryable {
-                Button("Try Again") { model.keep() }
+            if retry != nil {
+                Button("Try Again") { model.tryAgain() }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.clay)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!model.canKeep)
+                    .disabled(!model.canTryAgain)
             } else {
                 Button("Keep") { model.keep() }
                     .buttonStyle(.borderedProminent)

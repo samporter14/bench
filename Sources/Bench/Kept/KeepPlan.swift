@@ -12,6 +12,17 @@ import Foundation
 struct KeepSubject: Equatable, Sendable {
     let session: SessionStatus
     let entry: ArtifactEntry
+    /// Keep… pressed on a figure inside a known answer (the reference reader): that
+    /// version is preselected and that answer is the one kept with it, whatever newer
+    /// answer shows another version. Nil from Results.
+    var pinned: KeepPinnedAnswer? = nil
+}
+
+/// The answer a figure was shown in, when the caller knows it: its words and
+/// when it was sent. The version it shows is the subject's own.
+struct KeepPinnedAnswer: Equatable, Sendable {
+    let text: String
+    let at: Date?
 }
 
 /// Claude's words about the figure: the answer that shows it, or the
@@ -134,6 +145,9 @@ struct KeepPlan: Equatable, Sendable {
     let figure: KeepItem
     let files: [KeepItem]
     let answer: KeepAnswer?
+    /// The version Claude's answer shows, when the answer is kept with another
+    /// one (the user ticked it anyway): the README says so.
+    var answerShows: String? = nil
     var all: [KeepItem] { [figure] + files }
     var totalBytes: Int { all.compactMap(\.size).reduce(0, +) }
 }
@@ -146,7 +160,16 @@ struct KeepOutcome: Equatable, Sendable {
     let kept: Int
     let total: Int
     let missing: [KeptMissing]
-    var isComplete: Bool { missing.isEmpty }
+    /// Files landed but README.md couldn't be rewritten to list them: why, in
+    /// a sentence. Try Again rewrites it.
+    var recordFailed: String? = nil
+    /// Files kept whose bytes don't match Claude Science's checksum for their
+    /// version (each with both checksums): kept, but the sheet stays open to
+    /// say so, and the README says it too.
+    var mismatched: [KeptFile] = []
+    var isComplete: Bool { missing.isEmpty && recordFailed == nil }
+    /// Kept, with nothing to say about it: the sheet closes by itself.
+    var closesSheet: Bool { isComplete && mismatched.isEmpty }
 }
 
 enum KeepRules {
@@ -200,9 +223,22 @@ enum KeepRules {
         return stem.isEmpty ? entry.name : stem
     }
 
-    /// The three "Keep with it" rows for the chosen version.
-    static func rows(sources: KeepSources) -> [KeepRow] {
-        [answerRow(sources), dataRow(sources), codeRow(sources)]
+    /// The three "Keep with it" rows for the chosen version. `chosen` is the
+    /// version picked in the strip, nil while none is.
+    static func rows(sources: KeepSources, chosen: String? = nil) -> [KeepRow] {
+        [answerRow(sources, chosen: chosen), dataRow(sources), codeRow(sources)]
+    }
+
+    /// The version Claude's answer shows, when a version is chosen and it is
+    /// another one: that answer isn't about the chosen version.
+    static func answerShowsAnother(_ sources: KeepSources, chosen: String?) -> String? {
+        guard let chosen, let showing = sources.showing, showing.v != chosen else { return nil }
+        return showing.v
+    }
+
+    /// "version 4", or "another version" when the answer's version isn't in the list.
+    static func versionName(_ v: String, in versions: [ArtifactVersion]) -> String {
+        versions.first { $0.v == v }.map { "version \($0.n)" } ?? "another version"
     }
 
     /// Whether the chosen version is something the user uploaded: then there
@@ -213,7 +249,13 @@ enum KeepRules {
 
     static let uploadSentence = "You uploaded this file, so it has no inputs or script."
 
-    private static func answerRow(_ sources: KeepSources) -> KeepRow {
+    private static func answerRow(_ sources: KeepSources, chosen: String?) -> KeepRow {
+        if let other = answerShowsAnother(sources, chosen: chosen) {
+            // The answer is about another version: offered, but off unless ticked.
+            return KeepRow(kind: .answer, title: "What Claude said about it",
+                           detail: "Claude\u{2019}s answer shows \(versionName(other, in: sources.versions)), not this one.",
+                           available: true, onByDefault: false, info: nil)
+        }
         if let showing = sources.showing {
             let when = showing.at.map { " · the answer at \($0.formatted(date: .omitted, time: .shortened))" } ?? ""
             let how = showing.how == .saved ? " Claude saved this version here; the reply after it may show a newer one." : ""
@@ -387,7 +429,7 @@ enum KeepRules {
             taken.insert(candidate.lowercased())
             return candidate
         }
-        let rows = rows(sources: sources)
+        let rows = rows(sources: sources, chosen: chosen)
         if choices.withData, rows.first(where: { $0.kind == .data })?.available == true {
             for input in copyableInputs(sources).copyable {
                 guard let v = input.v else { continue }
@@ -407,7 +449,9 @@ enum KeepRules {
         let answer: KeepAnswer? = choices.withAnswer
             ? (sources.showing.map { KeepAnswer(text: $0.text, at: $0.at, how: $0.how, isFallback: false) } ?? sources.lastAnswer)
             : nil
-        return KeepPlan(figure: figure, files: files, answer: answer)
+        // Kept with another version than the one it shows: the README notes which.
+        let answerShows = answer?.isFallback == false ? answerShowsAnother(sources, chosen: chosen) : nil
+        return KeepPlan(figure: figure, files: files, answer: answer, answerShows: answerShows)
     }
 
     /// `{{artifact:<version id>}}` in the reconstruction names a file by its
@@ -452,13 +496,41 @@ enum KeepRules {
 
     /// "Kept 3 of 4 files. The data it was drawn from wasn't copied."
     static func outcomeSentence(_ outcome: KeepOutcome) -> String {
-        if outcome.isComplete { return "Kept \(count(outcome.total, "file"))." }
-        let lead = "Kept \(outcome.kept) of \(count(outcome.total, "file"))."
-        if outcome.missing.count == 1, let one = outcome.missing.first {
-            return "\(lead) \(roleTitle(one.role)) wasn\u{2019}t copied."
+        var sentence: String
+        if outcome.missing.isEmpty {
+            sentence = "Kept \(count(outcome.total, "file"))."
+        } else {
+            let lead = "Kept \(outcome.kept) of \(count(outcome.total, "file"))."
+            if outcome.missing.count == 1, let one = outcome.missing.first {
+                sentence = "\(lead) \(roleTitle(one.role)) wasn\u{2019}t copied."
+            } else {
+                sentence = "\(lead) \(outcome.missing.count) weren\u{2019}t copied."
+            }
         }
-        return "\(lead) \(outcome.missing.count) weren\u{2019}t copied."
+        if let clause = mismatchClause(outcome.mismatched.map(\.path)) {
+            sentence += " \(clause)"
+        }
+        if let reason = outcome.recordFailed {
+            sentence += " \(recordFailedSentence) \(reason)"
+            if !sentence.hasSuffix(".") { sentence += "." }
+        }
+        return sentence
     }
+
+    /// "z_prime.png doesn't match Claude Science's checksum; see README.md
+    /// before you use it." Nil when every file matched.
+    static func mismatchClause(_ paths: [String]) -> String? {
+        guard let last = paths.last else { return nil }
+        if paths.count == 1 {
+            return "\(last) doesn\u{2019}t match Claude Science\u{2019}s checksum; see README.md before you use it."
+        }
+        let names = paths.dropLast().joined(separator: ", ") + " and " + last
+        return "\(names) don\u{2019}t match Claude Science\u{2019}s checksums; see README.md before you use them."
+    }
+
+    /// After files landed in a kept folder and its README couldn't be rewritten.
+    static let recordFailedSentence = "The files landed, but README.md couldn\u{2019}t be updated to list them."
+
 
     static func roleTitle(_ role: KeptRole) -> String {
         switch role {
@@ -492,15 +564,20 @@ enum KeepRules {
             projectID: subject.session.projectID, projectName: subject.session.projectName,
             sessionID: subject.session.id, sessionTitle: subject.session.displayTitle,
             figure: KeptFile(path: figure.path, role: .figure, artifact: figure.artifact, version: figure.version,
-                             index: index, of: versions.isEmpty ? nil : versions.count, sha256: figure.sha256, bytes: figure.bytes),
+                             index: index, of: versions.isEmpty ? nil : versions.count, sha256: figure.sha256, bytes: figure.bytes,
+                             expectedSha256: figure.expectedSha256),
             files: copied.filter { $0.role != .figure }, missing: missing,
-            claudeScience: scienceVersion ?? "unknown", capsid: capsidVersion)
-        let attribution: String
+            claudeScience: scienceVersion ?? "unknown", capsid: capsidVersion,
+            answerShowsVersion: plan.answerShows.flatMap { shown in versions.first { $0.v == shown }?.n })
+        var attribution: String
         if let answer = plan.answer {
             let when = answer.at.map { " at \(longTime($0)) on \(longDate($0))" } ?? ""
             attribution = answer.isFallback
                 ? "From Claude\u{2019}s last answer in the session\(when). The answer that shows this version wasn\u{2019}t found."
                 : "From Claude\u{2019}s answer\(when)."
+            if let shown = plan.answerShows {
+                attribution += " That answer shows \(versionName(shown, in: versions)), not this one."
+            }
         } else {
             attribution = ""
         }

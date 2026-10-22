@@ -8,13 +8,16 @@
 // The renderer and the parser are a pair, and the parser is strict on purpose.
 // It is not a YAML parser: it reads only the shape the renderer writes (inline
 // maps for the project, the session and the figure, one `- { … }` row for each
-// file and each missing file, strings in double quotes), in that order, and
+// file and each missing file, strings in double quotes, and one optional line,
+// `answer_shows_version:`, after the figure when Claude's words were kept with
+// another version than the one they show), in that order, and
 // answers nil for anything else, so a folder it can't read is never half shown
 // and is never touched. `render` then `parse` then `render` gives the same
 // bytes, which `KeptReadmeTests` checks with names in every script.
 //
-// Ownership: the record owns the front matter, the title line and the "Not
-// copied" rows. The four `KeptText` fields are the bodies of the sections and
+// Ownership: the record owns the front matter, the title line, the "Not
+// copied" rows and the "Checksums" rows (one for each file whose bytes don't
+// match Claude Science's checksum). The four `KeptText` fields are the bodies of the sections and
 // are written as given and read back as written. (An empty `origin` is made
 // from the record; `origin(for:)` and `attribution(answerAt:)` make the
 // usual ones, with the dates written out in English and the time the way the
@@ -48,6 +51,9 @@ struct KeptFile: Equatable, Sendable {
     var of: Int?
     var sha256: String?
     var bytes: Int
+    /// Claude Science's checksum for this version when the bytes kept don't
+    /// match it (`sha256` is theirs): kept anyway, and the README says so.
+    var expectedSha256: String? = nil
 }
 
 /// Something that was meant to be kept and wasn't, with the reason.
@@ -71,6 +77,9 @@ struct KeptRecord: Equatable, Sendable {
     var missing: [KeptMissing]
     var claudeScience: String
     var capsid: String
+    /// Claude's words were kept with another version than the one they show:
+    /// that version's number (`answer_shows_version:`, written only then).
+    var answerShowsVersion: Int? = nil
 }
 
 /// The readable sections.
@@ -92,8 +101,11 @@ enum KeptReadme {
     static let saidHeading = "## What Claude said"
     static let originHeading = "## Where it came from"
     static let missingHeading = "## Not copied"
+    static let checksumHeading = "## Checksums"
     static let legendComment = "<!-- Write the legend here, or in Capsid’s Kept window. -->"
     static let finePrint = "Capsid changes only the “Your legend” section of this file, and only when you edit it in the Kept window."
+    /// The one optional line of the front matter, right after `figure:`.
+    static let answerShowsKey = "answer_shows_version"
 
     // MARK: Rendering
 
@@ -108,6 +120,7 @@ enum KeptReadme {
         front.append("project: { id: \(quoted(record.projectID)), name: \(quoted(record.projectName)) }")
         front.append("session: { id: \(quoted(record.sessionID)), title: \(quoted(record.sessionTitle)) }")
         front.append("figure: \(figureMap(record.figure))")
+        if let shown = record.answerShowsVersion { front.append("\(answerShowsKey): \(shown)") }
         front += rows("files", record.files.map(fileMap))
         front += rows("missing", record.missing.map(missingMap))
         front.append("claude_science: \(quoted(record.claudeScience))")
@@ -133,6 +146,10 @@ enum KeptReadme {
 
         if !record.missing.isEmpty {
             out += section(missingHeading, record.missing.map { "- \(notCopied($0))" }.joined(separator: "\n"))
+        }
+        let unmatched = mismatched(record)
+        if !unmatched.isEmpty {
+            out += section(checksumHeading, unmatched.map { "- \(checksumSentence($0))" }.joined(separator: "\n"))
         }
         out += "---\n\n\(finePrint)\n"
         return out
@@ -210,6 +227,24 @@ enum KeptReadme {
         return "\(what), \(oneLine(missing.name)): \(oneLine(missing.reason))."
     }
 
+    /// The figure and the files kept whose bytes don't match Claude Science's checksum.
+    static func mismatched(_ record: KeptRecord) -> [KeptFile] {
+        ([record.figure] + record.files).filter { $0.expectedSha256 != nil }
+    }
+
+    /// "z_prime.png doesn’t match Claude Science’s checksum for this version
+    /// (expected 3f2a9c41…, got 9c41d2e0…). It may be a reference file that
+    /// changed since; check it before you use it."
+    static func checksumSentence(_ file: KeptFile) -> String {
+        func short(_ sha: String?) -> String {
+            guard let sha, !sha.isEmpty else { return "none" }
+            return sha.count > 8 ? String(oneLine(sha).prefix(8)) + "…" : oneLine(sha)
+        }
+        return "\(oneLine(file.path)) doesn’t match Claude Science’s checksum for this version "
+            + "(expected \(short(file.expectedSha256)), got \(short(file.sha256))). "
+            + "It may be a reference file that changed since; check it before you use it."
+    }
+
     private static func encoded(_ id: String) -> String {
         id.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")) ?? id
     }
@@ -237,7 +272,8 @@ enum KeptReadme {
         return "{ \(fields.joined(separator: ", ")) }"
     }
 
-    /// artifact, version, index, of, sha256, bytes: each but bytes only when there is one.
+    /// artifact, version, index, of, sha256, expected_sha256, bytes: each but
+    /// bytes only when there is one.
     private static func common(_ file: KeptFile) -> [String] {
         var fields: [String] = []
         if let artifact = file.artifact { fields.append("artifact: \(quoted(artifact))") }
@@ -245,6 +281,7 @@ enum KeptReadme {
         if let index = file.index { fields.append("index: \(index)") }
         if let of = file.of { fields.append("of: \(of)") }
         if let sha = file.sha256 { fields.append("sha256: \(quoted(sha))") }
+        if let expected = file.expectedSha256 { fields.append("expected_sha256: \(quoted(expected))") }
         fields.append("bytes: \(file.bytes)")
         return fields
     }
@@ -340,8 +377,8 @@ enum KeptReadme {
     /// The record and the sections, or nil when the file is not a README this
     /// renderer made (no `capsid_kept: 1`, front matter out of order, a
     /// malformed row, a missing section or footer). Sections are read in
-    /// order: "Your legend", "What Claude said", "Where it came from", and
-    /// "Not copied" when it is there; a heading of anyone else's between them
+    /// order: "Your legend", "What Claude said", "Where it came from", then
+    /// "Not copied" and "Checksums" when they are there; a heading of anyone else's between them
     /// is passed over, so a person's own notes never hide a folder.
     static func parse(_ markdown: String) -> (record: KeptRecord, text: KeptText)? {
         var all = lines(markdown)
@@ -366,10 +403,11 @@ enum KeptReadme {
                 sections[sections.count - 1].lines.append(line)
             }
         }
-        let known = [legendHeading, saidHeading, originHeading, missingHeading]
+        let known = [legendHeading, saidHeading, originHeading, missingHeading, checksumHeading]
         let order = sections.map(\.heading).filter(known.contains)
-        guard order == [legendHeading, saidHeading, originHeading]
-            || order == [legendHeading, saidHeading, originHeading, missingHeading] else { return nil }
+        let base = [legendHeading, saidHeading, originHeading]
+        guard order == base || order == base + [missingHeading] || order == base + [checksumHeading]
+            || order == base + [missingHeading, checksumHeading] else { return nil }
         func bodyLines(of heading: String) -> [String] { sections.first { $0.heading == heading }?.lines ?? [] }
 
         let legendLines = trimmed(bodyLines(of: legendHeading))
@@ -427,7 +465,8 @@ enum KeptReadme {
 
     private static let fileFields = [Field("artifact", .string, optional: true), Field("version", .string, optional: true),
                                      Field("index", .int, optional: true), Field("of", .int, optional: true),
-                                     Field("sha256", .string, optional: true), Field("bytes", .int)]
+                                     Field("sha256", .string, optional: true), Field("expected_sha256", .string, optional: true),
+                                     Field("bytes", .int)]
 
     private static func parseFrontMatter(_ all: [String]) -> (record: KeptRecord, next: Int)? {
         var i = 0
@@ -472,7 +511,17 @@ enum KeptReadme {
             guard let bytes = number(values, "bytes") else { return nil }
             return KeptFile(path: path, role: role, artifact: text(values, "artifact"), version: text(values, "version"),
                             index: number(values, "index"), of: number(values, "of"), sha256: text(values, "sha256"),
-                            bytes: bytes)
+                            bytes: bytes, expectedSha256: text(values, "expected_sha256"))
+        }
+        /// An optional `key: <digits>` line. Not there: `.some(nil)`, and the
+        /// line is left for the next key. There but not a number: nil.
+        func optionalNumber(_ key: String) -> Int?? {
+            guard i < all.count, all[i].hasPrefix("\(key): ") else { return .some(nil) }
+            let digits = all[i].dropFirst(key.count + 2)
+            i += 1
+            guard !digits.isEmpty, digits.unicodeScalars.allSatisfy({ ("0"..."9").contains($0) }),
+                  let number = Int(digits) else { return nil }
+            return .some(number)
         }
 
         guard next() == "---", next() == "capsid_kept: 1",
@@ -483,6 +532,7 @@ enum KeptReadme {
               let figureValues = map("figure", [Field("file", .string)] + fileFields),
               let figurePath = text(figureValues, "file"),
               let figure = file(figureValues, path: figurePath, role: .figure),
+              let answerShows = optionalNumber(answerShowsKey),
               let fileRows = list("files", [Field("path", .string), Field("role", .role)] + fileFields),
               let missingRows = list("missing", [Field("role", .role), Field("name", .string), Field("reason", .string)]),
               let claudeScience = string("claude_science"),
@@ -505,7 +555,8 @@ enum KeptReadme {
         }
         let record = KeptRecord(name: name, keptAt: keptAt, projectID: projectID, projectName: projectName,
                                 sessionID: sessionID, sessionTitle: sessionTitle, figure: figure, files: files,
-                                missing: missing, claudeScience: claudeScience, capsid: capsid)
+                                missing: missing, claudeScience: claudeScience, capsid: capsid,
+                                answerShowsVersion: answerShows)
         return (record, i)
     }
 

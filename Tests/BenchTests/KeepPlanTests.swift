@@ -123,6 +123,29 @@ struct KeepRowTests {
         #expect(none.detail.hasPrefix("Capsid couldn\u{2019}t find the answer that showed this version."))
     }
 
+    @Test func anAnswerAboutAnotherVersionSaysSoAndIsOffByDefault() {
+        var sources = Made.full
+        // The answer shows version 3.
+        #expect(KeepRules.rows(sources: sources, chosen: Made.v3).first { $0.kind == .answer }
+            == KeepRules.rows(sources: sources).first { $0.kind == .answer })
+        let other = KeepRules.rows(sources: sources, chosen: Made.v4).first { $0.kind == .answer }!
+        #expect(other.title == "What Claude said about it")
+        #expect(other.detail == "Claude\u{2019}s answer shows version 3, not this one.")
+        #expect(other.available && !other.onByDefault)
+        #expect(KeepRules.answerShowsAnother(sources, chosen: Made.v4) == Made.v3)
+        #expect(KeepRules.answerShowsAnother(sources, chosen: Made.v3) == nil)
+        #expect(KeepRules.answerShowsAnother(sources, chosen: nil) == nil)
+        // A version the list doesn't have is named without a number.
+        sources.showing = ShowingMessage(i: 1, at: nil, text: "x", how: .mention, v: "eeeeeeee-0000-4000-8000-000000000009")
+        #expect(KeepRules.rows(sources: sources, chosen: Made.v4).first { $0.kind == .answer }!.detail
+            == "Claude\u{2019}s answer shows another version, not this one.")
+        // The last answer, the fallback, shows no version in particular.
+        sources.showing = nil
+        sources.lastAnswer = KeepAnswer(text: "Eleven plates.", at: nil, how: nil, isFallback: true)
+        let fallback = KeepRules.rows(sources: sources, chosen: Made.v4).first { $0.kind == .answer }!
+        #expect(fallback.title == "What Claude said last" && fallback.onByDefault)
+    }
+
     @Test func theDataRowNamesTheInputsOrSaysWhyNot() {
         var sources = Made.full
         let data = KeepRules.rows(sources: sources).first { $0.kind == .data }!
@@ -240,6 +263,34 @@ struct KeepPlanBuildTests {
         #expect(!none.files.contains { $0.role == .data })
     }
 
+    @Test func anAnswerKeptWithAnotherVersionIsMarkedInThePlanOnlyWhenTicked() throws {
+        var choices = Made.choices
+        choices.version = Made.v4
+        choices.withAnswer = false
+        let off = try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: choices))
+        #expect(off.answer == nil && off.answerShows == nil)
+        choices.withAnswer = true
+        let on = try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: choices))
+        #expect(on.answer?.text == Made.showing.text)
+        #expect(on.answerShows == Made.v3)
+        // The answer's own version: nothing to mark.
+        let same = try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: Made.choices))
+        #expect(same.answerShows == nil)
+        // The fallback answer is never marked.
+        var sources = Made.full
+        sources.showing = nil
+        sources.lastAnswer = KeepAnswer(text: "Eleven plates.", at: nil, how: nil, isFallback: true)
+        let fallback = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: choices))
+        #expect(fallback.answer?.isFallback == true && fallback.answerShows == nil)
+    }
+
+    @Test func aPinnedSubjectStillMakesTheSameSubjectWithoutIt() {
+        #expect(KeepSubject(session: Made.session, entry: Made.entry).pinned == nil)
+        let pinned = KeepSubject(session: Made.session, entry: Made.entry, pinned: KeepPinnedAnswer(text: "x", at: nil))
+        #expect(pinned != Made.subject)
+        #expect(pinned.pinned == KeepPinnedAnswer(text: "x", at: nil))
+    }
+
     @Test func aVanishedOrUnchosenVersionMakesNoPlan() {
         var choices = Made.choices
         choices.version = nil
@@ -289,6 +340,40 @@ struct KeepSentenceTests {
         #expect(KeepRules.outcomeSentence(two) == "Kept 1 of 3 files. 2 weren\u{2019}t copied.")
     }
 
+    @Test func anOutcomeWhoseReadmeWasntUpdatedSaysSoAndIsntComplete() {
+        let folder = URL(fileURLWithPath: "/tmp/x", isDirectory: true)
+        let all = KeepOutcome(folder: folder, collection: "c", folderName: "n", kept: 3, total: 3, missing: [],
+                              recordFailed: "Capsid isn\u{2019}t allowed to change the Kept folder.")
+        #expect(!all.isComplete)
+        #expect(KeepRules.outcomeSentence(all)
+            == "Kept 3 files. The files landed, but README.md couldn\u{2019}t be updated to list them. Capsid isn\u{2019}t allowed to change the Kept folder.")
+        let some = KeepOutcome(folder: folder, collection: "c", folderName: "n", kept: 2, total: 3,
+                               missing: [KeptMissing(role: .data, name: "a.csv", reason: "too big")], recordFailed: "The folder didn\u{2019}t respond")
+        #expect(KeepRules.outcomeSentence(some)
+            == "Kept 2 of 3 files. The data it was drawn from wasn\u{2019}t copied. The files landed, but README.md couldn\u{2019}t be updated to list them. The folder didn\u{2019}t respond.")
+    }
+
+    @Test func filesThatDontMatchTheirChecksumsAreNamedAndKeepTheSheetOpen() {
+        let folder = URL(fileURLWithPath: "/tmp/x", isDirectory: true)
+        func file(_ path: String) -> KeptFile {
+            KeptFile(path: path, role: path.hasPrefix("data/") ? .data : .figure, sha256: "9c41", bytes: 1, expectedSha256: "3f2a")
+        }
+        let one = KeepOutcome(folder: folder, collection: "c", folderName: "n", kept: 3, total: 3, missing: [],
+                              mismatched: [file("z_prime.png")])
+        #expect(one.isComplete && !one.closesSheet)
+        #expect(KeepRules.outcomeSentence(one)
+            == "Kept 3 files. z_prime.png doesn\u{2019}t match Claude Science\u{2019}s checksum; see README.md before you use it.")
+        let two = KeepOutcome(folder: folder, collection: "c", folderName: "n", kept: 2, total: 3,
+                              missing: [KeptMissing(role: .code, name: "z_prime.py", reason: "x")],
+                              mismatched: [file("z_prime.png"), file("data/a.csv")])
+        #expect(KeepRules.outcomeSentence(two)
+            == "Kept 2 of 3 files. The code that drew it wasn\u{2019}t copied. z_prime.png and data/a.csv don\u{2019}t match Claude Science\u{2019}s checksums; see README.md before you use them.")
+        #expect(KeepRules.mismatchClause(["a", "b", "c"])?.hasPrefix("a, b and c don\u{2019}t match") == true)
+        #expect(KeepRules.mismatchClause([]) == nil)
+        let clean = KeepOutcome(folder: folder, collection: "c", folderName: "n", kept: 3, total: 3, missing: [])
+        #expect(clean.closesSheet)
+    }
+
     @Test func theExcerptIsOneLineCutAtAWord() {
         #expect(KeepRules.excerpt("Short.") == "Short.")
         let long = "All plates passed except plate 7, which has an edge effect in column 12. It's flagged and left out of the cleaned table; the other eleven are unchanged."
@@ -321,6 +406,35 @@ struct KeepRecordTests {
         #expect(text.origin.hasPrefix("[Plate reader QC](bench://session?project=p-1&frame=\(Made.session.id)), in Assay development.\nVersion 3 of 4 of z_prime.png, kept on "))
         #expect(text.origin.contains("by Capsid 1.0, from Claude Science 0.1.70."))
         #expect(text.legend.isEmpty)
+    }
+
+    @Test func anAnswerKeptWithAnotherVersionIsRecordedAsSuch() throws {
+        var choices = Made.choices
+        choices.version = Made.v4
+        let plan = try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: choices))
+        let (record, text) = KeepRules.record(subject: Made.subject, sources: Made.full, plan: plan, folderName: "n", keptAt: Made.at(100),
+                                              copied: [], missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0")
+        #expect(record.figure.version == Made.v4 && record.figure.index == 4)
+        #expect(record.answerShowsVersion == 3)
+        #expect(text.attribution.hasPrefix("From Claude\u{2019}s answer at "))
+        #expect(text.attribution.hasSuffix(". That answer shows version 3, not this one."))
+        // Its own version: as before.
+        let same = try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: Made.choices))
+        let (plain, plainText) = KeepRules.record(subject: Made.subject, sources: Made.full, plan: same, folderName: "n", keptAt: Made.at(100),
+                                                  copied: [], missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0")
+        #expect(plain.answerShowsVersion == nil)
+        #expect(!plainText.attribution.contains("not this one"))
+    }
+
+    @Test func aFigureThatDoesntMatchItsChecksumKeepsBothInTheRecord() throws {
+        let plan = try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: Made.choices))
+        let copied = [KeptFile(path: "z_prime.png", role: .figure, artifact: Made.artifact, version: Made.v3, sha256: "9c41", bytes: 10,
+                               expectedSha256: String(repeating: "ab", count: 32))]
+        let (record, _) = KeepRules.record(subject: Made.subject, sources: Made.full, plan: plan, folderName: "n", keptAt: Made.at(100),
+                                           copied: copied, missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0")
+        #expect(record.figure.sha256 == "9c41")
+        #expect(record.figure.expectedSha256 == String(repeating: "ab", count: 32))
+        #expect(record.figure.index == 3)
     }
 
     @Test func theFallbackAnswerIsLabelledAsSuch() throws {
