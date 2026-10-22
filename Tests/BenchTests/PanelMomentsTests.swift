@@ -132,6 +132,20 @@ struct SessionSpecimenTests {
         #expect(SpecimenTopics.match(title: "Gel electrophoresis", sessionID: id, candidates: []) == nil)
     }
 
+    @Test func theRealMatcherPicksTheSpecimenNamedInTheTitleAndNeverOneTheUserSwitchedOff() {
+        let id = "00000000-0000-4000-8000-0000000000bb"
+        let picked = SessionSpecimen.resolve(title: "CRISPR screen hits", sessionID: id, playing: .full, matching: true)
+        #expect(picked.picked?.name == "CRISPR")
+        #expect(picked.rotation.scenes.map(\.name) == ["CRISPR"])
+        #expect(picked.picked?.topic.isEmpty == false)
+        var choice = SpecimenChoice.all
+        choice.toggle(Self.scene("CRISPR"))
+        let without = SessionSpecimen.resolve(title: "CRISPR screen hits", sessionID: id, playing: choice.rotation, matching: true)
+        #expect(without.picked?.name != "CRISPR")
+        #expect(!without.rotation.scenes.isEmpty)
+        if let name = without.picked?.name { #expect(without.rotation.scenes.map(\.name) == [name]) }
+    }
+
     @Test func theAnswerForASessionIsKeptWhileNothingChangesAndRedoneWhenTheTitleDoes() {
         defer { SessionSpecimen.matcher = SpecimenTopics.match; SessionSpecimen.forget() }
         var asked = 0
