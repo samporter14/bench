@@ -234,7 +234,7 @@ struct AlertSettingsView: View {
                 .disabled(!showCards)
                 Toggle(isOn: $sound) {
                     Text("Play a sound")
-                    Text("Once, when a session needs you or stops with an error, with or without the card.")
+                    Text("Once, when a session needs you, stops with an error or finishes, with or without the card. Each has its own sound.")
                 }
             }
 

@@ -12,6 +12,8 @@ struct ActivityList: View {
     /// What a card has read of a plan or a question: a row offers what its card would.
     @ObservedObject private var plans = PlanApprover.shared
     @ObservedObject private var questions = QuestionReplier.shared
+    /// A working session's plan progress, under its project (Lab/PanelInsights.swift).
+    @ObservedObject private var insights = PanelInsights.shared
     @Environment(\.colorScheme) private var colorScheme
 
     /// What a card offers and does (Lab/CardActions.swift), over the same model and states.
@@ -70,7 +72,7 @@ struct ActivityList: View {
                     // when it resumes. The section says so when it holds them all.
                     section(usagePause.holdsAll(model.working) ? "Paused · usage limit" : "Working") {
                         ForEach(model.working) { session in
-                            row(session, line: nil, accent: false) {
+                            row(session, line: nil, accent: false, progress: insights.progress[session.id]) {
                                 if usagePause.pause(for: session.id) != nil {
                                     Image(systemName: "pause.circle").foregroundStyle(.secondary)
                                 } else {
@@ -129,6 +131,10 @@ struct ActivityList: View {
         // What each shown ask's card would offer is read as the list opens (once per card:
         // a card on top has it already), so a row's buttons are there when the pointer is.
         .onAppear { shown.asks.forEach(cardActions.prepare) }
+        // The working sessions the list shows are read for their progress, while it is open.
+        .onAppear { insights.showing(model.working, from: .list) }
+        .onChange(of: model.working) { _, working in insights.showing(working, from: .list) }
+        .onDisappear { insights.showing([], from: .list) }
     }
 
     // MARK: Parts
@@ -191,7 +197,8 @@ struct ActivityList: View {
     }
 
     private func row<Glyph: View, Trailing: View>(_ session: SessionStatus, line: String?, accent: Bool,
-                                                  note: String? = nil, actions: [RowAction] = [],
+                                                  note: String? = nil, progress: PlanProgress? = nil,
+                                                  actions: [RowAction] = [],
                                                   engaged: @escaping () -> Void = {}, showsActions: Bool = false,
                                                   @ViewBuilder glyph: () -> Glyph,
                                                   @ViewBuilder trailing: () -> Trailing) -> some View {
@@ -215,6 +222,14 @@ struct ActivityList: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    // How far its plan has got: the card's line, and a hairline of a bar.
+                    if let progress {
+                        Text(verbatim: progress.line)
+                            .font(.caption)
+                            .lineLimit(1)
+                        PanelProgressBar(fraction: progress.fraction, height: 2)
+                            .padding(.top, 2)
+                    }
                     // Why a send didn't go, as the card says it.
                     if let note {
                         Text(note)
@@ -228,7 +243,7 @@ struct ActivityList: View {
                 trailing()
             }
         }
-        .accessibilityLabel([line, session.displayTitle, session.projectName, note].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel([line, session.displayTitle, session.projectName, progress?.line, note].compactMap { $0 }.joined(separator: ", "))
         .accessibilityHint("Opens the session")
     }
 

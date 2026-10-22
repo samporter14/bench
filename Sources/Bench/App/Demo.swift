@@ -10,6 +10,10 @@
 //   build/Capsid.app/Contents/MacOS/Capsid --demo working  -showLabPanel YES -panelWhileFront YES
 //   build/Capsid.app/Contents/MacOS/Capsid --demo card     -showLabPanel YES -panelWhileFront YES
 //   build/Capsid.app/Contents/MacOS/Capsid --demo plan     -showLabPanel YES -panelWhileFront YES
+//   build/Capsid.app/Contents/MacOS/Capsid --demo progress -showLabPanel YES -panelWhileFront YES -showSpecimenCaption YES
+//   build/Capsid.app/Contents/MacOS/Capsid --demo finished -showLabPanel YES -panelWhileFront YES [--one-figure]
+//   build/Capsid.app/Contents/MacOS/Capsid --demo note     -showLabPanel YES -panelWhileFront YES
+//   build/Capsid.app/Contents/MacOS/Capsid --demo stack    -showLabPanel YES -panelWhileFront YES [--hover]
 //   build/Capsid.app/Contents/MacOS/Capsid --demo toolbar
 //   build/Capsid.app/Contents/MacOS/Capsid --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
 //   build/Capsid.app/Contents/MacOS/Capsid --demo welcome --page 2
@@ -94,6 +98,17 @@ enum Demo {
         /// projects, recipes and a file; Start shows its sent state and sends
         /// nothing. No global key is registered.
         case quickStart = "quick-start"
+        /// The working panel with its plan's progress, "Step 4 of 6 · …" over a
+        /// bar (`-showSpecimenCaption YES` adds the specimen picked for the
+        /// session's title). Made-up insights; nothing is read.
+        case progress
+        /// The Finished card: the plate that fills, two figures, "3 files", the
+        /// reviewer's line. `--one-figure` makes it one, which offers Keep….
+        case finished
+        /// A note Claude sent mid-run, over the session working.
+        case note
+        /// Three sessions working; `--hover` opens the panel into a row each.
+        case stack
     }
 
     /// `--step` with `--demo kept`; `sheet` when missing.
@@ -279,6 +294,12 @@ enum Demo {
             ReferenceDemo.show(step: referenceStep, quiet: isQuiet)
         case .quickStart?:
             QuickStartDemo.show()
+        case .progress?, .finished?, .note?, .stack?:
+            // `mode` is one of the four, whose names are `PanelDemo.Step`'s.
+            if let step = mode.flatMap({ PanelDemo.Step(rawValue: $0.rawValue) }) {
+                let shown = PanelDemo.prepare(step, oneFigure: CommandLine.arguments.contains("--one-figure"))
+                showPanel(working: shown.working, cards: shown.cards)
+            }
         case nil:
             break
         }

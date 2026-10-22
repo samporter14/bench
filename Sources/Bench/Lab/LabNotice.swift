@@ -29,6 +29,10 @@ struct LabNotice: Identifiable, Equatable {
     /// Set on the one card for what finished while finishes were held, and
     /// saying which hold it was (`NoticeRules.held`).
     var heldFor: NoticeRules.HoldReason? = nil
+    /// Set on the card for a note Claude sent mid-run ("Claude says"): the
+    /// panel draws its text as a paragraph, and the note is told it was seen
+    /// when the card is (Lab/MidRunNoteCards.swift).
+    var midRunNote: MidRunNote? = nil
 }
 
 enum NoticeRules {

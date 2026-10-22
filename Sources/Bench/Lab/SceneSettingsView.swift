@@ -10,6 +10,9 @@ import SwiftUI
 
 struct SceneSettingsView: View {
     @ObservedObject private var settings = SceneSettings.shared
+    /// A session's title picks the specimen that plays for it, from the ones
+    /// that are on (Lab/SessionSpecimen.swift).
+    @AppStorage(SettingsKey.matchSpecimenToSession) private var matchSpecimen = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
@@ -114,6 +117,7 @@ struct SceneSettingsView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+                matchToSession
                 categories
             }
             .padding(.top, 4)
@@ -154,6 +158,22 @@ struct SceneSettingsView: View {
         Set Play to Only favorites and a click stars a specimen instead; only the starred ones play, and what’s \
         on is kept for when you switch back.
         """
+
+    // MARK: Matching the session
+
+    /// One checkbox and one line: the title of a session may pick its specimen.
+    /// Only from what is on, so every choice above still holds.
+    private var matchToSession: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Match the specimen to the session", isOn: $matchSpecimen)
+                .toggleStyle(.checkbox)
+            Text("When a session\u{2019}s title fits a specimen that\u{2019}s on, that one plays.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 20)
+        }
+    }
 
     // MARK: Categories
 
