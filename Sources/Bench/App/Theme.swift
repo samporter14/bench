@@ -133,6 +133,22 @@ enum SettingsKey {
     /// The collection last kept into, by project id (since 1.0): a
     /// settings-sized dictionary of opaque ids to folder names.
     static let keptCollections = "keptCollections"
+    // 1.0, M6–M8
+    /// The specimen that plays is matched to the session's title when one
+    /// fits (Lab/SpecimenTopics.swift). On by default (the handoff's
+    /// proposal; Sam's call).
+    static let matchSpecimenToSession = "matchSpecimenToSession"
+    /// Quick Start's global key (`GlobalHotKey`), a `GlobalHotKey.Choice`
+    /// raw value: "none" turns it off.
+    static let quickStartKey = "quickStartKey"
+    /// The global key that opens Reply on the top card, a `GlobalHotKey.Choice`.
+    static let replyKey = "replyKey"
+    /// Shortcuts may start sessions and send messages without asking each
+    /// time. Off by default; off, those intents ask for confirmation.
+    static let shortcutsMayAct = "shortcutsMayAct"
+    /// Quick Start's recipes, as JSON (`Recipe`): user-written and
+    /// settings-sized. Not registered: absent means none.
+    static let recipes = "recipes"
 
     static func register() {
         let defaults = UserDefaults.standard
@@ -167,6 +183,10 @@ enum SettingsKey {
             remoteActions: true, // Phase 2 actions
             remoteBrowse: true, // Phase 3 browse
             titleBarUsage: TitleBarUsage.fiveHour.rawValue,
+            matchSpecimenToSession: true,
+            quickStartKey: "controlOptionCommandSpace",
+            replyKey: "controlOptionCommandR",
+            shortcutsMayAct: false,
         ])
     }
 }

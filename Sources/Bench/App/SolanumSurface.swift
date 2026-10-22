@@ -32,6 +32,12 @@ enum Solanum {
     static let strongColor = dynamic(light: NSColor(srgbRed: 31 / 255, green: 30 / 255, blue: 29 / 255, alpha: 0.3),
                                      dark: NSColor(srgbRed: 250 / 255, green: 249 / 255, blue: 245 / 255, alpha: 0.32))
 
+    /// Words on a clay fill: slate in both appearances (the mock-ups' Keep,
+    /// Start and Reply).
+    static let slateInk = Color(nsColor: NSColor(srgbRed: 0x14 / 255, green: 0x14 / 255, blue: 0x13 / 255, alpha: 1))
+    /// The one accent, as a fill.
+    static let clayFill = Theme.clay
+
     static let page = Color(nsColor: pageColor)
     static let raised = Color(nsColor: raisedColor)
     static let bar = Color(nsColor: barColor)
@@ -66,22 +72,26 @@ enum Solanum {
 struct SolanumPillStyle: ButtonStyle {
     enum Size { case regular, medium, small }
     var size: Size = .regular
+    /// The one action that asks (Keep, Start): a clay fill with ink words,
+    /// semibold, no edge. One per view.
+    var prominent = false
     @Environment(\.isEnabled) private var isEnabled
 
-    init(_ size: Size = .regular) {
+    init(_ size: Size = .regular, prominent: Bool = false) {
         self.size = size
+        self.prominent = prominent
     }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: size == .regular ? 13 : 12))
-            .foregroundStyle(Solanum.ink)
+            .font(.system(size: size == .regular ? 13 : 12, weight: prominent ? .semibold : .regular))
+            .foregroundStyle(prominent ? AnyShapeStyle(Solanum.slateInk) : AnyShapeStyle(Solanum.ink))
             .lineLimit(1)
-            .padding(.horizontal, size == .small ? 10 : size == .medium ? 12 : 14)
+            .padding(.horizontal, size == .small ? 10 : size == .medium ? 12 : prominent ? 16 : 14)
             .frame(height: size == .small ? 26 : size == .medium ? 28 : 30)
-            .background(Capsule().fill(Solanum.raised))
+            .background(Capsule().fill(prominent ? Solanum.clayFill : Solanum.raised))
             .overlay(Capsule().fill(Solanum.hairline).opacity(configuration.isPressed ? 1 : 0))
-            .overlay(Capsule().strokeBorder(Solanum.strong, lineWidth: 1))
+            .overlay(Capsule().strokeBorder(prominent ? Color.clear : Solanum.strong, lineWidth: 1))
             .opacity(isEnabled ? 1 : 0.45)
             .contentShape(Capsule())
     }
