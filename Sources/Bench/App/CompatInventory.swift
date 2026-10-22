@@ -55,6 +55,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
     case closeTabs, tabMenu, signIn, notifications, sessionAddress, previews
     case usage, context, planCard, approve, errorCard, phone
     case start, sessions, activity, browse
+    case keep
 
     var title: String {
         switch self {
@@ -74,6 +75,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .sessions: "Sessions in the Lab"
         case .activity: "The usage graph and the week in review"
         case .browse: "Quick Open, Results and the phone's project list"
+        case .keep: "Keep a figure with its answer, data and script"
         }
     }
 
@@ -200,6 +202,19 @@ extension CompatInventory {
              .phone, "Remote/RemotePermissions.swift", check: .whenUsed("it reads what the helpers are asking, so it is not read from here")),
         read("GET /api/frames/<session>/streaming", "the text being written now; Capsid copes if the daemon has no such route",
              .phone, "Remote/RemoteLive.swift", check: .whenUsed("it exists only while a session works")),
+        read("GET /api/artifacts/<artifact>/versions",
+             "a bare array, oldest first: version_id, version_number, frame_id, content_type, size_bytes, created_at, parent_version_id (file_path, agent_name and language are dropped in the page)",
+             .keep, "Remote/ArtifactReader.swift"),
+        read("GET /api/artifacts/versions/<version>?include_metadata=true",
+             "JSON: version_id (the one asked for), artifact_id, version_number, filename, content_type, size_bytes, created_at, checksum (sha256 hex or null), is_user_upload, reproduction_code?, environment {environment_name, python_version, packages [{name, version}]}?",
+             .keep, "Remote/ArtifactReader.swift"),
+        read("GET /api/artifacts/versions/<version>/lineage?slim=1",
+             "code, code_description, language, pending, code_unavailable {model, reason}, has_cell_sources, has_environment, dependency_mappings {inputs [{filename, artifact_id, version_id, workspace_path, consensus}], mapping_status}; messages, environment_snapshot and interactions are null",
+             .keep, "Remote/ArtifactReader.swift",
+             check: .whenUsed("reading it can start Claude Science's own code reconstruction, so it is not read from here")),
+        read("_artifact_refs and _ts on GET /api/frames/<session>/messages",
+             "an assistant row's {name: {artifact_id, version_id}} for the files its text shows or names; _ts in milliseconds",
+             .keep, "Remote/HistoryReader.swift", check: .whenUsed("it is what was said, so it is never read from here")),
         read("GET /api/csrf", "sets the cookie that writes send back",
              .approve, "Web/WebAPI.swift", check: .whenUsed("read only when a write is refused as stale")),
         read("401 on any /api read", "what a signed-out page answers",

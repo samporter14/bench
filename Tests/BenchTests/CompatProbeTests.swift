@@ -223,6 +223,40 @@ struct ProbeClassificationTests {
         #expect(CompatProbeRules.plan(data("[]")) == .unexpectedShape("the plan file wasn't a JSON object"))
     }
 
+    // MARK: Keep's reads
+
+    @Test func versionsAreOkWhenEachHasANumberAndATime() {
+        #expect(CompatProbeRules.versions(.versions([FakePage.version(1)])) == .ok("1 version, each with a number and a time"))
+        #expect(CompatProbeRules.versions(.versions([FakePage.version(1), FakePage.version(2), FakePage.version(3)]))
+                == .ok("3 versions, each with a number and a time"))
+        #expect(CompatProbeRules.versions(.versions([])) == .unexpectedShape("the list was empty"))
+        #expect(CompatProbeRules.versions(.versions([FakePage.version(1), FakePage.version(2, at: nil)]))
+                == .unexpectedShape("1 of 2 versions have no time"))
+    }
+
+    @Test func factsAreOkForTheVersionAskedWithANumberAndAChecksumOrNone() {
+        let plan = FakePage.plan
+        #expect(CompatProbeRules.facts(.facts(FakePage.facts()), version: plan) == .ok("a checksum and a number"))
+        #expect(CompatProbeRules.facts(.facts(FakePage.facts(sha: nil)), version: plan)
+                == .ok("a number, and no checksum (a file read from your Mac may have none)"))
+        #expect(CompatProbeRules.facts(.facts(FakePage.facts()), version: FakePage.version(9).v) == .unexpectedShape("the answer was for another version"))
+        #expect(CompatProbeRules.facts(.facts(FakePage.facts(number: nil)), version: plan) == .unexpectedShape("the answer has no version number"))
+    }
+
+    @Test func anAnswerOfTheWrongKindOrNoAnswerHasItsWords() {
+        let plan = FakePage.plan
+        #expect(CompatProbeRules.facts(.unreadable, version: plan) == .unexpectedShape("a version's details weren't the shape Capsid reads"))
+        #expect(CompatProbeRules.facts(.versions([]), version: plan) == .unexpectedShape("a version's details weren't the shape Capsid reads"))
+        #expect(CompatProbeRules.versions(.facts(FakePage.facts())) == .unexpectedShape("the list of an artifact's versions wasn't the shape Capsid reads"))
+        for outcome in [ArtifactReadOutcome.bytes(Data()), .binary, .text("x", truncated: false)] {
+            #expect(CompatProbeRules.versions(outcome) == .unexpectedShape("the list of an artifact's versions wasn't the shape Capsid reads"))
+        }
+        #expect(CompatProbeRules.versions(.lost) == .failed("signed out (401); Capsid signs back in by itself"))
+        #expect(CompatProbeRules.facts(.missing, version: plan) == .failed("answered 404: the route may have moved, or that session is gone"))
+        #expect(CompatProbeRules.facts(.tooBig, version: plan) == .failed("the answer exceeded the read limit"))
+        #expect(CompatProbeRules.versions(.cancelled) == .failed("the read didn't complete"))
+    }
+
     // MARK: Failures
 
     private func refused(_ message: String) -> NSError {
@@ -287,7 +321,11 @@ struct ProbeClassificationTests {
 /// given, records every path asked for, and has no way to be written to.
 @MainActor
 private final class FakePage {
-    static let session = "0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5"
+    nonisolated static let session = "0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5"
+    /// The shown session's plan: made-up 36-character ids, as Keep's reads take.
+    nonisolated static let plan = "1c8d3a5f-2b3c-4d4e-9f00-b1c2d3e4f5a6"
+    nonisolated static let artifact = "6d1f0c2e-7a3b-4c8d-9e10-2b3c4d5e6f70"
+    nonisolated static let digest = String(repeating: "ab12", count: 16)
 
     var ready = true
     var shown: String? = FakePage.session
@@ -295,13 +333,31 @@ private final class FakePage {
     var signIn = false
     var answers: [String: Result<Data, NSError>] = [:]
     var hangs: Set<String> = []
+    /// What the typed artifact reader answers, by read; a read not here is gone (404).
+    var reads: [ArtifactRead: ArtifactReadOutcome] = [:]
+    var readFailures: [ArtifactRead: any Error] = [:]
+    var readHangs: Set<ArtifactRead> = []
     private(set) var asked: [String] = []
+    private(set) var readsAsked: [ArtifactRead] = []
 
     init() {
         answers["/usage"] = .success(Data(#"{"ok":true,"data":{"five_hour":{"utilization":3,"resets_at":null},"seven_day":{"utilization":9,"resets_at":null}}}"#.utf8))
         answers["/frames/\(Self.session)/token-series"] = .success(Data(#"{"window":200000,"turns":[{"ctx_total":900}]}"#.utf8))
-        answers["/frames/\(Self.session)?shallow=true"] = .success(Data(#"{"status":"completed","context_data":{"_plan_version_id":"ver-001","_plan_approved":true}}"#.utf8))
-        answers["/artifacts/versions/ver-001"] = .success(Data(#"{"task_summary":"Screen made-up buffers","steps":[{"title":"a"}]}"#.utf8))
+        answers["/frames/\(Self.session)?shallow=true"] = .success(Data(#"{"status":"completed","context_data":{"_plan_version_id":"\#(Self.plan)","_plan_artifact_id":"\#(Self.artifact)","_plan_approved":true}}"#.utf8))
+        answers["/artifacts/versions/\(Self.plan)"] = .success(Data(#"{"task_summary":"Screen made-up buffers","steps":[{"title":"a"}]}"#.utf8))
+        reads[.facts(version: Self.plan)] = .facts(Self.facts())
+        reads[.versions(artifact: Self.artifact)] = .versions([Self.version(1), Self.version(2)])
+    }
+
+    nonisolated static func facts(version: String = FakePage.plan, number: Int? = 2, sha: String? = FakePage.digest) -> ArtifactFacts {
+        ArtifactFacts(v: version, a: artifact, n: number, name: "plan.json", mime: "application/json", size: 900,
+                      at: Date(timeIntervalSince1970: 1_791_833_400), sha: sha, isUpload: false, code: nil, codeCut: false,
+                      environment: nil)
+    }
+
+    nonisolated static func version(_ number: Int, at: Date? = Date(timeIntervalSince1970: 1_791_833_400)) -> ArtifactVersion {
+        ArtifactVersion(v: String(format: "%08lx-0000-4000-8000-%012lx", number, number), n: number, frame: nil, mime: nil,
+                        size: 900, at: at, parent: nil)
     }
 
     func environment(timeout: Duration = .seconds(5)) -> CompatProbeEnvironment {
@@ -319,6 +375,12 @@ private final class FakePage {
             },
             tabStrip: { [unowned self] in self.tabs },
             signInShowing: { [unowned self] in self.signIn },
+            artifactRead: { [unowned self] read in
+                self.readsAsked.append(read)
+                if self.readHangs.contains(read) { try await Task.sleep(for: .seconds(30)) }
+                if let error = self.readFailures[read] { throw error }
+                return self.reads[read] ?? .missing
+            },
             timeout: timeout)
     }
 }
@@ -342,18 +404,80 @@ struct CompatProbeRunTests {
             "✓ GET /api/frames/<session>/token-series: a window size and 1 turn",
             "✓ GET /api/frames/<session>?shallow=true: a status, and the plan fields if it has a plan",
             "✓ GET /api/artifacts/versions/<version>: a summary, 1 step",
+            "✓ GET /api/artifacts/<artifact>/versions: 2 versions, each with a number and a time",
+            "✓ GET /api/artifacts/versions/<version>?include_metadata=true: a checksum and a number",
         ])
     }
 
     @Test func onlyReadsOfTheAllowedPathsAreMadeAndNoWriteIsPossible() async {
         _ = await CompatProbes.run(page.environment())
         #expect(page.asked == ["/usage", "/frames/\(FakePage.session)/token-series",
-                               "/frames/\(FakePage.session)?shallow=true", "/artifacts/versions/ver-001"])
+                               "/frames/\(FakePage.session)?shallow=true", "/artifacts/versions/\(FakePage.plan)"])
         for path in page.asked {
             #expect(WebContainer.isReadablePath(path), "\(path)")
             #expect(!WebContainer.isWritablePath(path), "\(path)")
             #expect(!path.contains("approve-plan") && !path.contains("resolve-input") && !path.contains("messages"))
         }
+    }
+
+    @Test func keepsTwoReadsAreThePureOnesOnThePlansArtifactAndNeverTheLineage() async {
+        _ = await CompatProbes.run(page.environment())
+        // The facts first (they name the artifact when the frame doesn't), then the versions.
+        #expect(page.readsAsked == [.facts(version: FakePage.plan), .versions(artifact: FakePage.artifact)])
+        for read in page.readsAsked {
+            switch read {
+            case .versions, .facts: break
+            default: Issue.record("a probe asked for \(read)")
+            }
+            #expect(read.path.map(ArtifactRead.isAllowedPath) == true)
+        }
+        // Nothing but looks: not one of the typed reads is the lineage, a download, a thumbnail or a list.
+        #expect(!page.readsAsked.contains { if case .lineage = $0 { true } else { false } })
+    }
+
+    @Test func theArtifactTheFrameDoesntNameIsTakenFromTheFacts() async {
+        page.answers["/frames/\(FakePage.session)?shallow=true"] = .success(Data(#"{"status":"completed","context_data":{"_plan_version_id":"\#(FakePage.plan)","_plan_approved":true}}"#.utf8))
+        let results = verdicts(await CompatProbes.run(page.environment()))
+        #expect(page.readsAsked == [.facts(version: FakePage.plan), .versions(artifact: FakePage.artifact)])
+        #expect(results[CompatProbes.Name.versions] == .ok("2 versions, each with a number and a time"))
+    }
+
+    @Test func aPlanWithNoFullIdsIsNotOnScreenAndAsksForNothing() async {
+        page.answers["/frames/\(FakePage.session)?shallow=true"] = .success(Data(#"{"status":"completed","context_data":{"_plan_version_id":"ver-001","_plan_artifact_id":"art-1","_plan_approved":true}}"#.utf8))
+        page.answers["/artifacts/versions/ver-001"] = .success(Data(#"{"task_summary":"Screen made-up buffers"}"#.utf8))
+        let results = verdicts(await CompatProbes.run(page.environment()))
+        #expect(results[CompatProbes.Name.plan] == .ok("a summary"))
+        #expect(results[CompatProbes.Name.facts] == .notOnScreenNow("the shown session's plan has no 36-character version id"))
+        #expect(results[CompatProbes.Name.versions] == .notOnScreenNow("the shown session's plan has no 36-character artifact id"))
+        #expect(page.readsAsked.isEmpty)
+    }
+
+    @Test func aKeepReadThatIsGoneOrSignedOutOrSlowIsFailedAndTheRestStillRun() async {
+        page.reads[.facts(version: FakePage.plan)] = .lost
+        page.reads[.versions(artifact: FakePage.artifact)] = nil
+        var results = verdicts(await CompatProbes.run(page.environment()))
+        #expect(results[CompatProbes.Name.facts] == .failed("signed out (401); Capsid signs back in by itself"))
+        #expect(results[CompatProbes.Name.versions] == .failed("answered 404: the route may have moved, or that session is gone"))
+        #expect(results[CompatProbes.Name.plan] == .ok("a summary, 1 step"))
+
+        let slow = FakePage()
+        slow.readHangs = [.facts(version: FakePage.plan)]
+        slow.readFailures[.versions(artifact: FakePage.artifact)] = WebAPIError.notAllowed
+        results = verdicts(await CompatProbes.run(slow.environment(timeout: .milliseconds(80))))
+        #expect(results[CompatProbes.Name.facts] == .failed("no answer in time"))
+        #expect(results[CompatProbes.Name.versions] == .failed("Capsid's list of readable paths doesn't allow it"))
+    }
+
+    @Test func aKeepAnswerThatIsntTheShapeIsReportedAsSuch() async {
+        page.reads[.facts(version: FakePage.plan)] = .unreadable
+        page.reads[.versions(artifact: FakePage.artifact)] = .versions([])
+        var results = verdicts(await CompatProbes.run(page.environment()))
+        #expect(results[CompatProbes.Name.facts] == .unexpectedShape("a version's details weren't the shape Capsid reads"))
+        #expect(results[CompatProbes.Name.versions] == .unexpectedShape("the list was empty"))
+        // An answer for another version of the plan is no answer.
+        page.reads[.facts(version: FakePage.plan)] = .facts(FakePage.facts(version: FakePage.version(9).v))
+        results = verdicts(await CompatProbes.run(page.environment()))
+        #expect(results[CompatProbes.Name.facts] == .unexpectedShape("the answer was for another version"))
     }
 
     @Test func aPageThatIsntUpIsNotOnScreenAndAsksNothing() async {
@@ -368,7 +492,9 @@ struct CompatProbeRunTests {
         page.shown = nil
         let results = verdicts(await CompatProbes.run(page.environment()))
         #expect(page.asked == ["/usage"])
-        for name in [CompatProbes.Name.address, CompatProbes.Name.context, CompatProbes.Name.frame, CompatProbes.Name.plan] {
+        #expect(page.readsAsked.isEmpty)
+        for name in [CompatProbes.Name.address, CompatProbes.Name.context, CompatProbes.Name.frame, CompatProbes.Name.plan,
+                     CompatProbes.Name.versions, CompatProbes.Name.facts] {
             #expect(results[name] == .notOnScreenNow("no session is open in the window"), "\(name)")
         }
         #expect(results[CompatProbes.Name.usage]?.isFault == false)
@@ -378,14 +504,18 @@ struct CompatProbeRunTests {
         page.answers["/frames/\(FakePage.session)?shallow=true"] = .success(Data(#"{"status":"completed","context_data":null}"#.utf8))
         let results = verdicts(await CompatProbes.run(page.environment()))
         #expect(results[CompatProbes.Name.plan] == .notOnScreenNow("the shown session has no plan"))
-        #expect(page.asked.count == 3)
+        #expect(results[CompatProbes.Name.versions] == .notOnScreenNow("the shown session has no plan"))
+        #expect(results[CompatProbes.Name.facts] == .notOnScreenNow("the shown session has no plan"))
+        #expect(page.asked.count == 3 && page.readsAsked.isEmpty)
     }
 
     @Test func aPlanVersionNotFitForAPathIsNotAsked() async {
         page.answers["/frames/\(FakePage.session)?shallow=true"] = .success(Data(#"{"status":"completed","context_data":{"_plan_version_id":"../etc"}}"#.utf8))
         let results = verdicts(await CompatProbes.run(page.environment()))
         #expect(results[CompatProbes.Name.plan] == .notOnScreenNow("the shown session has no plan"))
+        #expect(results[CompatProbes.Name.facts] == .notOnScreenNow("the shown session has no plan"))
         #expect(!page.asked.contains { $0.contains("..") })
+        #expect(page.readsAsked.isEmpty)
     }
 
     @Test func eachShapeProblemIsReportedWhereItIs() async {
@@ -422,7 +552,9 @@ struct CompatProbeRunTests {
         page.answers["/frames/abc/token-series"] = .success(Data(#"{"window":10,"turns":[]}"#.utf8))
         let results = verdicts(await CompatProbes.run(page.environment()))
         #expect(results[CompatProbes.Name.frame] == .unexpectedShape("the session's id isn't the 36-character id Capsid reads"))
-        #expect(page.asked == ["/usage", "/frames/abc/token-series"])
+        #expect(results[CompatProbes.Name.versions] == .notOnScreenNow("the session has no readable id"))
+        #expect(results[CompatProbes.Name.facts] == .notOnScreenNow("the session has no readable id"))
+        #expect(page.asked == ["/usage", "/frames/abc/token-series"] && page.readsAsked.isEmpty)
     }
 
     @Test func aSessionIdIsMadeSafeAsOnePathSegment() async {
@@ -437,6 +569,7 @@ struct CompatProbeRunTests {
             get: { _ in throw WebAPIError.badResponse },
             tabStrip: { throw ProbeTimeout() },
             signInShowing: { throw WebAPIError.notReady },
+            artifactRead: { _ in throw WebAPIError.notReady },
             timeout: .seconds(1))
         let results = verdicts(await CompatProbes.run(broken))
         #expect(results[CompatProbes.Name.tabStrip] == .failed("no answer in time"))
@@ -477,5 +610,8 @@ struct CompatProbeRunTests {
         for name in CompatProbes.Name.all where name.hasPrefix("GET ") {
             #expect(!lines.contains { $0.hasPrefix("• \(name):") }, "\(name)")
         }
+        // Keep's two that they don't: the lineage can start a reconstruction, and the messages are what was said.
+        #expect(lines.contains("• GET /api/artifacts/versions/<version>/lineage?slim=1: Keep a figure with its answer, data and script (reading it can start Claude Science's own code reconstruction, so it is not read from here)"))
+        #expect(lines.contains("• _artifact_refs and _ts on GET /api/frames/<session>/messages: Keep a figure with its answer, data and script (it is what was said, so it is never read from here)"))
     }
 }
