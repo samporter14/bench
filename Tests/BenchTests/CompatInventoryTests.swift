@@ -182,7 +182,7 @@ struct CompatPageHookTests {
 
     @Test func noOtherFileRunsAScriptInThePage() {
         let known: Set<String> = [
-            "Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/RemoteLive.swift",
+            "Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/InsightReader.swift", "Remote/RemoteLive.swift",
             "Remote/RemotePhotoUpload.swift", "Remote/SessionReader.swift", "Remote/SessionWriter.swift",
             "Web/NotificationBridge.swift", "Web/PageTabs.swift", "Web/TabContextMenu.swift", "Web/WebAPI.swift",
             "Web/WebContainer.swift",
@@ -249,6 +249,9 @@ struct CompatEndpointTests {
              ArtifactRead.isAllowedPath(ArtifactRead.facts(version: v).path ?? "")),
             ("GET /api/artifacts/versions/<version>/lineage?slim=1", ArtifactRead.lineage(version: v).path ?? "",
              ArtifactRead.isAllowedPath(ArtifactRead.lineage(version: v).path ?? "")),
+            // The reviewer's findings, built and gated by the insight reader, which projects them to counts in the page.
+            ("GET /api/frames/<session>/verification?resolved_limit=0&actionable_limit=500", InsightReaderScript.verificationPath(s) ?? "",
+             InsightReaderScript.isAllowedPath(InsightReaderScript.verificationPath(s) ?? "")),
         ]
     }
 
@@ -260,6 +263,10 @@ struct CompatEndpointTests {
         "GET /api/artifacts/versions/<version>/lineage?slim=1",
     ]
 
+    /// The reads the insight reader projects to counts in the page. `apiGET`
+    /// must not read them: its body would hand the findings' text to Swift.
+    private let projectedReads: Set<String> = ["GET /api/frames/<session>/verification?resolved_limit=0&actionable_limit=500"]
+
     /// Reads that are not a path of their own.
     private let notPaths: Set<String> = [
         "GET /api/csrf", "401 on any /api read",
@@ -267,6 +274,10 @@ struct CompatEndpointTests {
         "output_data.error on GET /api/frames/<session>?shallow=true",
         // Fields of the messages read above, kept by Keep's showing op.
         "_artifact_refs and _ts on GET /api/frames/<session>/messages",
+        // A message the history reader projects as a note.
+        "send_user_message in GET /api/frames/<session>/messages",
+        // Fields of the session tree the phone's permission queue reads; the insight reader projects the plan statuses in the page.
+        "plan statuses on GET /api/frames/<session>/trace-shallow?include_messages=false",
     ]
 
     @Test func everyReadInTheInventoryIsAPathCapsidBuildsAndItsGateAllows() {
@@ -299,6 +310,14 @@ struct CompatEndpointTests {
                 // Probed (or not) through the typed reader, whose own allowlist holds the shape.
                 #expect(ArtifactRead.isAllowedPath(sample), "\(item.token)")
                 #expect(item.file == "Remote/ArtifactReader.swift", "\(item.token)")
+                continue
+            }
+            if projectedReads.contains(item.token) {
+                // Probed through the insight reader, whose own allowlist holds the shape, and never through apiGET.
+                #expect(InsightReaderScript.isAllowedPath(sample), "\(item.token)")
+                #expect(item.file == "Remote/InsightReader.swift", "\(item.token)")
+                #expect(item.check == .live, "\(item.token)")
+                #expect(!WebContainer.isReadablePath(String(sample.dropFirst("/api".count))), "\(item.token) is reachable by apiGET")
                 continue
             }
             let readable = WebContainer.isReadablePath(String(sample.dropFirst("/api".count)))
@@ -340,6 +359,45 @@ struct CompatEndpointTests {
         #expect(facts?.detail.contains("reproduction_code") == true && facts?.detail.contains("python_version") == true)
         #expect(lineage?.detail.contains("workspace_path") == true && lineage?.detail.contains("consensus") == true)
         #expect(versions?.detail.contains("parent_version_id") == true && versions?.detail.contains("file_path") == true)
+    }
+
+    @Test func stepProgressTheReviewerAndNotesAreInTheInventoryWithTheirChecks() {
+        func item(_ token: String) -> CompatDependency? { CompatInventory.readEndpoints.first { $0.token == token } }
+        let progress = item("plan statuses on GET /api/frames/<session>/trace-shallow?include_messages=false")
+        let reviewer = item("GET /api/frames/<session>/verification?resolved_limit=0&actionable_limit=500")
+        let note = item("send_user_message in GET /api/frames/<session>/messages")
+        // Both projected counts are pure reads and are looked at; a note is what was said.
+        #expect(progress?.check == .live && reviewer?.check == .live)
+        #expect(note?.check == .whenUsed("it is what was said, so it is never read from here"))
+        #expect(progress?.feature == .planProgress && reviewer?.feature == .reviewer && note?.feature == .notes)
+        #expect([progress, reviewer].allSatisfy { $0?.file == "Remote/InsightReader.swift" && $0?.kind == .readEndpoint })
+        #expect(note?.file == "Remote/HistoryReader.swift")
+        #expect(CompatProbes.Name.all.contains(CompatProbes.Name.progress) && CompatProbes.Name.all.contains(CompatProbes.Name.reviewer))
+        #expect(CompatProbes.Name.progress == progress?.token && CompatProbes.Name.reviewer == reviewer?.token)
+        // The page's fields the projection reads are all named in the inventory's words.
+        for field in ["_plan_approved", "_plan_version_id", "_plan_json", "_step_statuses", "_plan_claims", "pending|in_progress|completed|blocked|skipped"] {
+            #expect(progress?.detail.contains(field) == true, "\(field)")
+        }
+        for field in ["verdict", "status", "rebuttal", "reflag_count", "running", "completed_review_count", "resolved_by_verdict"] {
+            #expect(reviewer?.detail.contains(field) == true, "\(field)")
+        }
+        #expect(progress?.detail.contains("never a step's description") == true)
+        #expect(reviewer?.detail.contains("never a claim, its evidence or a rebuttal") == true)
+        // The sources the page's counting rule rests on are named only once each.
+        #expect(CompatFeature.planProgress.title == "Step n of m under a running session")
+        #expect(CompatFeature.reviewer.title == "The reviewer's findings on a finished card")
+    }
+
+    @Test func theInsightReadersTwoPathsAreTheOnlyOnesItsScriptAllowsAndApiGETReadsNeither() {
+        let s = Self.session
+        let trace = InsightReaderScript.tracePath(s)
+        #expect(trace == "/api/frames/\(s)/trace-shallow?include_messages=false")
+        #expect(trace == PermissionPaths.trace(s))
+        #expect(InsightReaderScript.verificationPath(s) == "/api/frames/\(s)/verification?resolved_limit=0&actionable_limit=500")
+        for path in [trace, InsightReaderScript.verificationPath(s)].compactMap({ $0 }) {
+            #expect(InsightReaderScript.isAllowedPath(path))
+            #expect(!WebContainer.isReadablePath(String(path.dropFirst("/api".count))), "\(path)")
+        }
     }
 
     // MARK: Writes
@@ -404,6 +462,7 @@ struct CompatEndpointTests {
     @Test func everyDaemonResourceTheReadersAndWritersNameIsInTheInventory() {
         let files = ["Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/RemoteLive.swift", "Remote/RemotePhotoUpload.swift",
                      "Remote/SessionReader.swift", "Remote/SessionWriter.swift", "Remote/RemotePermissions.swift",
+                     "Remote/InsightReader.swift", "Lab/LabInsights.swift",
                      "Lab/PlanApproval.swift", "Lab/FailureReason.swift", "Web/WebAPI.swift"]
         var segments = Set<String>()
         for file in files {

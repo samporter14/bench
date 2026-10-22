@@ -6,14 +6,17 @@
 //   - the reads that `WebContainer.apiGET` is allowed to make, each answered
 //     in the shape Capsid parses, checked by the very parsers the app uses.
 //
-// The probes have no way to write: the environment they are given holds two
-// reads (`apiGET`, and Keep's typed artifact read) and two looks, and no POST.
+// The probes have no way to write: the environment they are given holds four
+// reads (`apiGET`, Keep's typed artifact read, and the two projected counts of
+// step progress and the reviewer's findings) and two looks, and no POST.
 // The phone's readers (messages, artifact lists, live text), Keep's lineage and
 // every write are listed as checked only when used: the first return what was
-// said or made, which Diagnostics never reads, the lineage can start Claude
-// Science's own code reconstruction, and the rest change things. Keep's other
-// two reads (an artifact's versions, one version's facts) are pure, and run on
-// the shown session's plan artifact.
+// said or made, which Diagnostics never reads (the notes are among them), the
+// lineage can start Claude Science's own code reconstruction, and the rest
+// change things. Keep's other two reads (an artifact's versions, one version's
+// facts) are pure, and run on the shown session's plan artifact; so do the two
+// projected reads, which answer in counts and never hand a title or a finding
+// to Swift.
 //
 // A probe says one of four things: it answered as expected, it answered in a
 // shape Capsid doesn't read, the thing isn't on screen right now (a tab strip
@@ -164,6 +167,49 @@ enum CompatProbeRules {
                                 : .ok("a checksum and a number")
     }
 
+    // MARK: Step progress and the reviewer
+
+    /// The shown session's plan progress, as the page projected it: counts
+    /// and words only, never a step's title.
+    static func progress(_ read: PlanProgressRead) -> ProbeVerdict {
+        func frames(_ facts: PlanProgressFacts) -> String {
+            "\(facts.children) frame\(facts.children == 1 ? "" : "s") directly below the session"
+        }
+        switch read {
+        case .progress(let value, let facts):
+            if facts.unknown > 0 { return .unexpectedShape(CompatMiss.progressStatusNotUnderstood.phrase) }
+            return .ok("step \(value.step) of \(value.total), \(facts.reported) step\(facts.reported == 1 ? "" : "s") reporting, \(frames(facts))")
+        case .idle(let why, let facts):
+            if facts.unknown > 0 { return .unexpectedShape(CompatMiss.progressStatusNotUnderstood.phrase) }
+            switch why {
+            case .notApproved: return .notOnScreenNow("the shown session has no approved plan")
+            case .noPlan: return .notOnScreenNow("the shown session's plan has no phases or steps")
+            case .planMissing: return .unexpectedShape(CompatMiss.progressTreeWithoutPlan.phrase)
+            case .noStatuses: return .notOnScreenNow("no plan step has reported a status yet")
+            case .complete: return .ok("every step is done, \(frames(facts))")
+            }
+        case .unreadable: return .unexpectedShape(CompatMiss.progressTreeNotUnderstood.phrase)
+        case .lost: return .failed("signed out (401); Capsid signs back in by itself")
+        case .missing: return .failed("answered 404: the route may have moved, or that session is gone")
+        case .tooBig: return .failed("the answer exceeded the read limit")
+        case .cancelled: return .failed("the read didn't complete")
+        }
+    }
+
+    /// The shown session's reviewer counts. A session nobody reviewed answers
+    /// an empty list, which is four zeros and no fault.
+    static func reviewer(_ read: ReviewerRead) -> ProbeVerdict {
+        switch read {
+        case .counts(let counts):
+            return .ok("\(counts.standing) standing, \(counts.fixed) fixed, \(counts.running) running, \(counts.reviews) finished")
+        case .unreadable: return .unexpectedShape(CompatMiss.reviewerAnswerNotUnderstood.phrase)
+        case .lost: return .failed("signed out (401); Capsid signs back in by itself")
+        case .missing: return .failed("answered 404: the route may have moved, or that session is gone")
+        case .tooBig: return .failed("the answer exceeded the read limit")
+        case .cancelled: return .failed("the read didn't complete")
+        }
+    }
+
     /// Why a typed artifact read didn't come back as the shape it was asked for.
     static func failure(_ outcome: ArtifactReadOutcome, miss: CompatMiss) -> ProbeVerdict {
         switch outcome {
@@ -225,6 +271,12 @@ struct CompatProbeEnvironment {
     /// and checked again. The probes ask only for an artifact's versions and a
     /// version's facts, never the lineage, which can start a reconstruction.
     var artifactRead: @MainActor @Sendable (ArtifactRead) async throws -> ArtifactReadOutcome
+    /// `WebContainer.readPlanProgress`: the shown session's tree, projected
+    /// in the page to a step number, a total and at most one title.
+    var planProgress: @MainActor @Sendable (String) async throws -> PlanProgressRead
+    /// `WebContainer.readReviewerCounts`: its findings, projected in the page
+    /// to four counts.
+    var reviewerCounts: @MainActor @Sendable (String) async throws -> ReviewerRead
     /// How long any one probe may take before it is called failed.
     var timeout: Duration = .seconds(6)
 
@@ -235,7 +287,9 @@ struct CompatProbeEnvironment {
             get: { try await WebContainer.shared.apiGET($0) },
             tabStrip: { try await WebContainer.shared.readTabStrip() },
             signInShowing: { try await WebContainer.shared.signInButtonIsShowing() },
-            artifactRead: { try await WebContainer.shared.readArtifact($0) })
+            artifactRead: { try await WebContainer.shared.readArtifact($0) },
+            planProgress: { try await WebContainer.shared.readPlanProgress($0) },
+            reviewerCounts: { try await WebContainer.shared.readReviewerCounts($0) })
     }
 }
 
@@ -251,8 +305,10 @@ enum CompatProbes {
         static let plan = "GET /api/artifacts/versions/<version>"
         static let versions = "GET /api/artifacts/<artifact>/versions"
         static let facts = "GET /api/artifacts/versions/<version>?include_metadata=true"
+        static let progress = "plan statuses on GET /api/frames/<session>/trace-shallow?include_messages=false"
+        static let reviewer = "GET /api/frames/<session>/verification?resolved_limit=0&actionable_limit=500"
 
-        static let all = [tabStrip, signIn, address, usage, context, frame, plan, versions, facts]
+        static let all = [tabStrip, signIn, address, usage, context, frame, plan, versions, facts, progress, reviewer]
     }
 
     /// Every probe, in order. Never throws: what goes wrong is a verdict.
@@ -284,11 +340,9 @@ enum CompatProbes {
 
         guard let session else {
             let none = ProbeVerdict.notOnScreenNow("no session is open in the window")
-            add(Name.context, none)
-            add(Name.frame, none)
-            add(Name.plan, none)
-            add(Name.versions, none)
-            add(Name.facts, none)
+            for name in [Name.context, Name.frame, Name.plan, Name.versions, Name.facts, Name.progress, Name.reviewer] {
+                add(name, none)
+            }
             return results
         }
         switch await timed(env.timeout, { try await env.get(ContextModel.seriesPath(for: session)) }) {
@@ -300,9 +354,7 @@ enum CompatProbes {
         guard let framePath = PlanCheck.framePath(session) else {
             add(Name.frame, .unexpectedShape("the session's id isn't the 36-character id Capsid reads"))
             let unreadable = ProbeVerdict.notOnScreenNow("the session has no readable id")
-            add(Name.plan, unreadable)
-            add(Name.versions, unreadable)
-            add(Name.facts, unreadable)
+            for name in [Name.plan, Name.versions, Name.facts, Name.progress, Name.reviewer] { add(name, unreadable) }
             return results
         }
         var shownFrame: PlanFrame?
@@ -314,22 +366,30 @@ enum CompatProbes {
         case .failure(let error):
             add(Name.frame, CompatProbeRules.failure(error))
         }
-        guard let version = shownFrame?.versionID, let planPath = PlanCheck.versionPath(version) else {
+        if let version = shownFrame?.versionID, let planPath = PlanCheck.versionPath(version) {
+            switch await timed(env.timeout, { try await env.get(planPath) }) {
+            case .success(let data): add(Name.plan, CompatProbeRules.plan(data))
+            case .failure(let error): add(Name.plan, CompatProbeRules.failure(error))
+            }
+            // Keep's two pure reads, on the plan's artifact.
+            let keep = await keepReads(env, version: version, artifact: shownFrame?.artifactID)
+            add(Name.versions, keep.versions)
+            add(Name.facts, keep.facts)
+        } else {
             let none = ProbeVerdict.notOnScreenNow("the shown session has no plan")
-            add(Name.plan, none)
-            add(Name.versions, none)
-            add(Name.facts, none)
-            return results
-        }
-        switch await timed(env.timeout, { try await env.get(planPath) }) {
-        case .success(let data): add(Name.plan, CompatProbeRules.plan(data))
-        case .failure(let error): add(Name.plan, CompatProbeRules.failure(error))
+            for name in [Name.plan, Name.versions, Name.facts] { add(name, none) }
         }
 
-        // Keep's two pure reads, on the plan's artifact.
-        let keep = await keepReads(env, version: version, artifact: shownFrame?.artifactID)
-        add(Name.versions, keep.versions)
-        add(Name.facts, keep.facts)
+        // Step progress and the reviewer's findings: projected in the page to
+        // counts, so these are pure reads too, whether or not there is a plan.
+        switch await timed(env.timeout, { try await env.planProgress(session) }) {
+        case .success(let read): add(Name.progress, CompatProbeRules.progress(read))
+        case .failure(let error): add(Name.progress, CompatProbeRules.failure(error))
+        }
+        switch await timed(env.timeout, { try await env.reviewerCounts(session) }) {
+        case .success(let read): add(Name.reviewer, CompatProbeRules.reviewer(read))
+        case .failure(let error): add(Name.reviewer, CompatProbeRules.failure(error))
+        }
         return results
     }
 

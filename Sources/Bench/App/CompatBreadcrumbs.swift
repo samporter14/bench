@@ -43,6 +43,12 @@ enum CompatMiss: String, CaseIterable, Sendable {
     // Keep (Remote/ArtifactReader.swift)
     case keepVersionsNotUnderstood
     case keepFactsNotUnderstood
+    // Step progress under a running session (Remote/InsightReader.swift)
+    case progressTreeNotUnderstood
+    case progressTreeWithoutPlan
+    case progressStatusNotUnderstood
+    // The reviewer's findings on a finished card (Remote/InsightReader.swift)
+    case reviewerAnswerNotUnderstood
 
     var feature: CompatFeature {
         switch self {
@@ -60,6 +66,10 @@ enum CompatMiss: String, CaseIterable, Sendable {
             .errorCard
         case .keepVersionsNotUnderstood, .keepFactsNotUnderstood:
             .keep
+        case .progressTreeNotUnderstood, .progressTreeWithoutPlan, .progressStatusNotUnderstood:
+            .planProgress
+        case .reviewerAnswerNotUnderstood:
+            .reviewer
         }
     }
 
@@ -85,6 +95,10 @@ enum CompatMiss: String, CaseIterable, Sendable {
         case .failedFrameNotUnderstood: "a stopped session's answer has no status"
         case .keepVersionsNotUnderstood: "the list of an artifact's versions wasn't the shape Capsid reads"
         case .keepFactsNotUnderstood: "a version's details weren't the shape Capsid reads"
+        case .progressTreeNotUnderstood: "the session's tree answer has no status, or its plan statuses aren't objects"
+        case .progressTreeWithoutPlan: "an approved plan's session tree doesn't carry the plan"
+        case .progressStatusNotUnderstood: "a plan step's status isn't one Capsid knows"
+        case .reviewerAnswerNotUnderstood: "the findings answer has no checks and running lists of the shape Capsid reads"
         }
     }
 }

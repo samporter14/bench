@@ -337,8 +337,16 @@ private final class FakePage {
     var reads: [ArtifactRead: ArtifactReadOutcome] = [:]
     var readFailures: [ArtifactRead: any Error] = [:]
     var readHangs: Set<ArtifactRead> = []
+    /// What the two projected reads answer: step progress and the reviewer's counts.
+    var progress: PlanProgressRead = .progress(PlanProgress(step: 3, total: 7, title: nil),
+                                               PlanProgressFacts(running: true, children: 2, reported: 3, unknown: 0))
+    var reviewer: ReviewerRead = .counts(ReviewerCounts(standing: 2, fixed: 1, running: 0, reviews: 1))
+    var progressFailure: (any Error)?
+    var reviewerHangs = false
     private(set) var asked: [String] = []
     private(set) var readsAsked: [ArtifactRead] = []
+    private(set) var progressAsked: [String] = []
+    private(set) var reviewerAsked: [String] = []
 
     init() {
         answers["/usage"] = .success(Data(#"{"ok":true,"data":{"five_hour":{"utilization":3,"resets_at":null},"seven_day":{"utilization":9,"resets_at":null}}}"#.utf8))
@@ -381,6 +389,16 @@ private final class FakePage {
                 if let error = self.readFailures[read] { throw error }
                 return self.reads[read] ?? .missing
             },
+            planProgress: { [unowned self] session in
+                self.progressAsked.append(session)
+                if let error = self.progressFailure { throw error }
+                return self.progress
+            },
+            reviewerCounts: { [unowned self] session in
+                self.reviewerAsked.append(session)
+                if self.reviewerHangs { try await Task.sleep(for: .seconds(30)) }
+                return self.reviewer
+            },
             timeout: timeout)
     }
 }
@@ -406,7 +424,64 @@ struct CompatProbeRunTests {
             "✓ GET /api/artifacts/versions/<version>: a summary, 1 step",
             "✓ GET /api/artifacts/<artifact>/versions: 2 versions, each with a number and a time",
             "✓ GET /api/artifacts/versions/<version>?include_metadata=true: a checksum and a number",
+            "✓ plan statuses on GET /api/frames/<session>/trace-shallow?include_messages=false: step 3 of 7, 3 steps reporting, 2 frames directly below the session",
+            "✓ GET /api/frames/<session>/verification?resolved_limit=0&actionable_limit=500: 2 standing, 1 fixed, 0 running, 1 finished",
         ])
+    }
+
+    @Test func theTwoProjectedReadsAreAskedForTheShownSessionOnlyAndNeverNeedAPlan() async {
+        page.answers["/frames/\(FakePage.session)?shallow=true"] = .success(Data(#"{"status":"completed","context_data":null}"#.utf8))
+        let results = verdicts(await CompatProbes.run(page.environment()))
+        #expect(page.progressAsked == [FakePage.session])
+        #expect(page.reviewerAsked == [FakePage.session])
+        #expect(results[CompatProbes.Name.plan] == .notOnScreenNow("the shown session has no plan"))
+        #expect(results[CompatProbes.Name.progress]?.isFault == false)
+        #expect(results[CompatProbes.Name.reviewer] == .ok("2 standing, 1 fixed, 0 running, 1 finished"))
+        // And not for a window with no session in it, or an id Capsid doesn't read.
+        page.shown = nil
+        _ = await CompatProbes.run(page.environment())
+        page.shown = "abc"
+        _ = await CompatProbes.run(page.environment())
+        #expect(page.progressAsked == [FakePage.session] && page.reviewerAsked == [FakePage.session])
+    }
+
+    @Test func eachWayStepProgressCanAnswerHasItsOwnLine() {
+        func facts(unknown: Int = 0) -> PlanProgressFacts { PlanProgressFacts(running: true, children: 1, reported: 2, unknown: unknown) }
+        #expect(CompatProbeRules.progress(.progress(PlanProgress(step: 2, total: 4, title: "A made-up step"), facts()))
+                == .ok("step 2 of 4, 2 steps reporting, 1 frame directly below the session"))
+        #expect(CompatProbeRules.progress(.idle(.notApproved, facts())) == .notOnScreenNow("the shown session has no approved plan"))
+        #expect(CompatProbeRules.progress(.idle(.noPlan, facts())) == .notOnScreenNow("the shown session's plan has no phases or steps"))
+        #expect(CompatProbeRules.progress(.idle(.noStatuses, facts())) == .notOnScreenNow("no plan step has reported a status yet"))
+        #expect(CompatProbeRules.progress(.idle(.complete, facts())) == .ok("every step is done, 1 frame directly below the session"))
+        #expect(CompatProbeRules.progress(.idle(.planMissing, facts())) == .unexpectedShape(CompatMiss.progressTreeWithoutPlan.phrase))
+        #expect(CompatProbeRules.progress(.unreadable) == .unexpectedShape(CompatMiss.progressTreeNotUnderstood.phrase))
+        // A status word the page doesn't know is a change, whatever else the answer says.
+        #expect(CompatProbeRules.progress(.idle(.noStatuses, facts(unknown: 1))) == .unexpectedShape(CompatMiss.progressStatusNotUnderstood.phrase))
+        #expect(CompatProbeRules.progress(.progress(PlanProgress(step: 1, total: 2), facts(unknown: 2)))
+                == .unexpectedShape(CompatMiss.progressStatusNotUnderstood.phrase))
+        #expect(CompatProbeRules.progress(.lost) == .failed("signed out (401); Capsid signs back in by itself"))
+        #expect(CompatProbeRules.progress(.missing) == .failed("answered 404: the route may have moved, or that session is gone"))
+        #expect(CompatProbeRules.progress(.tooBig) == .failed("the answer exceeded the read limit"))
+        #expect(CompatProbeRules.progress(.cancelled) == .failed("the read didn't complete"))
+    }
+
+    @Test func eachWayTheReviewerCanAnswerHasItsOwnLine() {
+        #expect(CompatProbeRules.reviewer(.counts(ReviewerCounts(standing: 0, fixed: 0, running: 0, reviews: 0)))
+                == .ok("0 standing, 0 fixed, 0 running, 0 finished"))
+        #expect(CompatProbeRules.reviewer(.unreadable) == .unexpectedShape(CompatMiss.reviewerAnswerNotUnderstood.phrase))
+        #expect(CompatProbeRules.reviewer(.lost) == .failed("signed out (401); Capsid signs back in by itself"))
+        #expect(CompatProbeRules.reviewer(.missing) == .failed("answered 404: the route may have moved, or that session is gone"))
+        #expect(CompatProbeRules.reviewer(.tooBig) == .failed("the answer exceeded the read limit"))
+        #expect(CompatProbeRules.reviewer(.cancelled) == .failed("the read didn't complete"))
+    }
+
+    @Test func aProjectedReadThatFailsOrIsSlowIsFailedAndTheOtherStillRuns() async {
+        page.progressFailure = WebAPIError.notAllowed
+        page.reviewerHangs = true
+        let results = verdicts(await CompatProbes.run(page.environment(timeout: .milliseconds(80))))
+        #expect(results[CompatProbes.Name.progress] == .failed("Capsid's list of readable paths doesn't allow it"))
+        #expect(results[CompatProbes.Name.reviewer] == .failed("no answer in time"))
+        #expect(results[CompatProbes.Name.facts]?.isFault == false)
     }
 
     @Test func onlyReadsOfTheAllowedPathsAreMadeAndNoWriteIsPossible() async {
@@ -494,7 +569,7 @@ struct CompatProbeRunTests {
         #expect(page.asked == ["/usage"])
         #expect(page.readsAsked.isEmpty)
         for name in [CompatProbes.Name.address, CompatProbes.Name.context, CompatProbes.Name.frame, CompatProbes.Name.plan,
-                     CompatProbes.Name.versions, CompatProbes.Name.facts] {
+                     CompatProbes.Name.versions, CompatProbes.Name.facts, CompatProbes.Name.progress, CompatProbes.Name.reviewer] {
             #expect(results[name] == .notOnScreenNow("no session is open in the window"), "\(name)")
         }
         #expect(results[CompatProbes.Name.usage]?.isFault == false)
@@ -554,6 +629,8 @@ struct CompatProbeRunTests {
         #expect(results[CompatProbes.Name.frame] == .unexpectedShape("the session's id isn't the 36-character id Capsid reads"))
         #expect(results[CompatProbes.Name.versions] == .notOnScreenNow("the session has no readable id"))
         #expect(results[CompatProbes.Name.facts] == .notOnScreenNow("the session has no readable id"))
+        #expect(results[CompatProbes.Name.progress] == .notOnScreenNow("the session has no readable id"))
+        #expect(results[CompatProbes.Name.reviewer] == .notOnScreenNow("the session has no readable id"))
         #expect(page.asked == ["/usage", "/frames/abc/token-series"] && page.readsAsked.isEmpty)
     }
 
@@ -570,6 +647,8 @@ struct CompatProbeRunTests {
             tabStrip: { throw ProbeTimeout() },
             signInShowing: { throw WebAPIError.notReady },
             artifactRead: { _ in throw WebAPIError.notReady },
+            planProgress: { _ in throw WebAPIError.notReady },
+            reviewerCounts: { _ in throw WebAPIError.notReady },
             timeout: .seconds(1))
         let results = verdicts(await CompatProbes.run(broken))
         #expect(results[CompatProbes.Name.tabStrip] == .failed("no answer in time"))
@@ -613,5 +692,8 @@ struct CompatProbeRunTests {
         // Keep's two that they don't: the lineage can start a reconstruction, and the messages are what was said.
         #expect(lines.contains("• GET /api/artifacts/versions/<version>/lineage?slim=1: Keep a figure with its answer, data and script (reading it can start Claude Science's own code reconstruction, so it is not read from here)"))
         #expect(lines.contains("• _artifact_refs and _ts on GET /api/frames/<session>/messages: Keep a figure with its answer, data and script (it is what was said, so it is never read from here)"))
+        // Claude's notes are what was said too; the two projected counts are looked at.
+        #expect(lines.contains("• send_user_message in GET /api/frames/<session>/messages: Claude's messages to you, on a card (it is what was said, so it is never read from here)"))
+        #expect(!lines.contains { $0.hasPrefix("• \(CompatProbes.Name.progress):") || $0.hasPrefix("• \(CompatProbes.Name.reviewer):") })
     }
 }
