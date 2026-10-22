@@ -379,8 +379,12 @@ the Markdown on Opus), merged; the window, the model and the gate here.
   `g/reference` build replaced /Applications/Capsid.app (the 0.9.7 copy went to
   the Trash), signed by Solanum Code Signing, CDHash 4ec8ff62…, no quarantine;
   it still calls itself 0.9.7, so the update check says up to date.
-- ⏳ **Not live:** no real session was read yet (Sam: right-click a session in
-  the activity list → Open as Reference). The `reading` log line's numbers,
+- ✅ **Measured on a real session** (Sam, 16:40, the installed build): two first
+  reads, each the 12-row tail plus 38 more (50 messages): fetch 35 and 33 ms,
+  parse 3 and 0 ms, project 3 and 2 ms, 300 KB and 137 KB. The fetch is the wait
+  for the daemon, not thread time; the page's thread spends about 5 ms a read.
+  An Earlier page (25 rows) has not been read yet.
+- ⏳ **Not live:** a real session was opened and read (above); the Earlier page,
   the typing gate against real key presses, ⌥⌘←/→ in the key window, Keep on
   Top, Keep… from a figure (its sheet reads through the Results shelf's
   queue, which has never served with the Results window closed), and Copy
