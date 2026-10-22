@@ -109,6 +109,18 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
     /// The model a session's window shows, for the demo.
     func model(for sessionID: String) -> ReferenceModel? { models[sessionID] }
 
+    /// THE SHELF'S CONTRACT (Kept/Shelf.swift): "Show Where It Came From".
+    /// Opens a session's reference window at the reply that holds history row
+    /// `row`, with the file `version` marked "On your shelf"; with no row, at
+    /// the newest reply that shows the version. The shelf-add agent implements
+    /// the place and the mark; until then it opens the session's window.
+    func show(sessionID: String, projectID: String, title: String, projectName: String,
+              at row: Int?, mark version: String?) {
+        let session = SessionStatus(id: sessionID, projectID: projectID, projectName: projectName, title: title,
+                                    state: .finished, updatedAt: Date(), startedAt: nil)
+        show(session)
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? ReferenceWindow,
               let id = windows.first(where: { $0.value === window })?.key else { return }
