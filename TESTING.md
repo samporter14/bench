@@ -323,6 +323,55 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-22, Capsid 0.9.7: updates you notice and install in one click
+
+Capsid already had an update check, but it was off unless someone found the
+switch, and an update it did find was easy to miss and fiddly to install: the
+card had no button and said to use a menu. Sam chose to turn the check on by
+default, tell people subtly, and make installing one click away. Built on
+`feature/update-offer`; not released or installed yet.
+
+- `checkForUpdates` is registered on, in the welcome window and in Settings
+  too. Someone who turned it off has a stored `false`, which still wins.
+- **Skip This Version** (`updateSkippedVersion`, `UpdateRules.shouldOffer`):
+  hushes that version and anything older, never a newer one. The card, the
+  toolbar button and the Dock item stop offering it; Settings and the menu's
+  alert still show it, since you asked there.
+- The card has **Install…** (`LabNotice.Action.installUpdate`). It dismisses
+  itself and then opens the offer alert, so the alert doesn't hold the card on
+  screen. One `UpdatePrompts.offer` serves the card, the Dock item and the
+  menu: Install (a copy in Applications only), Release Notes, Later, and a
+  "Skip this version" checkbox.
+- The install sentence adds "Your sessions keep running in Claude Science."
+- A toolbar **Update** button (clay arrow and the word) first among the
+  trailing items, only while an update is offered and never in a demo, with a
+  popover (`UpdateOfferView`): icon, "Capsid X is available", "You have Y.",
+  the install sentence, and Skip This Version, Release Notes, Install and
+  Reopen. The Dock menu starts with "Install Capsid X…" under the same
+  conditions.
+- Docs follow: README's privacy sentence and Updates paragraph, DESIGN.md's
+  Update check (and the Settings defaults and welcome notes), version 0.9.7
+  (45).
+
+- ✅ Drawn offscreen, light and dark, for the three states the popover has
+  (install, installing, a copy that can't install), and looked at. It showed a
+  real fault: at 320 across, "Skip This Version" wrapped onto two lines, so the
+  content is 360 across. `ImageRenderer` leaves a "no entry" sign where a
+  borderless button should be, so the test draws through an `NSHostingView`
+  that is never put in a window (`CAPSID_SNAPSHOT_DIR`; without it the test
+  does nothing).
+- ✅ Builds with no warnings.
+- ⏳ Not seen live (they need a newer release on GitHub, and 0.9.7 is the
+  first one that has something to offer to a 0.9.6): the toolbar capsule, and
+  that no empty capsule is left once the update is skipped or installed; the
+  popover in a real window, with Capsid's own icon; the card's Install…
+  button; the Dock item; the alert's "Skip this version" checkbox. The
+  installer was not run, and no test goes online.
+
+Automated:
+
+- ✅ `swift test`: 1,990 tests in 256 suites, all passing (on the branch; 1,985 before, five new).
+
 ## 2026-10-21, Capsid 0.9.6: the window reconnects on its own
 
 Claude Science 0.1.69 installed itself at 21:42 while another session ran

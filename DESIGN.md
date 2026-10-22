@@ -116,6 +116,8 @@ clay-text (Look).
 - Toolbar (unified compact, system glass). No back/forward/reload buttons:
   Claude Science has its own navigation, and ⌘[ ⌘] ⌘R stay in the menus.
   Trailing, left to right:
+  - **Update** (since 0.9.7, only while an update is on offer; see Update
+    check);
   - the **Lab status capsule** (only while something works or waits);
   - **Usage** (see Usage);
   - **Scenes**, a split button. Its click toggles the scenes panel. It shows
@@ -2370,15 +2372,20 @@ Home Screen name) and the docs. What deliberately kept the old name:
 
 ## Update check (App/UpdateCheck.swift, App/UpdatePrompts.swift, since 0.3.6)
 
-Capsid can ask GitHub whether a newer Capsid is out, and install it. **Off by
-default**: it is the one request Capsid makes beyond this Mac that no click
-asked for, so it needs the switch (Settings → General → Updates → **Check for
-updates once a day**, `checkForUpdates`), which the welcome window can also
-turn on. README's promise reads: Capsid talks to nothing beyond your Mac
-except links you click, a once-a-day update check if you turn it on, and, if
-you turn on Capsid on your phone, your own paired devices over your Tailscale
-network, with notifications, if you turn them on, carried by Apple's push
-service and encrypted so only your device can read them.
+Capsid can ask GitHub whether a newer Capsid is out, and install it. **On by
+default since 0.9.7**; it was off from 0.3.6 to 0.9.6, because it is the one
+request Capsid makes beyond this Mac that no click asked for. Sam chose to
+turn it on (2026-10-22) so people actually see updates: the check never ran
+for anyone who hadn't found the switch. What is sent is unchanged (below), and
+the switch stays (Settings → General → Updates → **Check for updates once a
+day**, `checkForUpdates`; the welcome window has it too, already on).
+Someone who had turned it off keeps it off: their stored `false` wins over
+the registered default. README's promise reads: Capsid talks to nothing
+beyond your Mac except links you click, a once-a-day update check, which you
+can turn off, and, if you turn on Capsid on your phone, your own paired
+devices over your Tailscale network, with notifications, if you turn them on,
+carried by Apple's push service and encrypted so only your device can read
+them.
 
 **What is sent.** One `GET https://api.github.com/repos/samporter14/bench/releases/latest`
 through an ephemeral `URLSession` (no cookies, no cache, no credentials,
@@ -2431,29 +2438,70 @@ GitHub does see the connection's IP address, as any site does. It is
 responded (`updateLastAsked`, the schedule's), the time of the last answer
 it gave (`updateLastChecked`, Settings' "Last checked"), the newest installable version seen
 (`updateNewestVersion`, forgotten when a check finds nothing newer) and the
-last version announced (`updateAnnouncedVersion`). At launch Settings
+last version announced (`updateAnnouncedVersion`) and the newest version
+skipped (`updateSkippedVersion`, below). At launch Settings
 shows an update seen last time while it is still newer than the running one,
 and "up to date" after a check that found none, without asking.
 
 **When there is a newer one.**
-- *Card, once per version* (`UpdateRules.shouldAnnounce`): "Capsid 0.3.6 is
-  available", "Choose Capsid → Check for Updates… to install it". Only from an
-  automatic check; one you asked for shows its answer itself and counts as
-  telling you. A newer version gets its own card. **The card has no buttons**:
-  a notice's action can only be Open on a session (`LabNotice.Action`,
-  `LabModel.open` and the panel's card are written for that), so Install and
-  Release Notes live in Settings and the menu's alert. Giving the card two
-  actions means a new `Action` case and changes in `LabModel.swift` and
-  `LabPanelView.swift`.
+- *Card, once per version* (`UpdateRules.shouldAnnounce`): "Capsid 0.9.7 is
+  available", "Install now, or any time from Update in the toolbar", with an
+  **Install…** button (since 0.9.7; before it the card had no buttons and
+  said to use the menu). Only from an automatic check; one you asked for shows
+  its answer itself and counts as telling you. A newer version gets its own
+  card, and a version you skipped gets none. The button is the notice's
+  action `.installUpdate(update)` (`LabNotice.Action`); `LabModel.open`
+  dismisses the card first and then, on the next turn of the main actor, runs
+  the offer alert (`UpdatePrompts.offer`), because a modal alert opened while
+  the card is still up would hold it on screen. The same `Action` is read by
+  `LabPanelView`, `MacNotifications` and `PushCenter`, each with an `if case`
+  for `.openSession`, so a new case changes nothing for them.
+- *The toolbar's Update button* (`App/UpdateToolbarButton.swift`, since
+  0.9.7): a clay `arrow.down.circle.fill` and "Update" in a glass capsule of
+  its own, first among the trailing items. It is there only while an update
+  is **offered** (`UpdateChecker.offered`: `state` is `.available` and the
+  version wasn't skipped) and never in a demo, which shares the toolbar and
+  checks nothing. The condition wraps the `ToolbarItem` itself, in
+  `BenchToolbar`: an item holding nothing still gets a capsule. Its help is
+  "Capsid 0.9.7 is available". It is a `ReadoutButtonStyle` button, and the
+  arrow carries its colour baked in, as the Specimens button's flask does,
+  because the toolbar draws template symbols in its own ink.
+- *Its popover* (`UpdateOfferView`, 400 wide with 20 points of padding all
+  round, like the usage popover's): the app icon at 40 points, "Capsid 0.9.7
+  is available" and "You have 0.9.6.", then the install sentence (or the
+  sentence for a copy that can't replace itself) in callout size, and a row
+  of **Skip This Version** (borderless, left), **Release Notes** and **Install
+  and Reopen** (`.borderedProminent`, clay, the default action). Install and
+  Reopen is left out of a copy that can't install, and reads "Installing…" and
+  is dimmed while the installer runs. It asks nothing further: the sentence
+  above it is the warning. The popover is told everything it shows and given
+  its actions, so a test draws it without the checker. Release Notes closes it
+  and opens the page; Skip closes it. At 320 across the three buttons wrapped
+  "Skip This Version" onto two lines, so the content is 360 across.
+- *Skip This Version* (`updateSkippedVersion`): `UpdateChecker.skip` keeps the
+  version and `UpdateRules.shouldOffer` is true for a version newer than it.
+  Skipping 0.9.7 hushes 0.9.7 and anything older, never 0.9.8; something stored
+  that isn't a version hushes nothing. It stops the card, the toolbar button
+  and the Dock item. `state` doesn't change: Settings and the menu's alert
+  still show the version, since you asked there. The offer alert has the same
+  choice as a checkbox, "Skip this version", used on any answer but Install.
+- *The Dock item*: with an update on offer, the Dock icon's menu starts with
+  "Install Capsid 0.9.7…" and a separator (`AppDelegate.applicationDockMenu`,
+  never in a demo). It opens the same offer alert.
 - *Settings → General → Updates:* the status line ("Asking GitHub…", "Capsid
   is up to date (0.3.5)", "Capsid 0.3.6 is available" or why a check failed)
   with **Check Now**, which reads "Checking…" and is dimmed while it runs,
   and under the status, in small secondary text, when the last answer came. When one is out, a row beneath says what Install will do, with
   **Release Notes** and **Install Update**.
-- *The menu's alert:* up to date; or "Capsid 0.3.6 is available" with
-  **Install**, **Release Notes** and **Later** (Esc); or why the check
-  failed. Its text is the install sentence, so Install needs no second
-  question. Settings' **Install Update** asks first, with the same words.
+- *The offer alert* (`UpdatePrompts.offer`, since 0.9.7 the one place that
+  offers; the card's Install…, the Dock item and the menu's check all open
+  it): "Capsid 0.3.6 is available" with **Install** (only for a copy that can
+  replace itself), **Release Notes** and **Later** (Esc), and a "Skip this
+  version" checkbox that skips on Release Notes or Later. A second ask while
+  one is showing does nothing. The menu's check shows it for an available
+  update, else an alert with OK: up to date, or why the check failed. Its
+  text is the install sentence, so Install needs no second question.
+  Settings' **Install Update** asks first, with the same words.
 - **Release Notes** opens the page in the in-app Browser window, as any
   other link to a website does (Web routing policy: GitHub is "any other
   http(s)"), where "Open in Safari" is one click away.
@@ -2465,7 +2513,9 @@ README.md contains it) and nothing the network says ever becomes part of it.
 It is started with its input and output on /dev/null and not waited for;
 `install.sh` takes it from there: SIGTERM quits this Capsid the way ⌘Q does
 (`AppDelegate`), the new one is moved into /Applications and opened. The
-confirmation says: "Capsid will quit, download 0.3.6 from GitHub and reopen."
+confirmation says: "Capsid will quit, download 0.3.6 from GitHub and reopen.
+Your sessions keep running in Claude Science." (The second sentence since
+0.9.7: Capsid never stops the daemon, so a running session doesn't notice.)
 - It is offered only to the copy that is /Applications/Capsid.app
   (`canInstall`). The script replaces that path and quits only that copy, so
   from a build folder or Downloads it would open a second Capsid beside the
@@ -2494,11 +2544,17 @@ confirmation says: "Capsid will quit, download 0.3.6 from GitHub and reopen."
   (`curl | zsh` ends 0), so this is the only failure it shows.
 
 **Tests** (`UpdateCheckTests`): version compare, the JSON from made-up
-fixtures, the once-per-version card, "not due yet", the setting off meaning
-no request (an injected fetch that records its calls), the request's headers,
-failures, a check shared by two callers, and the install line matching the
-README. No test goes online or runs the installer; the checker keeps its
-state in a scratch `UserDefaults` suite.
+fixtures, the once-per-version card and its Install… action, `shouldOffer`,
+Skip This Version (kept across launches, `state` unchanged, a newer release
+offered again, no card for a skipped one), "not due yet", the setting off
+meaning no request (an injected fetch that records its calls), the request's
+headers, failures, a check shared by two callers, and the install line
+matching the README. No test goes online or runs the installer; the checker
+keeps its state in a scratch `UserDefaults` suite. With `CAPSID_SNAPSHOT_DIR`
+set to a folder, one more test draws the popover into it as PNGs, light and
+dark, through an `NSHostingView` that is never shown (`ImageRenderer` leaves
+a "no entry" sign where a borderless button is); without it that test does
+nothing.
 
 ## Settings (⌘,)
 
@@ -2584,7 +2640,7 @@ before.
 | Show session and project names (Mac notifications) | on |
 | Show the Lab panel while Capsid is in front | on |
 | Name the specimen that's playing, in the panel (`showSpecimenCaption`) | off |
-| Check for updates once a day (`checkForUpdates`, since 0.3.6; see Update check) | off |
+| Check for updates once a day (`checkForUpdates`, since 0.3.6; on since 0.9.7; see Update check) | on |
 | Use Capsid from your phone (`remoteEnabled`, since 0.4.0; see Capsid on your phone) | off |
 | Skip "Put Tailscale on your phone" (`remotePhoneSkipped`; see Settings → Phone) | off |
 
@@ -2828,9 +2884,10 @@ main Claude Science window opens behind it as usual.
   4. *Updates and privacy.* Capsid reads your sessions on this Mac and changes
      nothing in Claude Science, except when you press Approve on a plan. One
      switch, "Check for updates once a day" (`checkForUpdates`, the same
-     setting as Settings' update check), off by default and left off unless
-     it is turned on: showing the page writes nothing. Its subtitle says what
-     is asked of GitHub and that nothing about you or your sessions is sent.
+     setting as Settings' update check), on by default since 0.9.7 (it was
+     off) and left as it is unless it is changed: showing the page writes
+     nothing. Its subtitle says what is asked of GitHub and that nothing
+     about you or your sessions is sent.
 - **Keys.** Return is the default action: Next, and Get Started on the last
   page. Esc closes. Get Started closes the window.
 - **Look.** System controls: `.glass` Back, and the one `.glassProminent` in
@@ -3080,6 +3137,7 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] the specimen holds a still after ten minutes without input and plays again on a touch (or `-specimenIdleSeconds 20` on a demo; the first look is at once, the next within a minute)
 - [ ] update check: with the switch off nothing asks GitHub (no request in Little Snitch or `nettop` for a day); Check Now and Capsid → Check for Updates… do; with it on, a first check comes within a minute and the next a day later, not at the next launch
 - [ ] update check against a real newer release: the card comes once, Settings shows "Capsid 0.3.6 is available", Release Notes opens the in-app Browser on the release, and Install Update (Capsid in /Applications) quits Capsid, installs it and reopens it. Capsid started from a build folder offers no Install
+- [ ] update offer (0.9.7): on a first launch with nothing stored the switch is on and a check follows within a minute; with a newer release out the card has Install…, the toolbar shows Update first among the trailing items (and no empty capsule once it is skipped or installed), its popover fits on one row of buttons with Capsid's own icon, Skip This Version hides the button, the card and the Dock item until a newer release, and the Dock menu starts with Install Capsid X… and opens the same alert. None in a demo
 - [ ] the field guide: hover text in Settings → Specimens, the Topics menu, search ranking, and the panel's caption lines (Panel, "Name the specimen that's playing")
 - [ ] Quick Open finds an older session: ⌘⇧O, type a word from the title (or project) of a session older than the ~25 recent ones; it joins the list a moment after the recent matches and opens; a hidden or sub-agent session is never found; Esc closes without leaving anything running
 - [ ] Next Waiting Session: with three sessions waiting (one a plan), ⌥⌘↓ in the Claude Science window with the page focused, and again with the cursor in the composer, opens the one that has waited longest, then the next, then the third, then the first; the same from File → Next Waiting Session and the Dock menu's first item; a Later session is skipped until its reminder is due; the items are dim with nothing waiting; in a Browser window the keys reach its page

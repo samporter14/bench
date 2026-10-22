@@ -80,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NoticeWatchers.shared.start()
         // Running sessions held by a used-up plan limit (Lab/UsagePause.swift).
         UsagePauseModel.shared.start()
-        // The opt-in daily look for a newer Bench (App/UpdateCheck.swift).
+        // The daily look for a newer Bench, unless turned off (App/UpdateCheck.swift).
         UpdateChecker.shared.start()
         // Capsid on your phone, if it was on (Remote/RemoteController.swift).
         RemoteController.shared.start()
@@ -136,13 +136,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The Dock icon's menu: the activity list's sessions, so they can be
-    /// opened with the window closed.
+    /// opened with the window closed. With an update on offer, its Install
+    /// item comes first.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = ActivityMenu.shared.make()
+        // A demo checks nothing, but the shared checker still remembers an
+        // update seen on an earlier run: never offered there.
+        if Demo.mode == nil, let update = UpdateChecker.shared.offered {
+            let install = NSMenuItem(title: "Install Capsid \(update.version)\u{2026}", action: #selector(installUpdate(_:)),
+                                     keyEquivalent: "")
+            install.target = self
+            menu.insertItem(install, at: 0)
+            menu.insertItem(.separator(), at: 1)
+        }
         menu.addItem(.separator())
         menu.addItem(PresentingMenu.shared.item())
         Logger.app.notice("Dock menu: \(menu.items.count, privacy: .public) items")
         return menu
+    }
+
+    /// The Dock menu's Install Capsid X…: the same alert as the card's button.
+    @objc private func installUpdate(_ item: NSMenuItem) {
+        guard Demo.mode == nil, let update = UpdateChecker.shared.offered else { return }
+        UpdatePrompts.offer(update)
     }
 }
 
@@ -208,6 +224,8 @@ struct MainView: View {
 /// sure to work.
 struct BenchToolbar: ViewModifier {
     @ObservedObject private var lab = LabModel.shared
+    /// Whether an update is on offer, for the Update button.
+    @ObservedObject private var updates = UpdateChecker.shared
 
     func body(content: Content) -> some View {
         content
@@ -216,6 +234,16 @@ struct BenchToolbar: ViewModifier {
             .toolbar {
                 // On the Mac, items start at the leading edge: push them right.
                 ToolbarSpacer(.flexible)
+                // Only while an update is on offer, and first, so the items
+                // after it stay where they are. The condition wraps the item
+                // itself: an item with nothing in it still gets a glass
+                // capsule. The demo window shares this toolbar and checks
+                // nothing, so it never shows one.
+                if Demo.mode == nil, let update = updates.offered {
+                    ToolbarItem {
+                        UpdateToolbarButton(update: update)
+                    }
+                }
                 // Always there: what works or waits, else Recent, else a quiet
                 // Activity, so the list stays one click away when all is done.
                 ToolbarItem {

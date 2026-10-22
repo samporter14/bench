@@ -9,10 +9,12 @@
 import Foundation
 
 struct LabNotice: Identifiable, Equatable {
-    /// What the card's Open does.
+    /// What the card's button does: Open on a session, or Install… on an
+    /// update (`UpdatePrompts.offer`).
     enum Action: Equatable {
         case none
         case openSession(SessionStatus)
+        case installUpdate(AvailableUpdate)
     }
 
     let id: String

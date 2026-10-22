@@ -3,6 +3,7 @@
 // is asked and answers from a fixture, and keeps its state in a scratch
 // UserDefaults suite, never Bench's own.
 import Foundation
+import SwiftUI
 import Testing
 @testable import Bench
 
@@ -271,17 +272,35 @@ struct UpdateNoticeTests {
         #expect(UpdateRules.shouldAnnounce(latest, announced: "garbage"))
     }
 
-    @Test func theCardSaysWhatIsOutAndWhereToGetIt() throws {
+    @Test func theCardSaysWhatIsOutAndOffersToInstallIt() throws {
         let update = AvailableUpdate(version: try version("0.3.6"), notesURL: UpdateRules.releasesPage)
         let notice = UpdateRules.notice(for: update)
         #expect(notice.title == "Capsid 0.3.6 is available")
         #expect(notice.id == "update-0.3.6")
-        #expect(notice.action == .none)
-        #expect(notice.detail.contains("Check for Updates"))
+        #expect(notice.action == .installUpdate(update))
+        #expect(notice.detail == "Install now, or any time from Update in the toolbar")
     }
 
     @Test func whatInstallDoesIsSaidInWords() throws {
-        #expect(UpdateRules.installSentence(try version("0.3.6")) == "Capsid will quit, download 0.3.6 from GitHub and reopen.")
+        #expect(UpdateRules.installSentence(try version("0.3.6"))
+            == "Capsid will quit, download 0.3.6 from GitHub and reopen. Your sessions keep running in Claude Science.")
+    }
+
+    @Test func aVersionIsOfferedUnlessItOrANewerOneWasSkipped() throws {
+        let latest = try version("0.3.6")
+        // Nothing skipped.
+        #expect(UpdateRules.shouldOffer(latest, skipped: nil))
+        // An older one was skipped: this one is news.
+        #expect(UpdateRules.shouldOffer(latest, skipped: "0.3.5"))
+        #expect(UpdateRules.shouldOffer(try version("0.3.10"), skipped: "0.3.9"))
+        // This one was.
+        #expect(!UpdateRules.shouldOffer(latest, skipped: "0.3.6"))
+        #expect(!UpdateRules.shouldOffer(latest, skipped: "v0.3.6"))
+        // A newer one was (a release pulled and replaced by an older tag).
+        #expect(!UpdateRules.shouldOffer(latest, skipped: "0.3.7"))
+        // Something stored that isn't a version hushes nothing.
+        #expect(UpdateRules.shouldOffer(latest, skipped: "garbage"))
+        #expect(UpdateRules.shouldOffer(latest, skipped: ""))
     }
 }
 
@@ -550,6 +569,73 @@ struct UpdateCheckerTests {
         #expect(posted.notices.map(\.title) == ["Capsid 0.3.6 is available", "Capsid 0.3.7 is available"])
     }
 
+    @Test func aScheduledCheckPostsNoCardForAVersionYouSkipped() async {
+        let scratch = Scratch()
+        defer { scratch.clean() }
+        let posted = Posted()
+        let network = FakeNetwork(json: Release.json())
+        // Skipped, and never announced: only the skip can be what keeps the card away.
+        scratch.defaults.set("0.3.6", forKey: "updateSkippedVersion")
+        #expect(scratch.defaults.string(forKey: "updateAnnouncedVersion") == nil)
+        let updates = checker(scratch, network: network, posted: posted, enabled: true)
+        await updates.checkIfDue()
+        #expect(network.calls == 1)
+        #expect(posted.notices.isEmpty)
+        // It is still what GitHub has, so Settings and the menu show it.
+        #expect(updates.state == .available(AvailableUpdate(version: BenchVersion("0.3.6")!, notesURL: UpdateRules.notesURL(nil, version: BenchVersion("0.3.6")))))
+        #expect(updates.offered == nil)
+    }
+
+    @Test func skippingAVersionKeepsItOutOfTheOfferButNotOutOfState() async throws {
+        let scratch = Scratch()
+        defer { scratch.clean() }
+        let network = FakeNetwork(json: Release.json())
+        let updates = checker(scratch, network: network, enabled: false)
+        // Nothing checked yet: nothing to offer.
+        #expect(updates.offered == nil)
+        #expect(updates.skippedVersion == nil)
+        await updates.checkNow()
+        let update = try #require(updates.offered)
+        #expect(update.version.description == "0.3.6")
+        updates.skip(update)
+        #expect(updates.offered == nil)
+        #expect(updates.state == .available(update))
+        #expect(updates.skippedVersion == "0.3.6")
+        #expect(scratch.defaults.string(forKey: "updateSkippedVersion") == "0.3.6")
+        // The next launch, on the same defaults, still doesn't offer it.
+        let relaunched = checker(scratch, network: network, enabled: false)
+        #expect(relaunched.skippedVersion == "0.3.6")
+        #expect(relaunched.state == .available(update))
+        #expect(relaunched.offered == nil)
+        // Asked again: still a Capsid that has 0.3.6 waiting, and still hushed.
+        await relaunched.checkNow()
+        #expect(relaunched.state == .available(update))
+        #expect(relaunched.offered == nil)
+    }
+
+    @Test func aReleaseNewerThanTheSkippedOneIsOfferedAgainWithItsOwnCard() async throws {
+        let scratch = Scratch()
+        defer { scratch.clean() }
+        let posted = Posted()
+        let clock = FakeClock()
+        let network = FakeNetwork { call in
+            call == 1 ? Release.reply(Release.json()) : Release.reply(Release.json(tag: "v0.3.7", url: nil))
+        }
+        let updates = checker(scratch, network: network, clock: clock, posted: posted, enabled: true)
+        await updates.checkNow()
+        updates.skip(try #require(updates.offered))
+        #expect(updates.offered == nil)
+        clock.advance(hours: 25)
+        await updates.checkIfDue()
+        #expect(network.calls == 2)
+        #expect(try #require(updates.offered).version.description == "0.3.7")
+        #expect(posted.notices.map(\.title) == ["Capsid 0.3.7 is available"])
+        // Skipping that one hushes it too, and only it.
+        updates.skip(try #require(updates.offered))
+        #expect(updates.offered == nil)
+        #expect(updates.skippedVersion == "0.3.7")
+    }
+
     @Test func aCheckYouAskedForShowsItselfAndPostsNoCard() async {
         let scratch = Scratch()
         defer { scratch.clean() }
@@ -603,5 +689,46 @@ struct UpdateInstallTests {
         #expect(!UpdateRules.canInstall(from: URL(fileURLWithPath: "/Users/someone/Downloads/Capsid.app")))
         #expect(!UpdateRules.canInstall(from: URL(fileURLWithPath: "/Applications/Utilities/Capsid.app")))
         #expect(!UpdateRules.canInstall(from: URL(fileURLWithPath: "/Users/someone/build/Capsid.app")))
+    }
+}
+
+// MARK: Looking at it
+
+/// Not a check: when `CAPSID_SNAPSHOT_DIR` names a folder, draws the toolbar
+/// popover into it as PNGs, light and dark, so it can be looked at without
+/// opening a window. Without it the test does nothing. It draws through an
+/// `NSHostingView` that is never put in a window: `ImageRenderer` leaves a
+/// "no entry" sign where a borderless button should be.
+@MainActor
+struct UpdateOfferSnapshotTests {
+    @Test func theOfferPopoverIsDrawnToPNGsWhenAsked() throws {
+        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let update = AvailableUpdate(version: try #require(BenchVersion("0.9.7")), notesURL: UpdateRules.releasesPage)
+        let cases: [(name: String, canInstall: Bool, installing: Bool)] = [
+            ("offer", true, false), ("installing", true, true), ("cannot-install", false, false),
+        ]
+        for dark in [false, true] {
+            for item in cases {
+                let view = UpdateOfferView(update: update, currentVersion: "0.9.6", canInstall: item.canInstall,
+                                           installing: item.installing, install: {}, releaseNotes: {}, skip: {})
+                    .background(Color(nsColor: .windowBackgroundColor))
+                let host = NSHostingView(rootView: view)
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = host.fittingSize
+                host.frame = CGRect(origin: .zero, size: size)
+                host.layoutSubtreeIfNeeded()
+                // Two pixels to the point.
+                let rep = try #require(NSBitmapImageRep(
+                    bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+                rep.size = size
+                host.cacheDisplay(in: host.bounds, to: rep)
+                let png = try #require(rep.representation(using: .png, properties: [:]))
+                try png.write(to: directory.appendingPathComponent("update-offer-\(item.name)-\(dark ? "dark" : "light").png"))
+            }
+        }
     }
 }

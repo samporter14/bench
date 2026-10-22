@@ -1,8 +1,10 @@
-// UpdateCheck.swift — the opt-in check for a newer Bench (DESIGN.md, Update
-// check). Bench asks GitHub for its latest release once a day, only if the
-// user turned that on in Settings, or when they ask with Check Now or the
-// app menu. It reads the release's tag, its page and whether it has a
-// Bench.zip, and sends nothing about the user or their sessions.
+// UpdateCheck.swift — the check for a newer Bench (DESIGN.md, Update check).
+// Bench asks GitHub for its latest release once a day, unless the user turned
+// that off in Settings, or when they ask with Check Now or the app menu. It
+// reads the release's tag, its page and whether it has a Bench.zip, and sends
+// nothing about the user or their sessions. A version can be skipped: the
+// card, the toolbar button and the Dock item stop offering it, and a newer
+// one is offered again.
 //
 // `UpdateRules` is pure, so the tests run it on made-up releases and clocks.
 // `UpdateChecker` takes its fetch as a parameter, so they never go online.
@@ -216,18 +218,29 @@ enum UpdateRules {
         return version > announced
     }
 
-    /// The card. It has no buttons: a notice's action can only open a
-    /// session, so it says where the update is.
+    /// Whether `version` is still worth offering, given the one the user
+    /// skipped (`updateSkippedVersion`): the card, the toolbar button and the
+    /// Dock item all ask. Skipping a version hushes it and anything older,
+    /// never a newer one. Nothing stored, or something that isn't a version,
+    /// hushes nothing.
+    static func shouldOffer(_ version: BenchVersion, skipped: String?) -> Bool {
+        guard let skipped = skipped.flatMap(BenchVersion.init) else { return true }
+        return version > skipped
+    }
+
+    /// The card, with Install… on it: that opens the same alert as the Dock
+    /// item (`UpdatePrompts.offer`).
     static func notice(for update: AvailableUpdate) -> LabNotice {
         LabNotice(
             id: "update-\(update.version)", symbol: "arrow.down.app", caption: "Update",
             title: "Capsid \(update.version) is available",
-            detail: "Choose Capsid \u{2192} Check for Updates\u{2026} to install it", lifetime: .seconds(15))
+            detail: "Install now, or any time from Update in the toolbar", lifetime: .seconds(15),
+            action: .installUpdate(update))
     }
 
     /// What Install does, said before it does it.
     static func installSentence(_ version: BenchVersion) -> String {
-        "Capsid will quit, download \(version) from GitHub and reopen."
+        "Capsid will quit, download \(version) from GitHub and reopen. Your sessions keep running in Claude Science."
     }
 
     static let cannotInstallHere =
@@ -285,6 +298,9 @@ final class UpdateChecker: ObservableObject {
     @Published private(set) var lastChecked: Date?
     /// The installer is running: Bench is about to quit.
     @Published private(set) var installing = false
+    /// The newest version the user chose to skip (`updateSkippedVersion`), as
+    /// text. Settings and the app menu still show it: those are explicit asks.
+    @Published private(set) var skippedVersion: String?
 
     let currentVersion: String
 
@@ -293,6 +309,7 @@ final class UpdateChecker: ObservableObject {
         static let lastAsked = "updateLastAsked"
         static let newestVersion = "updateNewestVersion"
         static let announcedVersion = "updateAnnouncedVersion"
+        static let skippedVersion = "updateSkippedVersion"
     }
 
     private let defaults: UserDefaults
@@ -330,6 +347,7 @@ final class UpdateChecker: ObservableObject {
         let stored = (defaults.object(forKey: Key.lastChecked) as? Double).map(Date.init(timeIntervalSince1970:))
         lastChecked = stored
         lastAsked = (defaults.object(forKey: Key.lastAsked) as? Double).map(Date.init(timeIntervalSince1970:))
+        skippedVersion = defaults.string(forKey: Key.skippedVersion)
         state = UpdateRules.restoredState(
             newest: defaults.string(forKey: Key.newestVersion), current: currentVersion, hasChecked: stored != nil)
     }
@@ -340,6 +358,24 @@ final class UpdateChecker: ObservableObject {
 
     /// Whether Settings has the daily check on.
     var enabled: Bool { defaults.bool(forKey: SettingsKey.checkForUpdates) }
+
+    // MARK: Offering
+
+    /// The update to put in front of the user unasked: the toolbar button,
+    /// the Dock item. The one `state` holds, unless they skipped it.
+    var offered: AvailableUpdate? {
+        guard case .available(let update) = state,
+              UpdateRules.shouldOffer(update.version, skipped: skippedVersion) else { return nil }
+        return update
+    }
+
+    /// Skip This Version: nothing offers it again, but a newer one is offered.
+    /// `state` stays as it is, so Settings and the app menu still show it.
+    func skip(_ update: AvailableUpdate) {
+        let version = update.version.description
+        skippedVersion = version
+        defaults.set(version, forKey: Key.skippedVersion)
+    }
 
     // MARK: On a schedule
 
@@ -441,10 +477,13 @@ final class UpdateChecker: ObservableObject {
             }
             defaults.set(update.version.description, forKey: Key.newestVersion)
             // Once per version, whoever finds it first. Whoever asked sees the
-            // answer, so only a check on the schedule posts the card.
+            // answer, so only a check on the schedule posts the card, and not
+            // for a version that was skipped.
             if UpdateRules.shouldAnnounce(update.version, announced: defaults.string(forKey: Key.announcedVersion)) {
                 defaults.set(update.version.description, forKey: Key.announcedVersion)
-                if trigger == .scheduled { post(UpdateRules.notice(for: update)) }
+                if trigger == .scheduled, UpdateRules.shouldOffer(update.version, skipped: skippedVersion) {
+                    post(UpdateRules.notice(for: update))
+                }
             }
             log.notice("Update check: a newer version is out")
             state = .available(update)

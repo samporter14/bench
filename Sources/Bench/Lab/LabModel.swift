@@ -408,9 +408,16 @@ final class LabModel: ObservableObject {
             if let frame = notification.frameID { forgetReminder(frame) }
         case .saved(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
         case .notice(let notice):
-            if case .openSession(let session) = notice.action {
+            switch notice.action {
+            case .openSession(let session):
                 Router.shared.open(session)
                 forgetReminder(session.id)
+            case .installUpdate(let update):
+                // After the card is dismissed (below): the alert is modal and
+                // would hold the card on screen while it runs.
+                Task { @MainActor in UpdatePrompts.offer(update) }
+            case .none:
+                break
             }
         }
         dismiss(card)

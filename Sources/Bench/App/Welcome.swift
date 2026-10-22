@@ -157,7 +157,7 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
 struct WelcomeView: View {
     @ObservedObject var model: WelcomeModel
     let close: @MainActor () -> Void
-    @AppStorage(SettingsKey.checkForUpdates) private var checkForUpdates = false
+    @AppStorage(SettingsKey.checkForUpdates) private var checkForUpdates = true
 
     init(model: WelcomeModel, close: @escaping @MainActor () -> Void) {
         self.model = model

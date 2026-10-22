@@ -376,6 +376,12 @@ struct LabPanelView: View {
                             .buttonStyle(.glassProminent)
                             .tint(Theme.clay)
                     }
+                } else if case .installUpdate = notice.action {
+                    buttons {
+                        Button("Install\u{2026}") { model.open(card) }
+                            .buttonStyle(.glassProminent)
+                            .tint(Theme.clay)
+                    }
                 }
             }
         case .saved(let url):

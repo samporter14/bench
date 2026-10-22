@@ -25,7 +25,7 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   (⌘F).
 - **Nothing collected.** No Capsid account, no analytics, no telemetry. Capsid
   talks to nothing beyond your Mac except links you click, a once-a-day
-  update check if you turn it on, and, if you turn on Capsid on your phone,
+  update check, which you can turn off, and, if you turn on Capsid on your phone,
   your own paired devices over your Tailscale network, with notifications,
   if you turn them on, carried by Apple's push service and encrypted so only
   your device can read them. Capsid reads Claude Science and changes nothing
@@ -206,16 +206,18 @@ for apps installed this way, because it only flags apps downloaded through a
 web browser. You're trusting this page instead, so [install.sh](install.sh)
 is short enough to read first.
 
-**Updates.** Off until you turn on **Settings → General → Updates → Check for
-updates once a day**: then Capsid asks GitHub for its latest release about once
-a day, and a card and Settings say when a newer one is out. The request
-carries only the name `Capsid` and its version, nothing about you or your
-sessions, though GitHub sees your IP address as any site you visit does.
-**Capsid → Check for Updates…** and **Check Now** ask at once, with
-the switch off too. **Install Update** runs the line above for you, after
-telling you that Capsid will quit, download the new version from GitHub and
-reopen. A copy that isn't in Applications can't replace itself, so it offers
-only the release notes.
+**Updates.** On unless you turn off **Settings → General → Updates → Check for
+updates once a day**: Capsid asks GitHub for its latest release about once a
+day. When a newer one is out, a card says so and an **Update** button appears
+in the toolbar, with **Install and Reopen**, **Release Notes** and **Skip This
+Version**; the Dock icon's menu has an Install item too. The request carries
+only the name `Capsid` and its version, nothing about you or your sessions,
+though GitHub sees your IP address as any site you visit does.
+**Capsid → Check for Updates…** and **Check Now** ask at once, with the
+switch off too. Installing runs the line above for you, after telling you that
+Capsid will quit, download the new version from GitHub and reopen, and that
+your sessions keep running in Claude Science. A copy that isn't in
+Applications can't replace itself, so it offers only the release notes.
 
 ### Or download it
 

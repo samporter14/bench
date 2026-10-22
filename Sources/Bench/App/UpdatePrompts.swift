@@ -1,6 +1,8 @@
-// UpdatePrompts.swift — what the update check says to the user: the app
-// menu's Check for Updates… alert, the alert for an install that didn't work,
-// and Settings → General → Updates (DESIGN.md, Update check).
+// UpdatePrompts.swift — what the update check says to the user: the alert
+// that offers an update (from the card, the Dock item and the app menu's Check
+// for Updates…), the alert for an install that didn't work, and Settings →
+// General → Updates (DESIGN.md, Update check). The toolbar's Update button
+// has its own file (UpdateToolbarButton.swift).
 import AppKit
 import SwiftUI
 
@@ -30,46 +32,68 @@ enum UpdatePrompts {
 
     private enum Choice { case install, notes, dismiss }
 
-    private static func present(_ state: UpdateChecker.State) {
+    /// An offer is on screen: asking again (a second click on the card or the
+    /// Dock item) must not stack another.
+    private static var offering = false
+
+    /// The alert that offers an update, the one place that does: the card's
+    /// Install…, the Dock item and the menu's check all come here. Install
+    /// (only for a copy that can replace itself), Release Notes and Later
+    /// (Esc), and a "Skip this version" box that, left checked on any answer
+    /// but Install, stops the card, the toolbar button and the Dock item
+    /// offering this version (`UpdateChecker.skip`).
+    static func offer(_ update: AvailableUpdate) {
+        guard !offering else { return }
+        offering = true
+        defer { offering = false }
         let alert = NSAlert()
         var choices: [Choice] = []
+        alert.messageText = "Capsid \(update.version) is available"
+        if UpdateRules.canInstall(from: Bundle.main.bundleURL) {
+            // The alert says what Install does, so it needs no second one.
+            alert.informativeText = UpdateRules.installSentence(update.version)
+            alert.addButton(withTitle: "Install")
+            choices.append(.install)
+        } else {
+            alert.informativeText = UpdateRules.cannotInstallHere
+        }
+        alert.addButton(withTitle: "Release Notes")
+        alert.addButton(withTitle: "Later")
+        alert.buttons.last?.keyEquivalent = "\u{1b}"
+        choices += [.notes, .dismiss]
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Skip this version"
+        NSApp.activate()
+        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        let choice = choices.indices.contains(index) ? choices[index] : .dismiss
+        switch choice {
+        case .install: UpdateChecker.shared.install()
+        case .notes: openReleaseNotes(update)
+        case .dismiss: break
+        }
+        if choice != .install, alert.suppressionButton?.state == .on { UpdateChecker.shared.skip(update) }
+    }
+
+    /// What the menu's check found: an offer, or an alert with just OK.
+    private static func present(_ state: UpdateChecker.State) {
+        let alert = NSAlert()
         switch state {
         case .upToDate(let version):
             alert.messageText = "Capsid is up to date (\(version))"
             alert.informativeText = "This is the latest release on GitHub."
-            alert.addButton(withTitle: "OK")
-            choices = [.dismiss]
         case .available(let update):
-            alert.messageText = "Capsid \(update.version) is available"
-            if UpdateRules.canInstall(from: Bundle.main.bundleURL) {
-                // The alert says what Install does, so it needs no second one.
-                alert.informativeText = UpdateRules.installSentence(update.version)
-                alert.addButton(withTitle: "Install")
-                choices.append(.install)
-            } else {
-                alert.informativeText = UpdateRules.cannotInstallHere
-            }
-            alert.addButton(withTitle: "Release Notes")
-            alert.addButton(withTitle: "Later")
-            alert.buttons.last?.keyEquivalent = "\u{1b}"
-            choices += [.notes, .dismiss]
+            offer(update)
+            return
         case .failed(let failure):
             alert.alertStyle = .warning
             alert.messageText = "Couldn\u{2019}t check for updates"
             alert.informativeText = failure.message
-            alert.addButton(withTitle: "OK")
-            choices = [.dismiss]
         case .idle, .checking:
             return
         }
+        alert.addButton(withTitle: "OK")
         NSApp.activate()
-        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-        guard choices.indices.contains(index) else { return }
-        switch (choices[index], state) {
-        case (.install, .available): UpdateChecker.shared.install()
-        case (.notes, .available(let update)): openReleaseNotes(update)
-        default: break
-        }
+        alert.runModal()
     }
 
     /// The installer ended and Bench is still here, so nothing was replaced.
@@ -87,7 +111,7 @@ enum UpdatePrompts {
 /// Settings → General → Updates: the switch for the daily check, Check Now,
 /// and, when one is out, Install Update and Release Notes.
 struct UpdatesSection: View {
-    @AppStorage(SettingsKey.checkForUpdates) private var enabled = false
+    @AppStorage(SettingsKey.checkForUpdates) private var enabled = true
     @ObservedObject private var updates = UpdateChecker.shared
     /// The update waiting on the answer to "Install?".
     @State private var confirming: AvailableUpdate?

@@ -85,9 +85,10 @@ enum SettingsKey {
     /// (opaque ids, never a name), for the next launch to reopen
     /// (Web/LastSession.swift). Not registered: absent means none.
     static let lastSession = "lastSession"
-    /// Check GitHub once a day for a newer Bench. Off unless the user turns it
-    /// on, in Settings or the welcome window: it's the one request Bench makes
-    /// beyond this Mac that a click didn't ask for.
+    /// Check GitHub once a day for a newer Bench. On unless the user turns it
+    /// off, in Settings or the welcome window (on by default since 0.9.7, so
+    /// updates get seen): it's the one request Bench makes beyond this Mac that
+    /// a click didn't ask for.
     static let checkForUpdates = "checkForUpdates"
     /// Capsid on your phone (since 0.4.0): the loopback listener and its
     /// Tailscale Serve mapping. Off unless the user turns it on in Settings
@@ -150,7 +151,7 @@ enum SettingsKey {
             macNotifyNames: true,
             panelWhileFront: true,
             panelCorner: PanelCorner.bottomRight.rawValue,
-            checkForUpdates: false,
+            checkForUpdates: true,
             remoteEnabled: false,
             panelScreen: "",
             pageZoom: 1.0,

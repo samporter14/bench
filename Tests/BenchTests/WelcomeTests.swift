@@ -16,7 +16,7 @@ struct WelcomeTests {
             defaults.register(defaults: [
                 SettingsKey.showPanel: true,
                 SettingsKey.appearance: BenchAppearance.system.rawValue,
-                SettingsKey.checkForUpdates: false,
+                SettingsKey.checkForUpdates: true,
             ])
         }
         try body(defaults, name)
