@@ -20,9 +20,12 @@ struct KeepSheet: View {
     @State private var overflows = false
     @FocusState private var nameFocused: Bool
 
-    /// Board 8's dialog is 760 wide with 28 and 24 of padding and 18 between
-    /// its sections.
-    static let width: CGFloat = 760
+    /// How wide it is. Board 8 draws it 760 wide in a large window; a sheet
+    /// wider than its window hangs off both sides, so each window passes what
+    /// fits: Results the default (its minimum width is 620), the reference
+    /// window its own width.
+    var width: CGFloat = KeepSheet.width
+    static let width: CGFloat = 600
     private static let side: CGFloat = 28
     private static let top: CGFloat = 24
     private static let gap: CGFloat = 18
@@ -48,7 +51,7 @@ struct KeepSheet: View {
             }
             footer
         }
-        .frame(width: Self.width)
+        .frame(width: width)
         .frame(maxHeight: cap)
         .background(Solanum.raised)
         .presentationBackground(Solanum.raised)

@@ -152,6 +152,9 @@ struct ReferenceView: View {
     @ObservedObject var model: ReferenceModel
     let selection: ReferenceSelection
     @State private var keeping: KeepModel?
+    /// The window's width, for the Keep sheet: one wider than the window
+    /// would hang off both sides.
+    @State private var pageWidth: CGFloat = ReferenceWindowController.size.width
 
     /// The page's margins and the space between its parts, after the mock-up.
     private static let side: CGFloat = 24
@@ -164,6 +167,7 @@ struct ReferenceView: View {
             footer
         }
         .frame(minWidth: 360, minHeight: 320)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
         .background {
             GeometryReader { proxy in
                 VStack(spacing: 0) {
@@ -213,7 +217,7 @@ struct ReferenceView: View {
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .sheet(item: $keeping) { keep in
-            KeepSheet(model: keep, dismiss: { keeping = nil })
+            KeepSheet(model: keep, dismiss: { keeping = nil }, width: max(360, pageWidth))
         }
     }
 
