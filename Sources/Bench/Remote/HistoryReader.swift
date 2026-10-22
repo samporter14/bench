@@ -18,7 +18,16 @@
 // (`ShowingRead`, below). It keeps the message's index, time and text and which
 // of four ways it matched, and nothing else: never tool input, results beyond
 // `artifacts[]`, thinking or images.
+//
+// Groundwork for a Mac-side reader (since 1.0): the trim that holds a page to
+// its caps counts each item once; a read takes `rows` (1 to 50) for the pages
+// before a row, and an optional nonce, so `abortArtifactRead(nonce)` or a
+// cancelled task ends its fetch; every GET's body is streamed and stopped at
+// 2 MiB (`tooBig`); the page yields before it parses and before it projects;
+// and a page read answers how long each step took, which Swift logs as one
+// line of numbers. The phone's reads pass none of it and read as they did.
 import Foundation
+import OSLog
 import WebKit
 
 // MARK: The script
@@ -27,8 +36,11 @@ enum HistoryReaderScript {
     /// At most this many items, and this many bytes of JSON, a page.
     static let maxItems = 60
     static let maxBytes = 64 * 1024
-    /// Rows a page covers.
+    /// Rows a page covers, at most (`readHistory`'s `rows` is 1 to this).
     static let pageRows = 50
+    /// A GET's body, at most this many bytes (2 MiB): its `Content-Length`
+    /// over it is refused unread, a stream is stopped at it. Over it is `tooBig`.
+    static let bodyCap = 2 * 1024 * 1024
     /// A turn's text on a page; `turn` sends a cut one whole, up to `wholeTurn`.
     static let turnText = 2_000
     static let wholeTurn = 20_000
@@ -60,10 +72,42 @@ enum HistoryReaderScript {
         }
     }
 
+    /// `benchTrimHistory(out, maxItems, maxBytes)`: the index of the first of
+    /// `out`'s items to keep, so that at most `maxItems` stay and their JSON
+    /// is at most `maxBytes` UTF-8 bytes. The oldest rows go whole (every item
+    /// of one row `i`), and the last row never does. Each item's JSON is
+    /// counted once: `JSON.stringify(out.slice(start))` is "[", the items'
+    /// own JSON with a "," between, and "]", so its length is
+    /// `1 + the sum of (item bytes + 1)`. Pure.
+    static let trim = #"""
+    function benchTrimHistory(out, maxItems, maxBytes) {
+        "use strict";
+        // UTF-8 bytes, counted by hand: JavaScriptCore has no TextEncoder.
+        const bytes = text => {
+            let n = 0;
+            for (const ch of text) { const c = ch.codePointAt(0); n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; }
+            return n;
+        };
+        const sizes = out.map(item => bytes(JSON.stringify(item)));
+        let rest = 1;
+        for (const n of sizes) { rest += n + 1; }
+        let start = 0;
+        while (start < out.length && (out.length - start > maxItems || rest > maxBytes)) {
+            const row = out[start].i;
+            let next = start, dropped = 0;
+            while (next < out.length && out[next].i === row) { dropped += sizes[next] + 1; next += 1; }
+            if (next >= out.length) { break; }
+            rest -= dropped;
+            start = next;
+        }
+        return start;
+    }
+    """#
+
     /// `benchProjectHistory(page, base)`: `{total, from, items}`, or null when
     /// a shape doesn't match. `page` is `{total, messages}` whose first message
     /// is row `base`. Pure: no fetch, no DOM, no globals.
-    static let projection = #"""
+    static let projection = trim + "\n" + #"""
     function benchProjectHistory(page, base) {
         "use strict";
         const MAX_ITEMS = 60, MAX_BYTES = 65536, TEXT = 2000, LINE = 300, NAME = 255, FILES = 20;
@@ -112,12 +156,6 @@ enum HistoryReaderScript {
             if (typeof v === "number" && isFinite(v)) { ms = v < 1e11 ? v * 1000 : v; }
             else if (typeof v === "string") { const parsed = Date.parse(v); if (isFinite(parsed)) { ms = parsed; } }
             return ms !== null && ms >= EARLIEST && ms <= LATEST ? Math.round(ms) : null;
-        };
-        // UTF-8 bytes, counted by hand: JavaScriptCore has no TextEncoder.
-        const bytes = text => {
-            let n = 0;
-            for (const ch of text) { const c = ch.codePointAt(0); n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; }
-            return n;
         };
         // A file's own name: the last part of whatever path it came with.
         const fileName = v => {
@@ -364,15 +402,7 @@ enum HistoryReaderScript {
 
         // At most 60 items and 64 KB: the oldest rows go whole, and `from`
         // moves up to the first row kept, so the next page starts there.
-        let start = 0;
-        const size = () => bytes(JSON.stringify(out.slice(start)));
-        while (start < out.length && (out.length - start > MAX_ITEMS || size() > MAX_BYTES)) {
-            const row = out[start].i;
-            let next = start;
-            while (next < out.length && out[next].i === row) { next += 1; }
-            if (next >= out.length) { break; }
-            start = next;
-        }
+        const start = benchTrimHistory(out, MAX_ITEMS, MAX_BYTES);
         const kept = out.slice(start);
         return { total: page.total, from: start === 0 ? base : kept[0].i, items: kept };
     }
@@ -425,12 +455,28 @@ enum HistoryReaderScript {
     """#
 
     /// The page's own fetch: only paths `isAllowedPath` allows, `no-store`,
-    /// 15 s each. Answers `{json}`, `{lost}` (401) or `{failed}`. `get(path,
-    /// stop)` takes an optional AbortController too (Keep's showing read files
-    /// one under its nonce, so `benchAbortRead` can end the fetch); without
-    /// one, as the phone's reads, the 15 s is the only signal.
+    /// 15 s each. Answers `{json}`, `{lost}` (401), `{tooBig}` or `{failed}`.
+    /// `get(path, stop)` takes an optional AbortController too (a read with a
+    /// nonce files one, so `benchAbortRead` can end the fetch); without one,
+    /// as the phone's reads, the 15 s is the only signal.
+    ///
+    /// The body is streamed and stopped at `bodyCap` bytes (a `Content-Length`
+    /// over it is refused unread), then decoded, and the page yields (an idle
+    /// callback with a 1 s timeout, else `setTimeout(0)`, else not at all)
+    /// before `JSON.parse` so the page's own typing isn't held. `stats` sums
+    /// what the GETs cost, in `performance.now()` milliseconds (zeros without
+    /// one) and bytes, for the timing `pageBody` answers with.
     static let fetcher = #"""
     const ALLOWED = /^\/api\/frames\/[0-9a-f-]{36}\/messages\?(from=-12&limit=12|from=\d{1,7}&limit=([1-9]|[1-4]\d|50))$/;
+    const BODY_CAP = \#(bodyCap);
+    const stats = { fetchMs: 0, parseMs: 0, rawBytes: 0 };
+    const clock = typeof performance === "object" && performance !== null && typeof performance.now === "function"
+        ? () => performance.now() : () => 0;
+    const pause = () => new Promise(resolve => {
+        if (typeof requestIdleCallback === "function") { requestIdleCallback(resolve, { timeout: 1000 }); }
+        else if (typeof setTimeout === "function") { setTimeout(resolve, 0); }
+        else { resolve(); }
+    });
     const signal = stop => {
         const limit = typeof AbortSignal === "function" && typeof AbortSignal.timeout === "function"
             ? AbortSignal.timeout(15000) : undefined;
@@ -445,8 +491,45 @@ enum HistoryReaderScript {
         }
         return either.signal;
     };
+    // The response's body as text: `{text}`, `{tooBig}` (over BODY_CAP, by its
+    // own header or as streamed) or null (no way to read it).
+    const readBody = async response => {
+        let declared = null;
+        try {
+            const header = response.headers && response.headers.get("content-length");
+            if (typeof header === "string" && /^\d{1,16}$/.test(header)) { declared = Number(header); }
+        } catch (e) { declared = null; }
+        const body = response.body;
+        const cancel = async target => { try { if (target && typeof target.cancel === "function") { await target.cancel(); } } catch (e) { } };
+        if (declared !== null && declared > BODY_CAP) { await cancel(body); return { tooBig: true }; }
+        if (!body || typeof body.getReader !== "function") {
+            // No stream to read (not a page's response): the whole text, counted as it comes.
+            const whole = await response.text();
+            if (typeof whole !== "string") { return null; }
+            stats.rawBytes += whole.length;
+            return whole.length > BODY_CAP ? { tooBig: true } : { text: whole };
+        }
+        if (typeof TextDecoder !== "function") { await cancel(body); return null; }
+        const reader = body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        const parts = [];
+        let total = 0;
+        for (;;) {
+            const step = await reader.read();
+            if (step.done) { break; }
+            const chunk = step.value;
+            if (!ArrayBuffer.isView(chunk)) { await cancel(reader); return null; }
+            if (total + chunk.byteLength > BODY_CAP) { await cancel(reader); return { tooBig: true }; }
+            total += chunk.byteLength;
+            parts.push(decoder.decode(chunk, { stream: true }));
+        }
+        parts.push(decoder.decode());
+        stats.rawBytes += total;
+        return { text: parts.join("") };
+    };
     const get = async (path, stop) => {
         if (!ALLOWED.test(path)) { return { failed: true }; }
+        const began = clock();
         let response;
         try {
             response = await fetch(path, { credentials: "include", cache: "no-store",
@@ -454,34 +537,51 @@ enum HistoryReaderScript {
         } catch (e) { return { failed: true }; }
         if (response.status === 401) { return { lost: true }; }
         if (!response.ok) { return { failed: true }; }
-        try { return { json: JSON.parse(await response.text()) }; } catch (e) { return { failed: true }; }
+        let read;
+        try { read = await readBody(response); } catch (e) { return { failed: true }; }
+        stats.fetchMs += clock() - began;
+        if (read === null) { return { failed: true }; }
+        if (read.tooBig) { return { tooBig: true }; }
+        try { await pause(); } catch (e) { }
+        const parsing = clock();
+        try {
+            const json = JSON.parse(read.text);
+            stats.parseMs += clock() - parsing;
+            return { json: json };
+        } catch (e) { return { failed: true }; }
     };
     const isPage = v => v !== null && typeof v === "object" && typeof v.from === "number" && typeof v.total === "number"
         && Array.isArray(v.messages) && Number.isInteger(v.total) && v.total >= 0;
     """#
 
-    /// `readRows(frameId, before, knownTotal, stop)`: the rows a page covers,
-    /// as `{messages, base, total}`, or `{outcome}` when the read ended
-    /// early: `refused` (an id or an index out of shape; nothing fetched),
-    /// `lost` (a 401), `unreadable`, or `same` (only without `before`: the
-    /// history is as long as `knownTotal`). Without `before` the session
-    /// reader's `from=-12&limit=12` says how many rows there are, and one more
-    /// GET reads the 38 before them; with it, one GET reads the 50 before it.
+    /// `readRows(frameId, before, knownTotal, stop, perPage)`: the rows a page
+    /// covers, as `{messages, base, total}`, or `{outcome}` when the read
+    /// ended early: `refused` (an id, an index or `perPage` out of shape;
+    /// nothing fetched), `lost` (a 401), `tooBig` (a body over the cap),
+    /// `unreadable`, or `same` (only without `before`: the history is as long
+    /// as `knownTotal`). Without `before` the session reader's
+    /// `from=-12&limit=12` says how many rows there are, and one more GET
+    /// reads the 38 before them; with it, one GET reads the `perPage` (1 to
+    /// 50, else 50) before it. The tail's own GET stays `from=-12&limit=12`,
+    /// and the 50 rows of a read without `before` don't change with `perPage`.
     /// The history page's body and Keep's showing body share it.
     static let rowReader = #"""
-    const readRows = async (frameId, before, knownTotal, stop) => {
+    const readRows = async (frameId, before, knownTotal, stop, perPage) => {
         if (typeof frameId !== "string" || !/^[0-9a-f-]{36}$/.test(frameId)) { return { outcome: "refused" }; }
         const hasBefore = before !== null && before !== undefined;
         if (hasBefore && (typeof before !== "number" || !Number.isInteger(before) || before < 1 || before > 9999999)) {
             return { outcome: "refused" };
         }
+        const per = perPage === null || perPage === undefined ? 50 : perPage;
+        if (typeof per !== "number" || !Number.isInteger(per) || per < 1 || per > 50) { return { outcome: "refused" }; }
         const path = (from, limit) => "/api/frames/" + frameId + "/messages?from=" + from + "&limit=" + limit;
         const unreadable = { outcome: "unreadable" };
         let messages, base, total;
         if (hasBefore) {
-            const from = Math.max(0, before - 50), limit = before - from;
+            const from = Math.max(0, before - per), limit = before - from;
             const reply = await get(path(from, limit), stop);
             if (reply.lost) { return { outcome: "lost" }; }
+            if (reply.tooBig) { return { outcome: "tooBig" }; }
             if (reply.failed || !isPage(reply.json) || reply.json.from !== from || reply.json.messages.length > limit) { return unreadable; }
             messages = reply.json.messages;
             base = from;
@@ -489,6 +589,7 @@ enum HistoryReaderScript {
         } else {
             const tail = await get("/api/frames/" + frameId + "/messages?from=-12&limit=12", stop);
             if (tail.lost) { return { outcome: "lost" }; }
+            if (tail.tooBig) { return { outcome: "tooBig" }; }
             // The last rows: they end at `total`, whether the reply's `from` says
             // where they start or echoes the -12 it was asked for.
             if (tail.failed || !isPage(tail.json) || tail.json.messages.length > 12
@@ -505,6 +606,7 @@ enum HistoryReaderScript {
             if (limit > 0) {
                 const earlier = await get(path(from, limit), stop);
                 if (earlier.lost) { return { outcome: "lost" }; }
+                if (earlier.tooBig) { return { outcome: "tooBig" }; }
                 if (earlier.failed || !isPage(earlier.json) || earlier.json.from !== from
                     || earlier.json.messages.length !== limit) { return unreadable; }
                 messages = earlier.json.messages.concat(messages);
@@ -515,39 +617,85 @@ enum HistoryReaderScript {
     };
     """#
 
-    /// What `callAsyncJavaScript` runs, with `frameId`, `before` (a row
-    /// index, or null for the last page) and `knownTotal` (the row count of
-    /// the last page Bench already holds, or null). Without `before`, the
-    /// session reader's `from=-12&limit=12` says how many rows there are: the
-    /// same as `knownTotal` answers `{"outcome":"same","total":n}` and reads
-    /// nothing more; otherwise one more GET reads the 38 before them. Answers
-    /// a JSON string: `{"outcome":"read","page":{…}}`, `"same"`,
-    /// `"unreadable"`, `"lost"` or `"refused"`.
-    static let pageBody = projection + "\n" + fetcher + "\n" + rowReader + #"""
-
-    const rows = await readRows(frameId, before, knownTotal, null);
-    if (rows.outcome !== undefined) { return JSON.stringify(rows); }
-    let page = null;
-    try { page = benchProjectHistory({ total: rows.total, messages: rows.messages }, rows.base); } catch (e) { page = null; }
-    return page === null ? JSON.stringify({ outcome: "unreadable" }) : JSON.stringify({ outcome: "read", page: page });
+    /// A read's own AbortController, when it has a nonce (1 to 64 letters,
+    /// digits and dashes): filed under it in `globalThis.benchArtifactReads`
+    /// (the artifact reader's own map, in the same content world), so
+    /// `abortArtifactRead(nonce)` ends the read's fetch. Sets `controller`
+    /// (null without a nonce, or in a page with no AbortController: a read
+    /// that can't be aborted), `reads`, `readID` and `aborted()`. The body
+    /// takes its entry out in a `finally`: `if (controller !== null &&
+    /// reads[readID] === controller) { delete reads[readID]; }`.
+    static let abortable = #"""
+    // `typeof`: no `nonce` at all (the phone's reads) or no AbortController (the tests' page) files nothing.
+    const readID = typeof nonce === "string" && /^[A-Za-z0-9-]{1,64}$/.test(nonce) ? nonce : null;
+    const controller = readID !== null && typeof AbortController === "function" ? new AbortController() : null;
+    const reads = controller === null ? null
+        : (globalThis.\#(ArtifactReaderScript.readsName) = globalThis.\#(ArtifactReaderScript.readsName) || Object.create(null));
+    if (controller !== null) { reads[readID] = controller; }
+    const aborted = () => controller !== null && controller.signal.aborted === true;
     """#
 
-    /// With `frameId` and `index`: one row, `from=<index>&limit=1`. Answers
-    /// `{"outcome":"turn","turn":{…}}`, `"none"` (no turn there), `"unreadable"`,
-    /// `"lost"` or `"refused"`.
-    static let turnBody = turnProjection + "\n" + fetcher + #"""
+    /// What `callAsyncJavaScript` runs, with `frameId`, `before` (a row
+    /// index, or null for the last page), `knownTotal` (the row count of the
+    /// last page Bench already holds, or null), `rows` (how many rows an
+    /// earlier page covers, 1 to 50; null reads 50) and `nonce` (null, or a
+    /// read's own: the page files an AbortController under it in
+    /// `globalThis.benchArtifactReads`, so `abortArtifactRead(nonce)` ends the
+    /// fetch). Without `before`, the session reader's `from=-12&limit=12`
+    /// says how many rows there are: the same as `knownTotal` answers
+    /// `{"outcome":"same","total":n}` and reads nothing more; otherwise one
+    /// more GET reads the 38 before them. Answers a JSON string:
+    /// `{"outcome":"read","page":{…},"timing":{…}}` (`timing`: `fetchMs`,
+    /// `parseMs`, `projectMs`, `rawBytes`, `rows`, whole numbers), `"same"`,
+    /// `"unreadable"`, `"tooBig"` (a body over the cap), `"lost"`,
+    /// `"refused"` or `"cancelled"`. The page yields before it projects.
+    static let pageBody = projection + "\n" + fetcher + "\n" + rowReader + "\n" + abortable + #"""
 
-    if (typeof frameId !== "string" || !/^[0-9a-f-]{36}$/.test(frameId)
-        || typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 9999999) {
-        return JSON.stringify({ outcome: "refused" });
+    // A run with no `rows` (an argument the body was never given) reads 50.
+    const perPage = typeof rows === "undefined" ? null : rows;
+    const whole = n => Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+    try {
+        const got = await readRows(frameId, before, knownTotal, controller, perPage);
+        if (aborted()) { return JSON.stringify({ outcome: "cancelled" }); }
+        if (got.outcome !== undefined) { return JSON.stringify(got); }
+        try { await pause(); } catch (e) { }
+        if (aborted()) { return JSON.stringify({ outcome: "cancelled" }); }
+        const projecting = clock();
+        let page = null;
+        try { page = benchProjectHistory({ total: got.total, messages: got.messages }, got.base); } catch (e) { page = null; }
+        const projectMs = clock() - projecting;
+        if (page === null) { return JSON.stringify({ outcome: "unreadable" }); }
+        return JSON.stringify({ outcome: "read", page: page, timing: {
+            fetchMs: whole(stats.fetchMs), parseMs: whole(stats.parseMs), projectMs: whole(projectMs),
+            rawBytes: whole(stats.rawBytes), rows: got.messages.length } });
+    } finally {
+        if (controller !== null && reads[readID] === controller) { delete reads[readID]; }
     }
-    const reply = await get("/api/frames/" + frameId + "/messages?from=" + index + "&limit=1");
-    if (reply.lost) { return JSON.stringify({ outcome: "lost" }); }
-    if (reply.failed || !isPage(reply.json)) { return JSON.stringify({ outcome: "unreadable" }); }
-    if (reply.json.messages.length === 0) { return JSON.stringify({ outcome: "none" }); }
-    let turn = null;
-    try { turn = benchProjectTurn(reply.json, index); } catch (e) { turn = null; }
-    return JSON.stringify(turn === null ? { outcome: "none" } : { outcome: "turn", turn: turn });
+    """#
+
+    /// With `frameId`, `index` and `nonce` (null, or as `pageBody`'s): one
+    /// row, `from=<index>&limit=1`. Answers `{"outcome":"turn","turn":{…}}`,
+    /// `"none"` (no turn there), `"unreadable"`, `"tooBig"`, `"lost"`,
+    /// `"refused"` or `"cancelled"`.
+    static let turnBody = turnProjection + "\n" + fetcher + "\n" + abortable + #"""
+
+    try {
+        if (typeof frameId !== "string" || !/^[0-9a-f-]{36}$/.test(frameId)
+            || typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 9999999) {
+            return JSON.stringify({ outcome: "refused" });
+        }
+        const reply = await get("/api/frames/" + frameId + "/messages?from=" + index + "&limit=1", controller);
+        if (aborted()) { return JSON.stringify({ outcome: "cancelled" }); }
+        if (reply.lost) { return JSON.stringify({ outcome: "lost" }); }
+        if (reply.tooBig) { return JSON.stringify({ outcome: "tooBig" }); }
+        if (reply.failed || !isPage(reply.json)) { return JSON.stringify({ outcome: "unreadable" }); }
+        if (reply.json.messages.length === 0) { return JSON.stringify({ outcome: "none" }); }
+        let turn = null;
+        try { turn = benchProjectTurn(reply.json, index); } catch (e) { turn = null; }
+        return JSON.stringify(turn === null ? { outcome: "none" } : { outcome: "turn", turn: turn });
+    } finally {
+        if (controller !== null && reads[readID] === controller) { delete reads[readID]; }
+    }
     """#
 
     /// Keep's showing op, pure: no fetch, no DOM, no globals.
@@ -758,21 +906,16 @@ enum HistoryReaderScript {
     /// What `callAsyncJavaScript` runs for one page of Keep's showing read,
     /// with `frameId`, `before` (a row index, or null for the last page),
     /// `versionIds` and `nonce`. The same GETs as the history page, the same
-    /// 15 s each, and with a nonce the page files an AbortController under it
-    /// in `globalThis.benchArtifactReads` (the artifact reader's own map, in
-    /// the same content world), so `abortArtifactRead(nonce)` ends the fetch.
+    /// 15 s and 2 MiB each (a body over it answers `"tooBig"`, which Swift
+    /// takes as unreadable), always 50 rows a page, and with a nonce the page
+    /// files an AbortController under it in `globalThis.benchArtifactReads`
+    /// (the artifact reader's own map, in the same content world), so
+    /// `abortArtifactRead(nonce)` ends the fetch.
     /// Answers `{"outcome":"read","total","from","newest","found"}` (`found`
     /// null or `benchFindShowingMessage`'s answer; `newest` the page's
     /// largest `_ts`), `"unreadable"`, `"lost"`, `"refused"` or `"cancelled"`.
-    static let showingBody = showingProjection + "\n" + fetcher + "\n" + rowReader + #"""
+    static let showingBody = showingProjection + "\n" + fetcher + "\n" + rowReader + "\n" + abortable + #"""
 
-    // `typeof`: no AbortController (the tests' page) means a read that can't be aborted.
-    const readID = typeof nonce === "string" && /^[A-Za-z0-9-]{1,64}$/.test(nonce) ? nonce : null;
-    const controller = readID !== null && typeof AbortController === "function" ? new AbortController() : null;
-    const reads = controller === null ? null
-        : (globalThis.\#(ArtifactReaderScript.readsName) = globalThis.\#(ArtifactReaderScript.readsName) || Object.create(null));
-    if (controller !== null) { reads[readID] = controller; }
-    const aborted = () => controller !== null && controller.signal.aborted === true;
     try {
         const rows = await readRows(frameId, before, null, controller);
         if (aborted()) { return JSON.stringify({ outcome: "cancelled" }); }
@@ -788,15 +931,22 @@ enum HistoryReaderScript {
 
     /// What the page said.
     enum Outcome: Equatable {
-        case read(HistoryPage)
+        /// A page of the history, with the page's own measure of the read
+        /// (nil when it sent none in shape: never a reason to refuse the page).
+        case read(HistoryPage, timing: HistoryTiming? = nil)
         /// The history has `total` rows, as many as the page Bench holds.
         case same(total: Int)
         case turn(HistoryTurn)
         /// No turn at that index.
         case none
         case unreadable
+        /// A GET's body was over `bodyCap`, by its own header or as streamed:
+        /// none of it was read.
+        case tooBig
         /// A 401: the page's session didn't take.
         case lost
+        /// The read's nonce was aborted (`abortArtifactRead`).
+        case cancelled
     }
 
     /// The page's answer, checked again here. Anything unexpected is unreadable.
@@ -806,13 +956,28 @@ enum HistoryReaderScript {
         switch outcome {
         case "lost": return .lost
         case "none": return .none
-        case "read": return HistoryPage(object: root["page"]).map(Outcome.read) ?? .unreadable
+        case "tooBig": return .tooBig
+        case "cancelled": return .cancelled
+        case "read":
+            guard let page = HistoryPage(object: root["page"]) else { return .unreadable }
+            return .read(page, timing: HistoryTiming(object: root["timing"]))
         case "same":
             guard let total = Pick.int(root["total"]), (0...maxIndex + 1).contains(total) else { return .unreadable }
             return .same(total: total)
         case "turn": return HistoryTurn(object: root["turn"]).map(Outcome.turn) ?? .unreadable
         default: return .unreadable
         }
+    }
+
+    /// The arguments of a history or turn read, checked before the page is
+    /// asked: a full frame id, `before` a row index, `rows` from 1 to
+    /// `pageRows`, and `nonce` (when there is one) as the page files it.
+    /// Throws `WebAPIError.notAllowed`.
+    static func check(frameID: String, before: Int? = nil, rows: Int = pageRows, nonce: String?) throws {
+        guard PlanCheck.isFrameID(frameID) else { throw WebAPIError.notAllowed }
+        if let before, !(1...maxIndex).contains(before) { throw WebAPIError.notAllowed }
+        guard (1...pageRows).contains(rows) else { throw WebAPIError.notAllowed }
+        if let nonce, !HistoryShowing.isNonce(nonce) { throw WebAPIError.notAllowed }
     }
 
     // MARK: Keep's showing read
@@ -1045,6 +1210,46 @@ struct HistoryTurn: Equatable, Sendable {
     }
 }
 
+/// What one page read cost, as the page measured it (`pageBody`'s `timing`):
+/// milliseconds from `performance.now()` (zeros when the page has none), the
+/// bytes of the bodies it read and the rows it projected. Only whole numbers
+/// of at least 0 count; anything else is no timing at all.
+struct HistoryTiming: Equatable, Sendable {
+    /// Requests to their bodies read, summed.
+    let fetchMs: Int
+    let parseMs: Int
+    let projectMs: Int
+    let rawBytes: Int
+    /// The messages in the page, before projection.
+    let rows: Int
+
+    init(fetchMs: Int, parseMs: Int, projectMs: Int, rawBytes: Int, rows: Int) {
+        self.fetchMs = fetchMs
+        self.parseMs = parseMs
+        self.projectMs = projectMs
+        self.rawBytes = rawBytes
+        self.rows = rows
+    }
+
+    /// `{fetchMs, parseMs, projectMs, rawBytes, rows}`: all five present, each
+    /// a whole number of at least 0.
+    init?(object: Any?) {
+        guard let timing = object as? [String: Any],
+              let fetch = Pick.int(timing["fetchMs"]), fetch >= 0,
+              let parse = Pick.int(timing["parseMs"]), parse >= 0,
+              let project = Pick.int(timing["projectMs"]), project >= 0,
+              let bytes = Pick.int(timing["rawBytes"]), bytes >= 0,
+              let rows = Pick.int(timing["rows"]), rows >= 0 else { return nil }
+        self.init(fetchMs: fetch, parseMs: parse, projectMs: project, rawBytes: bytes, rows: rows)
+    }
+
+    /// The one line `readHistory` logs: the five numbers, never an id, a name
+    /// or any text.
+    var line: String {
+        "history read: fetch \(fetchMs) ms, parse \(parseMs) ms, project \(projectMs) ms, \(rawBytes) bytes, \(rows) rows"
+    }
+}
+
 // MARK: Keep: the message that shows a figure
 
 /// How a message showed a version, from the surest way down.
@@ -1164,45 +1369,92 @@ enum HistoryShowing {
     }
 }
 
+/// The Swift side of a history or turn read's abort. With a nonce, cancelling
+/// the task asks the page to abort the fetch filed under it (`abort`, which is
+/// `WebContainer.abortArtifactRead`), a task already cancelled reads nothing,
+/// and one cancelled while the page was still answering throws
+/// `CancellationError` whatever the page said: cancelling never reaches a fetch
+/// by itself, and the read still returns when the page answers. Without a
+/// nonce, as the phone's reads, the read is left alone.
+enum HistoryReadAbort {
+    @MainActor
+    static func run<T>(nonce: String?, abort: @escaping @MainActor (String) async -> Void,
+                       operation: @MainActor () async throws -> T) async throws -> T {
+        guard let nonce else { return try await operation() }
+        try Task.checkCancellation()
+        let value = try await withTaskCancellationHandler {
+            try await operation()
+        } onCancel: {
+            Task { @MainActor in await abort(nonce) }
+        }
+        try Task.checkCancellation()
+        return value
+    }
+}
+
 // MARK: Reading through the page
 
+private let readingLog = Logger(subsystem: "local.sam.bench", category: "reading")
+
 extension WebContainer {
-    /// A page of a session's history (`HistoryReaderScript.pageBody`): the 50
-    /// rows before `before`, or the last 50; for the last, `.same` when the
-    /// history still has `knownTotal` rows. Unreadable when it can't be read
-    /// or doesn't match; throws when the page isn't up or the id isn't a full
-    /// frame id.
-    func readHistory(_ frameID: String, before: Int?, knownTotal: Int? = nil) async throws -> RemoteBrowser.HistoryRead {
+    /// A page of a session's history (`HistoryReaderScript.pageBody`): the
+    /// `rows` rows (1 to 50, default 50) before `before`, or the last 50 (a
+    /// read without `before` is the tail's 12 rows and then up to 38 before
+    /// them, whatever `rows` says); for the last, `.same` when the history
+    /// still has `knownTotal` rows. `.tooBig` when a GET's body was over the
+    /// 2 MiB cap, `.unreadable` when it can't be read or doesn't match; throws
+    /// when the page isn't up, or the id isn't a full frame id, `before` or
+    /// `rows` is out of range or `nonce` is malformed. With a `nonce` (the
+    /// caller's own: letters, digits and dashes, 1 to 64) the page files a
+    /// controller under it, so `abortArtifactRead(nonce)` or cancelling the
+    /// task ends the fetch and the read throws `CancellationError`; without
+    /// one, as the phone's reads, nothing can stop it but its 15 s. Logs one
+    /// `.notice` line (`HistoryTiming.line`: five numbers) for a page read.
+    func readHistory(_ frameID: String, before: Int?, knownTotal: Int? = nil, rows: Int = HistoryReaderScript.pageRows,
+                     nonce: String? = nil) async throws -> RemoteBrowser.HistoryRead {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard PlanCheck.isFrameID(frameID) else { throw WebAPIError.notAllowed }
-        if let before, !(1...HistoryReaderScript.maxIndex).contains(before) { throw WebAPIError.notAllowed }
-        let value = try await webView.callAsyncJavaScript(
-            HistoryReaderScript.pageBody,
-            arguments: ["frameId": frameID, "before": before.map { $0 as Any } ?? NSNull(),
-                        "knownTotal": knownTotal.map { $0 as Any } ?? NSNull()],
-            in: nil, contentWorld: .defaultClient)
-        guard let text = value as? String else { throw WebAPIError.badResponse }
+        try HistoryReaderScript.check(frameID: frameID, before: before, rows: rows, nonce: nonce)
+        let arguments: [String: Any] = [
+            "frameId": frameID, "before": before.map { $0 as Any } ?? NSNull(),
+            "knownTotal": knownTotal.map { $0 as Any } ?? NSNull(), "rows": rows, "nonce": nonce ?? NSNull(),
+        ]
+        let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
+            let value = try await self.webView.callAsyncJavaScript(
+                HistoryReaderScript.pageBody, arguments: arguments, in: nil, contentWorld: .defaultClient)
+            guard let text = value as? String else { throw WebAPIError.badResponse }
+            return text
+        }
         switch HistoryReaderScript.outcome(of: Data(text.utf8)) {
-        case .read(let page): return .page(page)
+        case .read(let page, let timing):
+            if let timing { readingLog.notice("\(timing.line, privacy: .public)") }
+            return .page(page)
         case .same(let total): return .same(total: total)
+        case .tooBig: return .tooBig
+        case .cancelled: throw CancellationError()
         case .lost:
             sessionLost()
             return .unreadable
-        default: return .unreadable
+        case .turn, .none, .unreadable: return .unreadable
         }
     }
 
-    /// One row's text whole. `.none` when the row is no turn the history shows.
-    func readTurn(_ frameID: String, index: Int) async throws -> HistoryReaderScript.Outcome {
+    /// One row's text whole. `.none` when the row is no turn the history
+    /// shows; `.tooBig` when its body was over the cap. `nonce` as for
+    /// `readHistory`: with one, an abort or a cancelled task throws
+    /// `CancellationError`, and a malformed one throws `notAllowed`.
+    func readTurn(_ frameID: String, index: Int, nonce: String? = nil) async throws -> HistoryReaderScript.Outcome {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard PlanCheck.isFrameID(frameID), (0...HistoryReaderScript.maxIndex).contains(index) else {
-            throw WebAPIError.notAllowed
+        guard (0...HistoryReaderScript.maxIndex).contains(index) else { throw WebAPIError.notAllowed }
+        try HistoryReaderScript.check(frameID: frameID, nonce: nonce)
+        let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
+            let value = try await self.webView.callAsyncJavaScript(
+                HistoryReaderScript.turnBody, arguments: ["frameId": frameID, "index": index, "nonce": nonce ?? NSNull()],
+                in: nil, contentWorld: .defaultClient)
+            guard let text = value as? String else { throw WebAPIError.badResponse }
+            return text
         }
-        let value = try await webView.callAsyncJavaScript(
-            HistoryReaderScript.turnBody, arguments: ["frameId": frameID, "index": index],
-            in: nil, contentWorld: .defaultClient)
-        guard let text = value as? String else { throw WebAPIError.badResponse }
         let outcome = HistoryReaderScript.outcome(of: Data(text.utf8))
+        if outcome == .cancelled { throw CancellationError() }
         if outcome == .lost { sessionLost() }
         return outcome
     }
