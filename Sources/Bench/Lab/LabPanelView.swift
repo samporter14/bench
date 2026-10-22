@@ -646,6 +646,13 @@ struct LabPanelView: View {
             if withOpen {
                 // Where the row has no room for Open of its own.
                 Button("Open in Capsid") { model.open(card) }
+            }
+            if let session = card.session {
+                // The reader beside the work (Reference/ReferenceWindow.swift);
+                // the card stays.
+                Button("Open as Reference") { ReferenceWindowController.shared.show(session) }
+            }
+            if withOpen || card.session != nil {
                 Divider()
             }
             Button("In 5 Minutes") { model.remind(card, .fiveMinutes) }

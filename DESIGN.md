@@ -4285,6 +4285,36 @@ cut turn whole, ≤ 20,000 chars: `{"i","role","at","text"}`.
 results' `artifacts[]`, `send_user_message` attachments), keeping only
 `{v: version_id, a: artifact_id, name ≤255, kind, size}`.
 
+**Groundwork for a Mac-side reader (since 1.0; the reference reader, Reference).**
+`readHistory(_:before:knownTotal:rows:nonce:)` and `readTurn(_:index:nonce:)` take two
+optional arguments the phone's routes never pass, and every GET of the file gains the
+same limits. `rows` (1 to 50, default 50; else `notAllowed`, and the page refuses it
+before any fetch) is how many rows the page before `before` covers: `before=120,
+rows=25` is one GET of `from=95&limit=25`; a first read (no `before`) is the tail's
+`from=-12&limit=12` and then up to 38 more rows whatever `rows` says. A `nonce`
+(letters, digits and dashes, 1 to 64) makes the page file the read's AbortController
+in `globalThis.benchArtifactReads`, the artifact reader's own map, so
+`abortArtifactRead(nonce)` ends the fetch and the page answers `cancelled`; cancelling
+the task asks for the same (`HistoryReadAbort`), and a cancelled read always throws
+`CancellationError`, even when the page answered at that moment. Every GET's body
+(history, turn and Keep's showing read, which share the fetch) is streamed and
+stopped at 2 MiB (2,097,152 bytes, `HistoryReaderScript.bodyCap`), and a
+`Content-Length` over it is refused unread; either way the page answers `tooBig`
+(`HistoryRead.tooBig`), which the phone's routes take as unreadable (503) and Keep as
+unreadable. The page yields once before it parses each body and once before it
+projects (`requestIdleCallback` with a 1 s timeout when there is one, else
+`setTimeout(0)`, else not at all), so a read doesn't hold the composer's thread in one
+block. The trim that holds a page to 60 items and 64 KB counts each item's JSON once
+(it stringified the whole remainder for every row it dropped), with byte-identical
+output, pinned in the tests against a copy of the old rule. A page read answers
+`timing` beside the page: `fetchMs` (request to body read, summed over the GETs),
+`parseMs`, `projectMs`, `rawBytes` and `rows` (the messages in the page), whole
+numbers from `performance.now()` (zeros without it; the byte and row counts stay).
+Swift takes it strictly (all five whole numbers of at least 0, else none, never a
+reason to refuse the page), and `readHistory` logs one `.notice` line in category
+`reading`, `history read: fetch N ms, parse N ms, project N ms, N bytes, N rows`,
+numbers only.
+
 **Which message shows a version (Keep, since 1.0).** One more op beside the projection, in the same file and
 on the same allowlisted GET and 15 s: `benchFindShowingMessage(page, base, versionIds)` takes one page of raw
 rows and answers the newest assistant message that shows any of an artifact's version ids, as
@@ -4428,8 +4458,10 @@ demo's files). The shared files only gained hooks marked `// Phase 3 files`.
   has actually ended, not when the connection goes, as before. The other readers
   (session, history, turn, live) have no abort in their page scripts: cancelling only
   stops one that has not yet started its page read (history and turn check before
-  asking the page) and the encode and send. They are bounded by their own 15 s
-  deadlines. That Tailscale Serve closes its connection to Capsid when the phone
+  asking the page) and the encode and send. They are bounded by their own
+  deadlines: 8 s for the session and live readers, 15 s for history and turn
+  (since 1.0 a history or turn read made with a nonce aborts too: the reference
+  reader's, above). That Tailscale Serve closes its connection to Capsid when the phone
   aborts is expected of its proxy (it ends the upstream request when the client
   goes) and was not seen with a real phone; the tests hang up a real loopback
   socket both ways (FIN and RST).
@@ -5151,6 +5183,136 @@ leaving every other byte alone), `KeptDiskTests` (the layout, the dated
 collision, abandon, scan, the outside-change refusal, the disk-calls scan),
 the reader tests for the three shapes and the showing op against a fake
 `fetch` (`RemoteArtifactsTests`, `HistoryReaderTests`), and the inventory's.
+
+## Reference (Reference/, since 1.0)
+
+An answer beside the work. A session's conversation lives in Claude Science's
+window; when the user is writing from what Claude found, they want one answer
+next to the document, not the tab behind it. Open as Reference opens a small
+read-only window on one session with Claude's newest answer in it, and the
+answers before it a step away. It reads the way the phone reads a conversation
+(Capsid on your phone → History) and writes nothing.
+
+**Opening.** Three doors, all on a session: Quick Open (⌥↩ on the field opens
+the highlighted session as a reference instead of in the main window, read
+from `NSApp.currentEvent` at submit, and every row's context menu has Open as
+Reference), the activity list (every session row's context menu and VoiceOver
+actions, `menuActions` on `ActivityRow`, never a hover button), and a card's
+Later menu (Open as Reference under Open in Capsid, on the cards that name a
+session). Opening a session as a reference leaves its cards and reminder as
+they are; Open in Claude Science inside the window goes through
+`Router.open(session)`, not `LabModel.open`, for the same reason. One window
+per session (`ReferenceWindowController.windows`); opening it again brings it
+forward.
+
+**The window** (`ReferenceWindow.swift`). A normal titled window, 440 wide and
+560 tall at first (`ReferenceWindowController.size`, no smaller than 360 × 320),
+its frame remembered under one name (`CapsidReference`) when it closes, so the
+next opens where the last was (a second one open at the same place steps down).
+The title is the session's title, the subtitle "<project> · read only". The
+toolbar has one `ControlGroup`, Earlier and Later, with ⌥⌘← and ⌥⌘→ on the
+buttons themselves, so the keys work only while this window is key and never
+reach the page (⌥⌘↓ is Next Waiting app-wide; the arrows were free). Under the
+toolbar one caption, "Claude's answer · 8:47 · 2 of 3" (the time alone on the
+day it is, else the day and month too; "2 of 3 so far" until row 0 has been
+read, since the count is over the answers read), with a small spinner while a
+page is read; then the answer as selectable text in an `NSTextView` sized to
+its text, so the page around it scrolls and the figures follow the text rather
+than sitting under it (`ReferenceTextView.sizeThatFits`); the figures as 72-pt
+thumbnails (the shelf's `ShelfThumbnails`, read through a one-slot
+`ShelfTransfers` of the window's own), each with Keep… and Open in Claude
+Science in its context menu; and a footer with Copy with Source and Open in
+Claude Science, both plain. Nothing in it is in the clay: the window reads, it
+never asks. Window → Keep on Top (`ReferenceCommands`) floats the key
+reference window (`level = .floating`), dim unless one is key; it is the only
+window that floats.
+
+**Copy with Source.** The selection, or the whole answer as drawn, then a
+blank line, then `— Claude, in “<session>” (<project>), 22 October 2026, 8:47`
+(Keep's date and time words) and `bench://session?project=…&frame=…` on the
+line after, which opens the session in Capsid. Line separators the renderer put
+in for hard breaks go back to newlines. The button says Copied for a moment.
+
+**What is read** (`ReferenceModel.swift`). Pages of the session's history, back
+from the newest end, 25 rows a page (`ReferenceModel.rows`; the first read is
+the page's 12-row tail), through `readHistory(_:before:rows:nonce:)` and
+`readTurn(_:index:nonce:)` (the groundwork, Capsid on your phone → History). An
+answer is a `turn` row whose role is Claude's; everything else on the page
+(steps, plans, questions, the user's turns) is passed over. A look reads pages
+until one holds an answer, row 0 is reached, or eight pages held none
+(`pagesPerLook`); then the window says "No answer in the newest messages" and
+Earlier looks again, or "No answers yet" when the session has none. Earlier at
+the oldest answer loaded reads the next page and shows its newest answer,
+unless the user moved meanwhile, in which case the page is merged and the shown
+answer stays the same answer (its index shifts by what was added). A page's
+text is cut at 2,000 characters; a cut answer, when shown, gets a whole-turn
+read (≤ 20,000) that lands on its row, by row index, never on the answer shown
+at the time, and is asked once per row; while it is in flight the window says
+"Reading the rest…", and if it fails, "The rest of this answer couldn't be
+read." Every read is dropped once the window closes (`close` bumps a token and
+cancels the tasks; a read that lands after the token moved changes nothing). A
+read that fails says "The conversation couldn't be read. Claude Science may not
+be up." with Try Again; a page over the reader's 2 MiB cap says it is too large
+to read here and points at Claude Science.
+
+**When it reads** (`ReadingGate.swift`). The reads run in the page, on the
+page's main thread, so each costs the user a few milliseconds of typing. The
+gate runs them one at a time, in order, across every reference window; none
+starts within 400 ms of a key press in the main window (a local key monitor
+notes the time and passes the event on); a read waits at most 2 s all told and
+then goes. The rule is pure (`ReadingGate.pause`), in whole milliseconds.
+Cancelling the waiting task cancels the read with it, and the nonce makes the
+page abort the fetch. The page measures each read and `readHistory` logs one
+line at `.notice` in category `reading`, numbers only; the demo's numbers are
+made up, so the cost is measured on a real session or not at all.
+
+**The text** (`AnswerMarkdown.swift`). The window shows an answer through
+`AnswerMarkdown.render`, a pure, nonisolated renderer: Foundation parses the
+Markdown with full syntax and the renderer lays it out as one paragraph per
+block, in system fonts and semantic colours. It shows headings, paragraphs,
+lists (a bullet or the item's own number, hanging 20 pt a level), code blocks
+(the monospaced font on a faint ground that follows light and dark), block
+quotes and thematic breaks, with bold, italic, inline code, strikethrough and
+links inline; only http, https and mailto links stay links, and any other link
+keeps its words as plain text. What a text view can't show becomes a
+placeholder paragraph in the secondary colour: a table ("Not shown here: a
+table."), an image ("Figure: <file name>") and a raw HTML block (its source).
+Each placeholder carries the `local.sam.bench.answer.unsupported` attribute (an
+`AnswerUnsupportedBox`) and is listed with its range in
+`AnswerDocument.unsupported`, and a figure's placeholder also carries
+`local.sam.bench.answer.image` with its file name. (Figures reach the window
+as the turn's `files`, not through the text, so that path is the secondary
+one.) A hard line break is a line separator (U+2028), so a list item's second
+line hangs under its text.
+
+**Privacy.** The reader reads only what the phone's History reads, from the
+page's own session, and the conversation stays in memory for as long as the
+window is open. Nothing is written but the window's frame; the pasteboard gets
+what Copy with Source copies and nothing else. No session or project name
+reaches the log.
+
+**`--demo reference`** (`ReferenceDemo.swift`): the window on a made-up session
+whose pages and thumbnails are answered from the demo after 300 ms (three
+answers: one with a list, one with code and a figure, the newest cut on its
+page and whole on the turn read, with a heading, a numbered list and a table
+that becomes its placeholder); `--step failed` opens it on reads that fail.
+Nothing is read from Claude Science.
+
+**Tests.** `ReferenceModelTests` (the newest answer on open; Earlier at the
+edge reading back; empty pages read until an answer appears, eight at most;
+the final count once row 0 is read; a cut answer read whole in place; a late
+whole answer landing on its own row while another is shown; a page landing
+while the user moved; unreadable, too big and thrown reads; close cancelling
+and dropping what lands; Copy with Source; thumbnails once per figure),
+`ReferenceRulesTests` (which rows are answers, the caption, the time, the
+source line, the copied text), `ReadingGateTests` (the pause rule, one at a
+time in order, a key press waited out, typing extending the wait to 2 s,
+cancellation reaching the read), `AnswerMarkdownTests` (every block kind by
+its attributes, the link filter, the placeholders and their ranges, a
+20,000-character answer, determinism), `HistoryReaderGroundworkTests` (the
+trim's identity with the old rule, the rows argument, the nonce and abort, the
+cap, the yields, the timing, the phone's 503), and `ReferenceSnapshotTests`
+(draws the content to PNGs, light and dark, when `CAPSID_SNAPSHOT_DIR` is set).
 
 ## 1.0 spikes (2026-10-22, read-only)
 

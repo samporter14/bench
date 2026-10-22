@@ -323,6 +323,61 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-22, Capsid 1.0 M4: the reference reader
+
+Claude's answers beside the work (the handoff's M4; DESIGN.md, Reference): a
+read-only 440-pt window per session, opened from Quick Open (⌥↩ or a row's
+menu), an activity row's menu or a card's Later menu, with Earlier and Later,
+Copy with Source and Open in Claude Science, and the history reader's
+groundwork from spike S5 beneath it. Branch `g/reference` (on `g/keep`),
+local, not pushed. Two agents in worktrees (the reader's groundwork on Sonnet,
+the Markdown on Opus), merged; the window, the model and the gate here.
+
+- ✅ **The whole suite:** 2,282 tests in 298 suites pass (`swift test --jobs 2`,
+  one run).
+- ✅ **History reader groundwork** (`HistoryReaderGroundworkTests`, 8 suites):
+  the linear trim is byte-identical to the old rule on ten fixtures and on the
+  full projection; a 25-row page is one `from=N&limit=25` GET and the first
+  read stays the 12-row tail; a nonce files the AbortController and
+  `abortArtifactRead` ends the fetch, the task ending in `CancellationError`;
+  a body over 2 MiB, declared or streamed, is `tooBig` (the phone says 503,
+  Keep unreadable); the page yields through `requestIdleCallback` or
+  `setTimeout(0)` before each parse and the projection; timing is parsed
+  strictly. Six deliberate breaks in the source were each caught.
+- ✅ **Markdown** (`AnswerMarkdownTests`, 29): every block kind by walking the
+  attributes; only http, https and mailto links stay links; tables, images and
+  HTML blocks become placeholders listed with their ranges; a 20,000-character
+  answer renders; the code ground is faint in both appearances. Probed first
+  on this macOS: `.full` parsing keeps tables, hands HTML blocks through as
+  marked text, and threw on nothing (50k-deep input included).
+- ✅ **The reader** (`ReferenceModelTests`, 15; `ReferenceRulesTests`, 6;
+  `ReadingGateTests`, 5): the newest answer on open; Earlier at the edge reads
+  back and lands on the page's newest answer; empty pages are read until an
+  answer appears, eight at most, and Earlier looks again; row 0 reached makes
+  the count final ("2 of 3" against "2 of 3 so far"); a cut answer is read
+  whole and replaced in place; a late whole answer lands on its own row while
+  another is shown (the stale guard); a page landing while the user moved
+  keeps the shown answer; unreadable, too big and thrown reads fail with their
+  sentences and Try Again reads; closing cancels the read (the fake sees the
+  cancellation) and drops what lands; Copy with Source; a thumbnail once per
+  figure. The gate: the pause rule in whole milliseconds, one read at a time
+  in order, a key press waited out, typing extending the wait to 2 s at most,
+  cancellation reaching the read.
+- ✅ **Drawn offscreen** (`ReferenceSnapshotTests`, `CAPSID_SNAPSHOT_DIR`): the
+  content at 440 pt, light and dark, an answer with code and a figure, and the
+  failed state. Reviewed: the text sizes to its content so the figure follows
+  it (the first draft pinned the figure under an empty gap); no clay anywhere.
+- ✅ **The real window:** `--demo reference` opened quietly (`open -g`) and was
+  captured by window ID (`bench-wt/shoot.sh`; captures work again on this Mac):
+  title and "Assay development · read only" subtitle, the Earlier/Later
+  control group, the caption, the text, the footer.
+- ⏳ **Not live:** no real session was read yet (Sam: right-click a session in
+  the activity list → Open as Reference). The `reading` log line's numbers,
+  the typing gate against real key presses, ⌥⌘←/→ in the key window, Keep on
+  Top, Keep… from a figure, and Copy with Source on a real answer are
+  unverified on the real app; the demo's reads are made up, so no cost was
+  measured.
+
 ## 2026-10-22, Capsid 1.0 M3: Keep, and the Kept window
 
 The first 1.0 feature (the handoff's M3; DESIGN.md, Keep). Keep saves the

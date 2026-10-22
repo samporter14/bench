@@ -180,6 +180,16 @@ struct ActivityList: View {
         row(session, line: line, accent: accent, glyph: glyph) { EmptyView() }
     }
 
+    /// Open as Reference, in every session row's context menu: the reader
+    /// beside the work (Reference/ReferenceWindow.swift). It leaves the
+    /// session's cards and reminder as they are.
+    private func referenceAction(_ session: SessionStatus) -> RowAction {
+        RowAction(title: "Open as Reference", help: nil, prominent: false) {
+            close()
+            ReferenceWindowController.shared.show(session)
+        }
+    }
+
     private func row<Glyph: View, Trailing: View>(_ session: SessionStatus, line: String?, accent: Bool,
                                                   note: String? = nil, actions: [RowAction] = [],
                                                   engaged: @escaping () -> Void = {}, showsActions: Bool = false,
@@ -188,7 +198,7 @@ struct ActivityList: View {
         ActivityRow(action: {
             model.open(session)
             close()
-        }, actions: actions, engaged: engaged, showsActions: showsActions) {
+        }, actions: actions, menuActions: [referenceAction(session)], engaged: engaged, showsActions: showsActions) {
             HStack(spacing: 10) {
                 glyph()
                     .frame(width: 26, height: 26)
@@ -352,7 +362,7 @@ struct ActivityList: View {
                 ActivityRow(action: {
                     model.open(session)
                     close()
-                }) {
+                }, menuActions: [referenceAction(session)]) {
                     recentLabel(symbol: Self.symbol(for: event.kind), line: Self.line(for: event.kind),
                                 title: session.displayTitle, detail: "\(session.projectName) · \(when)")
                 }
@@ -438,6 +448,8 @@ private struct RowAction: Identifiable {
 private struct ActivityRow<Label: View>: View {
     let action: () -> Void
     var actions: [RowAction] = []
+    /// Offered in the context menu and to VoiceOver only, never as a button on the row.
+    var menuActions: [RowAction] = []
     /// The pointer or the focus came to the row: a chance to read what its actions need.
     var engaged: () -> Void = {}
     /// Shows the actions as if the pointer were there (a demo's capture).
@@ -486,7 +498,7 @@ private struct ActivityRow<Label: View>: View {
         .onChange(of: focus) { _, now in
             if now != nil { engaged() }
         }
-        .modifier(RowActionsMenu(actions: actions))
+        .modifier(RowActionsMenu(actions: actions + menuActions))
     }
 
     private var highlighted: Bool {

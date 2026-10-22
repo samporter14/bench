@@ -160,6 +160,21 @@ Word or Keynote, copy it or its legend, and write the legend you'll use in
 the paper, which Capsid saves into the README (and touches nothing else in
 it). The Kept folder is in Settings → General → Kept.
 
+## An answer beside the work
+
+When you're writing from what Claude found, you want the answer next to the
+document, not in a tab behind it. **Open as Reference** (⌥↩ in Open Session…,
+the right-click menu of any session in the activity list, or a card's Later
+menu) opens a small read-only window with Claude's latest answer in that
+session: headings, lists and code as Claude wrote them, and the figures it
+showed as thumbnails (right-click one to Keep it). Earlier and Later step
+through the answers (⌥⌘← and ⌥⌘→). **Copy with Source** copies what you
+selected, or the whole answer, with a line saying which session and project it
+came from and when, and a link that opens the session in Capsid. **Window →
+Keep on Top** floats the window over your document; Open in Claude Science
+takes you to the session itself. The window reads the conversation the way the
+phone does, a page at a time, waits while you type, and writes nothing.
+
 ## Capsid on your phone
 
 Use Claude Science from your iPhone, iPad or another computer while you're

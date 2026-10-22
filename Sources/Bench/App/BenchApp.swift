@@ -284,6 +284,8 @@ struct BenchCommands: Commands {
     @ObservedObject private var lab = LabModel.shared
     /// The result selected in the Results window, for Keep… (Kept/KeptWindow.swift).
     @ObservedObject private var kept = KeptCommands.shared
+    /// The key reference window, for Keep on Top (Reference/ReferenceWindow.swift).
+    @ObservedObject private var reference = ReferenceCommands.shared
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
@@ -354,6 +356,12 @@ struct BenchCommands: Commands {
             Button("Find…") { ActiveWebPage.current?.showFind() }
                 .keyboardShortcut("f")
                 .disabled(!active.hasPage)
+        }
+        CommandGroup(after: .windowArrangement) {
+            // A reference window floats over the work while it is wanted
+            // there. Dim unless one is key: it is the only window that floats.
+            Toggle("Keep on Top", isOn: Binding(get: { reference.isOnTop }, set: { reference.setOnTop($0) }))
+                .disabled(reference.keyWindow == nil)
         }
         CommandGroup(after: .help) {
             // A demo has its own welcome (`--demo welcome`), which records nothing.

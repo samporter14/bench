@@ -83,6 +83,11 @@ enum Demo {
         /// or `window-empty`. Nothing is read from Claude Science and
         /// nothing lands outside the temporary root.
         case kept
+        /// The reference window (Reference/ReferenceDemo.swift) on a made-up
+        /// session whose pages and thumbnails are answered from here; with
+        /// `--step failed`, on reads that fail. Nothing is read from Claude
+        /// Science.
+        case reference
     }
 
     /// `--step` with `--demo kept`; `sheet` when missing.
@@ -90,6 +95,13 @@ enum Demo {
         let arguments = CommandLine.arguments
         guard mode == .kept, let flag = arguments.firstIndex(of: "--step") else { return "sheet" }
         return arguments.dropFirst(flag + 1).first ?? "sheet"
+    }()
+
+    /// `--step` with `--demo reference`; `answer` when missing.
+    static let referenceStep: String = {
+        let arguments = CommandLine.arguments
+        guard mode == .reference, let flag = arguments.firstIndex(of: "--step") else { return "answer" }
+        return arguments.dropFirst(flag + 1).first ?? "answer"
     }()
 
     /// Nil in a normal launch.
@@ -257,6 +269,8 @@ enum Demo {
             showPage(PhoneSetupPage(model: phoneSettings(step: phoneStep), actions: .none), title: "Phone")
         case .kept?:
             KeptDemo.show(step: keptStep, quiet: isQuiet) { view, title in showPage(view, title: title) }
+        case .reference?:
+            ReferenceDemo.show(step: referenceStep, quiet: isQuiet)
         case nil:
             break
         }

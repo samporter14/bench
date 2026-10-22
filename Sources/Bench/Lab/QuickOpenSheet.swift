@@ -36,7 +36,7 @@ struct QuickOpenSheet: View {
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($searching)
-                    .onSubmit { open(results.first { $0.id == selected }) }
+                    .onSubmit { submit(results.first { $0.id == selected }) }
                     .onKeyPress(.upArrow) {
                         selectedID = neighbour(of: selected, in: results, by: -1)
                         return .handled
@@ -88,7 +88,8 @@ struct QuickOpenSheet: View {
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(results) { session in
-                        QuickOpenRow(session: session, isSelected: session.id == selected) { open(session) }
+                        QuickOpenRow(session: session, isSelected: session.id == selected,
+                                     action: { open(session) }, reference: { reference(session) })
                             .id(session.id)
                     }
                 }
@@ -137,6 +138,23 @@ struct QuickOpenSheet: View {
         model.open(session)
         dismiss()
     }
+
+    /// Return opens the session; ⌥↩ opens it as a reference instead.
+    private func submit(_ session: SessionStatus?) {
+        if NSApp.currentEvent?.modifierFlags.contains(.option) == true {
+            reference(session)
+        } else {
+            open(session)
+        }
+    }
+
+    /// The reader beside the work (Reference/ReferenceWindow.swift), which
+    /// leaves the session's cards and reminder as they are.
+    private func reference(_ session: SessionStatus?) {
+        guard let session else { return }
+        dismiss()
+        ReferenceWindowController.shared.show(session)
+    }
 }
 
 /// One session: its state's glyph, its title over its project, and on the
@@ -145,6 +163,8 @@ private struct QuickOpenRow: View {
     let session: SessionStatus
     let isSelected: Bool
     let action: () -> Void
+    /// Open as Reference, in the row's context menu (and ⌥↩ on the field).
+    let reference: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -171,9 +191,13 @@ private struct QuickOpenRow: View {
             .contentShape(.rect(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button("Open as Reference", action: reference)
+        }
         .accessibilityLabel(spoken)
         .accessibilityHint("Opens the session")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAction(named: "Open as Reference", reference)
     }
 
     /// The waiting reason's glyph while it waits, the working one while it
