@@ -15,6 +15,8 @@ struct LabNotice: Identifiable, Equatable {
         case none
         case openSession(SessionStatus)
         case installUpdate(AvailableUpdate)
+        /// Show: the Since You Left sheet (SinceYouLeft/).
+        case sinceYouLeft
     }
 
     let id: String
