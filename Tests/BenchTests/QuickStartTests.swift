@@ -258,13 +258,15 @@ struct GlobalHotKeyTests {
         #expect(shown.last?.0 == "p" && shown.last?.1 == true)
     }
 
-    @Test func theKeysAreRegisteredByDefaultAndShortcutsMayNotActUntilTold() {
-        SettingsKey.register()
-        let defaults = UserDefaults.standard
-        #expect(defaults.string(forKey: SettingsKey.quickStartKey) != nil)
-        #expect(defaults.string(forKey: SettingsKey.replyKey) != nil)
-        #expect(defaults.object(forKey: SettingsKey.shortcutsMayAct) != nil)
-        #expect(defaults.bool(forKey: SettingsKey.shortcutsMayAct) == false)
+    /// The defaults `SettingsKey.register` gives are the slots' fallbacks, read from the source:
+    /// registering from a test would put them in the process's defaults for every other test.
+    @Test func theKeysAreRegisteredWithTheFallbacksAndShortcutsMayNotActUntilTold() throws {
+        let theme = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Bench/App/Theme.swift")
+        let source = try String(contentsOf: theme, encoding: .utf8)
+        #expect(source.contains(#"quickStartKey: "\#(GlobalHotKey.Slot.quickStart.fallback.rawValue)""#))
+        #expect(source.contains(#"replyKey: "\#(GlobalHotKey.Slot.reply.fallback.rawValue)""#))
+        #expect(source.contains("shortcutsMayAct: false"))
     }
 }
 

@@ -50,8 +50,9 @@ struct ShortcutsGateTests {
     }
 
     @Test func theSwitchIsReadEachTimeAndIsOffByDefault() async throws {
-        SettingsKey.register()
-        #expect(ShortcutsGate().mayAct() == false)
+        // Off unless turned on: a key never set reads false, and the registered default is false too.
+        #expect(ShortcutsGate().mayAct() == UserDefaults.standard.bool(forKey: SettingsKey.shortcutsMayAct))
+        #expect(UserDefaults.standard.bool(forKey: SettingsKey.shortcutsMayAct) == false)
         let on = Flag(false)
         let gate = ShortcutsGate(mayAct: { on.isOn })
         var asked = 0
