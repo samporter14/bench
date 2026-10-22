@@ -5104,8 +5104,8 @@ as a result) by `KeptDisk.prepare`, which also settles the name: `<Name>`, or
 `<Name> 2026-10-22 0912` when it is taken; Keep never overwrites. Each ticked
 file is fetched through the shelf's queue within the 8 MB cap (the figure
 first), its sha256 computed (CryptoKit) and compared with the daemon's
-checksum when it has one (a mismatch is logged, not refused: a reference
-artifact's checksum can be stale), and written atomically; the script is the
+checksum when it has one, and written atomically (a mismatch is kept, never
+silently: see the checksums below); the script is the
 reconstruction's text with `{{artifact:<v>}}` rewritten to `../data/<name>`
 for the inputs that were kept (the daemon's own script bundle does the same
 to its `inputs/`). README.md is written last and the folder renamed into
@@ -5119,6 +5119,44 @@ from wasn't copied.", the row saying why in clay-text, with **Try Again**
 (copies only what is missing, into the folder, and rewrites the README),
 **Show in Finder** and **Done**. Everything copied: the sheet closes and the
 Kept section shows the new row; no card, no toast.
+
+**Recovery and the record (since a Codex review of M3).** A failure before
+anything landed says what Try Again will do (`KeepRetry`): if the sheet's
+first read failed, Try Again reads everything again from the start; if the
+keep failed (the figure wouldn't download), it keeps again with the same
+choices into a fresh hidden folder, and the failed attempt leaves nothing
+behind. When trying the same thing again can't help (the version went, or the
+Kept folder refused), Keep stays available for another version or another go.
+Try Again after a partial keep isn't finished until README.md lists what is in
+the folder: if the README can't be rewritten the sheet stays open and says
+"The files landed, but README.md couldn't be updated to list them." with the
+reason, and Try Again then rewrites only the README; Cancel during a Try Again
+stops the copying but still rewrites the README with what landed, so the files
+and the record never disagree.
+
+**An answer and its version go together.** When Keep… is pressed on a figure
+inside an answer (the reference reader), `KeepSubject.pinned` carries that
+answer: its version is preselected and the answer is kept with it, and no
+newer answer is searched for. If the user picks a version the answer doesn't
+show (from anywhere), the answer row says so plainly ("Claude's answer shows
+version 4, not this one.") and is off by default; ticked anyway, the README's
+front matter gets `answer_shows_version: 4` and its attribution ends "That
+answer shows version 4, not this one."
+
+**Checksums.** Each file's sha256 is compared with Claude Science's checksum
+when it has one. A stored version's bytes never change, but a reference file's
+checksum can be stale, and Capsid can't tell one from the other, so bytes that
+don't match are kept, never silently: the front matter carries both checksums
+(`sha256` and `expected_sha256`), and a "Checksums" section says it in a
+sentence per file ("z_prime.png doesn't match Claude Science's checksum for
+this version (expected 3f2a9c41…, got 9c41d2e0…). It may be a reference file
+that changed since; check it before you use it."). The keep counts as kept,
+but the sheet stays open, the row saying "Kept, but it doesn't match Claude
+Science's checksum." and the line "Kept 3 files. z_prime.png doesn't match
+Claude Science's checksum; see README.md before you use it.", until Done. (The
+first fix refused such bytes outright, which would have made a reference
+file's figure impossible to keep; the review allowed either, so it's the
+warning.)
 
 **On disk** (Kept/KeptFolder.swift, Kept/KeptReadme.swift, Kept/KeptDisk.swift).
 The root is `~/Documents/Kept` (`keptRoot`, a path; Sam's call between it and
@@ -5172,24 +5210,31 @@ in Kept, Show in Finder and Open Conversation; the row drags the figure. The
 filter narrows it by name and file name. With nothing kept the section is
 left out: the seal on every row is the invitation.
 
-**The Kept window** (Kept/KeptWindow.swift; File → Kept…, ⇧⌘K): a
-`NavigationSplitView` with the system toolbar (a collection pop-up, Show in
-Finder, Open Conversation, search over names, legends and Claude's words),
-960 × 640, minimum 720 × 480, frame `CapsidKept`. The sidebar lists results
-by collection, newest first, a 40-pt picture each, with the root and the
-count at its foot. The detail: the figure, on paper, which drags into Pages,
-Word or Keynote and previews with Quick Look on a double-click or Space; the
-name; "Plate reader QC · Assay development · version 3 of 4, kept Oct 22";
-**Copy Figure** (the file and its image on the pasteboard) and **Copy
-Legend** (your legend, else Claude's words; the tooltip says so), each
-reading "Copied" for a moment at its own width; **Your legend**, a text field
-that saves itself a second after typing stops into the README's one section,
-refusing when the file changed in another app ("README.md was changed in
-another app." with Use Mine and Use Theirs) and never writing over an outside
-edit unasked; **What Claude said**, quiet, with its attribution; and the
-files with their sizes, each draggable, plus what wasn't copied. Nothing in
-the window needs you, so nothing in it is clay. There is no Delete: nothing
-in Capsid destroys what you chose to keep (Finder does).
+**The Kept window** (Kept/KeptWindow.swift; File → Kept…, ⇧⌘K), drawn as
+board 9 of the 1.0 mock-ups on the 1.0 windows' surfaces (Look): 760 × 720,
+minimum 620 × 480, frame `CapsidKept`, a transparent title bar over the page
+with "Kept" and a collection pill ("All Collections" or one by name, a menu)
+at its leading edge and a pill search field (names, legends, Claude's words)
+at its trailing one, the system title removed from the toolbar. The list, 236
+pt wide with a hairline edge, holds the results by collection, newest first,
+each a 44 × 34 picture on a white card with its name and the day it was
+kept; the selection is a tint of ink, never the accent, and ↑ ↓ move it; the
+root and the count sit at its foot. The first result is selected when the
+window opens, whether the results were read then or before. The detail, a
+page: the figure on a white card, which drags into Pages, Word or Keynote and
+previews with Quick Look on a double-click or Space; the name; "Plate reader
+QC · Assay development · version 3 of 4, kept Oct 22"; a row of pills,
+**Copy Figure** (the file and its image on the pasteboard), **Copy Legend**
+(your legend, else Claude's words; the tooltip says so), each reading
+"Copied" for a moment, **Show in Finder** and **Open Conversation**; **Your
+legend**, a white field that saves itself a second after typing stops into
+the README's one section, refusing when the file changed in another app
+("README.md was changed in another app." with Use Mine and Use Theirs) and
+never writing over an outside edit unasked; **What Claude said**, with its
+attribution; and the files with their sizes, each draggable, plus what
+wasn't copied. Nothing in the window needs you, so nothing in it is clay.
+There is no Delete: nothing in Capsid destroys what you chose to keep
+(Finder does). `KeptWindowSnapshotTests` draws the content offscreen.
 
 **Thumbnails** (Kept/KeptThumbnails.swift): kept files are on this Mac, so
 Quick Look draws them (`QLThumbnailGenerator`) at the size asked times the
@@ -5529,7 +5574,8 @@ the messages read as `whenUsed` ("it is what was said"). Bump `checkedWith` to
 What the sheet says when something is missing, reusing the page's own
 sentences where it has them: the version gone (404/410): "This version isn't
 in Claude Science any more."; a reference file whose bytes no longer match
-its checksum: kept as it is now, with a warning; no showing message found:
+its checksum: kept as it is now, with both checksums and a warning (Checksums,
+above); no showing message found:
 "Capsid couldn't find the answer that showed this version. The figure and its
 provenance can still be kept."; a user upload: no data or script rows; mapping
 `pending`: "Claude Science is still working out what this was drawn from. Try

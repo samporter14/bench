@@ -187,7 +187,13 @@ struct KeptView: View {
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onAppear {
-            if let initialSelection { selection = initialSelection.path }
+            // The results may already be read (a window opened again): the
+            // first is selected now, not only when they change.
+            if let initialSelection {
+                selection = initialSelection.path
+            } else if selection == nil {
+                selection = shown.first?.id
+            }
         }
         .onChange(of: index.results) { _, results in
             if selection == nil, let first = results.first { selection = first.id }

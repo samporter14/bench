@@ -365,5 +365,7 @@ struct ReferenceModelTests {
         #expect(subject.entry.name == "figure_4.png")
         #expect(subject.entry.kind == .image)
         #expect(subject.session.id == Self.session.id)
+        // The answer the figure sat in goes with it.
+        #expect(subject.pinned == KeepPinnedAnswer(text: "Newest", at: model.current?.at))
     }
 }

@@ -125,7 +125,7 @@ enum KeptDemo {
     // MARK: Made-up folders
 
     /// Three kept results in two collections, with the same pictures.
-    private static func seed(_ disk: KeptDisk) async {
+    static func seed(_ disk: KeptDisk) async {
         let items: [(collection: String, name: String, session: String, project: String, daysAgo: Double, variant: Int, legend: String)] = [
             ("Paper draft", "Fig 2B · Z′ by plate", "Plate reader QC", "Assay development", 0, 2,
              "Z′ factor for each of 12 plates; plate 7 was excluded for an edge effect in column 12."),

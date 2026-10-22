@@ -555,10 +555,13 @@ final class ReferenceModel: ObservableObject {
         dependencies.open(session)
     }
 
-    /// Keep… on a figure: the Keep sheet's subject for it.
+    /// Keep… on a figure: the Keep sheet's subject for it, pinned to this
+    /// answer, so the sheet keeps this version with these words rather than
+    /// whatever newer answer shows another.
     func keepSubject(_ file: HistoryFile) -> KeepSubject {
         KeepSubject(session: session,
                     entry: ArtifactEntry(version: file.v, artifact: file.a, name: file.name, mime: nil,
-                                         size: file.size ?? 0, at: current?.at))
+                                         size: file.size ?? 0, at: current?.at),
+                    pinned: current.map { KeepPinnedAnswer(text: $0.text, at: $0.at) })
     }
 }

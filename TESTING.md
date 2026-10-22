@@ -351,8 +351,13 @@ mock-ups' look. A Codex review of M2.1 and M3 came in at the same time.
   version from the reference reader, checksum mismatches no longer silent,
   and a partial retry not done until its README agrees. None of it was seen
   live.
-- ✅ **The whole suite:** 2,295 tests in 298 suites pass (before the Keep
-  merge).
+- ✅ **The Kept window as board 9** (list, tinted selection, figure card,
+  pills, legend field), drawn offscreen light and dark
+  (`KeptWindowSnapshotTests`): window captures failed again this evening
+  ("could not create image from window", the display asleep or locked), so
+  its title bar is unseen. Found on the way: the first result wasn't
+  selected when the window opened on results already read.
+- ✅ **The whole suite:** 2,315 tests in 302 suites pass, everything merged.
 - ⏳ **Live:** the restyled window on a real session, figures from a real
   run, Keep… from a figure.
 
