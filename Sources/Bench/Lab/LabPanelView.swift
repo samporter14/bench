@@ -199,7 +199,7 @@ struct LabPanelView: View {
         }
         // A card that needs you has come to the top: VoiceOver says so.
         .onChange(of: showCards ? model.cards.first.flatMap(PanelSpeech.announcement(for:)) : nil, initial: true) { _, text in
-            if let text { PanelAnnouncer.say(text) }
+            if let text { PanelAnnouncer.announce(text) }
         }
         .onDisappear { insights.showing([], from: .panel) }
         // The panel is never the key window, and a prominent button greys out
@@ -643,7 +643,7 @@ struct LabPanelView: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(PanelSpeech.note(text: text, title: notice.detail, project: ""))
+        .accessibilityLabel(PanelSpeech.note(text: text, detail: notice.detail))
     }
 
     /// The plan under the title: its summary in three lines, then its steps

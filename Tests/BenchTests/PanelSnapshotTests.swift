@@ -142,6 +142,8 @@ struct PanelSnapshotTests {
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer {
             defaults.removePersistentDomain(forName: suiteName)
+            // cfprefsd writes after us: flush, then delete the file it made.
+            defaults.synchronize()
             try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Preferences/\(suiteName).plist"))
             SessionSpecimen.matcher = SpecimenTopics.match

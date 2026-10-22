@@ -31,8 +31,11 @@ final class MidRunNoteCards {
 
     /// A note gets a card only where cards do, and where plans, questions and
     /// requests do: the same switch that lets Capsid read the note at all.
+    static func mayPost(cards: Bool, plans: Bool) -> Bool { cards && plans }
+
+    /// The two switches as they stand in the settings.
     static func mayPost(defaults: UserDefaults = .standard) -> Bool {
-        defaults.bool(forKey: SettingsKey.showCards) && defaults.bool(forKey: SettingsKey.showPlansOnCard)
+        mayPost(cards: defaults.bool(forKey: SettingsKey.showCards), plans: defaults.bool(forKey: SettingsKey.showPlansOnCard))
     }
 
     /// Starts watching, once.
@@ -40,7 +43,7 @@ final class MidRunNoteCards {
         guard subscriptions.isEmpty else { return }
         insights.$notes
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] notes in self?.offer(notes, to: model, defaults: defaults) }
+            .sink { [weak self] notes in self?.offer(notes, to: model, allowed: Self.mayPost(defaults: defaults)) }
             .store(in: &subscriptions)
         model.$cards
             .receive(on: DispatchQueue.main)
@@ -48,9 +51,9 @@ final class MidRunNoteCards {
             .store(in: &subscriptions)
     }
 
-    /// Unseen notes, oldest first, each posted once.
-    func offer(_ notes: [MidRunNote], to model: LabModel, defaults: UserDefaults = .standard) {
-        guard Self.mayPost(defaults: defaults) else { return }
+    /// Unseen notes, oldest first, each posted once, when `allowed`.
+    func offer(_ notes: [MidRunNote], to model: LabModel, allowed: Bool = MidRunNoteCards.mayPost()) {
+        guard allowed else { return }
         for note in notes.reversed() where !posted.contains(note.id) {
             guard let session = (model.sessions + model.working + model.waiting).first(where: { $0.id == note.sessionID }) else { continue }
             posted = Array((posted + [note.id]).suffix(200))

@@ -316,8 +316,12 @@ enum PanelSpeech {
         return parts.joined(separator: ". ")
     }
 
-    static func note(text: String, title: String, project: String) -> String {
-        "Claude says. \(text). \(title), \(project)"
+    /// "Claude says. Two wells are empty. Plate layout · Assay design": the
+    /// note, then the session it came from (`detail`, as the card shows it).
+    static func note(text: String, detail: String) -> String {
+        var words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while words.hasSuffix(".") { words.removeLast() }
+        return "Claude says. \(words). \(detail)"
     }
 
     /// What is said aloud the moment a card that needs you arrives: the
@@ -345,9 +349,21 @@ enum PanelAnnouncer {
         ])
     }
 
+    private static var last: (text: String, at: Date)?
+    /// The same words twice within this long are said once: the panel is built
+    /// afresh each time it comes up, with the same card on top.
+    static let quietFor: TimeInterval = 10
+
+    /// Says `text`, unless it was just said.
+    static func announce(_ text: String, now: Date = Date()) {
+        if let last, last.text == text, now.timeIntervalSince(last.at) < quietFor { return }
+        last = (text, now)
+        say(text)
+    }
+
     /// A card that needs you has come to the top of the panel.
     static func cardArrived(_ card: LabCard) {
         guard let text = PanelSpeech.announcement(for: card) else { return }
-        say(text)
+        announce(text)
     }
 }

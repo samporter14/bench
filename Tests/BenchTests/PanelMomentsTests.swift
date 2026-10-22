@@ -470,18 +470,14 @@ struct PanelSoundTests {
         #expect(heldLog.played.isEmpty)
     }
 
-    @Test func theSettingIsReadEachTimeAndOffIsSilent() throws {
-        let suite = "capsid-panel-sound-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer {
-            defaults.removePersistentDomain(forName: suite)
-            try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Preferences/\(suite).plist"))
-        }
-        defaults.set(false, forKey: SettingsKey.soundOnNeedsInput)
-        // Off: nothing to hear, and nothing to check but that it doesn't throw.
-        PanelSound.play(.question, defaults: defaults)
-        #expect(defaults.bool(forKey: SettingsKey.soundOnNeedsInput) == false)
+    @Test func theOneSettingGatesEverySoundAndIsReadEachTimeOneIsPlayed() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Bench/Lab/PanelSound.swift"), encoding: .utf8)
+        #expect(source.contains("defaults.bool(forKey: SettingsKey.soundOnNeedsInput)"))
+        // The model only ever plays through `PanelSound.play`, which holds the gate.
+        let model = try String(contentsOf: root.appendingPathComponent("Sources/Bench/Lab/LabModel.swift"), encoding: .utf8)
+        #expect(model.contains("{ PanelSound.play($0) }"))
+        #expect(!model.contains("NSSound("))
     }
 
     @Test func aFinishIsTheQuietestSound() {
@@ -554,8 +550,9 @@ struct PanelSpeechTests {
     }
 
     @Test func aNoteIsSaidWithWhoSaidIt() {
-        #expect(PanelSpeech.note(text: "Two wells are empty.", title: "Plate layout", project: "Assay design")
-                == "Claude says. Two wells are empty.. Plate layout, Assay design")
+        #expect(PanelSpeech.note(text: "Two wells are empty.", detail: "Plate layout · Assay design")
+                == "Claude says. Two wells are empty. Plate layout · Assay design")
+        #expect(PanelSpeech.note(text: "Carrying on", detail: "T · P") == "Claude says. Carrying on. T · P")
     }
 
     @Test func onlyACardThatNeedsYouIsAnnounced() {
@@ -577,6 +574,21 @@ struct PanelSpeechTests {
         #expect(said == ["Plan ready for your review: Batch effect check"])
     }
 
+    @Test func theSameWordsAreNotSaidTwiceInQuickSuccession() {
+        let saved = PanelAnnouncer.say
+        defer { PanelAnnouncer.say = saved }
+        var said: [String] = []
+        PanelAnnouncer.say = { said.append($0) }
+        let start = Date()
+        PanelAnnouncer.announce("Asked you a question: Dedupe made-up", now: start)
+        PanelAnnouncer.announce("Asked you a question: Dedupe made-up", now: start.addingTimeInterval(2))
+        PanelAnnouncer.announce("Stopped with an error: Dedupe made-up", now: start.addingTimeInterval(3))
+        PanelAnnouncer.announce("Asked you a question: Dedupe made-up", now: start.addingTimeInterval(4))
+        PanelAnnouncer.announce("Stopped with an error: Dedupe made-up", now: start.addingTimeInterval(40))
+        #expect(said == ["Asked you a question: Dedupe made-up", "Stopped with an error: Dedupe made-up",
+                         "Asked you a question: Dedupe made-up", "Stopped with an error: Dedupe made-up"])
+    }
+
     @Test func eachCardIsOneAccessibilityElementWithItsButtonsAsNamedActions() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let panel = try String(contentsOf: root.appendingPathComponent("Sources/Bench/Lab/LabPanelView.swift"), encoding: .utf8)
@@ -586,7 +598,7 @@ struct PanelSpeechTests {
         for action in ["Show every session", "Copy", "Results", "Open", "Dismiss"] {
             #expect(panel.contains(".accessibilityAction(named: \"\(action)\")"), "\(action)")
         }
-        #expect(panel.contains("PanelAnnouncer.say"))
+        #expect(panel.contains("PanelAnnouncer.announce"))
     }
 }
 
@@ -598,29 +610,15 @@ struct MidRunNoteCardsTests {
         MidRunNote(id: id, sessionID: session, text: text, at: nil)
     }
 
-    private func defaults(cards: Bool = true, plans: Bool = true) throws -> (UserDefaults, () -> Void) {
-        let suite = "capsid-panel-notes-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defaults.set(cards, forKey: SettingsKey.showCards)
-        defaults.set(plans, forKey: SettingsKey.showPlansOnCard)
-        return (defaults, {
-            defaults.removePersistentDomain(forName: suite)
-            try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Preferences/\(suite).plist"))
-        })
-    }
-
     private func workingModel() -> LabModel {
         let model = LabModel()
         model.ingest(Fixture.snapshot(Fixture.session("s", .running, title: "Plate layout")))
         return model
     }
 
-    @Test func aNoteBecomesAQuietTimedCardWithOpenAndItsWordsInTheNotice() throws {
-        let (defaults, cleanup) = try defaults()
-        defer { cleanup() }
+    @Test func aNoteBecomesAQuietTimedCardWithOpenAndItsWordsInTheNotice() {
         let model = workingModel()
-        MidRunNoteCards().offer([note()], to: model, defaults: defaults)
+        MidRunNoteCards().offer([note()], to: model, allowed: true)
         guard case .notice(let notice)? = model.cards.first else { Issue.record("no card"); return }
         #expect(notice.id == "note-s#1")
         #expect(notice.caption == "Claude says")
@@ -631,41 +629,34 @@ struct MidRunNoteCardsTests {
         #expect(PanelSound.sound(for: model.cards[0]) == nil)
     }
 
-    @Test func theSameNoteIsNeverPostedTwiceAndAnotherSessionsNoteWaitsForItsSession() throws {
-        let (defaults, cleanup) = try defaults()
-        defer { cleanup() }
+    @Test func theSameNoteIsNeverPostedTwiceAndAnotherSessionsNoteWaitsForItsSession() {
         let model = workingModel()
         let cards = MidRunNoteCards()
-        cards.offer([note()], to: model, defaults: defaults)
-        cards.offer([note()], to: model, defaults: defaults)
+        cards.offer([note()], to: model, allowed: true)
+        cards.offer([note()], to: model, allowed: true)
         #expect(model.cards.count == 1)
-        cards.offer([note("zz#2", session: "not-known")], to: model, defaults: defaults)
+        cards.offer([note("zz#2", session: "not-known")], to: model, allowed: true)
         #expect(model.cards.count == 1)
     }
 
-    @Test func theSameSwitchesAsTheOtherCardsGateIt() throws {
+    @Test func theSameSwitchesAsTheOtherCardsGateIt() {
         for (cards, plans) in [(false, true), (true, false), (false, false)] {
-            let (defaults, cleanup) = try defaults(cards: cards, plans: plans)
-            defer { cleanup() }
+            #expect(!MidRunNoteCards.mayPost(cards: cards, plans: plans), "cards \(cards) plans \(plans)")
             let model = workingModel()
-            MidRunNoteCards().offer([note()], to: model, defaults: defaults)
-            #expect(model.cards.isEmpty, "cards \(cards) plans \(plans)")
+            MidRunNoteCards().offer([note()], to: model, allowed: MidRunNoteCards.mayPost(cards: cards, plans: plans))
+            #expect(model.cards.isEmpty)
         }
-        let (on, cleanup) = try defaults()
-        defer { cleanup() }
-        #expect(MidRunNoteCards.mayPost(defaults: on))
+        #expect(MidRunNoteCards.mayPost(cards: true, plans: true))
     }
 
-    @Test func aNoteIsSeenWhenItsCardReachesTheTopAndNotBefore() throws {
-        let (defaults, cleanup) = try defaults()
-        defer { cleanup() }
+    @Test func aNoteIsSeenWhenItsCardReachesTheTopAndNotBefore() {
         let model = workingModel()
         let insights = PanelInsights()
         insights.showDemo(notes: [note()])
         let cards = MidRunNoteCards()
         // A question is on top first: the note is queued behind it, unseen.
         model.ingest(Fixture.snapshot(Fixture.session("s", .needsInput, reason: .question)))
-        cards.offer(insights.notes, to: model, defaults: defaults)
+        cards.offer(insights.notes, to: model, allowed: true)
         cards.watch(model.cards, insights: insights)
         #expect(model.cards.count == 2 && insights.notes.count == 1)
         model.dismiss(model.cards[0])

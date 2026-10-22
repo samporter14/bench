@@ -120,9 +120,7 @@ final class FinishedResults: ObservableObject {
         case failed
     }
 
-    /// The app's. A demo, a snapshot or a test swaps in its own before the
-    /// panel is built.
-    static var shared = FinishedResults(dependencies: .live())
+    static let shared = FinishedResults(dependencies: .live())
 
     /// The pictures on a card.
     static let thumbnailLimit = 3
