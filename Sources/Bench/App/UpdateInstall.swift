@@ -5,9 +5,10 @@
 // that was offered, and only then runs Resources/swap.sh, which waits for
 // this Capsid to quit, moves the old copy aside, moves the new one into
 // place and opens it; if the new one doesn't start, the old one is put back.
-// Nothing is deleted until the new copy is running (UpdateAftermath, at its
-// launch). A download or a check that fails leaves the installed Capsid
-// untouched and deletes what was downloaded without opening it.
+// Nothing is deleted until swap.sh has seen the new copy stay up and said so
+// in its marker (UpdateAftermath, at the new copy's launch, waits for it). A
+// download or a check that fails leaves the installed Capsid untouched and
+// deletes what was downloaded without opening it.
 //
 // `UpdateInstallRules` is pure, so the tests run it on made-up names and
 // markers. `UpdateInstallFlow` takes every step that touches the disk, the
@@ -583,12 +584,28 @@ enum UpdateDryRun {
 /// What the state folder says at launch: a copy was just installed (the
 /// old one waits beside it to be removed), or the swap failed and this is
 /// the copy that was put back.
+///
+/// The old copy beside a new one is the swap's way back, so it is removed
+/// only after the handshake: swap.sh opens the new copy, waits until it runs,
+/// looks again two seconds later (a copy that dies on launch is seen running
+/// for an instant) and only then writes `installed <version>`. A new copy that
+/// reaches its own launch clean-up before that must leave the old one alone:
+/// if it then crashes, swap.sh moves it away and needs the old copy at
+/// `.previous` to put back.
 enum UpdateAftermath {
     enum Outcome: Equatable, Sendable {
         case nothing
         case installed(version: String)
         case failed(UpdateInstallFailure, offered: String?)
+        /// An older copy sits beside this one, but swap.sh hasn't written
+        /// its marker yet: nothing was removed, and a later look will say.
+        case waiting
     }
+
+    /// How often `run` looks again while the outcome is `.waiting`, and for
+    /// how long in all.
+    static let retryInterval: Duration = .seconds(2)
+    static let retryLimit: Duration = .seconds(30)
 
     /// Reads the marker and the `.previous` copy, removes what is finished
     /// with, and says what happened. `remove` is injected so the tests
@@ -610,13 +627,22 @@ enum UpdateAftermath {
             remove(stateFolder)
         } else if files.fileExists(atPath: previous.path) {
             let previousVersion = bundleInfo(previous).version
-            if UpdateInstallRules.shouldRemovePrevious(previousVersion: previousVersion, current: currentVersion) {
-                remove(previous)
-                outcome = .installed(version: currentVersion)
+            let isOlder = UpdateInstallRules.shouldRemovePrevious(previousVersion: previousVersion, current: currentVersion)
+            if case .installed = marker {
+                if isOlder {
+                    remove(previous)
+                    outcome = .installed(version: currentVersion)
+                } else {
+                    log.error("A copy beside this one wasn't removed: it isn't older")
+                }
+                remove(stateFolder)
+            } else if isOlder {
+                // No marker yet: swap.sh is still looking at this copy, and may
+                // yet need the old one back. Remove nothing.
+                outcome = .waiting
             } else {
                 log.error("A copy beside this one wasn't removed: it isn't older")
             }
-            if marker != nil { remove(stateFolder) }
         } else if case .installed = marker {
             outcome = .installed(version: currentVersion)
             remove(stateFolder)
@@ -624,15 +650,49 @@ enum UpdateAftermath {
         return outcome
     }
 
-    /// At launch, for the copy in Applications, never in a demo.
+    /// `settle` once now and, while it answers `.waiting`, again every
+    /// `interval` until `limit` has gone by, then says what happened as `run`
+    /// always has: the notice for an install, the alert for a failed swap.
+    /// The first look is made before this returns; the returned task, nil when
+    /// the first look settled things, holds the later ones. Past the limit the
+    /// old copy is left where it is (the next update's swap.sh moves a stale
+    /// one into the state folder) and one line goes to the log. `sleep` is
+    /// injected so the tests don't wait.
     @MainActor
-    static func run(currentVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
-                    post: @MainActor (LabNotice) -> Void = { LabModel.shared.post($0) },
-                    alert: @MainActor (UpdateInstallFailure, String?) -> Void = { UpdatePrompts.installFailedAtLaunch($0, offered: $1) }) {
-        guard Demo.mode == nil, UpdateRules.canInstall(from: Bundle.main.bundleURL) else { return }
-        let live = UpdateInstallDependencies.live()
-        let outcome = settle(stateFolder: live.stateFolder, installedApp: live.installedApp, currentVersion: currentVersion,
-                             bundleInfo: live.bundleInfo, remove: { try? FileManager.default.removeItem(at: $0) })
+    @discardableResult
+    static func settleAndReport(
+        stateFolder: URL, installedApp: URL, currentVersion: String,
+        bundleInfo: @escaping @Sendable (URL) -> (id: String?, version: String?),
+        remove: @escaping @Sendable (URL) -> Void,
+        post: @escaping @MainActor @Sendable (LabNotice) -> Void,
+        alert: @escaping @MainActor @Sendable (UpdateInstallFailure, String?) -> Void,
+        sleep: @escaping @Sendable (Duration) async -> Void = { try? await Task.sleep(for: $0) },
+        interval: Duration = retryInterval, limit: Duration = retryLimit) -> Task<Void, Never>? {
+        func look() -> Outcome {
+            settle(stateFolder: stateFolder, installedApp: installedApp, currentVersion: currentVersion,
+                   bundleInfo: bundleInfo, remove: remove)
+        }
+        let first = look()
+        guard first == .waiting else {
+            report(first, post: post, alert: alert)
+            return nil
+        }
+        return Task { @MainActor in
+            var waited = Duration.zero
+            var outcome = Outcome.waiting
+            while outcome == .waiting, waited < limit {
+                await sleep(interval)
+                if Task.isCancelled { return }
+                waited += interval
+                outcome = look()
+            }
+            report(outcome, post: post, alert: alert)
+        }
+    }
+
+    @MainActor
+    private static func report(_ outcome: Outcome, post: @MainActor (LabNotice) -> Void,
+                               alert: @MainActor (UpdateInstallFailure, String?) -> Void) {
         switch outcome {
         case .nothing: break
         case .installed(let version):
@@ -641,6 +701,20 @@ enum UpdateAftermath {
         case .failed(let failure, let offered):
             log.error("Update: the swap failed: \(String(describing: failure), privacy: .public)")
             alert(failure, offered)
+        case .waiting:
+            log.notice("Update: the swap script never wrote its marker; the old copy was left beside this one")
         }
+    }
+
+    /// At launch, for the copy in Applications, never in a demo.
+    @MainActor
+    static func run(currentVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
+                    post: @escaping @MainActor @Sendable (LabNotice) -> Void = { LabModel.shared.post($0) },
+                    alert: @escaping @MainActor @Sendable (UpdateInstallFailure, String?) -> Void = { UpdatePrompts.installFailedAtLaunch($0, offered: $1) }) {
+        guard Demo.mode == nil, UpdateRules.canInstall(from: Bundle.main.bundleURL) else { return }
+        let live = UpdateInstallDependencies.live()
+        settleAndReport(stateFolder: live.stateFolder, installedApp: live.installedApp, currentVersion: currentVersion,
+                        bundleInfo: live.bundleInfo, remove: { try? FileManager.default.removeItem(at: $0) },
+                        post: post, alert: alert)
     }
 }

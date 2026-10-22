@@ -374,6 +374,19 @@ struct UpdateCheckerInstallTests {
 
 // MARK: After a launch
 
+/// What a launch clean-up did, for the tests of its retry loop: the files it
+/// removed, the cards it posted, the alerts it raised and the pauses it took.
+/// Everything runs on the main actor, one step at a time, so a plain class
+/// serves the closures that cross into the loop's task.
+private final class AftermathRecorder: @unchecked Sendable {
+    var removed: [URL] = []
+    var notices: [String] = []
+    var alerts: [(UpdateInstallFailure, String?)] = []
+    var sleeps: [Duration] = []
+    /// Runs when a pause is taken, with the number of pauses so far.
+    var onSleep: (Int) -> Void = { _ in }
+}
+
 struct UpdateAftermathTests {
     private struct Scratch {
         let root: URL
@@ -451,5 +464,148 @@ struct UpdateAftermathTests {
         let result = settle(scratch, previousVersion: nil)
         #expect(result.outcome == .installed(version: "0.9.8"))
         #expect(result.removed == [scratch.state])
+    }
+
+    // MARK: The handshake: nothing is removed before the marker
+
+    @Test func theOldCopyStaysUntilTheSwapScriptHasSaidTheNewOneStayedUp() throws {
+        let scratch = try Scratch()
+        defer { scratch.tearDown() }
+        try scratch.makePrevious()
+        // The new copy is up, but swap.sh hasn't written its marker.
+        let result = settle(scratch)
+        #expect(result.outcome == .waiting)
+        #expect(result.removed.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: scratch.previous.path))
+    }
+
+    @Test func theOldCopyGoesWhenTheMarkerAppears() throws {
+        let scratch = try Scratch()
+        defer { scratch.tearDown() }
+        try scratch.makePrevious()
+        let first = settle(scratch, previousVersion: "0.9.7", current: "1.0")
+        #expect(first.outcome == .waiting)
+        #expect(first.removed.isEmpty)
+        try scratch.marker("installed 1.0")
+        let second = settle(scratch, previousVersion: "0.9.7", current: "1.0")
+        #expect(second.outcome == .installed(version: "1.0"))
+        #expect(second.removed == [scratch.previous, scratch.state])
+    }
+
+    @Test func aCopyBesideThisOneThatIsNotOlderIsNotWaitedFor() throws {
+        let scratch = try Scratch()
+        defer { scratch.tearDown() }
+        try scratch.makePrevious()
+        for previousVersion in ["0.9.9", "0.9.8", nil] {
+            let result = settle(scratch, previousVersion: previousVersion, current: "0.9.8")
+            #expect(result.outcome == .nothing)
+            #expect(result.removed.isEmpty)
+        }
+    }
+
+    @Test func aFailedMarkerBeatsTheCopyBesideThisOne() throws {
+        let scratch = try Scratch()
+        defer { scratch.tearDown() }
+        try scratch.makePrevious()
+        try scratch.marker("failed: the new copy didn\u{2019}t open")
+        let result = settle(scratch)
+        #expect(result.outcome == .failed(.didNotOpen, offered: nil))
+        #expect(result.removed == [scratch.state])
+    }
+
+    // MARK: The same, looked at again
+
+    /// `UpdateAftermath.settleAndReport` on the scratch folders, with every
+    /// removal and pause recorded. `removeForReal` takes files off the disk,
+    /// as the live launch does.
+    @MainActor
+    private func report(_ scratch: Scratch, _ recorder: AftermathRecorder, current: String = "1.0",
+                        removeForReal: Bool = false) -> Task<Void, Never>? {
+        UpdateAftermath.settleAndReport(
+            stateFolder: scratch.state, installedApp: scratch.app, currentVersion: current,
+            bundleInfo: { _ in ("local.sam.bench", "0.9.7") },
+            remove: { url in
+                recorder.removed.append(url)
+                if removeForReal { try? FileManager.default.removeItem(at: url) }
+            },
+            post: { recorder.notices.append($0.id) },
+            alert: { recorder.alerts.append(($0, $1)) },
+            sleep: { duration in
+                recorder.sleeps.append(duration)
+                recorder.onSleep(recorder.sleeps.count)
+            })
+    }
+
+    @Test @MainActor func aMarkerThatArrivesLaterIsActedOnOnce() async throws {
+        let scratch = try Scratch()
+        defer { scratch.tearDown() }
+        try scratch.makePrevious()
+        let recorder = AftermathRecorder()
+        // Absent at the first look and after the first pause, there after the
+        // second.
+        recorder.onSleep = { count in if count == 2 { try? scratch.marker("installed 1.0") } }
+        let task = report(scratch, recorder, removeForReal: true)
+        #expect(task != nil)
+        #expect(recorder.notices.isEmpty && recorder.removed.isEmpty, "the first look is made, and is a wait")
+        await task?.value
+        #expect(recorder.sleeps == [.seconds(2), .seconds(2)])
+        #expect(recorder.notices == ["updated-1.0"])
+        #expect(recorder.alerts.isEmpty)
+        #expect(recorder.removed == [scratch.previous, scratch.state])
+        #expect(!FileManager.default.fileExists(atPath: scratch.previous.path))
+    }
+
+    @Test @MainActor func aMarkerThatNeverComesLeavesTheOldCopyWhereItIs() async throws {
+        let scratch = try Scratch()
+        defer { scratch.tearDown() }
+        try scratch.makePrevious()
+        let recorder = AftermathRecorder()
+        let task = report(scratch, recorder, removeForReal: true)
+        await task?.value
+        // Every two seconds for thirty.
+        #expect(recorder.sleeps.count == 15)
+        #expect(recorder.sleeps.allSatisfy { $0 == .seconds(2) })
+        #expect(recorder.removed.isEmpty)
+        #expect(recorder.notices.isEmpty && recorder.alerts.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: scratch.previous.path))
+        #expect(FileManager.default.fileExists(atPath: scratch.state.path))
+    }
+
+    @Test @MainActor func aFailedSwapThatIsWrittenLaterRaisesTheAlertOnce() async throws {
+        let scratch = try Scratch()
+        defer { scratch.tearDown() }
+        try scratch.makePrevious()
+        try scratch.tagFolder("v1.0")
+        let recorder = AftermathRecorder()
+        recorder.onSleep = { count in if count == 1 { try? scratch.marker("failed: the new copy didn\u{2019}t open") } }
+        let task = report(scratch, recorder)
+        await task?.value
+        #expect(recorder.sleeps.count == 1)
+        #expect(recorder.alerts.count == 1)
+        #expect(recorder.alerts.first?.0 == .didNotOpen && recorder.alerts.first?.1 == "v1.0")
+        #expect(recorder.notices.isEmpty)
+        #expect(recorder.removed == [scratch.state])
+    }
+
+    @Test @MainActor func aMarkerThatIsAlreadyThereIsActedOnWithoutWaiting() throws {
+        let scratch = try Scratch()
+        defer { scratch.tearDown() }
+        try scratch.makePrevious()
+        try scratch.marker("installed 1.0")
+        let recorder = AftermathRecorder()
+        let task = report(scratch, recorder)
+        #expect(task == nil)
+        #expect(recorder.sleeps.isEmpty)
+        #expect(recorder.notices == ["updated-1.0"])
+        #expect(recorder.removed == [scratch.previous, scratch.state])
+    }
+
+    @Test @MainActor func anOrdinaryLaunchDoesNotWaitOrSayAnything() throws {
+        let scratch = try Scratch()
+        defer { scratch.tearDown() }
+        let recorder = AftermathRecorder()
+        #expect(report(scratch, recorder) == nil)
+        #expect(recorder.sleeps.isEmpty && recorder.removed.isEmpty)
+        #expect(recorder.notices.isEmpty && recorder.alerts.isEmpty)
     }
 }

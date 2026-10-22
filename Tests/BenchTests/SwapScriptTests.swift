@@ -52,14 +52,14 @@ private struct SwapFixture {
         try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
     }
 
-    /// Runs the script for a "running copy" that quits after `oldQuitsAfter`
-    /// seconds (a sleep standing in for Capsid), with short waits.
-    func run(oldQuitsAfter: Double = 0.3, wait: Int = 2) throws -> (status: Int32, marker: String?, log: String) {
+    /// Starts the script for a "running copy" that quits after `oldQuitsAfter`
+    /// seconds (a sleep standing in for Capsid), with short waits, and returns
+    /// at once with the two processes: the caller can act while it runs.
+    func start(oldQuitsAfter: Double = 0.3, wait: Int = 2) throws -> (old: Process, swap: Process) {
         let old = Process()
         old.executableURL = URL(fileURLWithPath: "/bin/sleep")
         old.arguments = [String(oldQuitsAfter)]
         try old.run()
-        defer { if old.isRunning { old.terminate() } }
 
         let swap = Process()
         swap.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -73,11 +73,22 @@ private struct SwapFixture {
         swap.standardOutput = FileHandle.nullDevice
         swap.standardError = FileHandle.nullDevice
         try swap.run()
-        swap.waitUntilExit()
+        return (old, swap)
+    }
+
+    /// Waits for a started script to end and reads what it left.
+    func finish(_ started: (old: Process, swap: Process)) -> (status: Int32, marker: String?, log: String) {
+        started.swap.waitUntilExit()
+        if started.old.isRunning { started.old.terminate() }
         let marker = try? String(contentsOf: state.appendingPathComponent("marker"), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let log = (try? String(contentsOf: state.appendingPathComponent("swap.log"), encoding: .utf8)) ?? ""
-        return (swap.terminationStatus, marker, log)
+        return (started.swap.terminationStatus, marker, log)
+    }
+
+    /// Runs the script to its end.
+    func run(oldQuitsAfter: Double = 0.3, wait: Int = 2) throws -> (status: Int32, marker: String?, log: String) {
+        finish(try start(oldQuitsAfter: oldQuitsAfter, wait: wait))
     }
 
     func version(of url: URL) -> String? {
@@ -124,6 +135,95 @@ struct SwapScriptTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.previous.path))
         // The copy that didn't start is kept for a look, not deleted.
         #expect(try fixture.stateEntries().contains { $0.hasPrefix("broken-") && $0.hasSuffix(".app") })
+    }
+
+    /// The interaction the update's handshake exists for: the new Capsid
+    /// reaches its launch clean-up (`UpdateAftermath.settle`) while swap.sh is
+    /// still inside its two-second look, and then dies. swap.sh must find the
+    /// old copy where it put it, so the rollback leaves a whole Capsid in
+    /// Applications. The timing is real (the script's own `sleep 2`), so a
+    /// run that missed the window, on a machine too busy to get from the
+    /// running file to the clean-up in a second and a half, is tried again.
+    @Test func aNewCopyThatCleansUpAndThenDiesStillLeavesTheOldOneBack() throws {
+        for attempt in 1...3 {
+            let fixture = try SwapFixture()
+            defer { fixture.tearDown() }
+            let started = try fixture.start(wait: 5)
+
+            // The fake launch has made the running file: swap.sh is about to
+            // sleep its two seconds and look again.
+            let deadline = Date().addingTimeInterval(10)
+            while !FileManager.default.fileExists(atPath: fixture.runningFile.path) && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            #expect(FileManager.default.fileExists(atPath: fixture.runningFile.path), "the fake launch never ran")
+            // The script looks for the file every quarter second: half a second
+            // on, it has seen it and is inside its two-second sleep.
+            Thread.sleep(forTimeInterval: 0.5)
+            let seen = Date()
+
+            // The new copy's launch clean-up, with the real removal, on the
+            // paths the script is using; then the new copy dies.
+            let outcome = UpdateAftermath.settle(
+                stateFolder: fixture.state, installedApp: fixture.app, currentVersion: "0.9.8",
+                bundleInfo: { ("local.sam.bench", fixture.version(of: $0)) },
+                remove: { try? FileManager.default.removeItem(at: $0) })
+            try? FileManager.default.removeItem(at: fixture.runningFile)
+            let cleanedUpAfter = Date().timeIntervalSince(seen)
+
+            let result = fixture.finish(started)
+            if cleanedUpAfter > 1.5 || result.marker?.hasPrefix("installed") == true {
+                // The two-second look ran before the crash: not this test's
+                // interaction. Another attempt, unless this was the last.
+                if attempt < 3 { continue }
+                Issue.record("the clean-up never landed inside the script's two-second look (\(cleanedUpAfter) s)")
+                return
+            }
+
+            #expect(outcome == .waiting, "the clean-up must wait for the marker, not remove the old copy")
+            #expect(result.status == 1, "\(result.log)")
+            // The old copy is back in Applications, whole.
+            #expect(fixture.version(of: fixture.app) == "0.9.7", "\(result.log)")
+            #expect(FileManager.default.fileExists(atPath: fixture.app.appendingPathComponent("Contents/MacOS/Capsid").path))
+            #expect(!FileManager.default.fileExists(atPath: fixture.previous.path))
+            #expect(result.marker?.hasPrefix("failed:") == true, "\(result.marker ?? "no marker")")
+            #expect(result.marker?.contains("put back") != true, "\(result.marker ?? "no marker")")
+            // The copy that died is kept for a look.
+            #expect(try fixture.stateEntries().contains { $0.hasPrefix("broken-") && $0.hasSuffix(".app") })
+            return
+        }
+    }
+
+    /// The other half: a new copy that reaches its clean-up inside the look
+    /// and stays up. The clean-up waits; once the script has written its
+    /// marker, the next look removes the old copy and the state folder.
+    @Test func aNewCopyThatStaysUpHasTheOldOneRemovedOnceTheMarkerIsThere() throws {
+        let fixture = try SwapFixture()
+        defer { fixture.tearDown() }
+        let started = try fixture.start(wait: 5)
+        let deadline = Date().addingTimeInterval(10)
+        while !FileManager.default.fileExists(atPath: fixture.runningFile.path) && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        Thread.sleep(forTimeInterval: 0.5)
+        func cleanUp() -> UpdateAftermath.Outcome {
+            UpdateAftermath.settle(
+                stateFolder: fixture.state, installedApp: fixture.app, currentVersion: "0.9.8",
+                bundleInfo: { ("local.sam.bench", fixture.version(of: $0)) },
+                remove: { try? FileManager.default.removeItem(at: $0) })
+        }
+        // Half a second in, the script is inside its two-second look: no marker.
+        let early = cleanUp()
+        #expect(early == .waiting)
+        #expect(fixture.version(of: fixture.previous) == "0.9.7")
+        let result = fixture.finish(started)
+        #expect(result.status == 0, "\(result.log)")
+        #expect(result.marker == "installed 0.9.8")
+        let late = cleanUp()
+        #expect(late == .installed(version: "0.9.8"))
+        #expect(!FileManager.default.fileExists(atPath: fixture.previous.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.state.path))
+        #expect(fixture.version(of: fixture.app) == "0.9.8")
     }
 
     @Test func aMoveThatFailsPutsTheOldCopyBack() throws {
