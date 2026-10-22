@@ -137,7 +137,7 @@ protocol HotKeyBackend: AnyObject {
 /// The two keys, registered from settings; what each does is set by the app.
 @MainActor
 final class GlobalKeys: ObservableObject {
-    static let shared = GlobalKeys(backend: CarbonHotKeys.shared, defaults: .standard)
+    static let shared = GlobalKeys(backend: CarbonHotKeys.shared, defaults: UserDefaults.standard)
 
     /// A sentence for each key that isn't working, for Settings.
     @Published private(set) var problems: [GlobalHotKey.Slot: String] = [:]
@@ -147,7 +147,7 @@ final class GlobalKeys: ObservableObject {
     var actions: [GlobalHotKey.Slot: @MainActor () -> Void] = [:]
 
     private let backend: HotKeyBackend
-    private let defaults: UserDefaults
+    private let defaults: SettingsStoring
     /// The choice a slot failed with, so a settings change that isn't its own
     /// doesn't ask the system again.
     private var failed: [GlobalHotKey.Slot: GlobalHotKey.Choice] = [:]
@@ -155,7 +155,7 @@ final class GlobalKeys: ObservableObject {
     private var observer: NSObjectProtocol?
     private let now: () -> Date
 
-    init(backend: HotKeyBackend, defaults: UserDefaults, now: @escaping () -> Date = { Date() }) {
+    init(backend: HotKeyBackend, defaults: SettingsStoring, now: @escaping () -> Date = { Date() }) {
         self.backend = backend
         self.defaults = defaults
         self.now = now
@@ -164,7 +164,7 @@ final class GlobalKeys: ObservableObject {
     /// Registers both keys, and again whenever a setting changes.
     func start() {
         apply()
-        observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: defaults,
+        observer = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: UserDefaults.standard,
                                                           queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.apply() }
         }

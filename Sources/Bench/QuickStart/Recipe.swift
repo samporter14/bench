@@ -35,17 +35,26 @@ struct Recipe: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
-/// Reads and writes the recipes in a `UserDefaults` (the app's own, or a
-/// suite a test makes).
+/// The two things settings storage is asked here: a string, and to keep one.
+/// `UserDefaults` is one; a test's is a dictionary, so no preferences file is
+/// made for it.
+protocol SettingsStoring: AnyObject {
+    func string(forKey defaultName: String) -> String?
+    func set(_ value: Any?, forKey defaultName: String)
+}
+
+extension UserDefaults: SettingsStoring {}
+
+/// Reads and writes the recipes in settings (the app's own, or a test's).
 struct RecipeStore {
     /// ⌘1 to ⌘9.
     static let keyed = 9
     /// More than this is a mistake, not a collection.
     static let limit = 60
 
-    private let defaults: UserDefaults
+    private let defaults: SettingsStoring
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: SettingsStoring = UserDefaults.standard) {
         self.defaults = defaults
     }
 
