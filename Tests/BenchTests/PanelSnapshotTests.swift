@@ -8,8 +8,7 @@
 // its whole view with white), so each is drawn on a backdrop (board 6's slate,
 // or an ivory) with `flatGlass`: the surface and the buttons become flat
 // stand-ins of the same colours. The specimens draw stills (`stillSpecimens`),
-// since a playing layer is not painted either. Settings are read from a suite
-// of the test's own. What this cannot show: the glass itself, and the clay
+// since a playing layer is not painted either. What this cannot show: the glass itself, and the clay
 // tint of a glass button.
 import AppKit
 import SwiftUI
@@ -138,21 +137,17 @@ struct PanelSnapshotTests {
         guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let suiteName = "capsid-panel-snapshot-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        // Settings the pictures need, registered for this run only: a registered
+        // default is never written, so nothing is left in ~/Library/Preferences.
+        let defaults = UserDefaults.standard
+        defaults.register(defaults: [
+            SettingsKey.showSpecimenCaption: true, SettingsKey.matchSpecimenToSession: true,
+            SettingsKey.showCards: true, SettingsKey.showPanel: true,
+        ])
         defer {
-            defaults.removePersistentDomain(forName: suiteName)
-            // cfprefsd writes after us: flush, then delete the file it made.
-            defaults.synchronize()
-            try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Preferences/\(suiteName).plist"))
             SessionSpecimen.matcher = SpecimenTopics.match
             SessionSpecimen.forget()
         }
-        defaults.set(true, forKey: SettingsKey.showSpecimenCaption)
-        defaults.set(true, forKey: SettingsKey.matchSpecimenToSession)
-        defaults.set(true, forKey: SettingsKey.showCards)
-        defaults.set(true, forKey: SettingsKey.showPanel)
         // The matcher the data branch brings is not here yet: this one names the
         // board's example.
         SessionSpecimen.matcher = { title, _, candidates in
