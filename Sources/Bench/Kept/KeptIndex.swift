@@ -1,5 +1,5 @@
 // KeptIndex.swift — what is kept, as the Results window's Kept section and
-// the Kept window see it (DESIGN.md, Keep): the folders under the Kept root
+// the Shelf window see it (DESIGN.md, Keep, Shelf): the folders under the Kept root
 // that hold a README with `capsid_kept: 1`, read when a window opens or a
 // keep lands, never in the background, and never written anywhere. There is
 // no index file: the folders are the record, so a result moved or made by
@@ -30,6 +30,8 @@ final class KeptIndex: ObservableObject {
     let disk: KeptDisk
     private let root: @MainActor () -> URL
     private var task: Task<Void, Never>?
+    /// Asked to read again while a read was under way.
+    private var again = false
 
     init(disk: KeptDisk, root: @escaping @MainActor () -> URL) {
         self.disk = disk
@@ -44,28 +46,51 @@ final class KeptIndex: ObservableObject {
         return results.compactMap { seen.insert($0.collection).inserted ? $0.collection : nil }
     }
 
-    /// Reads the folders again. A read under way answers for both.
+    /// Reads the folders again. A read under way is followed by one more, so
+    /// whatever changed since it began is seen; any number of asks in the
+    /// meantime are that one.
     func refresh() {
-        guard task == nil else { return }
+        guard task == nil else {
+            again = true
+            return
+        }
         if results.isEmpty { state = .reading }
         task = Task { [weak self] in
             guard let self else { return }
-            do {
-                let found = try await disk.scan()
-                results = found
-                state = .ready
-                readAt = Date()
-            } catch let error as KeptDiskError {
-                if case .rootMissing = error {
-                    results = []
-                    state = .rootMissing
-                } else {
-                    state = .failed(KeptDiskError.sentence(error))
-                }
-            } catch {
+            repeat {
+                again = false
+                await read()
+            } while again
+            task = nil
+        }
+    }
+
+    /// Reads the folders again and waits for the read that sees everything
+    /// changed before this call: what the Shelf needs after it adds or removes.
+    func refreshAndWait() async {
+        refresh()
+        await task?.value
+    }
+
+    /// The folders have been read once, or a read is under way: the Shelf's
+    /// "read it once, lazily".
+    var hasRead: Bool { readAt != nil || task != nil || state != .idle }
+
+    private func read() async {
+        do {
+            let found = try await disk.scan()
+            results = found
+            state = .ready
+            readAt = Date()
+        } catch let error as KeptDiskError {
+            if case .rootMissing = error {
+                results = []
+                state = .rootMissing
+            } else {
                 state = .failed(KeptDiskError.sentence(error))
             }
-            task = nil
+        } catch {
+            state = .failed(KeptDiskError.sentence(error))
         }
     }
 

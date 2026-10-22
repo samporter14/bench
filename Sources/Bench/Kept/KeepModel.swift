@@ -92,6 +92,45 @@ struct KeepDependencies {
     }
 }
 
+/// What fetching one file of a keep came to.
+enum KeepFetched {
+    /// `expected`: the daemon's checksum, when the bytes don't match it.
+    case bytes(Data, expected: String?), gone, tooBig, failed(String), cancelled
+}
+
+extension KeepDependencies {
+    /// A file's bytes: the script from the text it is, the rest through the
+    /// shelf's queue and the 8 MB cap, checked against the daemon's checksum
+    /// when it has one. Bytes that don't match are kept all the same (a
+    /// reference file's checksum can be stale, and Capsid can't tell one from a
+    /// stored file), with the checksum they should have had, so the README and
+    /// the sheet can say so. The Keep sheet and the Shelf both keep through it.
+    @MainActor
+    func fetch(_ item: KeepItem) async -> KeepFetched {
+        switch item.source {
+        case .text(let text):
+            return .bytes(Data(text.utf8), expected: nil)
+        case .download(let version):
+            if let size = item.size, size > KeepRules.cap { return .tooBig }
+            switch await read(.download(version: version)) {
+            case .answered(.bytes(let data)):
+                guard case .success(let bytes) = ArtifactGate.downloadBytes(data) else { return .tooBig }
+                if let sha = item.sha?.lowercased(), sha != disk.sha256(of: bytes) {
+                    log.error("A kept file's bytes don't match the daemon's checksum: kept, and the README says so")
+                    return .bytes(bytes, expected: sha)
+                }
+                return .bytes(bytes, expected: nil)
+            case .answered(.tooBig): return .tooBig
+            case .answered(.missing): return .gone
+            case .answered(.cancelled), .cancelled: return .cancelled
+            case .answered(let other): return .failed(ShelfFailure(other).sentence)
+            case .timedOut: return .failed(ShelfFailure.timedOut.sentence)
+            case .notReady: return .failed(ShelfFailure.notReady.sentence)
+            }
+        }
+    }
+}
+
 /// The Kept root and the per-project collection memory (settings-sized values).
 enum KeptSettings {
     /// `keptRoot`: a path; empty means `~/Documents/Kept`.
@@ -622,39 +661,9 @@ final class KeepModel: ObservableObject, Identifiable {
         missing.append(KeptMissing(role: item.role, name: item.name, reason: reason))
     }
 
-    private enum Fetched {
-        /// `expected`: the daemon's checksum, when the bytes don't match it.
-        case bytes(Data, expected: String?), gone, tooBig, failed(String), cancelled
-    }
-
-    /// A file's bytes: the script from the text it is, the rest through the
-    /// shelf's queue and the 8 MB cap, checked against the daemon's checksum
-    /// when it has one. Bytes that don't match are kept all the same (a
-    /// reference file's checksum can be stale, and Capsid can't tell one from a
-    /// stored file), with the checksum they should have had, so the README and
-    /// the sheet can say so.
-    private func fetch(_ item: KeepItem) async -> Fetched {
-        switch item.source {
-        case .text(let text):
-            return .bytes(Data(text.utf8), expected: nil)
-        case .download(let version):
-            if let size = item.size, size > KeepRules.cap { return .tooBig }
-            switch await dependencies.read(.download(version: version)) {
-            case .answered(.bytes(let data)):
-                guard case .success(let bytes) = ArtifactGate.downloadBytes(data) else { return .tooBig }
-                if let sha = item.sha?.lowercased(), sha != dependencies.disk.sha256(of: bytes) {
-                    log.error("A kept file's bytes don't match the daemon's checksum: kept, and the README says so")
-                    return .bytes(bytes, expected: sha)
-                }
-                return .bytes(bytes, expected: nil)
-            case .answered(.tooBig): return .tooBig
-            case .answered(.missing): return .gone
-            case .answered(.cancelled), .cancelled: return .cancelled
-            case .answered(let other): return .failed(ShelfFailure(other).sentence)
-            case .timedOut: return .failed(ShelfFailure.timedOut.sentence)
-            case .notReady: return .failed(ShelfFailure.notReady.sentence)
-            }
-        }
+    /// A file's bytes (`KeepDependencies.fetch`).
+    private func fetch(_ item: KeepItem) async -> KeepFetched {
+        await dependencies.fetch(item)
     }
 
     // MARK: The result

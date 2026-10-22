@@ -27,6 +27,8 @@ struct KeptDiskCallsTests {
         // What a file manager or a URL does to the disk, whatever the file manager is called.
         "FileManager(", ".createDirectory(", ".removeItem(", ".moveItem(", ".copyItem(", ".contentsOfDirectory(",
         ".fileExists(", ".attributesOfItem(", ".subpathsOfDirectory(", ".write(to:", "renamex_np(", "NSFileCoordinator",
+        // The Trash.
+        ".trashItem(",
     ]
 
     /// `file: call` → how many lines of code say it, in every file of Kept/.
@@ -60,6 +62,11 @@ struct KeptDiskCallsTests {
             "KeptDisk.swift: .attributesOfItem(": 1,
             "KeptDisk.swift: .moveItem(": 1,
             "KeptDisk.swift: .removeItem(": 1,
+            // Taking a folder off the shelf: into the Trash, never deleted.
+            "KeptDisk.swift: .trashItem(": 1,
+            // A text file's first bytes, for its card (and a look at whether iCloud has it).
+            "KeptDisk.swift: FileHandle(": 1,
+            "KeptDisk.swift: resourceValues(": 1,
             // The README's bytes, read whole; the atomic writes of a file, a README and a legend.
             "KeptDisk.swift: Data(contentsOf": 1,
             "KeptDisk.swift: .write(to:": 4,
@@ -69,7 +76,7 @@ struct KeptDiskCallsTests {
             // and the temporary folder a demo names: none of these reads or writes anything.
             "KeepModel.swift: NSWorkspace": 1,
             "KeptDemo.swift: FileManager.default": 1,
-            "KeptWindow.swift: NSWorkspace": 6,
+            "ShelfView.swift: NSWorkspace": 5,
         ]
         let now = try found()
         #expect(now == allowed, "now: \(now.sorted { $0.key < $1.key })")

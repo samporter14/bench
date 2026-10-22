@@ -1,0 +1,466 @@
+// ShelfRules.swift — the decisions behind the Shelf (DESIGN.md, Shelf), pure:
+// what kind of thing a shelved file is (the chips: Figures, Documents,
+// Tables), how the kept folders found on disk become the items the window
+// shows (one item for each figure version, the folder kept with data and code
+// beating a lighter one), which of them a project, a kind and a search leave,
+// what each card and the detail say about where it came from, and the words
+// of the README an add writes. Nothing here touches the disk or the page, so
+// the tests run it on made-up folders.
+import Foundation
+
+/// The three chips above the grid.
+enum ShelfKind: String, CaseIterable, Sendable {
+    case figure, document, table
+
+    private static let figures: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "svg", "tif", "tiff", "bmp", "heic", "avif"]
+    private static let tables: Set<String> = ["csv", "tsv", "xlsx", "xls", "xlsm", "ods", "numbers", "parquet"]
+
+    /// By the file's name alone: pictures are figures, spreadsheets and
+    /// delimited tables are tables, and everything else a person might
+    /// write with (Markdown, text, PDF, HTML, notebooks, code) is a document.
+    static func classify(fileName: String) -> ShelfKind {
+        let ext = (fileName as NSString).pathExtension.lowercased()
+        if figures.contains(ext) { return .figure }
+        if tables.contains(ext) { return .table }
+        return .document
+    }
+
+    /// The chip's word.
+    var chip: String {
+        switch self {
+        case .figure: "Figures"
+        case .document: "Documents"
+        case .table: "Tables"
+        }
+    }
+
+    /// For a sentence: "No tables on your shelf."
+    var noun: String {
+        switch self {
+        case .figure: "figures"
+        case .document: "documents"
+        case .table: "tables"
+        }
+    }
+}
+
+/// One thing on the shelf: a figure version, as one kept folder or more
+/// (a figure shelved and later kept with its data and code is two folders and
+/// one item).
+struct ShelfItem: Identifiable, Equatable, Sendable {
+    /// The folder shown: the one kept with data and code if any, else the newest.
+    let result: KeptResult
+    /// The other folders of the same figure version, newest first.
+    let others: [KeptResult]
+
+    var id: String { result.id }
+    var record: KeptRecord { result.record }
+    var text: KeptText { result.text }
+    var folder: URL { result.folder }
+    /// Every folder of the item, the one shown first.
+    var folders: [URL] { [result.folder] + others.map(\.folder) }
+    var fileURL: URL { result.figureURL }
+    var fileName: String { record.figure.path }
+    var version: String? { record.figure.version }
+    var kind: ShelfKind { ShelfKind.classify(fileName: fileName) }
+    var title: String { ShelfRules.title(for: record) }
+    var collection: String { result.collection }
+    /// When it was put on the shelf: the newest of its folders.
+    var addedAt: Date { ([result] + others).map(\.record.keptAt).max() ?? record.keptAt }
+    /// Kept with data or code, or with a legend written: the detail shows them too.
+    var hasMore: Bool { !record.files.isEmpty || !result.text.legend.isEmpty }
+    /// Whether any of the folders is `folder`.
+    func contains(folder url: URL) -> Bool { folders.contains { $0.path == url.path } }
+}
+
+enum ShelfRules {
+    // MARK: The items
+
+    /// The kept folders as the shelf's items, newest first. Folders of one
+    /// figure version are one item; a folder with no version is its own.
+    static func items(from results: [KeptResult]) -> [ShelfItem] {
+        var order: [String] = []
+        var groups: [String: [KeptResult]] = [:]
+        for result in results {
+            let key = result.record.figure.version.map { "v:\($0)" } ?? "f:\(result.id)"
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(result)
+        }
+        let items: [ShelfItem] = order.compactMap { key in
+            guard let group = groups[key], !group.isEmpty else { return nil }
+            // Kept with data and code first, then the newest, then by path, so the choice never wobbles.
+            let ranked = group.sorted { a, b in
+                let (fa, fb) = (!a.record.files.isEmpty, !b.record.files.isEmpty)
+                if fa != fb { return fa }
+                if a.record.keptAt != b.record.keptAt { return a.record.keptAt > b.record.keptAt }
+                return a.folder.path < b.folder.path
+            }
+            return ShelfItem(result: ranked[0], others: Array(ranked.dropFirst()))
+        }
+        return items.sorted { a, b in a.addedAt == b.addedAt ? a.folder.path < b.folder.path : a.addedAt > b.addedAt }
+    }
+
+    /// The name on a card: the file's own name (with its extension), unless the
+    /// person gave the keep a name of their own. The folder's name is the
+    /// file's name without its extension, or that with the date a name taken
+    /// already adds, or numbered.
+    static func title(for record: KeptRecord) -> String {
+        let file = record.figure.path
+        let stem = KeptName.sanitized((file as NSString).deletingPathExtension)
+        var name = record.name
+        // "… 2" after a dated name, then the date and time itself.
+        if let space = name.lastIndex(of: " "), Int(name[name.index(after: space)...]) != nil, KeptName.isDated(String(name[..<space])) {
+            name = String(name[..<space])
+        }
+        if KeptName.isDated(name) { name = String(name.dropLast(16)) }
+        return name == stem ? file : record.name
+    }
+
+    // MARK: Showing them
+
+    /// The items in a project (a collection) matching a search: the names, the
+    /// sessions, the legends and Claude's words.
+    static func matching(_ items: [ShelfItem], project: String?, query: String) -> [ShelfItem] {
+        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
+        return items.filter { item in
+            if let project, item.collection != project { return false }
+            return words.allSatisfy { word in
+                [item.title, item.fileName, item.record.sessionTitle, item.record.projectName, item.text.legend, item.text.claudeSaid,
+                 item.record.question ?? ""].contains { $0.localizedCaseInsensitiveContains(word) }
+            }
+        }
+    }
+
+    /// One chip's count and the whole.
+    struct Counts: Equatable, Sendable {
+        var all = 0, figures = 0, documents = 0, tables = 0
+
+        func of(_ kind: ShelfKind?) -> Int {
+            switch kind {
+            case nil: all
+            case .figure?: figures
+            case .document?: documents
+            case .table?: tables
+            }
+        }
+    }
+
+    static func counts(of items: [ShelfItem]) -> Counts {
+        var counts = Counts()
+        for item in items {
+            counts.all += 1
+            switch item.kind {
+            case .figure: counts.figures += 1
+            case .document: counts.documents += 1
+            case .table: counts.tables += 1
+            }
+        }
+        return counts
+    }
+
+    static func chipLabel(_ kind: ShelfKind?, _ counts: Counts) -> String {
+        "\(kind?.chip ?? "All") \u{00B7} \(counts.of(kind))"
+    }
+
+    /// The items of one kind, or all of them.
+    static func items(_ items: [ShelfItem], of kind: ShelfKind?) -> [ShelfItem] {
+        guard let kind else { return items }
+        return items.filter { $0.kind == kind }
+    }
+
+    // MARK: The words on a card and in the detail
+
+    /// "Plate reader QC · 8:47 AM": the session, and when it was put on the
+    /// shelf: the time today, "Yesterday", the weekday this week, else the day.
+    static func caption(for item: ShelfItem, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+        "\(item.record.sessionTitle) \u{00B7} \(when(item.addedAt, now: now, calendar: calendar, locale: locale))"
+    }
+
+    static func when(_ date: Date, now: Date, calendar: Calendar = .current, locale: Locale = .current) -> String {
+        func style() -> Date.FormatStyle { Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone) }
+        if calendar.isDate(date, inSameDayAs: now) {
+            return date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, calendar: calendar,
+                                                   timeZone: calendar.timeZone))
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
+            return "Yesterday"
+        }
+        if let week = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: now)), date >= week, date <= now {
+            return date.formatted(style().weekday(.abbreviated))
+        }
+        let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+        return date.formatted(sameYear ? style().month(.abbreviated).day() : style().month(.abbreviated).day().year())
+    }
+
+    /// Claude's last answer stands in for the one that showed the file.
+    static func isLastAnswer(_ text: KeptText) -> Bool {
+        text.attribution.hasPrefix("From Claude\u{2019}s last answer")
+    }
+
+    /// "From Claude’s answer at 8:47 AM in “Plate reader QC” · Assay development · version 3".
+    static func sourceLine(for item: ShelfItem, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+        let record = item.record
+        var head: String
+        if item.text.claudeSaid.isEmpty {
+            head = "From"
+        } else {
+            head = isLastAnswer(item.text) ? "From Claude\u{2019}s last answer" : "From Claude\u{2019}s answer"
+            if let at = record.answerAt {
+                let phrase = when(at, now: now, calendar: calendar, locale: locale)
+                if calendar.isDate(at, inSameDayAs: now) {
+                    head += " at \(phrase)"
+                } else {
+                    head += phrase == "Yesterday" ? " yesterday" : " on \(phrase)"
+                }
+            }
+            head += " in"
+        }
+        var parts = ["\(head) \u{201C}\(record.sessionTitle)\u{201D}"]
+        if !record.projectName.isEmpty { parts.append(record.projectName) }
+        if let index = record.figure.index {
+            parts.append(record.figure.of.map { "version \(index) of \($0)" } ?? "version \(index)")
+        }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// "You asked: “…”", from what the user asked, flattened to one line;
+    /// nil when it isn't known.
+    static func askedLine(for item: ShelfItem) -> String? {
+        guard let question = item.record.question else { return nil }
+        let flat = flatten(question)
+        return flat.isEmpty ? nil : "You asked: \u{201C}\(flat)\u{201D}"
+    }
+
+    static func flatten(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    // MARK: The sentences
+
+    static let emptyTitle = "Nothing on your shelf yet"
+    static let emptySentence = "Right-click a figure in a conversation and choose Add to Shelf."
+
+    static func emptyKindTitle(_ kind: ShelfKind) -> String { "No \(kind.noun) on your shelf" }
+
+    static func emptyKindSentence(_ kind: ShelfKind) -> String {
+        switch kind {
+        case .figure: "Figures you add from a conversation or from Results show up here."
+        case .document: "Documents Claude writes, Markdown and PDFs among them, show up here once you add them."
+        case .table: "Tables Claude makes, spreadsheets and CSV files among them, show up here once you add them."
+        }
+    }
+
+    /// What a failed add says: which file, and why.
+    static func couldntAdd(_ name: String, _ why: String) -> String {
+        "Couldn\u{2019}t add \(name) to your shelf. \(why)"
+    }
+
+    static func removed(_ name: String) -> String { "Moved \(name) to the Trash." }
+
+    static func couldntRemove(_ name: String, _ why: String?) -> String {
+        "Couldn\u{2019}t move \(name) to the Trash." + (why.map { " \($0)" } ?? "")
+    }
+
+    static func partlyRemoved(_ name: String, _ why: String) -> String {
+        "Moved some of \(name) to the Trash, not all. \(why)"
+    }
+
+    static func couldntPutBack(_ name: String, _ why: String) -> String {
+        "Couldn\u{2019}t put \(name) back. \(why)"
+    }
+
+    static func tooBig(_ name: String) -> String {
+        "\(name) is over 8 MB, which is more than the shelf takes."
+    }
+
+    static func gone(_ name: String) -> String {
+        "\(name) isn\u{2019}t in Claude Science any more, so it can\u{2019}t go on your shelf."
+    }
+
+    // MARK: The README an add writes
+
+    /// What the user asked, at most this many characters.
+    static let questionLimit = 400
+
+    /// What an add came to know of the answer.
+    struct Answer: Equatable, Sendable {
+        var text: String
+        var at: Date?
+        /// Claude's last answer in the session, in place of the one that showed the file.
+        var isLast: Bool
+    }
+
+    /// The record and the sections for a figure put on the shelf: no data and
+    /// no code, and where it came from in words. `row` is the history row of
+    /// the message that showed it, `question` what the user asked in that
+    /// exchange, each when known.
+    static func readme(session: SessionStatus, folderName: String, figure: KeptFile, answer: Answer?, row: Int?,
+                       question: String?, keptAt: Date, claudeScience: String?, capsid: String,
+                       timeZone: TimeZone = .current, locale: Locale = .current) -> (record: KeptRecord, text: KeptText) {
+        let asked = question.map { String(flatten($0).prefix(questionLimit)) }.flatMap { $0.isEmpty ? nil : $0 }
+        let record = KeptRecord(
+            name: folderName, keptAt: keptAt, projectID: session.projectID, projectName: session.projectName,
+            sessionID: session.id, sessionTitle: session.displayTitle, figure: figure, files: [], missing: [],
+            claudeScience: claudeScience ?? "unknown", capsid: capsid,
+            sourceRow: answer == nil || answer?.isLast == true ? nil : row, question: asked,
+            answerAt: answer?.at)
+
+        var attribution = ""
+        if let answer {
+            if answer.isLast {
+                let when = answer.at.map { " at \(KeptReadme.shortTime($0, timeZone: timeZone, locale: locale)) on \(KeptReadme.englishDate($0, timeZone: timeZone))" } ?? ""
+                attribution = "From Claude\u{2019}s last answer in the session\(when). The answer that shows this version wasn\u{2019}t found."
+            } else {
+                attribution = KeptReadme.attribution(answerAt: answer.at, timeZone: timeZone, locale: locale)
+            }
+        }
+
+        // Where it came from, in words: the session, then the answer, then the file.
+        let usual = KeptReadme.origin(for: record, timeZone: timeZone, locale: locale).split(separator: "\n", omittingEmptySubsequences: false)
+        var middle: String
+        switch answer {
+        case nil:
+            middle = "Capsid couldn\u{2019}t find the answer that showed this version."
+        case let answer? where answer.isLast:
+            middle = "Capsid couldn\u{2019}t find the answer that showed this version, so the words kept with it are Claude\u{2019}s last in the session"
+            if let at = answer.at {
+                middle += ", from \(KeptReadme.shortTime(at, timeZone: timeZone, locale: locale)) on \(KeptReadme.englishDate(at, timeZone: timeZone))"
+            }
+            middle += "."
+        case let answer?:
+            middle = "From Claude\u{2019}s answer"
+            if let at = answer.at {
+                middle += " at \(KeptReadme.shortTime(at, timeZone: timeZone, locale: locale)) on \(KeptReadme.englishDate(at, timeZone: timeZone))"
+            }
+            if let row { middle += ", message \(row) in the session\u{2019}s history" }
+            middle += "."
+        }
+        if let asked { middle += " You asked: \u{201C}\(asked)\u{201D}" }
+
+        let file = record.figure.path
+        var last = record.figure.index.map { "Version \($0) of \(file)" } ?? file
+        last += ", put on your shelf on \(KeptReadme.englishDate(keptAt, timeZone: timeZone)) at \(KeptReadme.shortTime(keptAt, timeZone: timeZone, locale: locale))"
+        last += " by Capsid" + (capsid.isEmpty ? "" : " \(capsid)")
+        if let claudeScience, !claudeScience.isEmpty { last += ", from Claude Science \(claudeScience)" }
+        last += ". The link opens the session in Capsid on a Mac that has it."
+
+        let origin = [String(usual.first ?? ""), middle, last].joined(separator: "\n")
+        return (record, KeptText(legend: "", claudeSaid: answer?.text ?? "", attribution: attribution, origin: origin))
+    }
+}
+
+/// What a card shows of a text file, in place of Quick Look's picture of a
+/// page whose words are too small to read at a card's size: a Markdown note's
+/// heading and first paragraphs, a table's first rows, a script's first lines.
+/// Made from the file's first bytes (`KeptDisk.peek`); anything else is Quick
+/// Look's.
+enum ShelfPeek: Equatable, Sendable {
+    /// Prose: a heading, if the file opens with one, and its paragraphs.
+    case document(title: String?, paragraphs: [String])
+    /// Delimited rows: the first few, and the first few columns.
+    case table(rows: [[String]])
+    /// Code and data in a text format: the first lines, as they are.
+    case lines([String])
+
+    static let proseExtensions: Set<String> = ["md", "markdown", "txt", "text", "rst"]
+    static let codeExtensions: Set<String> = ["log", "json", "jsonl", "yaml", "yml", "toml", "xml", "py", "r", "sh", "js", "ts", "tex",
+                                              "sql", "fasta", "fa", "fastq", "fq", "gff", "gtf", "bed", "vcf", "sam"]
+    static let delimiters: [String: Character] = ["csv": ",", "tsv": "\t"]
+    /// At most this many rows, columns, paragraphs and lines are kept.
+    static let rows = 7, columns = 4, paragraphs = 6, codeLines = 9
+
+    /// Whether this file's card is drawn from its text.
+    static func wants(fileName: String) -> Bool {
+        let ext = (fileName as NSString).pathExtension.lowercased()
+        return proseExtensions.contains(ext) || codeExtensions.contains(ext) || delimiters[ext] != nil
+    }
+
+    static func make(text: String, fileName: String) -> ShelfPeek? {
+        let ext = (fileName as NSString).pathExtension.lowercased()
+        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        if let delimiter = delimiters[ext] {
+            let table = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.prefix(rows)
+                .map { Array(split($0, by: delimiter).prefix(columns)) }
+            return table.isEmpty ? nil : .table(rows: table)
+        }
+        if codeExtensions.contains(ext) {
+            let shown = lines.prefix(codeLines * 2).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.prefix(codeLines)
+            return shown.isEmpty ? nil : .lines(shown.map { String($0.prefix(60)) })
+        }
+        guard proseExtensions.contains(ext) else { return nil }
+        var title: String?
+        var paragraphs: [String] = []
+        var current: [String] = []
+        func flush() {
+            let joined = current.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            if !joined.isEmpty { paragraphs.append(String(joined.prefix(300))) }
+            current = []
+        }
+        let first = lines.firstIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        for (position, raw) in lines.enumerated() {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { flush(); continue }
+            if line.hasPrefix("#") {
+                let heading = plain(line)
+                // A heading that opens the file is its title; a later one is a line of its own.
+                if position == first {
+                    title = heading
+                } else {
+                    flush()
+                    if !heading.isEmpty { paragraphs.append(heading) }
+                }
+                continue
+            }
+            current.append(plain(line))
+        }
+        flush()
+        guard title != nil || !paragraphs.isEmpty else { return nil }
+        return .document(title: title, paragraphs: Array(paragraphs.prefix(Self.paragraphs)))
+    }
+
+    /// A line of Markdown without its marks: "## A **bold** [link](x)" is "A bold link".
+    static func plain(_ line: String) -> String {
+        var text = line.trimmingCharacters(in: .whitespaces)
+        for (pattern, template) in [("^#{1,6}\\s*", ""), ("^>\\s?", ""), ("^[-*+]\\s+", ""), ("^\\d+[.)]\\s+", ""),
+                                    ("!?\\[([^\\]]*)\\]\\([^)]*\\)", "$1"), ("(\\*\\*|__)(.+?)\\1", "$2"),
+                                    ("(\\*|_)([^*_]+)\\1", "$2"), ("`([^`]*)`", "$1")] {
+            text = text.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
+        }
+        return text.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// A delimited line's cells, with a quoted cell kept whole ("a, b" in quotes
+    /// is one) and its doubled quotes made single.
+    static func split(_ line: String, by delimiter: Character) -> [String] {
+        var cells: [String] = []
+        var cell = ""
+        var quoted = false
+        var characters = line.makeIterator()
+        var pending: Character?
+        while let character = pending ?? characters.next() {
+            pending = nil
+            if quoted {
+                if character == "\"" {
+                    if let next = characters.next() {
+                        if next == "\"" { cell.append("\"") } else { quoted = false; pending = next }
+                    } else {
+                        quoted = false
+                    }
+                } else {
+                    cell.append(character)
+                }
+            } else if character == "\"" && cell.isEmpty {
+                quoted = true
+            } else if character == delimiter {
+                cells.append(cell.trimmingCharacters(in: .whitespaces))
+                cell = ""
+            } else {
+                cell.append(character)
+            }
+        }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        return cells
+    }
+}
