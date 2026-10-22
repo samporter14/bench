@@ -32,6 +32,17 @@ enum KeptDemo {
     plt.savefig("z_prime.png", dpi=200)
     """
 
+    /// The script of a figure put on the shelf: a plain file, with no placeholder for a kept input.
+    private static let shelvedScript = """
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    plates = pd.read_csv("z_prime_by_plate.csv")
+    plates = plates[plates.plate != 7]
+    plates.plot.bar(x="plate", y="z_prime", legend=False)
+    plt.savefig("z_prime_by_plate.png", dpi=200)
+    """
+
     private static var keepModel: KeepModel?
 
     static func show(step: String, quiet: Bool, present: (AnyView, String) -> Void) {
@@ -171,10 +182,12 @@ enum KeptDemo {
                  minutesAgo: 35, answer: "Eleven plates pass with Z\u{2032} between 0.62 and 0.78. Plate 7 fails because of an edge effect in column 12. Repeat plate 7 with a fresh seal.",
                  question: "Write up the QC for the notebook.", row: 47),
             Seed(file: "receptors.xlsx", data: xlsx(), session: "ER-phagy receptors", project: "Receptor biology", collection: "Receptor biology",
-                 version: version(4), minutesAgo: 3 * 1440 + 10, answer: "Eleven receptors carry an LC3-interacting region; four of them are annotated for the endoplasmic reticulum.",
+                 version: version(4), minutesAgo: 4 * 60, answer: "Eleven receptors carry an LC3-interacting region; four of them are annotated for the endoplasmic reticulum.",
                  question: "Which ER-phagy receptors have an LIR motif?", row: 22),
             Seed(file: "z_prime_by_plate.csv", data: csv(), session: qc, project: assay, collection: assay, version: version(5),
                  minutesAgo: 1440 + 40, answer: "The table behind the figure: one row for each plate, with its Z\u{2032}.", question: nil, row: 39),
+            Seed(file: "plot_z_prime.py", data: Data(shelvedScript.utf8), session: qc, project: assay, collection: assay, version: version(9),
+                 minutesAgo: 1440 + 50, answer: "The script that draws it: it drops plate 7 and plots the other eleven.", question: "Save the script too.", row: 40),
             Seed(file: "knockdown_blot.png", data: chart(variant: 1), session: "Western blot quantification", project: "Knockdown validation",
                  collection: "Knockdown validation", version: version(6), minutesAgo: 5 * 1440, answer: "The knockdown holds at 72 hours: the band at 55 kDa is down by about 80%.",
                  question: "Quantify the knockdown.", row: 30),
