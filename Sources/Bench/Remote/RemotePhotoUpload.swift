@@ -279,17 +279,16 @@ extension WebContainer {
     /// The same for any file (`UploadFile`): a photo, or a file Quick Start
     /// sends from the Mac. Its deadline is sized by the file
     /// (`WriteDeadline.upload(bytes:)`); an upload that got no answer in time
-    /// throws `WebAPIError.timedOut`.
+    /// throws `WebAPIError.timedOut`. A caller already given up on starts
+    /// nothing in the page (`PhotoUploadScript.upload`).
     func uploadFile(project: String, file: UploadFile) async throws -> PhotoUploadReply {
         guard status == .ready else { throw WebAPIError.notReady }
-        let view = webView, limit = WriteDeadline.upload(bytes: file.data.count) + WriteDeadline.grace
-        let text: String? = try await WriteDeadline.bridge(limit) {
+        let view = webView
+        let reply = try await PhotoUploadScript.upload(file) {
             try await view.callAsyncJavaScript(PhotoUploadScript.body,
                                                arguments: PhotoUploadScript.arguments(project: project, file: file),
-                                               in: nil, contentWorld: .defaultClient) as? String
+                                               in: nil, contentWorld: .defaultClient)
         }
-        guard let text else { throw WebAPIError.badResponse }
-        let reply = try PhotoUploadScript.result(of: Data(text.utf8), sent: file)
         if reply.status == 401 { sessionLost() }
         return reply
     }
@@ -300,11 +299,46 @@ extension WebContainer {
     /// that was not made, the daemon's reply, or `PhotoUploadReply.unknown` for
     /// one that may have been (no answer in time, a page that threw).
     func uploadAnswer(project: String, file: UploadFile) async -> PhotoUploadReply? {
+        await PhotoUploadScript.answer { try await self.uploadFile(project: project, file: file) }
+    }
+}
+
+extension PhotoUploadScript {
+    /// An upload as `WebContainer.uploadFile` makes it, `run` being the call
+    /// into the page. A caller that has already been given up on (a turn that
+    /// ran out of time, a Cancel) starts nothing there: `CancellationError`,
+    /// before `run`. Once it has started, the call is waited for as any write
+    /// is (`WriteDeadline.bridge`, which its caller's cancel doesn't take back),
+    /// and no answer in time is `WebAPIError.timedOut`; so is a cancellation
+    /// from inside the call, which may have sent it.
+    @MainActor
+    static func upload(_ file: UploadFile, wait: @escaping @MainActor (Duration) async -> Void = WriteDeadline.sleep,
+                       run: @escaping @MainActor () async throws -> Any?) async throws -> PhotoUploadReply {
+        guard !Task.isCancelled else { throw CancellationError() }
+        let limit = WriteDeadline.upload(bytes: file.data.count) + WriteDeadline.grace
+        let text: String?
         do {
-            return try await uploadFile(project: project, file: file)
+            text = try await WriteDeadline.bridge(limit, wait: wait) { try await run() as? String }
+        } catch is CancellationError {
+            throw WebAPIError.timedOut
+        }
+        guard let text else { throw WebAPIError.badResponse }
+        return try result(of: Data(text.utf8), sent: file)
+    }
+
+    /// How an upload ended, as its callers want it: nil for one that was not
+    /// made (the page isn't up, it refused the arguments, or the caller had
+    /// been given up on before it started), the daemon's reply, or
+    /// `PhotoUploadReply.unknown` for one that may have been.
+    @MainActor
+    static func answer(_ attempt: @MainActor () async throws -> PhotoUploadReply) async -> PhotoUploadReply? {
+        do {
+            return try await attempt()
         } catch WebAPIError.notReady {
             return nil
         } catch WebAPIError.notAllowed {
+            return nil
+        } catch is CancellationError {
             return nil
         } catch {
             return .unknown

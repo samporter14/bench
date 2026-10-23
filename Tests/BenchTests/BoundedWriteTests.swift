@@ -302,7 +302,74 @@ struct WriteDeadlineRaceTests {
     }
 }
 
+// MARK: An upload's start
+
+/// `WebContainer.uploadFile` runs its page call through `PhotoUploadScript.upload`: a caller
+/// already given up on starts nothing in the page, and its callers read that as not made.
+@MainActor
+struct UploadStartTests {
+    private let file = UploadFile(data: Data(count: 12), name: "plate.csv", contentType: "text/csv", kind: .file)
+
+    private var stored: String {
+        #"{"result":{"status":200,"code":"","upload":{"id":"11111111-2222-4333-8444-555555555555","version_id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","filename":"plate.csv","content_type":"text/csv","size_bytes":12}}}"#
+    }
+
+    @Test func aCallerGivenUpOnBeforeItStartsSendsNothingToThePage() async {
+        let ran = Flag()
+        let file = file, stored = stored
+        let task = Task { @MainActor () -> String in
+            do {
+                _ = try await PhotoUploadScript.upload(file) { ran.on = true; return stored }
+                return "uploaded"
+            } catch is CancellationError {
+                return "not started"
+            } catch {
+                return "\(error)"
+            }
+        }
+        // Cancelled before it runs: a turn that ran out of time, or a Cancel.
+        task.cancel()
+        #expect(await task.value == "not started")
+        #expect(!ran.on, "the page was never asked")
+    }
+
+    @Test func itsCallersReadThatAsNotMadeNotAsMaybeInTheProject() async {
+        let ran = Flag()
+        let file = file, stored = stored
+        let task = Task { @MainActor in
+            await PhotoUploadScript.answer { try await PhotoUploadScript.upload(file) { ran.on = true; return stored } }
+        }
+        task.cancel()
+        #expect(await task.value == nil)
+        #expect(!ran.on)
+    }
+
+    @Test func aCallerStillWaitingUploadsOnceAndHearsTheReply() async {
+        let calls = Count()
+        let stored = stored
+        let reply = await PhotoUploadScript.answer { try await PhotoUploadScript.upload(file) { calls.n += 1; return stored } }
+        #expect(calls.n == 1)
+        #expect(reply?.status == 200)
+        #expect(reply?.upload?.filename == "plate.csv")
+    }
+
+    @Test func aCancellationFromInsideACallThatStartedMayHaveSentIt() async {
+        // Once the page has been asked, the upload may be in the project: unknown, not "not made".
+        let calls = Count()
+        let reply = await PhotoUploadScript.answer {
+            try await PhotoUploadScript.upload(file) { calls.n += 1; throw CancellationError() }
+        }
+        #expect(calls.n == 1)
+        #expect(reply == .unknown)
+    }
+}
+
 @MainActor
 private final class Flag {
     var on = false
+}
+
+@MainActor
+private final class Count {
+    var n = 0
 }

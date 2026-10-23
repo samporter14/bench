@@ -109,6 +109,21 @@ struct RemoteSessionV2Tests {
         """#)
     }
 
+    @Test func aTurnsIntentAndFileIDsStayOnTheMac() {
+        // They tell a message just sent from another (WriteSettle.swift); the phone never gets them.
+        let read = SessionProjection(
+            status: "completed", agentName: "made-up-agent", projectID: "p",
+            turns: [SessionProjection.Turn(role: .you, at: now.addingTimeInterval(-400), text: "Look at this.\n\nAttached: plate.csv",
+                                           intent: "1b4e28ba-2fa1-41d2-883f-0016d3cca427",
+                                           files: ["11111111-2222-4333-8444-555555555555"])])
+        let json = text(RemoteAPI.session(id: id, candidates: [session(.finished)], plan: nil, read: read))
+        #expect(json.contains(#""turns":[{"at":"2026-10-12T19:23:20Z","role":"you","text":"Look at this.\n\nAttached: plate.csv"}]"#))
+        #expect(!json.contains("1b4e28ba"))
+        #expect(!json.contains("11111111-2222"))
+        #expect(!json.contains("intent"))
+        #expect(!json.contains("files"))
+    }
+
     @Test func unreadableIsVersionOneWithNulls() {
         let built = RemoteAPI.session(id: id, candidates: [session(.running)], plan: nil)
         #expect(text(built) == #"""
