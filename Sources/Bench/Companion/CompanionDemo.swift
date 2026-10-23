@@ -11,7 +11,12 @@
 // (sessions made files today and none is in memory: "Results today" and Show
 // all), `panel` (the
 // real panel, glass and all, at the top right of the screen on a neutral
-// backdrop of our own, with no menu bar item and without taking the keyboard).
+// backdrop of our own, with no menu bar item and without taking the keyboard),
+// then `recent` (nothing needs you or works: Recent's five), `typing` (words in
+// the field and the line under it), `started` ("Started in …" and Open),
+// `failed` (a start Capsid can't confirm), and `projects` (the real panel with
+// the project pill's menu open). The field's ↩ goes to a sender of its own that
+// waits a moment and says it started: nothing is sent anywhere.
 import AppKit
 import Combine
 import SwiftUI
@@ -20,6 +25,16 @@ import SwiftUI
 enum CompanionDemo {
     enum Step: String, CaseIterable {
         case board, since, empty, busy, unread, panel
+        /// Nothing needs you and nothing works: Recent's five.
+        case recent
+        /// Words in the field, and what ↩ does under it.
+        case typing
+        /// "Started in Assay development." and Open.
+        case started
+        /// A start Capsid can't confirm, in the flow's words.
+        case failed
+        /// The real panel with the project pill's menu open.
+        case projects
     }
 
     /// What the popover sits on in a plain window or a picture: a stand-in for the blurred wallpaper the
@@ -45,6 +60,8 @@ enum CompanionDemo {
         let plan: SessionStatus
         let plate: SessionStatus
         let screen: SessionStatus
+        /// Done and quiet, the newest first: Recent's.
+        let quiet: [SessionStatus]
     }
 
     static let ids = (question: "00000000-0000-4000-8000-0000000000e1", plan: "00000000-0000-4000-8000-0000000000e2",
@@ -69,7 +86,45 @@ enum CompanionDemo {
                               waiting: 12 * 60, reason: .question),
             plan: session(ids.plan, "Lipid peroxidation panel", "Oxidative stress", .needsInput, waiting: 3 * 60, reason: .plan),
             plate: session(ids.plate, "Plate reader QC", "Assay development", .running, started: 17 * 60 + 34),
-            screen: session(ids.screen, "CRISPRi screen hits", "Screen analysis", .running, started: 42 * 60 + 10))
+            screen: session(ids.screen, "CRISPRi screen hits", "Screen analysis", .running, started: 42 * 60 + 10),
+            quiet: [
+                session("00000000-0000-4000-8000-0000000000e5", "Western blot densitometry", "Assay development", .finished,
+                        waiting: 26 * 60),
+                session("00000000-0000-4000-8000-0000000000e6", "Primer design for KO validation", "Cloning", .finished,
+                        waiting: 100 * 60),
+                session("00000000-0000-4000-8000-0000000000e7", "Ferroptosis reading list", "Reading group", .finished,
+                        waiting: 26 * 3600),
+                session("00000000-0000-4000-8000-0000000000e8", "Seahorse plate layout", "Assay development", .error,
+                        waiting: 50 * 3600),
+                session("00000000-0000-4000-8000-0000000000e9", "Codon optimisation", "Cloning", .finished, waiting: 76 * 3600),
+                session("00000000-0000-4000-8000-0000000000ea", "Pilot power analysis", "RNA-seq pilot", .finished,
+                        waiting: 120 * 3600),
+            ])
+    }
+
+    /// The projects the field offers: the recent ones first, then the rest of the "database".
+    static let recentProjects = [
+        QuickStartProject(id: "proj_demo_assay", name: "Assay development"),
+        QuickStartProject(id: "proj_demo_rnaseq", name: "RNA-seq pilot"),
+        QuickStartProject(id: "proj_demo_oxstress", name: "Oxidative stress"),
+        QuickStartProject(id: "proj_demo_screen", name: "Screen analysis"),
+        QuickStartProject(id: "proj_demo_cloning", name: "Cloning"),
+    ]
+    static let otherProjects = [
+        QuickStartProject(id: "proj_demo_reading", name: "Reading group"),
+        QuickStartProject(id: "proj_demo_figures", name: "Manuscript figures"),
+    ]
+
+    /// Takes the field's request, waits a moment, and says it started. Nothing goes anywhere.
+    final class Sender: QuickStartSending {
+        private(set) var requests: [QuickStartFlow.Request] = []
+
+        func perform(_ request: QuickStartFlow.Request) async -> QuickStartFlow.Outcome {
+            requests.append(request)
+            try? await Task.sleep(for: .milliseconds(1200))
+            return .started(sessionID: "00000000-0000-4000-8000-0000000000eb",
+                            sentence: QuickStartFlow.Sentence.started(project: request.projectName))
+        }
     }
 
     /// Seven files made today, the way the board's strip has them.
@@ -120,9 +175,14 @@ enum CompanionDemo {
         let made = sessions(now: now)
         var working = [made.plate, made.screen]
         var asking = [made.question, made.plan]
+        var quiet = made.quiet
         switch step {
-        case .board, .since, .unread, .panel: break
+        case .board, .since, .unread, .panel, .typing, .started, .failed, .projects: break
         case .empty:
+            working = []
+            asking = []
+            quiet = []
+        case .recent:
             working = []
             asking = []
         case .busy:
@@ -159,15 +219,36 @@ enum CompanionDemo {
         }
         let limit = limit(now: now)
         let presenting = PresentingMode()
+        // What a read would hold: everything above, and the quiet ones Recent shows.
+        let inMemory = asking + working + quiet
+        let start = CompanionStart.Dependencies(recentProjects: { recentProjects }, allProjects: { recentProjects + otherProjects },
+                                                planFirst: { true }, sender: Sender())
         let sources = CompanionModel.Sources(
             lab: lab, cards: cards, results: results,
             usage: { limit }, since: { since.display }, pause: { _ in nil }, progress: { _ in nil }, prepare: { _ in },
-            quickStartKey: { .controlOptionCommandSpace }, now: { now },
+            quickStartKey: { .controlOptionCommandSpace }, now: { now }, recent: { inMemory }, start: start,
             changes: { [lab.$working.map { _ in () }.eraseToAnyPublisher(), lab.$cards.map { _ in () }.eraseToAnyPublisher(),
                         cards.plans.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
                         cards.questions.objectWillChange.map { _ in () }.eraseToAnyPublisher()] })
         return Made(lab: lab, cards: cards, model: CompanionModel(sources: sources), results: results, presenting: presenting,
                     since: since, sessions: made)
+    }
+
+    /// The field as `step` shows it, once the popover is open. Nothing is sent.
+    static func fill(_ made: Made, step: Step) {
+        let start = made.model.start
+        switch step {
+        case .typing:
+            start.showDemo(text: "Compare the Z′ across the last three plates", phase: .editing)
+        case .started:
+            start.showDemo(text: "", phase: .started(sessionID: "00000000-0000-4000-8000-0000000000eb", projectID: "proj_demo_assay",
+                                                     sentence: QuickStartFlow.Sentence.started(project: "Assay development")))
+        case .failed:
+            start.showDemo(text: "Compare the Z′ across the last three plates",
+                           phase: .failed(QuickStartFlow.Sentence.startNotThere))
+        default:
+            break
+        }
     }
 
     /// The popover's buttons on made-up sessions: answers go to the made-up cards and nothing else happens.
@@ -189,11 +270,13 @@ enum CompanionDemo {
     /// `--demo menubar`: the popover on the board's neutral ground, in a plain window.
     static func show(quiet: Bool) {
         let made = made(step)
-        if step == .panel {
+        if step == .panel || step == .projects {
             showPanel(made, quiet: quiet)
+            if step == .projects { openProjectMenu() }
             return
         }
         made.model.open()
+        fill(made, step: step)
         let view = CompanionDemoWindow(model: made.model, presenting: made.presenting, actions: actions(made))
         let host = NSHostingController(rootView: view)
         host.sizingOptions = [.preferredContentSize]
@@ -232,6 +315,30 @@ enum CompanionDemo {
         CompanionPanelController.shared.stage = CompanionPanelController.Stage(model: made.model, actions: actions)
         let anchor = CGRect(x: area.maxX - 150, y: area.maxY, width: 36, height: 24)
         CompanionPanelController.shared.show(below: anchor, itemWindow: nil, takesKeyboard: !quiet)
+    }
+
+    /// `--step projects`: once the panel is up, its project pill is pressed through accessibility (the button's
+    /// own press, no event posted), so the real menu opens for a capture.
+    private static func openProjectMenu() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            MainActor.assumeIsolated {
+                guard let root = CompanionPanelController.shared.content,
+                      let pill = accessible(in: root, labelled: "Project, ") else { return }
+                if !pill.accessibilityPerformShowMenu() { _ = pill.accessibilityPerformPress() }
+            }
+        }
+    }
+
+    /// The first accessibility element under `element` whose label starts with `prefix`.
+    private static func accessible(in element: NSAccessibilityProtocol, labelled prefix: String, depth: Int = 0) -> NSAccessibilityProtocol? {
+        guard depth < 60 else { return nil }
+        if element.accessibilityLabel()?.hasPrefix(prefix) == true { return element }
+        for child in element.accessibilityChildren() ?? [] {
+            if let child = child as? NSAccessibilityProtocol, let found = accessible(in: child, labelled: prefix, depth: depth + 1) {
+                return found
+            }
+        }
+        return nil
     }
 
     // MARK: The pictures

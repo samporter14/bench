@@ -116,6 +116,8 @@ final class QuickStartModel: ObservableObject {
     private var ledger = IntentLedger()
     /// A project was chosen (a chip, "Other…" or a recipe) since the panel opened.
     private var projectChosen = false
+    /// The project the menu bar's field handed over: known before the database's list has been read.
+    private var carried: QuickStartProject?
     private var sending: Task<Void, Never>?
     private var lingering: Task<Void, Never>?
     /// Whose outcome counts: a send that a newer one or `open` has replaced is
@@ -133,8 +135,11 @@ final class QuickStartModel: ObservableObject {
     /// The panel opens (or opens again with something new): the recipes are
     /// read afresh, the projects and the session in view looked up, and
     /// `files` and `text` filled when something handed them over. Everything
-    /// the person had typed is kept when `keeping`.
-    func open(files urls: [URL] = [], text start: String? = nil, keeping: Bool = false) {
+    /// the person had typed is kept when `keeping`. A `project` (and a
+    /// `planFirst`) handed over, by the menu bar's field, is chosen as if its
+    /// chip had been pressed.
+    func open(files urls: [URL] = [], text start: String? = nil, keeping: Bool = false,
+              project handed: QuickStartProject? = nil, planFirst handedPlan: Bool? = nil) {
         openCount += 1
         lingering?.cancel()
         // A request on its way isn't taken back by opening the panel again: it
@@ -157,6 +162,7 @@ final class QuickStartModel: ObservableObject {
             appliedRecipe = nil
             projectID = nil
             projectChosen = false
+            carried = nil
             planFirst = true
             phase = .editing
             progress = nil
@@ -167,6 +173,12 @@ final class QuickStartModel: ObservableObject {
         }
         recipes = RecipeKeys.keyed(dependencies.recipes())
         recents = dependencies.recentProjects()
+        if let handed, !underway {
+            carried = handed
+            projectID = handed.id
+            projectChosen = true
+        }
+        if let handedPlan, !underway { planFirst = handedPlan }
         if projectID == nil { projectID = recents.first?.id }
         // What a Service or a Shortcut hands over while a send is in flight waits: the request on its way is kept.
         if let start, !underway { self.text = start }
@@ -195,7 +207,7 @@ final class QuickStartModel: ObservableObject {
     }
 
     func known(_ id: String) -> QuickStartProject? {
-        recents.first { $0.id == id } ?? allProjects.first { $0.id == id }
+        recents.first { $0.id == id } ?? allProjects.first { $0.id == id } ?? (carried?.id == id ? carried : nil)
     }
 
     /// The chips: the most recent projects, the chosen one among them (first,

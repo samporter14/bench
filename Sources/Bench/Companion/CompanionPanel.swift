@@ -77,6 +77,9 @@ final class CompanionPanelController: NSObject {
 
     var isShowing: Bool { window?.isVisible == true }
 
+    /// The popover's content while it is up: a demo presses its project pill through accessibility.
+    var content: NSView? { hosting }
+
     // MARK: Showing
 
     /// The item was clicked: opens the popover under it, or puts it away if it is up.
@@ -101,9 +104,10 @@ final class CompanionPanelController: NSObject {
         // A reopening a moment after a close finds the old content still there to let go.
         releaseContent()
         let model = ensureModel()
+        let room = CompanionPlacement.maxHeight(anchor: anchor, visible: area)
+        model.room = room - CompanionHomeView.pinnedHeight
         model.open()
         let window = ensureWindow()
-        let room = CompanionPlacement.maxHeight(anchor: anchor, visible: area)
         let view = CompanionHomeView(model: model, actions: actions(), maxHeight: room, onFit: { [weak self] height in
             self?.fit(height)
         })
@@ -231,8 +235,29 @@ final class CompanionPanelController: NSObject {
                 lab.open(session)
                 self?.close()
             },
-            quickStart: { text in
-                QuickStartController.shared.show(text: text.isEmpty ? nil : text)
+            reference: { [weak self] session in
+                self?.close()
+                ReferenceWindowController.shared.show(session)
+            },
+            copyLink: { session in
+                if let link = URL(string: KeepRules.deepLink(session)) { LinkCopy.copy(link, to: .general) }
+            },
+            showQuickOpen: { [weak self] in
+                self?.close()
+                QuickOpenPresenter.shared.show()
+            },
+            quickStart: { handOff in
+                QuickStartController.shared.show(text: handOff.text.isEmpty ? nil : handOff.text, project: handOff.project,
+                                                 planFirst: handOff.planFirst)
+            },
+            openStarted: { [weak self] sessionID, projectID in
+                self?.close()
+                // The Lab may have read it already; if not, its address opens it all the same.
+                if let session = lab.sessions.first(where: { $0.id == sessionID }) {
+                    lab.open(session)
+                } else if let link = URL(string: CompanionLinks.session(projectID: projectID, sessionID: sessionID)) {
+                    Router.shared.handle(benchURL: link, port: WebContainer.shared.port)
+                }
             },
             showResults: { [weak self] in
                 self?.close()

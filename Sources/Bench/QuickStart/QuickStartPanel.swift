@@ -43,12 +43,14 @@ final class QuickStartController: NSObject {
     // MARK: Showing
 
     /// Opens the panel, on the screen the pointer is on. Already open, it keeps
-    /// what was typed and takes the files and text it is given.
-    func show(files: [URL] = [], text: String? = nil, dependencies given: QuickStartModel.Dependencies? = nil) {
+    /// what was typed and takes the files and text it is given. The menu bar's
+    /// field hands over its project and plan setting too (⌘↩).
+    func show(files: [URL] = [], text: String? = nil, project: QuickStartProject? = nil, planFirst: Bool? = nil,
+              dependencies given: QuickStartModel.Dependencies? = nil) {
         if let given { dependencies = given }
         let model = ensureModel()
         let wasShowing = isShowing
-        model.open(files: files, text: text, keeping: wasShowing)
+        model.open(files: files, text: text, keeping: wasShowing, project: project, planFirst: planFirst)
         let window = ensureWindow(model)
         if !wasShowing {
             top = nil
