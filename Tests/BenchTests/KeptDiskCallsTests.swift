@@ -77,6 +77,13 @@ struct KeptDiskCallsTests {
             "KeepModel.swift: NSWorkspace": 1,
             "KeptDemo.swift: FileManager.default": 1,
             "ShelfView.swift: NSWorkspace": 5,
+            // Make PDF…'s drawing runs on a queue of its own (ShelfPDF.swift): its PDF is written to a temporary
+            // file and moved over the old one only when whole, and a failed one is cleared away. Finder is
+            // asked to show the file it made (a UI call, as above).
+            "ShelfPDF.swift: FileManager.default": 1,
+            "ShelfPDF.swift: .moveItem(": 1,
+            "ShelfPDF.swift: .removeItem(": 1,
+            "ShelfPDFCommand.swift: NSWorkspace": 1,
         ]
         let now = try found()
         #expect(now == allowed, "now: \(now.sorted { $0.key < $1.key })")

@@ -117,6 +117,9 @@ enum Demo {
         /// The menu bar home (Companion/CompanionDemo.swift): its popover's content in a plain window,
         /// on made-up sessions, files and a limit; `--step since`, `empty` or `busy` for the other states.
         case menuBar = "menubar"
+        /// The Shelf window (Kept/ShelfPDF*.swift) on the made-up shelf with two figures picked; the
+        /// PDF Make PDF… would make from them is written into a temporary folder (its path is printed).
+        case shelfPdf = "shelf-pdf"
     }
 
     /// `--step` with `--demo since-you-left`; `sheet` when missing.
@@ -326,6 +329,8 @@ enum Demo {
             }
         case .menuBar?:
             CompanionDemo.show(quiet: isQuiet)
+        case .shelfPdf?:
+            ShelfPDFDemo.show()
         case nil:
             break
         }

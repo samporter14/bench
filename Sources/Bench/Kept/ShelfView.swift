@@ -52,6 +52,12 @@ struct ShelfView: View {
                     .fixedSize()
                 }
                 .sharedBackgroundVisibility(.hidden)
+                if model.pickCount > 0 {
+                    ToolbarItem(placement: .primaryAction) {
+                        ShelfMakePDFButton(model: model)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                }
                 ToolbarItem(placement: .primaryAction) {
                     ShelfSearchPill(search: $model.search)
                 }
@@ -76,7 +82,11 @@ struct ShelfView: View {
                 chips
                 if let selected = model.selected {
                     grid
-                    detail(selected)
+                    if model.pickCount > 1 {
+                        ShelfPickedCard(model: model, thumbnails: thumbnails)
+                    } else {
+                        detail(selected)
+                    }
                 } else {
                     empty
                 }
@@ -129,6 +139,7 @@ struct ShelfView: View {
         .onKeyPress(.upArrow) { model.move(0, -1); return .handled }
         .onKeyPress(.downArrow) { model.move(0, 1); return .handled }
         .onKeyPress(.space) { previewSelected() ? .handled : .ignored }
+        .shelfPickingKeys(model)
         .overlay(alignment: .bottom) {
             if let note = model.note {
                 ShelfNote(note: note, undo: { model.undoRemoval() })
@@ -140,13 +151,16 @@ struct ShelfView: View {
     }
 
     private func card(_ item: ShelfItem) -> some View {
-        let isSelected = item.id == model.selection
+        let isSelected = model.isPicked(item.id)
         return VStack(alignment: .leading, spacing: 6) {
             ShelfPaper(store: thumbnails, url: item.fileURL, side: item.kind == .figure ? 220 : 520, kind: item.kind, inset: 7, symbolSize: 30)
                 .frame(height: 120)
                 .background(Solanum.raised, in: .rect(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isSelected ? Solanum.ink : Solanum.hairline,
                                                                          lineWidth: isSelected ? 2 : 1))
+                .overlay(alignment: .topLeading) {
+                    if let page = model.pageNumber(of: item.id) { ShelfPageBadge(number: page).offset(x: -5, y: -5) }
+                }
                 .accessibilityHidden(true)
             Text(item.title)
                 .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
@@ -164,7 +178,8 @@ struct ShelfView: View {
             quickLookSelected()
         }
         .onTapGesture {
-            model.selection = item.id
+            // ⌘ adds the card or takes it away, ⇧ picks the run from the last one.
+            model.pick(item.id, ShelfModel.Pick(NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags))
             gridFocused = true
         }
         .id(item.id)
@@ -174,6 +189,7 @@ struct ShelfView: View {
                 .disabled(Demo.mode != nil)
             Button("Quick Look") { model.selection = item.id; quickLookSelected() }
             Button("Copy") { ShelfActions.copy(item) }
+            Button("Make PDF\u{2026}") { model.makePDF(from: item) }
             Divider()
             Button("Open") { NSWorkspace.shared.open(item.fileURL) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.folder]) }
@@ -181,7 +197,7 @@ struct ShelfView: View {
             Button("Remove") { model.selection = item.id; model.removeSelected() }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(item.title), \(ShelfRules.caption(for: item))")
+        .accessibilityLabel("\(item.title), \(ShelfRules.caption(for: item))" + (model.pageNumber(of: item.id).map { ", page \($0)" } ?? ""))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { model.selection = item.id }
     }

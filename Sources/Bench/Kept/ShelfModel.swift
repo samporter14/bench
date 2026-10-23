@@ -22,13 +22,25 @@ final class ShelfModel: ObservableObject {
 
     let shelf: Shelf
     var index: KeptIndex { shelf.index }
+    /// Make PDF… (ShelfPDFCommand.swift).
+    let pdf: ShelfPDFMaker
 
     @Published private(set) var items: [ShelfItem] = []
     @Published var project: String? { didSet { if project != oldValue { reconcile() } } }
     @Published var kind: ShelfKind? { didSet { if kind != oldValue { reconcile() } } }
     @Published var search = "" { didSet { if search != oldValue { reconcile() } } }
-    /// The selected item's id (`ShelfItem.id`).
-    @Published var selection: String?
+    /// The selected item's id (`ShelfItem.id`): the one the detail shows and the arrows move from.
+    /// Choosing it alone goes back to one pick (ShelfPicking.swift).
+    @Published var selection: String? {
+        didSet {
+            picked = selection.map { [$0] } ?? []
+            pickAnchor = selection
+        }
+    }
+    /// Every item picked (⌘-click, ⇧-click, ⌘A), the selected one among them: what Make PDF… makes.
+    @Published var picked: Set<String> = []
+    /// The card a ⇧-click runs from.
+    var pickAnchor: String?
     @Published private(set) var note: Note?
 
     private var subscription: AnyCancellable?
@@ -38,8 +50,10 @@ final class ShelfModel: ObservableObject {
     /// How long the line after a removal stays; one that only says what went wrong, twice as long.
     private let noteLifetime: Duration
 
-    init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() }) {
+    init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() },
+         pdf: ShelfPDFMaker? = nil) {
         self.shelf = shelf
+        self.pdf = pdf ?? .live(disk: shelf.index.disk)
         self.now = now
         self.noteLifetime = noteLifetime
         items = ShelfRules.items(from: shelf.index.results)
@@ -76,6 +90,12 @@ final class ShelfModel: ObservableObject {
         if let pending, now() > pending.until { self.pending = nil }
         applyPending()
         let shown = self.shown
+        // Picks still shown stay picked: moving the selection puts it back to one pick, so they are kept aside.
+        let keep = picked.intersection(shown.map(\.id))
+        defer { if let selection, keep.contains(selection) { picked = keep } }
+        if let selection, !shown.contains(where: { $0.id == selection }), let first = shown.first(where: { keep.contains($0.id) }) {
+            self.selection = first.id
+        }
         if let selection, shown.contains(where: { $0.id == selection }) { return }
         // The folder it was is gone or regrouped (kept with data and code now): the item that holds it.
         if let selection, let there = items.first(where: { item in item.folders.contains { $0.path == selection } }),
@@ -178,7 +198,7 @@ final class ShelfModel: ObservableObject {
         return at > 0 ? shown[at - 1].id : nil
     }
 
-    private func say(_ sentence: String, removal: ShelfRemoval? = nil) {
+    func say(_ sentence: String, removal: ShelfRemoval? = nil) {
         let made = Note(sentence: sentence, removal: removal)
         note = made
         noteTask?.cancel()
