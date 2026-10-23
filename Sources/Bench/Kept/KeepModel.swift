@@ -6,7 +6,9 @@
 // silently: the README and the sheet say so), written into a hidden folder
 // beside its destination, the README last, then the folder renamed into
 // place. What couldn't be copied is listed, never guessed, and Try Again copies only that and then rewrites the README: it
-// isn't done until the README agrees with the folder. A failure before
+// isn't done until the README agrees with the folder. The figure is the
+// exception: a folder is its figure, so a figure that can't be copied (over
+// the cap, or the disk refused it) ends the keep with nothing made. A failure before
 // anything landed says what Try Again will do (read again, or keep again).
 // Every step that touches the page or the disk is a dependency, so the demo
 // and the tests run the whole sheet on made-up data.
@@ -220,7 +222,9 @@ final class KeepModel: ObservableObject, Identifiable {
         case .ready, .failed(_, retry: nil): break
         default: return false
         }
-        guard plan != nil, !readingProvenance, keepTask == nil else { return false }
+        guard let plan, !readingProvenance, keepTask == nil else { return false }
+        // A figure over the cap can't be copied; the sentence under the tiles says so.
+        guard !KeepRules.figureOverCap(plan) else { return false }
         return !choices.name.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
@@ -287,17 +291,31 @@ final class KeepModel: ObservableObject, Identifiable {
             sources.versions = [ArtifactVersion(v: entry.version, n: facts?.n ?? 1, frame: nil, mime: facts?.mime ?? entry.mime,
                                                 size: facts?.size ?? entry.size, at: facts?.at ?? entry.at, parent: nil)]
         }
+        // A version the user picked is one the daemon just answered for, so it is
+        // in the strip even when the list left it out: never another in its place.
+        if subject.picksItsVersion, !sources.versions.contains(where: { $0.v == entry.version }),
+           let facts = sources.facts, let n = facts.n {
+            sources.versions.append(ArtifactVersion(v: entry.version, n: n, frame: nil, mime: facts.mime ?? entry.mime,
+                                                    size: facts.size ?? entry.size, at: facts.at ?? entry.at, parent: nil))
+            sources.versions.sort { $0.n < $1.n }
+        }
         if Task.isCancelled { return }
         wantThumbnails()
         // 3. The answer that shows one of them: the one Keep… was pressed in
         // when the caller knows it (never searched for: a newer answer may show
-        // another version), else the one found, else the last answer.
+        // another version), else the one found, else the last answer. A version
+        // the user picked without its answer (the conversation's menu) looks for
+        // the answer that shows that version and no other, as the Shelf's add
+        // does: a newer answer about another version must not take its place.
         if let pinned = subject.pinned {
             // `i` is the message's row in the history, which this answer wasn't read from.
             sources.showing = ShowingMessage(i: -1, at: pinned.at, text: pinned.text, how: .image, v: entry.version)
         } else {
-            let ids = sources.versions.map(\.v)
-            let near = sources.versions.compactMap(\.at).min()
+            let picked = subject.selectsItsVersion
+            let ids = picked ? [entry.version] : sources.versions.map(\.v)
+            let near = picked
+                ? (sources.versions.first { $0.v == entry.version }?.at ?? sources.facts?.at ?? entry.at)
+                : sources.versions.compactMap(\.at).min()
             if case .found(let message) = await dependencies.showing(subject.session.id, ids, near) {
                 sources.showing = message
             } else if !Task.isCancelled {
@@ -311,8 +329,10 @@ final class KeepModel: ObservableObject, Identifiable {
         if Task.isCancelled { return }
         phase = .ready
         // 5. The chosen version: its provenance. A pinned answer shows the
-        // subject's own version, so that one is preselected.
-        choose(KeepRules.preselect(versions: sources.versions, showing: sources.showing))
+        // subject's own version, so that one is preselected; so is a version the
+        // user picked without an answer, whichever answer is found or none is.
+        choose(KeepRules.preselect(versions: sources.versions, showing: sources.showing,
+                                   picked: subject.picksItsVersion ? entry.version : nil))
         checkName()
     }
 
@@ -528,6 +548,13 @@ final class KeepModel: ObservableObject, Identifiable {
                     copied.append(KeptFile(path: item.relativePath, role: item.role, artifact: item.artifact, version: item.version,
                                            index: nil, of: nil, sha256: d.disk.sha256(of: data), bytes: data.count,
                                            expectedSha256: expected))
+                } catch where item.role == .figure {
+                    // A folder is its figure: without one it is not made, and the hidden
+                    // one goes. (Listing the figure as missing would finish a folder that
+                    // Try Again, which copies only the other files, could never complete.)
+                    await d.disk.abandon(destination)
+                    phase = .failed(KeepRules.figureNotCopied(item.name, because: Self.reason(for: error)), retry: nil)
+                    return
                 } catch {
                     missing.append(KeptMissing(role: item.role, name: item.name, reason: KeptDiskError.sentence(error)))
                 }
@@ -541,6 +568,11 @@ final class KeepModel: ObservableObject, Identifiable {
                 return
             case .gone:
                 missing.append(KeptMissing(role: item.role, name: item.name, reason: ShelfFailure.missing.sentence))
+            case .tooBig where item.role == .figure:
+                // Not a thing Try Again can change: another version, or Cancel.
+                await d.disk.abandon(destination)
+                phase = .failed(KeepRules.figureTooBig(item.name), retry: nil)
+                return
             case .tooBig:
                 missing.append(KeptMissing(role: item.role, name: item.name, reason: "too big to keep here (over 8 MB)"))
             case .failed(let sentence) where item.role == .figure:
@@ -576,6 +608,16 @@ final class KeepModel: ObservableObject, Identifiable {
         log.notice("Kept \(outcome.kept, privacy: .public) of \(outcome.total, privacy: .public) files")
         d.didKeep(outcome)
         phase = outcome.isComplete ? .kept(outcome) : .partial(outcome)
+    }
+
+    /// The disk's sentence for a write that failed. A write that got no answer
+    /// is "the file may still appear there" for the folder it was meant for;
+    /// the hidden folder is abandoned, so that is not said here.
+    private static func reason(for error: any Error) -> String {
+        if case .notResponding(let sentence) = KeptDiskError.from(error), sentence == KeptDiskError.writeDidNotRespond {
+            return KeptDiskError.lookDidNotRespond
+        }
+        return KeptDiskError.sentence(error)
     }
 
     /// Try Again after a partial keep: only what is missing, into the folder

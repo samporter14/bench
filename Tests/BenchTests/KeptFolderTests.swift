@@ -94,6 +94,18 @@ struct KeptFolderTests {
         #expect(KeptLayout.isValidRelativePath("data/README 2.md"))
     }
 
+    @Test func theFigureNeverTakesTheReadmesOrAFoldersPlace() {
+        #expect(KeptLayout.isReadme("README.md") && KeptLayout.isReadme("readme.MD") && !KeptLayout.isReadme("README 2.md"))
+        #expect(KeptLayout.figureFileName("z_prime.png") == "z_prime.png")
+        #expect(KeptLayout.figureFileName("README.md") == "README 2.md")
+        #expect(KeptLayout.figureFileName("data") == "data 2")
+        #expect(KeptLayout.figureFileName("Code") == "Code 2")
+        #expect(KeptLayout.figureFileName("input") == "input 2")
+        // Only the whole name: a file that merely starts like a folder is a file.
+        #expect(KeptLayout.figureFileName("data.csv") == "data.csv" && KeptLayout.figureFileName("data 2") == "data 2")
+        #expect(KeptLayout.isValidRelativePath(KeptLayout.figureFileName("data")))
+    }
+
     @Test func theDefaultFolderIsDocumentsKeptInTheHomeFolderGiven() {
         let home = URL(filePath: "/home/made-up", directoryHint: .isDirectory)
         #expect(KeptDefaults.root(home: home).path == "/home/made-up/Documents/Kept")

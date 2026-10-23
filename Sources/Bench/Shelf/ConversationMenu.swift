@@ -351,7 +351,9 @@ final class ConversationShelf {
                 ArtifactEntry(version: pick.version, artifact: $0.a, name: $0.name ?? entry.name, mime: $0.mime,
                               size: $0.size ?? 0, at: $0.at)
             }
-            dependencies.keep(KeepSubject(session: session, entry: known ?? entry))
+            // The version is the user's pick: it stays the selection, whichever
+            // newer answer shows another, and whether or not its answer is found.
+            dependencies.keep(KeepSubject(session: session, entry: known ?? entry, selectsItsVersion: true))
         case .openAsReference:
             dependencies.reference(session, pick.version)
         case .showInResults:

@@ -56,10 +56,26 @@ private final class Science {
     /// A download answered here first; nil goes on as usual.
     var onDownload: (@MainActor (String) -> ShelfTransferResult?)?
     private(set) var downloads: [String] = []
+    /// The figure's file name now, and what the inputs are called.
+    var figureName = "z_prime.png"
+    var inputNames = Made.inputNames
+    /// A version's size as the listing and the facts say it (the bytes stay small).
+    var sizes: [String: Int] = [:]
+    /// Versions the artifact's list leaves out, though the daemon knows them.
+    var unlisted: Set<String> = []
+    /// The session's last answer, the fallback.
+    var last: KeepAnswer?
+    /// The versions each search was asked about, in order.
+    private(set) var searches: [[String]] = []
+    /// A search finds the answer only if it shows one of the versions asked about,
+    /// as the real reader does; off, it answers whatever it was asked.
+    var searchMatchesVersions = true
 
-    func search() -> ShowingRead {
+    func search(_ versions: [String]? = nil) -> ShowingRead {
         showingCalls += 1
-        return showing.map { .found($0) } ?? .notFound
+        searches.append(versions ?? [])
+        guard let showing, !searchMatchesVersions || versions?.contains(showing.v) != false else { return .notFound }
+        return .found(showing)
     }
 
     func read(_ read: ArtifactRead) -> ShelfTransferResult {
@@ -67,25 +83,25 @@ private final class Science {
         case .facts(let v):
             if factsFailures > 0 { factsFailures -= 1; return .timedOut }
             let sha = KeptDisk.sha256(of: Made.bytes(v))
-            if let name = Made.inputNames[v] {
+            if let name = inputNames[v] {
                 return .answered(.facts(ArtifactFacts(v: v, a: Made.inputArtifact, n: 1, name: name, mime: "text/csv",
                                                       size: Made.table(v).count, at: Made.at(0), sha: sha, isUpload: false,
                                                       code: nil, codeCut: false, environment: nil)))
             }
             guard Made.versions.contains(v) else { return .answered(.missing) }
-            return .answered(.facts(ArtifactFacts(v: v, a: Made.artifact, n: Made.n(v), name: "z_prime.png", mime: "image/png",
-                                                  size: Made.figure(v).count, at: Made.at(Double(Made.n(v))), sha: sha,
+            return .answered(.facts(ArtifactFacts(v: v, a: Made.artifact, n: Made.n(v), name: figureName, mime: "image/png",
+                                                  size: sizes[v] ?? Made.figure(v).count, at: Made.at(Double(Made.n(v))), sha: sha,
                                                   isUpload: false, code: nil, codeCut: false, environment: nil)))
         case .versions:
-            return .answered(.versions(Made.versions.map {
-                ArtifactVersion(v: $0, n: Made.n($0), frame: Made.session.id, mime: "image/png", size: Made.figure($0).count,
+            return .answered(.versions(Made.versions.filter { !unlisted.contains($0) }.map {
+                ArtifactVersion(v: $0, n: Made.n($0), frame: Made.session.id, mime: "image/png", size: sizes[$0] ?? Made.figure($0).count,
                                 at: Made.at(Double(Made.n($0))), parent: nil)
             }))
         case .lineage(let v):
             return .answered(.lineage(ArtifactLineage(
                 v: v, code: Made.script, codeCut: false, description: nil, language: "python", pending: false,
                 unavailableModel: nil, unavailableReason: nil, hasCells: true, hasEnvironment: true, mappingStatus: "complete",
-                inputs: inputs.map { LineageInput(v: $0, a: Made.inputArtifact, name: Made.inputNames[$0], file: nil, how: "runtime", inferred: false) })))
+                inputs: inputs.map { LineageInput(v: $0, a: Made.inputArtifact, name: inputNames[$0], file: nil, how: "runtime", inferred: false) })))
         case .download(let v):
             downloads.append(v)
             if let answer = onDownload?(v) { return answer }
@@ -99,6 +115,27 @@ private final class Science {
     }
 }
 
+/// Disk calls that can be held back, as a dropped volume holds them, and let
+/// go late. Calls run at once until `holding` is set.
+private final class HeldCalls: @unchecked Sendable {
+    private let lock = NSLock()
+    private var held: [KeptDisk.Work] = []
+    private var hold = false
+
+    func holding(_ on: Bool) { lock.withLock { hold = on } }
+    var count: Int { lock.withLock { held.count } }
+
+    func run(_ work: @escaping KeptDisk.Work) {
+        if lock.withLock({ hold }) { lock.withLock { held.append(work) } } else { work() }
+    }
+
+    /// Lets the held calls finish, late, in the order they came.
+    func release() {
+        let pending = lock.withLock { let all = held; held = []; return all }
+        for work in pending { work() }
+    }
+}
+
 /// A scratch Kept folder, a defaults suite of its own and the made-up reads.
 @MainActor
 private final class Rig {
@@ -109,27 +146,32 @@ private final class Rig {
     private let suite = "capsid-tests-keep-\(UUID().uuidString)"
     let defaults: UserDefaults
 
-    init() throws {
+    /// `hold` makes the disk one that can stop answering, as a dropped volume does.
+    init(hold: HeldCalls? = nil) throws {
         let scratch = FileManager.default.temporaryDirectory.appending(path: "capsid-tests-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         let root = scratch.appending(path: "Kept", directoryHint: .isDirectory)
         self.scratch = scratch
         self.root = root
-        disk = KeptDisk(root: { root })
+        if let hold {
+            disk = KeptDisk(root: { root }, wait: { _ in }, run: { hold.run($0) })
+        } else {
+            disk = KeptDisk(root: { root })
+        }
         defaults = UserDefaults(suiteName: suite)!
     }
 
     /// Where the made-up session's keeps go: its project's name.
     var collection: URL { root.appending(path: "Assay development", directoryHint: .isDirectory) }
 
-    func model(entry v: String = Made.v4, pinned: KeepPinnedAnswer? = nil) -> KeepModel {
+    func model(entry v: String = Made.v4, pinned: KeepPinnedAnswer? = nil, selectsItsVersion: Bool = false) -> KeepModel {
         let entry = ArtifactEntry(version: v, artifact: Made.artifact, name: "z_prime.png", mime: "image/png",
                                   size: Made.figure(v).count, at: Made.at(Double(Made.n(v))))
         let science = self.science, root = self.root
         let dependencies = KeepDependencies(
             read: { science.read($0) },
-            showing: { _, _, _ in science.search() },
-            lastAnswer: { _ in nil },
+            showing: { _, versions, _ in science.search(versions) },
+            lastAnswer: { _ in science.last },
             thumbnails: ShelfThumbnails(),
             disk: disk,
             defaults: defaults,
@@ -138,7 +180,8 @@ private final class Rig {
             capsidVersion: "1.0",
             now: { Made.at(100) },
             didKeep: { _ in })
-        return KeepModel(subject: KeepSubject(session: Made.session, entry: entry, pinned: pinned), dependencies: dependencies)
+        return KeepModel(subject: KeepSubject(session: Made.session, entry: entry, pinned: pinned, selectsItsVersion: selectsItsVersion),
+                         dependencies: dependencies)
     }
 
     func tearDown() {
@@ -553,5 +596,317 @@ struct KeepRetryRecordTests {
         #expect(back.record.missing == after.missing)
         #expect(back.record.files.map(\.path).contains("data/z_prime_by_plate.csv"))
         #expect(!back.record.files.map(\.path).contains("data/plate_layout.csv"))
+    }
+}
+
+// MARK: D. A version the user picked stays picked
+
+@MainActor
+struct KeepPickedVersionModelTests {
+    @Test func aVersionClickedInTheConversationStaysSelectedWhileALaterAnswerShowsAnother() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        // The later answer shows version 2; version 1 was clicked. Even a reader that
+        // hands back that answer whatever it is asked cannot move the pick.
+        rig.science.showing = Made.showing(Made.v2)
+        rig.science.searchMatchesVersions = false
+        let model = rig.model(entry: Made.v1, selectsItsVersion: true)
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.choices.version == Made.v1)
+        #expect(model.plan?.figure.version == Made.v1)
+        // What that answer is about is said, and the answer is left off.
+        #expect(model.tiles.first { $0.v == Made.v2 }?.inAnswer == true)
+        let answer = try #require(model.row(.answer))
+        #expect(answer.detail == "Claude\u{2019}s answer shows version 2, not this one.")
+        #expect(answer.available && !answer.onByDefault)
+        #expect(model.plan?.answer == nil)
+
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let back = try await rig.disk.readme(at: try #require(model.keptOutcome).folder)
+        #expect(back.record.figure.version == Made.v1)
+        #expect(back.record.figure.sha256 == KeptDisk.sha256(of: Made.figure(Made.v1)))
+    }
+
+    @Test func theAnswerLookedForIsTheOneThatShowsTheClickedVersion() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        // A newer answer shows version 2; an answer that shows version 1 is not in the page's reach: unknown.
+        rig.science.showing = Made.showing(Made.v2)
+        let model = rig.model(entry: Made.v1, selectsItsVersion: true)
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(rig.science.searches == [[Made.v1]])
+        // Its answer is unknown, and the version is still the one clicked, not the newest.
+        #expect(model.choices.version == Made.v1)
+        #expect(model.sources.showing == nil)
+        let none = try #require(model.row(.answer))
+        #expect(!none.available)
+        #expect(none.detail.hasPrefix("Capsid couldn\u{2019}t find the answer that showed this version."))
+        #expect(model.versionSentence.hasPrefix("Version 1 of 4, from "))
+        #expect(model.plan?.answer == nil)
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let back = try await rig.disk.readme(at: try #require(model.keptOutcome).folder)
+        #expect(back.record.figure.version == Made.v1)
+        #expect(back.record.answerShowsVersion == nil)
+    }
+
+    @Test func withNoAnswerForItTheSessionsLastAnswerIsOfferedAndNeverAnotherVersion() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.last = KeepAnswer(text: "The eleven plates are unchanged.", at: Made.at(30), how: nil, isFallback: true)
+        let model = rig.model(entry: Made.v2, selectsItsVersion: true)
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.choices.version == Made.v2)
+        let row = try #require(model.row(.answer))
+        #expect(row.title == "What Claude said last" && row.available)
+        #expect(model.plan?.answer?.isFallback == true)
+    }
+
+    @Test func whenItsAnswerIsFoundItIsKeptWithItLikeAnyOther() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.showing = Made.showing(Made.v1)
+        let model = rig.model(entry: Made.v1, selectsItsVersion: true)
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(rig.science.searches == [[Made.v1]])
+        #expect(model.choices.version == Made.v1)
+        #expect(model.tiles.first { $0.v == Made.v1 }?.inAnswer == true)
+        let answer = try #require(model.row(.answer))
+        #expect(answer.available && answer.onByDefault && answer.detail.hasPrefix("\u{201C}All plates passed"))
+        #expect(model.plan?.answer?.text == Made.answer)
+        #expect(model.plan?.answerShows == nil)
+    }
+
+    @Test func withoutAPickItFollowsTheNewestAnswerAsBefore() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.showing = Made.showing(Made.v2)
+        let model = rig.model(entry: Made.v1)
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        // Results' entry is the latest version project-wide, never the user's pick: every version is searched.
+        #expect(rig.science.searches == [Made.versions])
+        #expect(model.choices.version == Made.v2)
+    }
+
+    @Test func aPickTheArtifactsListLeftOutIsInTheStripAndSelected() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.unlisted = [Made.v1]
+        let model = rig.model(entry: Made.v1, selectsItsVersion: true)
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.tiles.map(\.n) == [1, 2, 3, 4])
+        #expect(model.choices.version == Made.v1)
+        #expect(model.plan?.figure.version == Made.v1)
+    }
+}
+
+// MARK: E. A folder is its figure
+
+/// Something done once, from inside a made-up read.
+@MainActor
+private final class Once {
+    private var done = false
+    func take() -> Bool {
+        defer { done = true }
+        return !done
+    }
+}
+
+@MainActor
+struct KeepFigureFirstModelTests {
+    @Test func aFigureCalledReadmeIsKeptBesideCapsidsOwnReadme() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.figureName = "README.md"
+        rig.science.inputNames = [Made.in1: "readme.md", Made.in2: "plate_layout.csv"]
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.plan?.figure.name == "README 2.md")
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.isComplete && outcome.kept == 3 && outcome.total == 3)
+        #expect(names(outcome.folder) == ["README 2.md", "README.md", "code", "data"])
+        // README.md is Capsid's, and says where everything is.
+        let back = try await rig.disk.readme(at: outcome.folder)
+        #expect(back.markdown.contains("capsid_kept: 1"))
+        #expect(back.record.figure.path == "README 2.md")
+        #expect(back.record.figure.sha256 == KeptDisk.sha256(of: Made.figure(Made.v4)))
+        #expect(Set(back.record.files.map(\.path)) == ["data/readme 3.md", "code/README.py"])
+        #expect(back.record.missing.isEmpty)
+        let figure = try Data(contentsOf: outcome.folder.appending(path: "README 2.md", directoryHint: .notDirectory))
+        #expect(figure == Made.figure(Made.v4))
+        let script = try String(contentsOf: outcome.folder.appending(path: "code/README.py", directoryHint: .notDirectory), encoding: .utf8)
+        #expect(script.contains("../data/readme 3.md"))
+        #expect(try await rig.disk.scan().count == 1)
+    }
+
+    @Test func aFigureCalledDataDoesntTakeTheDataFoldersPlace() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.figureName = "data"
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.isComplete && outcome.kept == 3 && outcome.total == 3)
+        #expect(names(outcome.folder) == ["README.md", "code", "data", "data 2"])
+        #expect(exists(outcome.folder, "data/z_prime_by_plate.csv"))
+        #expect(try await rig.disk.readme(at: outcome.folder).record.figure.path == "data 2")
+    }
+
+    @Test func aFigureOverTheCapIsSaidBeforeKeepingAndNothingIsMade() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.sizes[Made.v4] = KeepRules.cap + 1
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(!model.canKeep)
+        #expect(model.versionSentence.hasSuffix("it\u{2019}s over the 8 MB Capsid can copy here, so this version can\u{2019}t be kept."))
+        model.keep()
+        #expect(model.phase == .ready)
+        #expect(rig.science.downloads.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: rig.root.path))
+
+        // Another version can be kept, and reads as it always did.
+        model.choose(Made.v3)
+        try await until("version 3 is read") { model.settled }
+        #expect(model.canKeep)
+        #expect(!model.versionSentence.contains("8 MB"))
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        #expect(try #require(model.keptOutcome).isComplete)
+        #expect(names(rig.collection) == ["z_prime"])
+    }
+
+    @Test func aFigureTheDaemonCallsTooBigEndsTheKeepWithNothingMadeAndRetryHasNothingToDo() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        // Its listing didn't say how big it is; the read does.
+        rig.science.onDownload = { v in v == Made.v4 ? .answered(.tooBig) : nil }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.canKeep)
+        model.keep()
+        try await until("the keep fails") { model.failure != nil }
+        #expect(model.failure?.sentence == KeepRules.figureTooBig("z_prime.png"))
+        #expect(model.failure?.sentence.contains("nothing was kept") == true)
+        #expect(model.failure?.retry == nil)
+        #expect(!model.canTryAgain)
+        // Nothing was made: no folder, no hidden one, and the data and code were never fetched.
+        #expect(names(rig.collection).isEmpty)
+        #expect(rig.science.downloads == [Made.v4])
+        #expect(try await rig.disk.scan().isEmpty)
+
+        // Another version, then, as the sentence says.
+        rig.science.onDownload = nil
+        #expect(model.canKeep)
+        model.choose(Made.v3)
+        try await until("version 3 is read") { model.settled }
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.isComplete && outcome.missing.isEmpty)
+        #expect(names(outcome.folder) == ["README.md", "code", "data", "z_prime.png"])
+        #expect(try await rig.disk.scan().count == 1)
+    }
+
+    @Test func aFigureThatCantBeWrittenEndsTheKeepWithNothingMade() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        // The folder being built goes while the figure is coming, as when a volume is pulled.
+        let once = Once()
+        let collection = rig.collection
+        rig.science.onDownload = { v in
+            guard v == Made.v4, once.take() else { return nil }
+            for name in names(collection) where KeptName.isTemporary(name) {
+                try? FileManager.default.removeItem(at: collection.appending(path: name, directoryHint: .isDirectory))
+            }
+            return nil
+        }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep fails") { model.failure != nil }
+        #expect(model.failure?.sentence
+            == KeepRules.figureNotCopied("z_prime.png", because: "The folder for this keep isn't there."))
+        #expect(model.failure?.retry == nil)
+        #expect(names(rig.collection).isEmpty)
+        #expect(rig.science.downloads == [Made.v4])
+        #expect(try await rig.disk.scan().isEmpty)
+
+        // Keep is on again for another go, and it works.
+        #expect(model.canKeep)
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.isComplete && outcome.kept == 3)
+        #expect(names(rig.collection) == ["z_prime"])
+        #expect(rig.science.downloads.filter { $0 == Made.v4 }.count == 2)
+    }
+
+    @Test func aFigureWriteThatGetsNoAnswerSaysTheFolderDidntRespondAndLeavesNothing() async throws {
+        let hold = HeldCalls()
+        let rig = try Rig(hold: hold)
+        defer { rig.tearDown() }
+        // The volume stops answering just as the figure arrives.
+        rig.science.onDownload = { v in
+            if v == Made.v4 { hold.holding(true) }
+            return nil
+        }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep fails") { model.failure != nil }
+        let sentence = try #require(model.failure?.sentence)
+        #expect(sentence == KeepRules.figureNotCopied("z_prime.png", because: KeptDiskError.lookDidNotRespond))
+        // The file isn't going to appear there: the hidden folder is abandoned.
+        #expect(!sentence.contains("may still appear"))
+        #expect(model.failure?.retry == nil)
+
+        // The volume comes back: the late calls finish, and the hidden folder goes.
+        hold.holding(false)
+        hold.release()
+        #expect(hold.count == 0)
+        #expect(names(rig.collection).isEmpty)
+        #expect(try await rig.disk.scan().isEmpty)
+        rig.science.onDownload = nil
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        #expect(try #require(model.keptOutcome).isComplete)
+    }
+
+    @Test func aDataFileTooBigIsStillListedAndTheFolderStillMade() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        // Only the figure ends a keep: the other files are listed when they can't be copied.
+        rig.science.onDownload = { v in v == Made.in1 ? .answered(.tooBig) : nil }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep ends") { model.partialOutcome != nil }
+        let outcome = try #require(model.partialOutcome)
+        #expect(outcome.kept == 2 && outcome.total == 3)
+        #expect(outcome.missing.map(\.name) == ["z_prime_by_plate.csv"])
+        #expect(outcome.missing.allSatisfy { $0.role != .figure })
+        #expect(exists(outcome.folder, "z_prime.png"))
+        let back = try await rig.disk.readme(at: outcome.folder)
+        #expect(back.record.figure.sha256 == KeptDisk.sha256(of: Made.figure(Made.v4)))
+        #expect(back.record.missing.map(\.name) == ["z_prime_by_plate.csv"])
     }
 }

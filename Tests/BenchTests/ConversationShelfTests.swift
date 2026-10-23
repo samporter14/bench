@@ -110,8 +110,11 @@ struct ConversationShelfTests {
         #expect(calls.kept.count == 1)
         #expect(calls.kept[0].session == Self.session)
         #expect(calls.kept[0].entry.version == Self.version)
-        // The sheet reads its own facts and finds the answer: it is not pinned.
+        // The sheet reads its own facts and finds the answer, so no answer is pinned;
+        // but the version is the user's pick, and no newer answer moves it.
         #expect(calls.kept[0].pinned == nil)
+        #expect(calls.kept[0].selectsItsVersion)
+        #expect(calls.kept[0].picksItsVersion)
         #expect(fake.added.isEmpty)
         #expect(toast.state == nil)
     }
@@ -129,6 +132,7 @@ struct ConversationShelfTests {
         #expect(entry?.at == Date(timeIntervalSince1970: 1_792_000_000))
         // The sheet's proposed folder name is the file's, not the picture's alt text.
         #expect(KeepRules.defaultName(for: entry!) == "z_prime_by_plate")
+        #expect(calls.kept.first?.selectsItsVersion == true)
     }
 
     @Test func keepWithDataAndCodeWithNoFactsStillOpensOnTheElementsWords() async {
@@ -137,6 +141,8 @@ struct ConversationShelfTests {
         #expect(calls.factsAsks == [Self.version])
         #expect(calls.kept.first?.entry.name == "z_prime_by_plate.png")
         #expect(calls.kept.first?.entry.version == Self.version)
+        // Facts or not, the clicked version is the selection.
+        #expect(calls.kept.first?.selectsItsVersion == true)
     }
 
     @Test func openAsReferenceNamesTheVersionToShow() async {
