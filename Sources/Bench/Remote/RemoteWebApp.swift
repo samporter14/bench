@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "b2bdf46d13bc",
+        "/app.js": "05884f14ee6d",
         "/app.css": "b948887bc2c7",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=b2bdf46d13bc"></script>
+<script type="module" src="/app.js?v=05884f14ee6d"></script>
 </body>
 </html>
 """#
@@ -1840,7 +1840,7 @@ return { ok: true, refetch: true, text: sentence || { approved: 'Approved', allo
 }
 if (result === 'blocked') return { ok: false, refetch: true, text: sentence || 'That isn’t possible right now.' };
 if (result === 'retry') return { ok: false, refetch: true, text: sentence || 'That didn’t go through. Try again.' };
-if (result === 'unknown') return { ok: false, refetch: true, text: sentence || 'Not sure that went through. Look at it on your Mac before you try again.' };
+if (result === 'unknown') return { ok: false, refetch: true, open: true, text: sentence || 'Not sure that went through. Look at it on your Mac before you try again.' };
 if (status === 403 && !sentence) return { ok: false, refetch: true, text: 'Actions are off in Capsid’s Settings.' };
 return { ok: false, refetch: true, open: true, text: sentence || 'Couldn’t do that from here. Open it on your Mac.' };
 }

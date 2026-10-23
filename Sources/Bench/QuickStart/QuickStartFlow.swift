@@ -206,6 +206,11 @@ final class QuickStartFlow: QuickStartSending {
             "The files are in \(project), but the message didn't go through. Send again and they won't go up twice."
         }
         static let sendUnsure = "Not sure that went through. Look at the session before you send again. Your message is still here."
+        /// The session's turn ran out of time before the message left.
+        static func stalledNothingSent(files: Bool, project: String) -> String {
+            files ? "Claude Science took too long. Nothing was sent, but a file may already be in \(project). Your message is still here."
+                : "Claude Science took too long, and nothing was sent. Your message is still here."
+        }
         static func uploadUnsure(_ name: String, project: String, starting: Bool) -> String {
             "Not sure \u{201C}\(name)\u{201D} reached \(project). Nothing was \(starting ? "started" : "sent"). Your request is still here: sending it again may add a second copy."
         }
@@ -373,17 +378,24 @@ final class QuickStartFlow: QuickStartSending {
 
     private func send(to id: String, request: Request, progress: @escaping @MainActor (Progress) -> Void) async -> Outcome {
         var outcome = Outcome.failed(sentence: Sentence.notSent)
+        var committed = false
+        let told: @MainActor (Progress) -> Void = { stage in
+            if stage == .committed { committed = true }
+            progress(stage)
+        }
         // The turn is bounded, uploads and all, so a message behind a stalled one still goes.
         let end = await sessions.runSerially(on: id, limit: dependencies.turn(request.files.map(\.size))) { [weak self] in
-            if let self { outcome = await self.sendToSession(id, request: request, progress: progress) }
+            if let self { outcome = await self.sendToSession(id, request: request, progress: told) }
             return .ok(.unavailable)
         }
         switch end {
         case .finished: return outcome
         // Never began: nothing was sent.
         case .cancelled: return .failed(sentence: Sentence.cancelled)
-        // The turn ran out of time somewhere, and the message may have gone.
-        case .stalled: return .failed(sentence: Sentence.sendUnsure)
+        // The turn ran out of time: if the message hadn't left, nothing was sent; if it had, it may have gone.
+        case .stalled:
+            if committed { return .failed(sentence: Sentence.sendUnsure) }
+            return .failed(sentence: Sentence.stalledNothingSent(files: !request.files.isEmpty, project: request.projectName))
         }
     }
 

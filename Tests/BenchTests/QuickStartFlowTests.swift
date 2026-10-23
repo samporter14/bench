@@ -38,6 +38,8 @@ private final class FlowRig {
 
     // Holds, for the tests of Cancel: each waits on `gate` until `gate.open()`.
     let gate = Gate()
+    /// The deadline of a session's turn waits on this; `clock.fire()` is "the time is up".
+    let clock = ManualClock()
     var holdProjects = false
     var holdUploads = false
     var holdCreate = false
@@ -46,6 +48,8 @@ private final class FlowRig {
     /// Called as each read begins, with its place in turn.
     var onRead: ((Int) -> Void)?
     var turnLimit: Duration = .seconds(60)
+    /// How many of the first writes wait on the gate (a message's write).
+    var holdWrites = 0
     /// An upload's deadline in Swift passes at once.
     var uploadsRunOutOfTime = false
     private var readCalls = 0
@@ -105,11 +109,16 @@ private final class FlowRig {
         write: { [unowned self] write in
             self.log.append("write")
             self.writes.append(write)
+            if self.holdWrites > 0 {
+                self.holdWrites -= 1
+                await self.gate.wait()
+            }
             return self.writeReply
         },
         now: { [unowned self] in self.now },
         browseOn: { false },
-        lookup: { _ in nil }))
+        lookup: { _ in nil },
+        wait: { [unowned self] in await self.clock.wait($0) }))
 
     lazy var browser = RemoteBrowser(sessions: sessions, dependencies: RemoteBrowser.Dependencies(
         browseOn: { false },
@@ -738,21 +747,55 @@ struct QuickStartFlowUnknownTests {
         for _ in 0..<60 { await Task.yield() }
     }
 
-    @Test func aTurnThatStallsEndsUnknownAndTheNextMessageGoes() async {
-        // The session read never returns: the turn is given up, and the next message is not held behind it.
+    @Test func aTurnThatStallsBeforeAnythingIsSentSaysSoAndTheNextMessageGoes() async {
+        // The session read never returns: the turn is given up, nothing was sent, and the next
+        // message is not held behind it.
         rig.holdReads = [0]
-        rig.turnLimit = .milliseconds(60)
         let flow = rig.flow
-        let stuck = Task { @MainActor in await flow.perform(rig.message("First")) }
+        var stages: [QuickStartFlow.Progress] = []
+        let stuck = Task { @MainActor in await flow.perform(rig.message("First"), progress: { stages.append($0) }) }
         for _ in 0..<2_000 where rig.gate.holding == 0 { await Task.yield() }
+        await rig.clock.until(waiting: 1)
         let next = Task { @MainActor in await flow.perform(rig.message("Second", intent: otherIntent)) }
+        for _ in 0..<40 { await Task.yield() }
+        rig.clock.fire()
         let first = await stuck.value
-        #expect(first == .failed(sentence: QuickStartFlow.Sentence.sendUnsure))
+        #expect(first == .failed(sentence: QuickStartFlow.Sentence.stalledNothingSent(files: false, project: "Made-up")))
+        #expect(first != .failed(sentence: QuickStartFlow.Sentence.sendUnsure), "it hadn't left, so it isn't unsure")
+        #expect(stages.isEmpty)
         let second = await next.value
         #expect(second == .sent(.sent, sentence: "Sent."))
         #expect(rig.writes.count == 1, "only the second message was written")
         rig.gate.open()
         for _ in 0..<60 { await Task.yield() }
+    }
+
+    @Test func aTurnThatStallsWithTheMessageOutMayHaveGone() async {
+        rig.holdWrites = 1
+        let flow = rig.flow
+        var stages: [QuickStartFlow.Progress] = []
+        let stuck = Task { @MainActor in await flow.perform(rig.message("First"), progress: { stages.append($0) }) }
+        for _ in 0..<2_000 where rig.gate.holding == 0 { await Task.yield() }
+        await rig.clock.until(waiting: 1)
+        let next = Task { @MainActor in await flow.perform(rig.message("Second", intent: otherIntent)) }
+        for _ in 0..<40 { await Task.yield() }
+        rig.clock.fire()
+        let first = await stuck.value
+        #expect(first == .failed(sentence: QuickStartFlow.Sentence.sendUnsure))
+        #expect(stages == [.committed])
+        let second = await next.value
+        #expect(second == .sent(.sent, sentence: "Sent."))
+        #expect(rig.writes.count == 2)
+        rig.gate.open()
+        for _ in 0..<60 { await Task.yield() }
+        // The stuck write came back late: nothing more was done for it (no look, no second write).
+        #expect(rig.writes.count == 2)
+        #expect(!rig.log.contains("turns"))
+    }
+
+    @Test func aStalledTurnWithFilesSaysAFileMayBeThere() {
+        #expect(QuickStartFlow.Sentence.stalledNothingSent(files: true, project: "P")
+            == "Claude Science took too long. Nothing was sent, but a file may already be in P. Your message is still here.")
     }
 }
 

@@ -755,13 +755,15 @@ final class RemoteSessions {
     func respond(_ request: RemoteActionRequest, session id: String,
                  checking: (@MainActor () -> Void)? = nil) async -> RemoteActionResult {
         var result = RemoteActionResult.unsure
+        var wrote = false
         let end = await runSerially(on: id, limit: dependencies.turnLimit) { [weak self] in
-            if let self { result = await self.perform(request, session: id, checking: checking) }
+            if let self { result = await self.perform(request, session: id, checking: checking, leaving: { wrote = true }) }
             return .ok(result)
         }
         switch end {
         case .finished: return result
-        case .stalled: return .unsure
+        // The turn ran out of time: if the write hadn't left, nothing was sent; if it had, it may have gone.
+        case .stalled: return wrote ? .unsure : .notThere
         case .cancelled: return .unavailable
         }
     }
@@ -774,7 +776,7 @@ final class RemoteSessions {
     }
 
     private func perform(_ request: RemoteActionRequest, session id: String,
-                         checking: (@MainActor () -> Void)?) async -> RemoteActionResult {
+                         checking: (@MainActor () -> Void)?, leaving: (@MainActor () -> Void)?) async -> RemoteActionResult {
         // Phase 4 permissions: an answer to a request reads the helpers' frames too (a full read).
         let fresh = await dependencies.read(id, request.isPermission)
         switch request {
@@ -782,7 +784,7 @@ final class RemoteSessions {
             switch RemoteDecide.approve(version: version, session: id, fresh: fresh) {
             case .answer(let result): return result
             case .write(let write):
-                return await settling(write, session: id, full: false, checking: checking,
+                return await settling(write, session: id, full: false, checking: checking, leaving: leaving,
                                       map: { RemoteDecide.approved($0) },
                                       settle: { RemoteDecide.settledApprove(version: version, fresh: $0) })
             }
@@ -795,7 +797,7 @@ final class RemoteSessions {
                 case .answer(let id, _), .chooseForMe(let id), .cancel(let id): toolID = id
                 default: return .unavailable
                 }
-                return await settling(write, session: id, full: false, checking: checking,
+                return await settling(write, session: id, full: false, checking: checking, leaving: leaving,
                                       map: { RemoteDecide.answered($0, request: request) },
                                       settle: { RemoteDecide.settledAnswer(toolID: toolID, fresh: $0) })
             }
@@ -804,13 +806,13 @@ final class RemoteSessions {
             case .answer(let result): return result
             case .write(let write):
                 guard case .message(_, _, _, let text, _, _) = write else { return .unavailable }
-                return await deliver(write, text: text, session: id, before: fresh, checking: checking).result
+                return await deliver(write, text: text, session: id, before: fresh, checking: checking, leaving: leaving).result
             }
         case .permission(let requestID, let allow, _): // Phase 4 permissions
             switch PermissionDecide.decide(request, session: id, fresh: fresh) {
             case .answer(let result): return result
             case .write(let write):
-                return await settling(write, session: id, full: true, checking: checking,
+                return await settling(write, session: id, full: true, checking: checking, leaving: leaving,
                                       map: { PermissionDecide.answered($0, allow: allow) },
                                       settle: { PermissionDecide.settled(requestID: requestID, fresh: $0) })
             }
@@ -820,7 +822,7 @@ final class RemoteSessions {
             case .write(let write):
                 guard case .planFeedback(_, _, _, let text, _) = write else { return .unavailable }
                 let since = dependencies.now()
-                return await settling(write, session: id, full: true, checking: checking,
+                return await settling(write, session: id, full: true, checking: checking, leaving: leaving,
                                       map: { RemoteDecide.planFeedbackSent($0) },
                                       settle: { RemoteDecide.settledPlanFeedback(version: version, text: text, since: since, fresh: $0) })
             }
@@ -832,17 +834,21 @@ final class RemoteSessions {
     /// The one place a write leaves for the daemon: not once the turn has been
     /// cancelled or given up on, and not again on its own. Nil when it didn't
     /// complete; `RemoteWriteResult.unknown` when it got no answer.
-    func send(_ write: RemoteWrite) async -> RemoteWriteResult? {
+    /// `leaving` is called just before it goes, so that a turn which runs out
+    /// of time can say whether anything was sent.
+    func send(_ write: RemoteWrite, leaving: (@MainActor () -> Void)? = nil) async -> RemoteWriteResult? {
         guard !Task.isCancelled else { return nil }
+        leaving?()
         return await dependencies.write(write)
     }
 
     /// A write, and its answer mapped by `map`; or, when it got none, `checking`
     /// and then one fresh read, mapped by `settle`.
     func settling(_ write: RemoteWrite, session id: String, full: Bool, checking: (@MainActor () -> Void)?,
+                  leaving: (@MainActor () -> Void)? = nil,
                   map: (RemoteWriteResult?) -> RemoteActionResult,
                   settle: (SessionProjection?) -> RemoteActionResult) async -> RemoteActionResult {
-        let reply = await send(write)
+        let reply = await send(write, leaving: leaving)
         guard reply?.isUnknown == true else { return map(reply) }
         // A turn that was given up on while the write was out has ended as unknown: it says and reads nothing more.
         guard !Task.isCancelled else { return .unsure }
@@ -856,9 +862,10 @@ final class RemoteSessions {
     /// the write was decided by. The reply comes back too, for a caller that
     /// reads a 409 as a repeat.
     func deliver(_ write: RemoteWrite, text: String, session id: String, before: SessionProjection?,
-                 checking: (@MainActor () -> Void)? = nil) async -> (reply: RemoteWriteResult?, result: RemoteActionResult) {
+                 checking: (@MainActor () -> Void)? = nil,
+                 leaving: (@MainActor () -> Void)? = nil) async -> (reply: RemoteWriteResult?, result: RemoteActionResult) {
         let since = dependencies.now()
-        let reply = await send(write)
+        let reply = await send(write, leaving: leaving)
         guard reply?.isUnknown == true else { return (reply, RemoteDecide.messaged(reply, status: before?.status ?? "")) }
         guard !Task.isCancelled else { return (reply, .unsure) }
         checking?()
@@ -954,13 +961,14 @@ extension RemoteSessions {
 
     /// Runs `work` as one of this session's actions: after the ones before
     /// it on the same queue `act` uses, and with what was held of the session
-    /// dropped once it is done. The reply of the turn, or `.unknown` when it
-    /// stalled and `.unavailable` when it was cancelled before it began.
-    func actSerially(on id: String, limit: Duration? = nil,
+    /// dropped once it is done. The reply of the turn, `stalled`'s when it ran
+    /// out of time (unknown, unless the caller knows nothing was sent) and
+    /// `.unavailable` when it was cancelled before it began.
+    func actSerially(on id: String, limit: Duration? = nil, stalled: @MainActor () -> RemoteActionReply = { .ok(.unsure) },
                      _ work: @escaping @MainActor () async -> RemoteActionReply) async -> RemoteActionReply {
         switch await runSerially(on: id, limit: limit ?? dependencies.turnLimit, work) {
         case .finished(let reply): reply
-        case .stalled: .ok(.unsure)
+        case .stalled: stalled()
         case .cancelled: .ok(.unavailable)
         }
     }

@@ -36,8 +36,12 @@ private final class Rig {
     var reply: RemoteWriteResult? = .unknown
     /// The first write goes in and never comes back, until `release()`.
     var firstWriteHangs = false
+    /// The first read (before the write) never returns.
+    var firstReadHangs = false
     var afterHangs = false
     var now = Date(timeIntervalSince1970: 1_791_833_400)
+    /// Every deadline (a turn's, the read that settles) waits on this; `clock.fire()` is "the time is up".
+    let clock = ManualClock()
     private(set) var reads: [Bool] = []
     private(set) var writes: [RemoteWrite] = []
     private var parked: CheckedContinuation<Void, Never>?
@@ -49,6 +53,7 @@ private final class Rig {
             cardPlan: { _ in nil },
             read: { id, full in
                 self.reads.append(full)
+                if self.firstReadHangs && self.reads.count == 1 { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
                 if self.writes.isEmpty { return full ? self.before : self.before?.withoutTurns }
                 if self.afterHangs { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
                 return full ? self.after : self.after?.withoutTurns
@@ -62,6 +67,7 @@ private final class Rig {
             now: { self.now })
         dependencies.turnLimit = turnLimit
         dependencies.settleLimit = settleLimit
+        dependencies.wait = { await self.clock.wait($0) }
         return RemoteSessions(dependencies: dependencies)
     }
 
@@ -138,8 +144,15 @@ struct UnknownApprovalTests {
     @Test func aReadThatNeverReturnsIsCutOffAndIsUnknown() async {
         rig.before = projection("awaiting_plan_approval", version: "ver-1")
         rig.afterHangs = true
-        let sessions = rig.sessions(settleLimit: .milliseconds(40))
-        #expect(await run(rig, approve, sessions: sessions).result == .unsure)
+        // The turn's deadline and the read's are different lengths; only the read's passes.
+        let sessions = rig.sessions(turnLimit: .seconds(61), settleLimit: .seconds(7))
+        let task = Task { @MainActor in await run(rig, approve, sessions: sessions) }
+        await rig.clock.until(waiting: 1, .seconds(7))
+        rig.clock.fire(.seconds(7))
+        let (result, checking) = await task.value
+        #expect(result == .unsure)
+        #expect(checking == 1)
+        #expect(rig.clock.waiting(.seconds(61)) == 0, "the turn had finished, and its deadline was let go")
     }
 
     @Test func anAnswerThatCameBackNeverCallsTheCheckingLineOrReadsAgain() async {
@@ -372,26 +385,52 @@ struct SessionQueueDeadlineTests {
         rig.before = projection("awaiting_plan_approval", version: "ver-1")
         rig.after = projection("awaiting_plan_approval", version: "ver-1")
         rig.firstWriteHangs = true
-        let sessions = rig.sessions(turnLimit: .milliseconds(80))
+        let sessions = rig.sessions()
         let first = Task { @MainActor in await sessions.respond(approve, session: root) }
         await waitUntil { rig.isParked }
         // A second action on the same session, behind the stuck one.
         let second = Task { @MainActor in await sessions.respond(approve, session: root) }
+        for _ in 0..<40 { await Task.yield() }
+        rig.clock.fire()
         let stalled = await first.value
-        #expect(stalled == .unsure)
+        #expect(stalled == .unsure, "the write had left, so it may have gone")
         let next = await second.value
         #expect(next.result == .approved)
         // Both wrote once each; the stuck write was never sent again.
         #expect(rig.writes.count == 2)
         rig.release()
+        for _ in 0..<40 { await Task.yield() }
+    }
+
+    @Test func aTurnThatNeverGotToItsWriteIsNotCalledUnknown() async {
+        // The read before the write never returns: the turn is given up, and nothing was sent.
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-1")
+        rig.firstReadHangs = true
+        rig.reply = RemoteWriteResult(status: 200, bodyStatus: "accepted")
+        let sessions = rig.sessions()
+        let stuck = Task { @MainActor in await sessions.respond(approve, session: root) }
+        for _ in 0..<2_000 where rig.reads.isEmpty { await Task.yield() }
+        await rig.clock.until(waiting: 1)
+        let next = Task { @MainActor in await sessions.respond(approve, session: root) }
+        for _ in 0..<40 { await Task.yield() }
+        rig.clock.fire()
+        let first = await stuck.value
+        #expect(first == .notThere, "it didn't go through, and can be tried again")
+        #expect(first != .unsure)
+        let second = await next.value
+        #expect(second.result == .approved)
+        #expect(rig.writes.count == 1, "only the second went")
     }
 
     @Test func aWriteThatLeftAfterTheTurnWasGivenUpOnSendsNothingMore() async {
         rig.before = projection("awaiting_plan_approval", version: "ver-1")
         rig.firstWriteHangs = true
-        let sessions = rig.sessions(turnLimit: .milliseconds(40))
+        let sessions = rig.sessions()
         let first = Task { @MainActor in await sessions.respond(approve, session: root) }
         await waitUntil { rig.isParked }
+        await rig.clock.until(waiting: 1)
+        rig.clock.fire()
         _ = await first.value
         // The stuck write finally comes back: nothing follows it (no settle read, no second write).
         let readsThen = rig.reads.count
@@ -442,10 +481,15 @@ struct SessionQueueDeadlineTests {
 
     @Test func aTurnThatNeverReturnsIsStalledAndTheQueueIsFree() async {
         let sessions = rig.sessions()
-        let end = await sessions.runSerially(on: root, limit: .milliseconds(30)) {
-            await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
-            return .ok(.unavailable)
+        let stuck = Task { @MainActor in
+            await sessions.runSerially(on: root, limit: .seconds(30)) {
+                await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+                return .ok(.unavailable)
+            }
         }
+        await rig.clock.until(waiting: 1)
+        rig.clock.fire()
+        let end = await stuck.value
         guard case .stalled = end else { Issue.record("not stalled: \(end)"); return }
         let after = await sessions.runSerially(on: root, limit: .seconds(30)) { .ok(.unavailable) }
         guard case .finished = after else { Issue.record("not finished: \(after)"); return }
@@ -479,7 +523,8 @@ struct PhoneUnknownTests {
         #expect(said["ok"] as? Bool == false)
         #expect(said["refetch"] as? Bool == true)
         #expect(said["text"] as? String == RemoteDecide.Sentence.unsure)
-        #expect(said["open"] == nil)
+        // It says to look on the Mac, and the link to do it is there.
+        #expect(said["open"] as? Bool == true)
     }
 
     @Test func withoutASentenceThePhoneHasItsOwn() throws {

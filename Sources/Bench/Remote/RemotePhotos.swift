@@ -105,13 +105,33 @@ final class RemotePhotos {
         case .failure(let refusal): return refusal.reply
         case .success(let made): photo = made
         }
-        return await sessions.actSerially(on: id, limit: WriteDeadline.turn(uploadBytes: [photo.data.count])) { [weak self] in
+        let progress = Progress()
+        return await sessions.actSerially(on: id, limit: WriteDeadline.turn(uploadBytes: [photo.data.count]),
+                                          stalled: { progress.stalled }) { [weak self] in
             guard let self else { return .ok(.unavailable) }
-            return await self.sendToSession(id, request: request, photo: photo)
+            return await self.sendToSession(id, request: request, photo: photo, progress: progress)
         }
     }
 
-    private func sendToSession(_ id: String, request: PhotoRequest, photo: PhotoFile) async -> RemoteActionReply {
+    /// How far a photo's turn got, so that one that runs out of time can say
+    /// what is known: nothing sent, a photo that may be in the project, one
+    /// that is, or a message that may have gone.
+    @MainActor
+    private final class Progress {
+        enum Stage { case reading, uploading, uploaded, sending }
+        var stage = Stage.reading
+
+        var stalled: RemoteActionReply {
+            switch stage {
+            case .reading: .ok(.notThere)
+            case .uploading: .ok(.uploadUnsure)
+            case .uploaded: .ok(.savedNotThere)
+            case .sending: .ok(.savedUnsure)
+            }
+        }
+    }
+
+    private func sendToSession(_ id: String, request: PhotoRequest, photo: PhotoFile, progress: Progress) async -> RemoteActionReply {
         // First the check the message route makes, so that nothing is
         // uploaded for a session that can't take a message now (its status,
         // its agent and its project).
@@ -125,11 +145,13 @@ final class RemotePhotos {
         case .write: return .ok(.unavailable)
         }
         let attachment: PhotoAttachment, retried: Bool
+        progress.stage = .uploading
         switch await attach(photo, request: request, to: project) {
         case .placed(let placed, let again): (attachment, retried) = (placed, again)
         case .failed: return .ok(.notAttached)
         case .unsure: return .ok(.uploadUnsure)
         }
+        progress.stage = .uploaded
         // Then the message route's own re-read, now the photo is up: the
         // status says send, queue or resume, and the agent is the one it names.
         let fresh = await sessions.photoDependencies.read(id, false)
@@ -137,7 +159,7 @@ final class RemotePhotos {
         guard case .write(let write) = RemoteDecide.message(.message(text: text, intentID: request.intentID), session: id,
                                                             fresh: fresh, attachment: true),
               case .message(_, _, let sentTo?, _, _, _) = write, sentTo == project else { return .ok(.savedNotSent) }
-        let delivered = await sessions.deliver(write, text: text, session: id, before: fresh)
+        let delivered = await sessions.deliver(write, text: text, session: id, before: fresh, leaving: { progress.stage = .sending })
         var result = delivered.result
         // A retry the daemon refuses as a repeat (409): the first try went.
         if retried, delivered.reply?.status == 409 { result = RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.sent) }

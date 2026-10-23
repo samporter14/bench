@@ -2083,7 +2083,7 @@ function describe(out) {
   // A write that got no answer, which Capsid has looked for in the session: it isn't there (send it again), or that can't be told.
   // Either way the words stay where they are, so a second try is the same message, which the Mac knows.
   if (result === 'retry') return { ok: false, refetch: true, text: sentence || 'That didn’t go through. Try again.' };
-  if (result === 'unknown') return { ok: false, refetch: true, text: sentence || 'Not sure that went through. Look at it on your Mac before you try again.' };
+  if (result === 'unknown') return { ok: false, refetch: true, open: true, text: sentence || 'Not sure that went through. Look at it on your Mac before you try again.' };
   if (status === 403 && !sentence) return { ok: false, refetch: true, text: 'Actions are off in Capsid’s Settings.' };
   return { ok: false, refetch: true, open: true, text: sentence || 'Couldn’t do that from here. Open it on your Mac.' };
 }

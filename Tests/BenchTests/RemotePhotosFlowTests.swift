@@ -448,6 +448,23 @@ struct PhotoWriterRoomTests {
 
 // MARK: The flow, against fakes
 
+/// Holds whoever waits on it until it is opened, as a page that is slow to answer does.
+@MainActor
+private final class PhotoGate {
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    var holding: Int { waiting.count }
+
+    func wait() async {
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func open() {
+        let held = waiting
+        waiting = []
+        held.forEach { $0.resume() }
+    }
+}
+
 @MainActor
 private final class PhotoRig {
     enum Upload { case echo, none, status(Int), noUpload, wrongSize, unknown }
@@ -460,6 +477,14 @@ private final class PhotoRig {
         didSet { readIndex = 0 }
     }
     var upload: Upload = .echo
+    // Holds, for the tests of a turn that runs out of time: each waits on `gate` until it is opened.
+    let gate = PhotoGate()
+    /// The deadline of a session's turn waits on this; `clock.fire()` is "the time is up".
+    let clock = ManualClock()
+    var turnLimit: Duration = .seconds(60)
+    var holdFirstRead = false
+    var holdUpload = false
+    var holdWrite = false
     var writeReply: RemoteWriteResult? = RemoteWriteResult(status: 200, bodyStatus: "accepted")
     var createReply: RemoteWriteResult? = RemoteWriteResult(status: 200, bodyStatus: "accepted", rootFrameID: newID)
     var intents: [String?] = []
@@ -481,6 +506,7 @@ private final class PhotoRig {
         cardPlan: { _ in nil },
         read: { [unowned self] _, turns in
             self.log.append(turns ? "turns" : "read")
+            if self.holdFirstRead && self.readIndex == 0 { await self.gate.wait() }
             let index = min(self.readIndex, self.reads.count - 1)
             self.readIndex += 1
             return self.reads.isEmpty ? nil : self.reads[index]
@@ -489,11 +515,14 @@ private final class PhotoRig {
         write: { [unowned self] write in
             self.log.append("write")
             self.writes.append(write)
+            if self.holdWrite { await self.gate.wait() }
             return self.writeReply
         },
         now: { [unowned self] in self.now },
         browseOn: { [unowned self] in self.browseOn },
-        lookup: { _ in nil }))
+        lookup: { _ in nil },
+        turnLimit: turnLimit,
+        wait: { [unowned self] in await self.clock.wait($0) }))
 
     lazy var browser = RemoteBrowser(sessions: sessions, dependencies: RemoteBrowser.Dependencies(
         browseOn: { [unowned self] in self.browseOn },
@@ -520,6 +549,7 @@ private final class PhotoRig {
         upload: { [unowned self] project, photo in
             self.log.append("upload")
             self.uploads.append((project, photo))
+            if self.holdUpload { await self.gate.wait() }
             switch self.upload {
             case .echo:
                 return PhotoUploadReply(status: 200, upload: PhotoAttachment(
@@ -683,6 +713,40 @@ struct RemotePhotosSessionTests {
 
     private func sessionWithTurns(_ turns: [SessionProjection.Turn]?, status: String = "completed", queued: Int = 0) -> SessionProjection {
         SessionProjection(status: status, agentName: "made-up-agent", projectID: "proj-1", queued: queued, turns: turns)
+    }
+
+    // A turn that runs out of time says what is known of how far it got.
+
+    private func stalledReply(_ prepare: (PhotoRig) -> Void) async -> [String: Any] {
+        let rig = PhotoRig()
+        prepare(rig)
+        let task = Task { @MainActor in await rig.session(PhotoFixture.body(text: "Look at this gel.")) }
+        for _ in 0..<2_000 where rig.gate.holding == 0 { await Task.yield() }
+        await rig.clock.until(waiting: 1)
+        // The time is up while the page still hasn't answered.
+        rig.clock.fire()
+        let said = decode(await task.value.body)
+        rig.gate.open()
+        for _ in 0..<60 { await Task.yield() }
+        return said
+    }
+
+    @Test func aTurnThatStallsBeforeAnythingWasDoneIsNotCalledUnknown() async {
+        let said = await stalledReply { $0.holdFirstRead = true }
+        #expect(said.string("result") == "retry")
+        #expect(said.string("sentence") == RemoteDecide.Sentence.notThere)
+    }
+
+    @Test func aTurnThatStallsInTheUploadMayHaveLeftThePhotoInTheProject() async {
+        let said = await stalledReply { $0.holdUpload = true }
+        #expect(said.string("result") == "unknown")
+        #expect(said.string("sentence") == RemotePhotos.Sentence.uploadUnsure)
+    }
+
+    @Test func aTurnThatStallsWithTheMessageOutMayHaveGone() async {
+        let said = await stalledReply { $0.holdWrite = true }
+        #expect(said.string("result") == "unknown")
+        #expect(said.string("sentence") == RemotePhotos.Sentence.savedUnsure)
     }
 
     @Test func anUploadWithNoAnswerMayBeInTheProjectAndNothingIsSent() async {
