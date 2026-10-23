@@ -219,7 +219,8 @@ final class ReferenceFiles: NSObject, ObservableObject {
     /// never closed). It returns at once; the actor keeps a run that has written
     /// by then, so a copy made first is never taken.
     static func sweepLeftoversOnce() {
-        guard !swept else { return }
+        // Not in a demo: the temporary folder is shared with the installed Capsid.
+        guard !swept, Demo.mode == nil else { return }
         swept = true
         let storage = sharedStorage
         Task.detached { await storage.removeLeftovers() }

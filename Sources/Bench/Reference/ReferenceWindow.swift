@@ -64,10 +64,11 @@ final class ReferenceWindow: NSWindow {
         return super.performKeyEquivalent(with: event)
     }
 
-    /// Esc not claimed by anything in the window.
+    /// Esc not claimed by anything in the window. (Not passed up: nothing
+    /// above the window takes it, and the responder chain is not asked to
+    /// answer a selector it may not implement.)
     override func cancelOperation(_ sender: Any?) {
-        if goBack?() == true { return }
-        super.cancelOperation(sender)
+        _ = goBack?()
     }
 }
 
