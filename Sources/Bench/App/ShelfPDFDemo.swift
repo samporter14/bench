@@ -15,6 +15,8 @@ enum ShelfPDFDemo {
         // The folder the demo owns: the made-up Shelf folder in it, and beside that the PDF.
         let base = URL.temporaryDirectory.appending(path: "Capsid Shelf PDF demo-\(UUID().uuidString)", directoryHint: .isDirectory)
         let root = base.appending(path: "Shelf", directoryHint: .isDirectory)
+        // The Shelf folder may be made when it is missing, but not its parent.
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         observer = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             try? FileManager.default.removeItem(at: base)
         }

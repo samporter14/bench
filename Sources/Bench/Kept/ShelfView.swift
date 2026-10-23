@@ -159,7 +159,7 @@ struct ShelfView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isSelected ? Solanum.ink : Solanum.hairline,
                                                                          lineWidth: isSelected ? 2 : 1))
                 .overlay(alignment: .topLeading) {
-                    if let page = model.pageNumber(of: item.id) { ShelfPageBadge(number: page).padding(9) }
+                    if let page = model.pageNumber(of: item.id) { ShelfPageBadge(number: page).offset(x: -5, y: -5) }
                 }
                 .accessibilityHidden(true)
             Text(item.title)
@@ -197,7 +197,7 @@ struct ShelfView: View {
             Button("Remove") { model.selection = item.id; model.removeSelected() }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(item.title), \(ShelfRules.caption(for: item))")
+        .accessibilityLabel("\(item.title), \(ShelfRules.caption(for: item))" + (model.pageNumber(of: item.id).map { ", page \($0)" } ?? ""))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { model.selection = item.id }
     }

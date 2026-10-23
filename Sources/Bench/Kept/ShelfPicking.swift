@@ -220,12 +220,7 @@ struct ShelfPickedCard: View {
             }
             HStack(spacing: 8) {
                 ForEach(Array(items.prefix(Self.thumbnailsShown).enumerated()), id: \.element.id) { offset, item in
-                    ShelfPaper(store: thumbnails, url: item.fileURL, side: 140, kind: item.kind, inset: 3, symbolSize: 16)
-                        .frame(width: 72, height: 50)
-                        .background(Solanum.raised, in: .rect(cornerRadius: 7))
-                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Solanum.hairline, lineWidth: 1))
-                        .overlay(alignment: .topLeading) { ShelfPageBadge(number: offset + 1).padding(3) }
-                        .accessibilityHidden(true)
+                    ShelfPickedThumb(item: item, thumbnails: thumbnails, page: offset + 1)
                 }
                 if items.count > Self.thumbnailsShown {
                     Text("+\(items.count - Self.thumbnailsShown)")
@@ -244,5 +239,31 @@ struct ShelfPickedCard: View {
         .padding(.bottom, 20)
         .padding(.top, 8)
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// A small picture of one page: the figure itself, or its kind's symbol (a note's lines
+/// are too small to read at this size), with its number at the corner.
+private struct ShelfPickedThumb: View {
+    let item: ShelfItem
+    @ObservedObject var thumbnails: KeptThumbnails
+    let page: Int
+
+    var body: some View {
+        ZStack {
+            if item.kind == .figure {
+                ShelfPaper(store: thumbnails, url: item.fileURL, side: 140, kind: item.kind, inset: 3, symbolSize: 16)
+            } else {
+                Image(systemName: ShelfPaper.symbol(item.kind))
+                    .font(.system(size: 18, weight: .light))
+                    .foregroundStyle(Solanum.muted)
+            }
+        }
+        .frame(width: 72, height: 50)
+        .background(Solanum.raised, in: .rect(cornerRadius: 7))
+        .clipShape(.rect(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Solanum.hairline, lineWidth: 1))
+        .overlay(alignment: .topLeading) { ShelfPageBadge(number: page).offset(x: -5, y: -5) }
+        .accessibilityHidden(true)
     }
 }
