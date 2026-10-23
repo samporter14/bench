@@ -49,6 +49,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
     case progressStatusNotUnderstood
     // The reviewer's findings on a finished card (Remote/InsightReader.swift)
     case reviewerAnswerNotUnderstood
+    // Add to Shelf in a figure's own menu (Shelf/ConversationMenu.swift)
+    case figureMenuNotUnderstood
     // The one look after Claude Science's version changed (App/CompatWatch.swift)
     case probesAfterUpdate
 
@@ -72,6 +74,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
             .planProgress
         case .reviewerAnswerNotUnderstood:
             .reviewer
+        case .figureMenuNotUnderstood:
+            .shelfMenu
         case .probesAfterUpdate:
             .update
         }
@@ -103,6 +107,7 @@ enum CompatMiss: String, CaseIterable, Sendable {
         case .progressTreeWithoutPlan: "an approved plan's session tree doesn't carry the plan"
         case .progressStatusNotUnderstood: "a plan step's status isn't one Capsid knows"
         case .reviewerAnswerNotUnderstood: "the findings answer has no checks and running lists of the shape Capsid reads"
+        case .figureMenuNotUnderstood: "the figure menu didn't look as Capsid expects"
         case .probesAfterUpdate: "some of what Capsid reads didn't answer as it expects"
         }
     }

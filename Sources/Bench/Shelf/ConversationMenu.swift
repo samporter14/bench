@@ -1,25 +1,41 @@
 // ConversationMenu.swift — Add to Shelf, Keep with Data and Code…, Open as
 // Reference and Show in Results in the right-click menu of a figure or a file
 // link in Claude Science's page (DESIGN.md, Shelf → From the conversation;
-// board 10). WebKit's menu says which kind of thing was clicked (its items are
-// "Copy Image", "Copy Link"…) but never which address, and the address is what
-// names the file; so a small user script, in a content world of its own, tells
-// Swift what the last right-click was on, as `TabContextMenu` does for tabs.
-// The main window's web view adds the items when its menu opens.
+// board 10). Two ways in, one script.
 //
-// The order of the two is not an API guarantee (see TabContextMenu): the
+// The Mac's own menu. WebKit's menu says which kind of thing was clicked (its
+// items are "Copy Image", "Copy Link"…) but never which address, and the
+// address is what names the file; so a small user script, in a content world
+// of its own, tells Swift what the last right-click was on, as `TabContextMenu`
+// does for tabs, and the main window's web view adds the items when its menu
+// opens. That is the way in for a plain picture or a link.
+//
+// The page's own menu. Claude Science draws a figure's menu itself (a tile, an
+// inline picture, a card in the Generated tray, the side pane's image: one
+// component, `role="menu"` named "Artifact actions") and cancels the Mac's, so
+// `willOpenMenu` never runs for them. For those the same script waits, for two
+// seconds after a right-click on a figure whose address names a version, for
+// that menu to open, and adds a rule and the four items at its end, drawn with
+// the menu's own item classes. A click on one tells Swift, which runs the same
+// action as the Mac menu's item, and the script closes the page's menu the way
+// the page does (Escape on the document).
+//
+// The order of the first path is not an API guarantee (see TabContextMenu): the
 // script posts from inside the `contextmenu` event and WebKit asks for the menu
 // after it, over one connection. A message that came late is not fresh, and
 // the menu simply has no Shelf items; the File menu's commands stay the way in
-// from Results. Nothing read from the page is logged.
+// from Results. Nothing read from the page is logged, and the script never
+// reads the text of the page's own menu items.
 import AppKit
 import Foundation
 import WebKit
 
 // MARK: What was clicked
 
-/// The four things the menu does with the clicked file.
-enum ConversationAction: CaseIterable, Sendable {
+/// The four things the menu does with the clicked file. The raw values are
+/// the words the page script posts when one of them is chosen in the page's
+/// own menu.
+enum ConversationAction: String, CaseIterable, Sendable {
     case addToShelf, keep, openAsReference, showInResults
 
     var title: String {
@@ -58,6 +74,35 @@ enum ConversationMenuMessage {
               let version = ShelfAddress.version(in: url, daemonPort: daemonPort) else { return nil }
         let hint = String(((body["name"] as? String) ?? "").prefix(maxName))
         return ConversationPick(kind: kind, version: version, name: ShelfAddress.name(hint: hint, isImage: kind == .image))
+    }
+
+    /// An item chosen in the page's own menu: the action, and the figure the
+    /// script noted at the right-click.
+    struct Choice: Equatable, Sendable {
+        let action: ConversationAction
+        let pick: ConversationPick
+    }
+
+    /// The choice a message names: `{action, version, name}` (and `kind`,
+    /// "image" unless it says "link": the menu is a figure's). The action must
+    /// be one of the four, and the version a full id as the daemon writes it
+    /// (`PlanCheck.isFrameID`), which is all the script could have found in an
+    /// address: nothing else is acted on, and no address comes with it.
+    static func choice(in body: Any?) -> Choice? {
+        guard let body = body as? [String: Any], let word = body["action"] as? String,
+              let action = ConversationAction(rawValue: word),
+              let version = body["version"] as? String, PlanCheck.isFrameID(version) else { return nil }
+        let kind = (body["kind"] as? String).flatMap(ConversationPick.Kind.init(rawValue:)) ?? .image
+        let hint = String(((body["name"] as? String) ?? "").prefix(maxName))
+        return Choice(action: action, pick: ConversationPick(kind: kind, version: version,
+                                                             name: ShelfAddress.name(hint: hint, isImage: kind == .image)))
+    }
+
+    /// The page's menu opened after a right-click on a figure, and the script
+    /// could not put the items in it: `{unplaced: true}`.
+    static func isUnplaced(_ body: Any?) -> Bool {
+        guard let body = body as? [String: Any] else { return false }
+        return body["unplaced"] as? Bool == true
     }
 }
 
@@ -102,13 +147,18 @@ final class ConversationMenu {
     private let now: () -> ContinuousClock.Instant
     private let daemonPort: @MainActor () -> Int?
     private let run: @MainActor (ConversationAction, ConversationPick) -> Void
+    private let breadcrumbs: CompatBreadcrumbs
 
-    /// `run` is what an item does. `now` is the clock, which tests replace.
+    /// `run` is what an item does, in the Mac's menu and in the page's own.
+    /// `now` is the clock, which tests replace, and `breadcrumbs` is where
+    /// "the figure menu didn't look as Capsid expects" goes.
     init(now: @escaping () -> ContinuousClock.Instant = { .now },
          daemonPort: @escaping @MainActor () -> Int?,
+         breadcrumbs: CompatBreadcrumbs = .shared,
          run: @escaping @MainActor (ConversationAction, ConversationPick) -> Void) {
         self.now = now
         self.daemonPort = daemonPort
+        self.breadcrumbs = breadcrumbs
         self.run = run
     }
 
@@ -174,39 +224,322 @@ final class ConversationMenu {
 
     fileprivate func receive(_ message: WKScriptMessage) {
         let origin = message.frameInfo.securityOrigin
-        let port = daemonPort()
         let accepted = TabMenuMessage.isAccepted(
             isMainFrame: message.frameInfo.isMainFrame,
             fromMainWebView: message.webView != nil && message.webView === webView,
             isDaemonOrigin: WebRoute.isDaemonOrigin(scheme: origin.protocol, host: origin.host, port: origin.port,
-                                                    daemonPort: port))
-        record(accepted ? ConversationMenuMessage.pick(in: message.body, daemonPort: port) : nil)
+                                                    daemonPort: daemonPort()))
+        hear(message.body, accepted: accepted)
+    }
+
+    /// What a message from the page means, once its sender is known to be the
+    /// main window's own page (`accepted`). Three shapes:
+    /// - `{kind, url, name}`: what the last right-click was on, kept a second
+    ///   for the Mac's menu (anything else clears it);
+    /// - `{action, version, name}`: an item chosen in the page's own menu, run
+    ///   at once (that menu can stay open far longer than a second);
+    /// - `{unplaced: true}`: the page's menu opened and the items had nowhere
+    ///   to go, which is a change in Claude Science worth a breadcrumb.
+    /// From anyone else a message is nothing, and clears the last pick.
+    func hear(_ body: Any?, accepted: Bool) {
+        guard accepted else {
+            record(nil)
+            return
+        }
+        if let choice = ConversationMenuMessage.choice(in: body) {
+            run(choice.action, choice.pick)
+        } else if ConversationMenuMessage.isUnplaced(body) {
+            breadcrumbs.record(.figureMenuNotUnderstood)
+        } else {
+            record(ConversationMenuMessage.pick(in: body, daemonPort: daemonPort()))
+        }
     }
 
     // MARK: The page's side
 
-    /// A capturing `contextmenu` listener: posts `{kind, url, name}` for the
-    /// nearest picture or link under the right-click (its address as the
-    /// browser resolved it, a picture's alt text or a link's text), and
-    /// `{kind: null}` for anything else, so an older pick is never taken for
-    /// this click. Only real clicks, and only on the daemon's own page.
-    nonisolated static let script = #"""
+    /// The script: `template` below with the four items' actions and words
+    /// put in, so the page shows exactly the words the Mac's menu does.
+    nonisolated static let script: String = {
+        let entries = ConversationAction.allCases.map { ["action": $0.rawValue, "title": $0.title] }
+        let data = (try? JSONSerialization.data(withJSONObject: entries, options: [.withoutEscapingSlashes])) ?? Data("[]".utf8)
+        return template.replacingOccurrences(of: "__ENTRIES__", with: String(decoding: data, as: UTF8.self))
+    }()
+
+    /// A capturing `contextmenu` listener for real clicks on the daemon's own
+    /// page. It posts `{kind, url, name}` for the picture or link under the
+    /// right-click (its address as the browser resolved it, a picture's alt
+    /// text or a link's text), and `{kind: null}` for anything else, so an
+    /// older pick is never taken for this click. A picture can be under a
+    /// transparent layer (the page's annotation layer sits over every figure
+    /// it draws), so when the click isn't on one the picture beside the thing
+    /// clicked, under the pointer, is the figure; and a card in the Generated
+    /// tray stands for its thumbnail.
+    ///
+    /// When the address names a version it also watches, for two seconds, for
+    /// the page's own menu (`role="menu"` named "Artifact actions"): a
+    /// MutationObserver that ends the moment it has placed the items, or at
+    /// the end of the two seconds, and that then only looks after the menu
+    /// until it closes. The items are a rule and four buttons made from the
+    /// menu's own first item (its classes, its icon box; never its words), with
+    /// an icon of Capsid's own drawing in the box. A real click on one posts
+    /// `{action, version, name, kind}` and closes the menu with Escape on the
+    /// document, which is what the page listens for, else a pointer-down
+    /// outside the menu. If the menu opens and has nothing to copy it posts
+    /// `{unplaced: true}`.
+    private nonisolated static let template = #"""
     (() => {
       "use strict";
       if (location.protocol !== "http:" || !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return;
       const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.capsidShelfMenu;
       if (!handler) return;
-      document.addEventListener("contextmenu", (event) => {
-        if (!event.isTrusted) return;
+
+      // The four items, in order: what is posted for each, and its words.
+      const ENTRIES = __ENTRIES__;
+      // How long the page has to open its own menu after a right-click on a figure.
+      const WAIT_MS = 2000;
+      // The longest the items are looked after once they are in a menu.
+      const HOLD_MS = 120000;
+      // How long the page has to close its menu on Escape before the click outside.
+      const CLOSE_MS = 80;
+      // The page's own rule between groups, if the menu has none to copy.
+      const RULE_CLASS = "my-1 h-px bg-border-300 mx-1";
+      const SVG = "http://www.w3.org/2000/svg";
+      // Capsid's own 16-point line icons, one stroke each.
+      const ICONS = {
+        addToShelf: "M4 2.75h8a.5.5 0 0 1 .5.5v10.2L8 10.55l-4.5 2.9V3.25a.5.5 0 0 1 .5-.5z",
+        keep: "M2.75 3.25h10.5v2.5H2.75zM3.75 5.75v6.5a1 1 0 0 0 1 1h6.5a1 1 0 0 0 1-1v-6.5M6.5 8.5h3",
+        openAsReference: "M8 4.5C7 3.5 5.4 3.1 2.75 3.25v8.5C5.4 11.6 7 12 8 13c1-1 2.6-1.4 5.25-1.25v-8.5C10.6 3.1 9 3.5 8 4.5zM8 4.5V13",
+        showInResults: "M2.75 3.5h10.5v9H2.75zM2.75 6.75h10.5M6.5 6.75v5.75"
+      };
+      const VERSION = /^[0-9a-f-]{36}$/;
+      const TAILS = ["download", "raw", "content", "file", "thumbnail"];
+      const QUERY_NAMES = ["v", "version", "version_id", "versionId"];
+
+      // The version an address on this page names: the same rule as Swift's
+      // ShelfAddress.version, which has the last word.
+      function versionOf(address) {
+        const text = String(address || "");
+        if (text.length === 0 || text.length > 4096) return null;
+        let url;
+        try { url = new URL(text); } catch (error) { return null; }
+        if (url.origin !== location.origin) return null;
+        if (url.pathname.indexOf("/api/artifacts/versions/") === 0) {
+          const parts = url.pathname.split("/");
+          if (!VERSION.test(parts[4])) return null;
+          if (parts.length === 5) return parts[4];
+          return parts.length === 6 && TAILS.indexOf(parts[5]) >= 0 ? parts[4] : null;
+        }
+        for (const pair of url.searchParams) {
+          if (QUERY_NAMES.indexOf(pair[0]) >= 0 && VERSION.test(pair[1])) return pair[1];
+        }
+        return null;
+      }
+
+      function isImage(node) {
+        return !!node && String(node.tagName).toLowerCase() === "img";
+      }
+
+      // The picture under a transparent layer: one of the pictures under the
+      // pointer that sits beside the thing clicked, or beside what it is in
+      // (a marker in the layer). Never as far out as the body, or a pop-up over
+      // the conversation would take a figure beneath it.
+      function pictureBeside(element, event) {
+        if (typeof document.elementsFromPoint !== "function") return null;
+        const stack = document.elementsFromPoint(event.clientX || 0, event.clientY || 0) || [];
+        let node = element;
+        for (let depth = 0; node && depth < 2; depth++, node = node.parentElement) {
+          const parent = node.parentElement;
+          if (!parent || parent === document.body || parent === document.documentElement) return null;
+          for (let index = 0; index < stack.length; index++) {
+            if (isImage(stack[index]) && parent.contains(stack[index])) return stack[index];
+          }
+        }
+        return null;
+      }
+
+      // The figure or the link a right-click was on.
+      function figureAt(event) {
         const node = event.target;
         const element = node && node.nodeType === 1 ? node : (node && node.parentElement) || null;
-        const found = element && element.closest ? element.closest("img, a[href]") : null;
+        if (!element || !element.closest) return null;
+        const found = element.closest("img, a[href]");
+        if (found) return found;
+        const card = element.closest('[data-testid="turn-tray-card"]');
+        if (card) return card.querySelector("img");
+        return pictureBeside(element, event);
+      }
+
+      let watch = null;
+
+      function stopWatch() {
+        const view = watch;
+        watch = null;
+        if (!view) return;
+        if (view.observer) view.observer.disconnect();
+        if (view.timer) clearTimeout(view.timer);
+        if (view.hold) clearTimeout(view.hold);
+      }
+
+      function startWatch(figure) {
+        if (typeof MutationObserver !== "function") return;
+        const view = { figure: figure, menu: null, nodes: [], observer: null, timer: null, hold: null };
+        view.observer = new MutationObserver((records) => changed(view, records));
+        view.observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+        view.timer = setTimeout(() => { if (watch === view && !view.menu) stopWatch(); }, WAIT_MS);
+        watch = view;
+      }
+
+      // The page's menu among the nodes just added, if it is there.
+      function menuIn(records) {
+        for (const record of records) {
+          for (const added of record.addedNodes) {
+            if (!added || added.nodeType !== 1) continue;
+            const menu = (added.closest && added.closest('[role="menu"][aria-label="Artifact actions"]'))
+              || (added.querySelector && added.querySelector('[role="menu"][aria-label="Artifact actions"]'));
+            if (menu) return menu;
+          }
+        }
+        return null;
+      }
+
+      function changed(view, records) {
+        if (watch !== view) return;
+        if (!view.menu) {
+          const menu = menuIn(records);
+          if (menu) place(view, menu);
+          return;
+        }
+        if (view.menu.isConnected) { restore(view); return; }
+        // The menu closed, or the page drew it again as a new one.
+        view.menu = null;
+        view.nodes = [];
+        const next = menuIn(records);
+        if (next) place(view, next); else stopWatch();
+      }
+
+      function icon(doc, action) {
+        const svg = doc.createElementNS(SVG, "svg");
+        svg.setAttribute("viewBox", "0 0 16 16");
+        svg.setAttribute("width", "1em");
+        svg.setAttribute("height", "1em");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.25");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        svg.setAttribute("aria-hidden", "true");
+        const path = doc.createElementNS(SVG, "path");
+        path.setAttribute("d", ICONS[action]);
+        svg.appendChild(path);
+        return svg;
+      }
+
+      function place(view, menu) {
+        const doc = menu.ownerDocument || document;
+        // The first item that isn't the red one, for its classes and its icon box.
+        let template = null;
+        const items = menu.querySelectorAll('[role="menuitem"]');
+        for (let index = 0; index < items.length && !template; index++) {
+          if (String(items[index].className).indexOf("danger") < 0) template = items[index];
+        }
+        if (!template) {
+          handler.postMessage({ unplaced: true });
+          stopWatch();
+          return;
+        }
+        const box = template.querySelector('[data-cds="Icon"]');
+        let ruleClass = RULE_CLASS;
+        const children = Array.prototype.slice.call(menu.children);
+        for (let index = 0; index < children.length; index++) {
+          if (String(children[index].tagName).toLowerCase() === "div" && !children[index].firstChild && children[index].className) {
+            ruleClass = children[index].className;
+            break;
+          }
+        }
+        const nodes = [];
+        const rule = doc.createElement("div");
+        rule.className = ruleClass;
+        nodes.push(rule);
+        ENTRIES.forEach((entry) => {
+          const button = doc.createElement("button");
+          button.setAttribute("type", "button");
+          button.setAttribute("role", "menuitem");
+          button.className = template.className;
+          if (box) {
+            const holder = box.cloneNode(false);
+            holder.appendChild(icon(doc, entry.action));
+            button.appendChild(holder);
+          }
+          button.appendChild(doc.createTextNode(entry.title));
+          button.addEventListener("click", (event) => choose(view, entry, event));
+          nodes.push(button);
+        });
+        view.menu = menu;
+        view.nodes = nodes;
+        if (view.timer) { clearTimeout(view.timer); view.timer = null; }
+        view.hold = setTimeout(() => { if (watch === view) stopWatch(); }, HOLD_MS);
+        nodes.forEach((node) => menu.appendChild(node));
+        fit(menu);
+        view.observer.takeRecords();
+      }
+
+      // React drew the menu again and left the items out: put them back.
+      function restore(view) {
+        const menu = view.menu;
+        if (!view.nodes.some((node) => node.parentNode !== menu)) return;
+        view.nodes.forEach((node) => menu.appendChild(node));
+        fit(menu);
+        view.observer.takeRecords();
+      }
+
+      // The page placed its menu to fit without the new items: keep it on screen.
+      function fit(menu) {
+        const view = (menu.ownerDocument && menu.ownerDocument.defaultView) || window;
+        const margin = 8;
+        const box = menu.getBoundingClientRect();
+        const below = box.bottom - (view.innerHeight - margin);
+        if (below > 0) menu.style.top = Math.max(margin, box.top - below) + "px";
+        const beyond = box.right - (view.innerWidth - margin);
+        if (beyond > 0) menu.style.left = Math.max(margin, box.left - beyond) + "px";
+      }
+
+      function choose(view, entry, event) {
+        if (!event.isTrusted) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handler.postMessage({ action: entry.action, version: view.figure.version, name: view.figure.name, kind: view.figure.kind });
+        const menu = view.menu;
+        stopWatch();
+        dismiss(menu);
+      }
+
+      // Closes the page's menu the way the page's own hook does: Escape on the
+      // document; if it is still there a moment later, a pointer-down outside it.
+      function dismiss(menu) {
+        if (!menu) return;
+        const doc = menu.ownerDocument || document;
+        doc.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+        setTimeout(() => {
+          if (!menu.isConnected) return;
+          (doc.body || doc.documentElement).dispatchEvent(new PointerEvent("pointerdown", {
+            bubbles: true, cancelable: true, composed: true, pointerType: "mouse", isPrimary: true
+          }));
+        }, CLOSE_MS);
+      }
+
+      document.addEventListener("contextmenu", (event) => {
+        if (!event.isTrusted) return;
+        stopWatch();
+        const found = figureAt(event);
         if (!found) { handler.postMessage({ kind: null }); return; }
-        const image = String(found.tagName).toLowerCase() === "img";
-        const url = image ? (found.currentSrc || found.src) : found.href;
+        const image = isImage(found);
+        const address = String((image ? (found.currentSrc || found.src) : found.href) || "");
         const hint = image ? (found.alt || found.title) : (found.download || found.textContent || found.title);
-        handler.postMessage({ kind: image ? "image" : "link", url: String(url || "").slice(0, 4096),
-                              name: String(hint || "").trim().slice(0, 300) });
+        const name = String(hint || "").trim().slice(0, 300);
+        const kind = image ? "image" : "link";
+        handler.postMessage({ kind: kind, url: address.slice(0, 4096), name: name });
+        const version = versionOf(address);
+        if (version) startWatch({ kind: kind, version: version, name: name });
       }, true);
     })();
     """#
