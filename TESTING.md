@@ -323,6 +323,18 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23, Capsid 1.0 released and installed
+
+- ✅ Released as v1.0.0 (tag on c3fcdb4, "Capsid 1.0", by Sam with `gh release create`): `Bench.zip` with
+  Capsid.app 1.0.0 (46) inside, 17,403,437 bytes, sha256 5485422429a421f7…. GitHub's asset digest matches the file
+  built from that commit.
+- ✅ Installed from those same bytes before the release (unzipped, signature checked, swapped into /Applications).
+  Diagnostics: "Capsid 1.0.0 diagnostics", "Signing in: with a code from claude-science url", "Claude Science
+  0.1.70; Capsid was last checked with 0.1.70".
+- The whole suite before the push: 3,526 tests in 461 suites pass.
+- The phone's server stays on 47281: it remembers the port it last had (`remotePort`), and the phone's tailnet
+  address (8443) doesn't change.
+
 ## 2026-10-23, review B's fixes, and test rigs that outlived their tests
 
 - ✅ All nine of review B's findings, each with a test, mutation-checked:
