@@ -87,7 +87,13 @@ struct SinceYouLeftDependencies {
     /// Why a stopped session stopped, its first line.
     var readReason: @MainActor (String) async -> String? = { await SinceYouLeftReads.reason(for: $0) }
     /// A reason already read for a failure card: no read needed.
-    var knownReason: @MainActor (String) -> String? = { FailureReasoner.shared.reason(for: $0)?.line }
+    var knownReason: @MainActor (String) -> String? = { SinceYouLeftReads.known(for: $0) }
+    /// All of it, for Copy.
+    var fullReason: @MainActor (String) -> String? = { SinceYouLeftReads.full(for: $0) }
+    /// What Capsid may read of what a session said, for a row: the same setting as the cards' ("Show plans,
+    /// questions and requests on the card"), since Claude's last words and why it stopped are session content
+    /// too. Off, a row has its title, project and time and nothing more.
+    var readsContent: @MainActor () -> Bool = { UserDefaults.standard.object(forKey: SettingsKey.showPlansOnCard) as? Bool ?? true }
 }
 
 @MainActor
@@ -279,6 +285,21 @@ final class SinceYouLeftModel: ObservableObject {
         return summary.isEmpty ? nil : summary
     }
 
+    /// The details of a summary's rows for the phone: what was read for the sheet, and a reason the failure
+    /// card has read though the sheet has not.
+    func detailsForPhone(_ summary: SinceYouLeftSummary) -> [String: SinceYouLeftDetail] {
+        var all = details
+        for row in summary.stopped where all[row.id]?.reason == nil {
+            if let reason = dependencies.knownReason(row.id) { all[row.id, default: .init()].reason = reason }
+        }
+        return all
+    }
+
+    /// All of why a row's session stopped, for Copy: what the card read, else the line.
+    func fullReason(for id: String) -> String? {
+        dependencies.fullReason(id) ?? details[id]?.reason
+    }
+
     /// What the stretch used of the 5-hour limit, when it can be said.
     func usage() -> UsageWhileAway? {
         UsageWhileAway.between(baseline: pending?.baseline, current: dependencies.usage())
@@ -366,7 +387,8 @@ final class SinceYouLeftModel: ObservableObject {
     /// earlier. At most six sessions, one read at a time, and none while away.
     /// Reading a session twice is never needed: it is asked for once per return.
     func loadDetails(cardActions: CardActions? = nil) {
-        guard loading == nil, pending != nil, !rule.isAway, dependencies.canRead(), let summary = display else { return }
+        guard loading == nil, pending != nil, !rule.isAway, dependencies.canRead(), dependencies.readsContent(),
+              let summary = display else { return }
         // The typing rule for the reads of the rows (Reference/ReadingGate.swift): it listens for keys only from here on.
         if Demo.mode == nil { ReadingGate.shared.start() }
         let rows = summary.readOrder().filter { !asked.contains($0.id) }
@@ -395,8 +417,10 @@ final class SinceYouLeftModel: ObservableObject {
                     let answer = await self.dependencies.readAnswer(row.id)
                     if Task.isCancelled { break }
                     self.details[row.id, default: .init()].answer = answer
-                    // The pictures: the list of its files, then up to three thumbnails.
-                    await self.finished.load(row.session)
+                    // The pictures: the list of its files, then up to three thumbnails, in the typing gate's turn
+                    // like the answer above (the panel's own reader: one read at a time).
+                    let finished = self.finished, session = row.session
+                    _ = try? await ReadingGate.shared.perform { await finished.load(session) }
                 }
             }
             self.loading = nil

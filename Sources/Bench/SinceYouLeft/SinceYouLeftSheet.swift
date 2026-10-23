@@ -129,9 +129,8 @@ struct SinceYouLeftSheet: View {
     /// Read so the buttons follow what the cards have read (the plan's, the question's).
     @ObservedObject private var plans: PlanApprover
     @ObservedObject private var questions: QuestionReplier
-    /// The limit moves under the block; the failure reasons arrive under the stopped rows.
+    /// The limit moves under the block.
     @ObservedObject private var usage = PlanUsageModel.shared
-    @ObservedObject private var failures = FailureReasoner.shared
     @AppStorage(SinceYouLeftSettings.sheetKey) private var showsWhenAway = true
     @Environment(\.colorScheme) private var colorScheme
 
@@ -187,6 +186,8 @@ struct SinceYouLeftSheet: View {
         .frame(maxHeight: cap)
         .background(Solanum.page)
         .presentationBackground(Solanum.page)
+        // Esc: the same as Done, as Quick Open's sheet closes on it (the window's own `cancelOperation` is the fallback).
+        .onExitCommand { done() }
         // The failure card's own reasons, and each ask's question, are read as the sheet comes up.
         .onAppear { model.loadDetails(cardActions: actions) }
         .onChange(of: model.display?.count) { _, _ in model.loadDetails(cardActions: actions) }
@@ -515,7 +516,7 @@ struct SinceYouLeftSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let reason {
-                Button("Copy") { copy(reason) }
+                Button("Copy") { copy(session.id, line: reason) }
                     .buttonStyle(SolanumPillStyle(.medium))
             }
             Button("Open") { open(session) }
@@ -525,11 +526,10 @@ struct SinceYouLeftSheet: View {
         .accessibilityLabel(["Stopped with an error", session.displayTitle, session.projectName, reason].compactMap { $0 }.joined(separator: ". "))
     }
 
-    private func copy(_ text: String) {
-        // All of the reason when the failure card read it, else the line.
-        let full = failures.reason(for: model.display?.stopped.first { model.details[$0.id]?.reason == text }?.id ?? "")?.full ?? text
+    private func copy(_ id: String, line: String) {
+        // All of the reason when the card read it, else the line.
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(full, forType: .string)
+        NSPasteboard.general.setString(model.fullReason(for: id) ?? line, forType: .string)
     }
 
     // MARK: Footer
@@ -668,6 +668,8 @@ final class SinceYouLeftSheetController: NSObject {
         host.sizingOptions = [.preferredContentSize]
         let window = SheetWindow(contentViewController: host)
         window.styleMask = [.titled]
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.backgroundColor = Solanum.pageColor
         window.onCancel = { model.done() }

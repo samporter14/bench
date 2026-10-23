@@ -17,7 +17,7 @@ private final class Rig {
     var now = Date().addingTimeInterval(-3 * 3600)
     var idle: TimeInterval = 3
     var screenOff = false
-    var cardsOn = true, sheetOn = true, windowKey = false, quiet = false, holds = false, readable = true
+    var cardsOn = true, sheetOn = true, windowKey = false, quiet = false, holds = false, readable = true, mayRead = true
     var usage: PlanLimit?
     var opened = 0, closed = 0
     var answered: [String] = [], reasoned: [String] = []
@@ -47,6 +47,8 @@ private final class Rig {
         deps.showSheet = { holder.rig.opened += 1 }
         deps.closeSheet = { holder.rig.closed += 1 }
         deps.canRead = { holder.rig.readable }
+        deps.readsContent = { holder.rig.mayRead }
+        deps.fullReason = { holder.rig.knownReasons[$0].map { "Full: \($0)" } }
         deps.readAnswer = { id in holder.rig.answered.append(id); return "Answer for \(id)." }
         deps.readReason = { id in holder.rig.reasoned.append(id); return "Reason for \(id)." }
         deps.knownReason = { holder.rig.knownReasons[$0] }
@@ -434,6 +436,32 @@ struct SinceYouLeftModelTests {
         #expect(rig.reasoned.isEmpty)
         #expect(rig.m.details["s0"]?.reason == "Already known.")
         #expect(rig.answered == ["f1"])
+    }
+
+    @Test func withTheContentSettingOffARowIsItsTitleAndNothingMore() async {
+        let rig = Rig()
+        rig.mayRead = false
+        rig.leave()
+        manyFinished(rig, count: 2, stopped: 1)
+        rig.advance(minutes: 70, idle: 2)
+        rig.m.loadDetails(cardActions: rig.actions)
+        await rig.m.settled()
+        #expect(rig.answered.isEmpty && rig.reasoned.isEmpty)
+        #expect(rig.m.details.isEmpty)
+        #expect(rig.m.display?.count == 3)
+    }
+
+    @Test func thePhoneGetsAReasonTheCardHasReadAndCopyGetsAllOfIt() {
+        let rig = Rig()
+        rig.knownReasons["s0"] = "Out of memory."
+        rig.leave()
+        manyFinished(rig, count: 1, stopped: 1)
+        rig.advance(minutes: 70, idle: 2)
+        let summary = try? #require(rig.m.display)
+        #expect(summary.map { rig.m.detailsForPhone($0)["s0"]?.reason } == "Out of memory.")
+        #expect(rig.m.fullReason(for: "s0") == "Full: Out of memory.")
+        // Nothing known: the line the sheet read, or nothing.
+        #expect(rig.m.fullReason(for: "f1") == nil)
     }
 
     @Test func aRowWhoseSessionIsNoLongerThereIsNotRead() async {

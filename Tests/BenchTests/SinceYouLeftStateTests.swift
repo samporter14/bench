@@ -126,7 +126,7 @@ struct SinceYouLeftStateTests {
                                       dependencies: SinceYouLeftDependencies())
         let feed = RemoteFeed()
         var told = 0
-        feed.start(lab: lab, usage: .shared, approver: .shared, since: model, reasons: .shared) { told += 1 }
+        feed.start(lab: lab, usage: .shared, approver: .shared, since: model) { told += 1 }
         defer { feed.stop() }
         // The publishers' first values arrive at once; let that settle.
         try await Task.sleep(for: .milliseconds(450))

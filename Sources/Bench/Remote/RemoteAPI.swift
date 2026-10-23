@@ -640,11 +640,7 @@ enum RemoteAPI {
         // What changed while someone was away (SinceYouLeft/): while the stretch lasts, and after the return until Done.
         if lab === LabModel.shared, let summary = SinceYouLeftModel.shared.forPhone(now: now) {
             input.since = summary
-            var details = SinceYouLeftModel.shared.details
-            // A failure card's reason, when the card has read it, though the sheet has not.
-            for row in summary.stopped where details[row.id]?.reason == nil {
-                if let reason = FailureReasoner.shared.reason(for: row.id)?.line { details[row.id, default: .init()].reason = reason }
-            }
+            let details = SinceYouLeftModel.shared.detailsForPhone(summary)
             input.sinceDetails = details
         }
         return input
@@ -687,7 +683,7 @@ final class RemoteFeed {
     private var subscription: AnyCancellable?
 
     func start(lab: LabModel, usage: PlanUsageModel, approver: PlanApprover,
-               since: SinceYouLeftModel = .shared, reasons: FailureReasoner = .shared,
+               since: SinceYouLeftModel = .shared, reasonChanges: AnyPublisher<Void, Never> = SinceYouLeftReads.reasonChanges,
                changed: @escaping @MainActor () -> Void) {
         let signals: [AnyPublisher<Void, Never>] = [
             lab.$working.map { _ in () }.eraseToAnyPublisher(),
@@ -704,7 +700,7 @@ final class RemoteFeed {
             since.$awaySince.map { _ in () }.eraseToAnyPublisher(),
             since.$pending.map { _ in () }.eraseToAnyPublisher(),
             since.$details.map { _ in () }.eraseToAnyPublisher(),
-            reasons.$states.map { _ in () }.eraseToAnyPublisher(),
+            reasonChanges,
         ]
         // @Published publishes before the value changes; after the wait the
         // models hold the new values.

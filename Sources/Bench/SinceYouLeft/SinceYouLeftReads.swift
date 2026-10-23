@@ -7,6 +7,7 @@
 // starts within 400 ms of a key press in the main window, and one runs at a
 // time. What was read is turned into a couple of plain lines or a sentence and
 // the rest is dropped. Nothing here logs what a session says.
+import Combine
 import Foundation
 
 @MainActor
@@ -19,6 +20,22 @@ enum SinceYouLeftReads {
         }
         guard let reply = read?.reply else { return nil }
         return AnswerLines.first(reply)
+    }
+
+    /// Says when the card reads (or lets go of) a reason: the phone's state has it for a stopped row.
+    static var reasonChanges: AnyPublisher<Void, Never> {
+        FailureReasoner.shared.$states.map { _ in () }.eraseToAnyPublisher()
+    }
+
+    /// What the failure card has already read of why a session stopped, its first line: no read of ours.
+    /// (This file is the one place Since You Left names the reason's type, as the card's own file does.)
+    static func known(for sessionID: String) -> String? {
+        FailureReasoner.shared.reason(for: sessionID)?.line
+    }
+
+    /// All of the reason the card read, for Copy.
+    static func full(for sessionID: String) -> String? {
+        FailureReasoner.shared.reason(for: sessionID)?.full
     }
 
     /// Why a session stopped, the first line of the reason, when it says.

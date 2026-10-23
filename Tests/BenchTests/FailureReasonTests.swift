@@ -649,8 +649,11 @@ struct FailureReasonerTests {
     }
 
     @Test func theCardIsTheOnlyPlaceTheReasonShows() {
-        // Not in a Mac notification, the activity list, the Dock menu, the
-        // menu bar or on the phone: none of them so much as names it.
+        // Not in a Mac notification, the activity list, the Dock menu or the
+        // menu bar: none of them so much as names it. Since You Left (1.0) is
+        // the one other place: its stopped rows, on the sheet and on the phone,
+        // say why, and only through SinceYouLeftReads.swift, which is the one
+        // file there that names the type.
         let files = FileManager.default.enumerator(atPath: URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/Bench").path)?
@@ -659,7 +662,8 @@ struct FailureReasonerTests {
         let naming = Set(files.filter { Self.source($0).contains("FailureReason") })
         // (PlanApproval.swift only says, in a comment, who else reads its JSON helper.)
         #expect(naming == ["Lab/FailureReason.swift", "Lab/LabPanelView.swift", "Lab/PlanApproval.swift", "App/Demo.swift",
-                           "App/BenchApp.swift", "App/CompatBreadcrumbs.swift", "App/CompatInventory.swift"], "\(naming.sorted())")
+                           "App/BenchApp.swift", "App/CompatBreadcrumbs.swift", "App/CompatInventory.swift",
+                           "SinceYouLeft/SinceYouLeftReads.swift"], "\(naming.sorted())")
         // And the notification's body for a failure is still the fixed phrase.
         #expect(Self.source("Lab/MacNotifications.swift").contains("Stopped with an error"))
     }
