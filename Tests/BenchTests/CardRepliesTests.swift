@@ -294,7 +294,7 @@ private final class FakeCore {
                 await Task.yield()
                 return self.reads[id] ?? nil
             },
-            respond: { [unowned self] request, _ in
+            respond: { [unowned self] request, _, _ in
                 self.requests.append(request)
                 return self.results.isEmpty ? RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.answered)
                     : self.results.removeFirst()

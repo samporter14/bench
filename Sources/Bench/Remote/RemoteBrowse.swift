@@ -484,7 +484,7 @@ final class RemoteBrowser {
                 },
                 create: { write in
                     guard Demo.mode == nil else { return nil }
-                    return try? await WebContainer.shared.writeSession(write)
+                    return await WebContainer.shared.writeAnswer(write)
                 },
                 findIntent: { project, intent in
                     guard Demo.mode == nil else { return nil }
@@ -625,32 +625,67 @@ final class RemoteBrowser {
         guard let request = NewSessionRequest.parse(body) else { return RemoteActionRequest.refusal(body: body) }
         guard let projects = await listedProjects() else { return Self.unreadable }
         guard projects.contains(project) else { return .notFound }
-        return await start(project, request: request) ?? .ok(.unavailable)
+        switch await attempt(project, request: request) {
+        case .started(let reply): return reply
+        case .notStarted: return .ok(.unavailable)
+        case .notThere: return .ok(RemoteActionResult(result: .retry, sentence: RemoteBrowser.Sentence.notThere))
+        }
+    }
+
+    enum Sentence {
+        /// A new session whose write got no answer, and which the database doesn't show.
+        static let notThere = "Not sure that went through, and no new session shows. Try again: it won't start twice."
+    }
+
+    /// How starting a session ended.
+    enum StartAttempt {
+        /// `started`, with the new session's id.
+        case started(RemoteActionReply)
+        /// No session was made, or none that Capsid can tell of.
+        case notStarted
+        /// The write got no answer, and a look for a session with its intent id
+        /// found none: as far as Capsid can see it did not go through. Starting
+        /// again is safe (the daemon refuses a repeated intent, 409, and the
+        /// look finds the session it made), and is the person's to choose.
+        case notThere
     }
 
     /// The write itself, and what follows it: `started`, or nil when no
     /// session was made. Phase 4's photo route comes here too, with the
     /// attachment line in the request and its own `title`.
     func start(_ project: String, request: NewSessionRequest, title: String? = nil) async -> RemoteActionReply? {
+        if case .started(let reply) = await attempt(project, request: request, title: title) { return reply }
+        return nil
+    }
+
+    /// `start`, with what became of a write that got no answer told apart.
+    /// `checking` is called once, when the write got none and the database is
+    /// about to be asked whether the session was made after all.
+    func attempt(_ project: String, request: NewSessionRequest, title: String? = nil,
+                 checking: (@MainActor () -> Void)? = nil) async -> StartAttempt {
         let write: RemoteWrite = request.files
             ? .newSessionWithFiles(project: project, text: request.text, planMode: request.planFirst, intentID: request.intentID)
             : .newSession(project: project, text: request.text, planMode: request.planFirst,
                           intentID: request.intentID, attachment: request.attachment)
         let reply = await dependencies.create(write)
         if let reply, reply.status == 200, reply.isJSON, reply.bodyStatus == "accepted", let id = reply.rootFrameID {
-            return started(id, project: project, request: request, title: title)
+            return .started(started(id, project: project, request: request, title: title))
         }
         // A timeout, a 409 (that intent made a session already: an earlier
         // try whose answer was lost), or a 200 Bench can't read: look.
-        if reply == nil || reply?.status == 409 || reply?.status == 200 {
+        let unanswered = reply?.isUnknown == true
+        if reply == nil || unanswered || reply?.status == 409 || reply?.status == 200 {
+            if unanswered { checking?() }
             var found = await dependencies.findIntent(project, request.intentID)
             if found == nil {
                 await dependencies.pause()
                 found = await dependencies.findIntent(project, request.intentID)
             }
-            if let found, PlanCheck.isFrameID(found) { return started(found, project: project, request: request, title: title) }
+            if let found, PlanCheck.isFrameID(found) {
+                return .started(started(found, project: project, request: request, title: title))
+            }
         }
-        return nil
+        return reply?.isUnknown == true ? .notThere : .notStarted
     }
 
     /// The projects the list shows, read again when a minute old.

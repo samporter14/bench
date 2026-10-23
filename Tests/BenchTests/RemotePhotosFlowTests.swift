@@ -100,6 +100,7 @@ var __result = null;
 var document = { cookie: __cookie };
 var AbortSignal = function () {};
 AbortSignal.timeout = function () { return undefined; };
+\(PageScript.timerShim)
 var Blob = function (parts, options) {
     var size = 0;
     for (var i = 0; i < parts.length; i++) { size += parts[i].length; }
@@ -138,6 +139,8 @@ var fetch = function (path, init) {
     var n = __seen[path] || 0;
     __seen[path] = n + 1;
     var answer = list[Math.min(n, list.length - 1)];
+    var hung = __hangs(answer, init);
+    if (hung) { return hung; }
     return Promise.resolve({ status: answer.status, ok: answer.status >= 200 && answer.status < 300,
                              text: function () { return Promise.resolve(answer.body); } });
 };
@@ -155,14 +158,14 @@ private struct UploadRun {
 
 private func runUpload(_ photo: PhotoFile, project: String = "proj_a", overrides: [String: Any] = [:],
                        answers: [String: [PageScript.Answer]],
-                       cookie: String = "theme=dark; operon_csrf=secret%20one") -> UploadRun {
+                       cookie: String = "theme=dark; operon_csrf=secret%20one", expire: Bool = false) -> UploadRun {
     let script = PageScript()
     script.set("__answers", (try? JSONEncoder().encode(answers)).map { String(decoding: $0, as: UTF8.self) } ?? "{}")
     script.set("__cookie", cookie)
     script.evaluate(uploadPrelude)
     var arguments = PhotoUploadScript.arguments(project: project, photo: photo)
     for (key, value) in overrides { arguments[key] = value }
-    let names = ["projectId", "filename", "contentType", "data", "size"]
+    let names = ["projectId", "filename", "contentType", "data", "size", "timeoutMS"]
     var values: [String] = []
     for (index, name) in names.enumerated() {
         let data = (try? JSONSerialization.data(withJSONObject: arguments[name] ?? NSNull(), options: [.fragmentsAllowed])) ?? Data("null".utf8)
@@ -174,6 +177,8 @@ private func runUpload(_ photo: PhotoFile, project: String = "proj_a", overrides
     \(PhotoUploadScript.body)
     })(\(values.joined(separator: ", "))).then(function (v) { __result = v; }, function (e) { __result = "threw: " + e; });
     """)
+    // The time is up: every timer the script set goes off.
+    if expire { script.evaluate("__expire()") }
     let raw = script.evaluate("__result")
     let json = script.evaluate("JSON.stringify(__requests)") ?? "[]"
     let requests = ((try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: Any]]) ?? []
@@ -291,10 +296,40 @@ struct PhotoUploadPageTests {
         }
     }
 
-    @Test func aRequestThatFailsIsNoResult() {
+    @Test func aRequestWithNoAnswerAtAllIsUnknownNotFailed() throws {
+        // A POST that fails with no response may have reached the daemon first.
         let run = runUpload(photo, answers: [:])
-        #expect(run.raw == #"{"failed":true}"#)
+        #expect(run.raw == #"{"unknown":true}"#)
         #expect(run.reply(sent: photo) == nil)
+        #expect(throws: WebAPIError.timedOut) { try PhotoUploadScript.result(of: Data(try #require(run.raw).utf8), sent: photo) }
+    }
+
+    @Test func anUploadThatNeverAnswersIsUnknownOnceTheTimeIsUp() throws {
+        let hangs = PageScript.Answer(status: 0, body: "__hang__")
+        let waiting = runUpload(photo, answers: [path: [hangs]])
+        #expect(waiting.raw == nil)
+        let run = runUpload(photo, answers: [path: [hangs]], expire: true)
+        #expect(run.raw == #"{"unknown":true}"#)
+        #expect(run.requests.count == 1)
+        #expect(throws: WebAPIError.timedOut) { try PhotoUploadScript.result(of: Data(try #require(run.raw).utf8), sent: photo) }
+    }
+
+    @Test func aStaleAnswerWhoseRefreshNeverAnswersStandsAsTheAnswer() throws {
+        // The first POST answered 403: the file was not accepted, so this is a failure, not unknown.
+        let stale = PageScript.Answer(status: 403, body: #"{"code":"csrf_stale"}"#)
+        let run = runUpload(photo, answers: [path: [stale], "/api/csrf": [.init(status: 0, body: "__hang-ignore__")]], expire: true)
+        #expect(run.requests.map { $0["path"] as? String } == [path, "/api/csrf"])
+        let reply = try PhotoUploadScript.result(of: Data(try #require(run.raw).utf8), sent: photo)
+        #expect(reply == PhotoUploadReply(status: 403, code: "csrf_stale"))
+        #expect(!reply.isUnknown)
+    }
+
+    @Test func theSecondPostThatNeverAnswersIsUnknown() {
+        let stale = PageScript.Answer(status: 403, body: #"{"code":"csrf_stale"}"#)
+        let run = runUpload(photo, answers: [path: [stale, .init(status: 0, body: "__hang__")], "/api/csrf": [.init(status: 204, body: "")]],
+                            expire: true)
+        #expect(run.requests.map { $0["path"] as? String } == [path, "/api/csrf", path])
+        #expect(run.raw == #"{"unknown":true}"#)
     }
 
     @Test func aThreeMebibytePhotoGoesThroughThePage() {

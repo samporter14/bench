@@ -210,9 +210,10 @@ struct SessionWriterPageTests {
         #expect(requests.isEmpty)
     }
 
-    @Test func aRequestThatFailsIsNoResult() {
+    @Test func aRequestWithNoAnswerAtAllIsUnknownNotFailed() {
+        // A POST that fails with no response may have reached the daemon first.
         let (result, raw, _) = run(.approvePlan(frame: root), answers: [:])
         #expect(result == nil)
-        #expect(raw == #"{"failed":true}"#)
+        #expect(raw == #"{"unknown":true}"#)
     }
 }

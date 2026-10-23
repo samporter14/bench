@@ -190,7 +190,7 @@ private final class Rig {
                 await Task.yield()
                 return self.reads[id]
             },
-            respond: { [unowned self] request, session in
+            respond: { [unowned self] request, session, _ in
                 self.sent.append((request, session))
                 if self.holdSends { await withCheckedContinuation { self.held = $0 } }
                 return self.result

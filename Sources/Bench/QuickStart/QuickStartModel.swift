@@ -10,6 +10,11 @@
 // panel goes once it has sent. The live ones read what the app already reads;
 // the tests and `--demo quick-start` stand in for them. Nothing here sends
 // anything on its own.
+//
+// Cancel while sending stops what is unsent and waits for the flow to say how
+// far it got (QuickStart/QuickStartFlow.swift): nothing sent, and the panel
+// goes; some files up, and the panel says which; or the request already out,
+// which no Cancel takes back, and then the panel says what happened to it.
 import Foundation
 
 struct QuickStartProject: Identifiable, Equatable, Sendable {
@@ -94,6 +99,10 @@ final class QuickStartModel: ObservableObject {
     /// ⇧ is down: the footer and the button say what ⇧↩ will do.
     @Published var shiftHeld = false
     @Published private(set) var phase: Phase = .editing
+    /// While sending: how far the request has got. Nil until it is going.
+    @Published private(set) var progress: QuickStartFlow.Progress?
+    /// Cancel was pressed while sending.
+    @Published private(set) var stopRequested = false
     @Published private(set) var recents: [QuickStartProject] = []
     @Published private(set) var allProjects: [QuickStartProject] = []
     @Published private(set) var viewed: ViewedSession?
@@ -106,6 +115,9 @@ final class QuickStartModel: ObservableObject {
     private var projectChosen = false
     private var sending: Task<Void, Never>?
     private var lingering: Task<Void, Never>?
+    /// Whose outcome counts: a send that a newer one or `open` has replaced is
+    /// let go quietly.
+    private var sendToken: UUID?
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
@@ -119,9 +131,15 @@ final class QuickStartModel: ObservableObject {
     /// the person had typed is kept when `keeping`.
     func open(files urls: [URL] = [], text start: String? = nil, keeping: Bool = false) {
         openCount += 1
-        sending?.cancel()
         lingering?.cancel()
-        if !keeping {
+        // A request on its way isn't taken back by opening the panel again: it
+        // finishes, and the panel keeps showing it.
+        let underway = phase == .sending
+        if !underway {
+            sending?.cancel()
+            sendToken = nil
+        }
+        if !keeping && !underway {
             self.text = ""
             files = []
             appliedRecipe = nil
@@ -129,6 +147,8 @@ final class QuickStartModel: ObservableObject {
             projectChosen = false
             planFirst = true
             phase = .editing
+            progress = nil
+            stopRequested = false
             ledger.sent()
         } else if case .sent = phase {
             phase = .editing
@@ -198,6 +218,16 @@ final class QuickStartModel: ObservableObject {
         case .sending: shiftHeld ? "Sending…" : "Starting…"
         case .sent: "Done"
         default: shiftHeld ? "Send ⇧↩" : "Start ↩"
+        }
+    }
+
+    /// The sentence at the foot while sending: what is going on, and, after a
+    /// Cancel that came too late, that it is.
+    var sendingLine: String {
+        switch progress {
+        case .checking?: return RemoteDecide.Sentence.checking
+        case .committed? where stopRequested: return "Already sent. Waiting for Claude Science…"
+        default: return shiftHeld ? "Sending…" : "Starting…"
         }
     }
 
@@ -295,10 +325,17 @@ final class QuickStartModel: ObservableObject {
     func submit(toViewed: Bool) {
         guard canSubmit(toViewed: toViewed), let request = request(toViewed: toViewed) else { return }
         phase = .sending
+        progress = nil
+        stopRequested = false
+        let token = UUID()
+        sendToken = token
         sending = Task { [weak self] in
             guard let self else { return }
-            let outcome = await dependencies.sender.perform(request)
-            guard !Task.isCancelled else { return }
+            let outcome = await dependencies.sender.perform(request, progress: { [weak self] stage in
+                guard let self, self.sendToken == token else { return }
+                self.progress = stage
+            })
+            guard sendToken == token else { return }
             finish(outcome)
         }
     }
@@ -306,10 +343,20 @@ final class QuickStartModel: ObservableObject {
     func submit() { submit(toViewed: shiftHeld) }
 
     private func finish(_ outcome: QuickStartFlow.Outcome) {
+        sendToken = nil
+        progress = nil
         switch outcome {
         case .failed(let sentence):
-            phase = .failed(sentence)
+            if stopRequested && outcome.isCleanCancel {
+                // Cancel, before anything was sent: nothing to say, and the panel goes.
+                stopRequested = false
+                phase = .editing
+                dependencies.close()
+            } else {
+                phase = .failed(sentence)
+            }
         case .started(_, let sentence), .sent(_, let sentence):
+            // It went, whatever Cancel said: the panel says what happened.
             phase = .sent(sentence)
             ledger.sent()
             lingering = Task { [weak self] in
@@ -319,12 +366,22 @@ final class QuickStartModel: ObservableObject {
                 dependencies.close()
             }
         }
+        stopRequested = false
     }
 
+    /// Cancel and Esc. Not sending, the panel goes. Sending, what is unsent is
+    /// stopped and the flow says how far it got (`finish`); once the request is
+    /// out, there is nothing to stop, and the panel says so.
     func cancel() {
-        sending?.cancel()
         lingering?.cancel()
-        dependencies.close()
+        guard phase == .sending else {
+            sending?.cancel()
+            sendToken = nil
+            dependencies.close()
+            return
+        }
+        stopRequested = true
+        if progress == nil { sending?.cancel() }
     }
 }
 

@@ -21,6 +21,11 @@
 // those five fields reach Swift. `file_path` (an absolute path on the Mac) and
 // `root_frame_id` (the project's hidden uploads frame, not a session) are
 // dropped.
+//
+// The whole upload has a deadline (Remote/WriteDeadline.swift): in the page,
+// one AbortController over the CSRF refresh, the POST and its answer, sized by
+// the file; in Swift, a little more. An upload that got no answer in time may
+// or may not be in the project: `PhotoUploadReply.unknown`.
 import Foundation
 import WebKit
 
@@ -59,11 +64,19 @@ struct PhotoUploadReply: Equatable, Sendable {
     /// The body's `code`, when it is a short identifier.
     let code: String?
     let upload: PhotoAttachment?
+    /// The upload went out and no answer came back in time, or at all: the
+    /// file may be in the project. Nothing in Claude Science can be asked
+    /// whether it is, so a caller says so and leaves the next try to the person.
+    let isUnknown: Bool
 
-    init(status: Int, code: String? = nil, upload: PhotoAttachment? = nil) {
+    /// What an upload that got no answer is.
+    static let unknown = PhotoUploadReply(status: 0, isUnknown: true)
+
+    init(status: Int, code: String? = nil, upload: PhotoAttachment? = nil, isUnknown: Bool = false) {
         self.status = status
         self.code = code
         self.upload = upload
+        self.isUnknown = isUnknown
     }
 
     /// The page's summary, checked again against what was sent. Nil when it
@@ -153,13 +166,17 @@ enum PhotoUploadScript {
     """#
 
     /// What `callAsyncJavaScript` runs, with `projectId`, `filename`,
-    /// `contentType`, `data` (base64) and `size`. Answers a JSON string:
-    /// `{"result":{…}}`, `{"refused":true}` (the arguments make no upload) or
-    /// `{"failed":true}` (the request didn't complete).
+    /// `contentType`, `data` (base64), `size` and `timeoutMS`. Answers a JSON
+    /// string: `{"result":{…}}`, `{"refused":true}` (the arguments make no
+    /// upload), `{"failed":true}` (the file couldn't be put together) or
+    /// `{"unknown":true}` (no answer came back in time, or at all).
     ///
     /// The form is built again for the retry after a stale CSRF secret, and
-    /// `Content-Type` is left to `fetch`, which adds the boundary.
-    static let body = builder + "\n" + summarizer + #"""
+    /// `Content-Type` is left to `fetch`, which adds the boundary. The refresh
+    /// and the POSTs share one deadline (`WriteScript.bounded`); as for the
+    /// other writers, a deadline that passes during the refresh leaves the
+    /// first POST's 403 as the answer.
+    static let body = WriteScript.bounded + "\n" + builder + "\n" + summarizer + #"""
 
     // `kind` is only there for a file from the Mac; a photo's callers leave it out.
     const build = benchBuildUpload({ projectId: projectId, filename: filename, contentType: contentType,
@@ -180,32 +197,42 @@ enum PhotoUploadScript {
         const value = entry.slice("operon_csrf=".length);
         try { return decodeURIComponent(value); } catch (e) { return value; }
     };
-    const signal = () => typeof AbortSignal === "function" && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(60000) : undefined;
-    const send = async () => {
-        const form = new FormData();
-        form.append("file", blob, build.filename);
-        let response;
-        try {
-            response = await fetch(build.path, {
-                method: "POST",
-                credentials: "include",
-                cache: "no-store",
-                headers: { "Accept": "application/json", "x-operon-csrf": secret() },
-                body: form,
-                signal: signal(),
-            });
-        } catch (e) { return null; }
-        let reply = "";
-        try { reply = await response.text(); } catch (e) { reply = ""; }
-        return benchSummarizeUpload(response.status, reply, build);
-    };
-    let result = await send();
-    if (result !== null && result.status === 403 && result.code === "csrf_stale") {
-        try { await fetch("/api/csrf", { credentials: "include", cache: "no-store" }); } catch (e) { }
-        result = await send();
+    let refused = null;
+    const outcome = await benchBounded(timeoutMS, async (signal) => {
+        const send = async () => {
+            if (signal && signal.aborted) { return null; }
+            const form = new FormData();
+            form.append("file", blob, build.filename);
+            let response;
+            try {
+                response = await fetch(build.path, {
+                    method: "POST",
+                    credentials: "include",
+                    cache: "no-store",
+                    headers: { "Accept": "application/json", "x-operon-csrf": secret() },
+                    body: form,
+                    signal: signal,
+                });
+            } catch (e) { return null; }
+            let reply = "";
+            try { reply = await response.text(); } catch (e) { if (signal && signal.aborted) { return null; } reply = ""; }
+            if (signal && signal.aborted) { return null; }
+            return benchSummarizeUpload(response.status, reply, build);
+        };
+        let result = await send();
+        if (result !== null && result.status === 403 && result.code === "csrf_stale") {
+            refused = result;
+            try { await fetch("/api/csrf", { credentials: "include", cache: "no-store", signal: signal }); } catch (e) { }
+            if (signal && signal.aborted) { return null; }
+            refused = null;
+            result = await send();
+        }
+        return result === null ? { unknown: true } : { result: result };
+    });
+    if (outcome === null || outcome.timedOut === true || outcome.unknown === true) {
+        return JSON.stringify(refused !== null ? { result: refused } : { unknown: true });
     }
-    return JSON.stringify(result === null ? { failed: true } : { result: result });
+    return JSON.stringify(outcome);
     """#
 
     /// The script's arguments for a photo going to `project`.
@@ -216,7 +243,8 @@ enum PhotoUploadScript {
     /// The script's arguments for any file going to `project`.
     static func arguments(project: String, file: UploadFile) -> [String: Any] {
         ["projectId": project, "filename": file.name, "contentType": file.contentType,
-         "data": file.data.base64EncodedString(), "size": file.data.count, "kind": file.kind.rawValue]
+         "data": file.data.base64EncodedString(), "size": file.data.count, "kind": file.kind.rawValue,
+         "timeoutMS": WriteDeadline.milliseconds(WriteDeadline.upload(bytes: file.data.count))]
     }
 
     /// The page's answer, checked again here against what was sent.
@@ -230,6 +258,7 @@ enum PhotoUploadScript {
             throw WebAPIError.badResponse
         }
         if Pick.bool(root["refused"]) == true { throw WebAPIError.notAllowed }
+        if Pick.bool(root["unknown"]) == true { throw WebAPIError.timedOut }
         guard let reply = PhotoUploadReply(object: root["result"], sent: sent) else { throw WebAPIError.badResponse }
         return reply
     }
@@ -248,15 +277,37 @@ extension WebContainer {
     }
 
     /// The same for any file (`UploadFile`): a photo, or a file Quick Start
-    /// sends from the Mac.
+    /// sends from the Mac. Its deadline is sized by the file
+    /// (`WriteDeadline.upload(bytes:)`); an upload that got no answer in time
+    /// throws `WebAPIError.timedOut`.
     func uploadFile(project: String, file: UploadFile) async throws -> PhotoUploadReply {
         guard status == .ready else { throw WebAPIError.notReady }
-        let value = try await webView.callAsyncJavaScript(PhotoUploadScript.body,
-                                                          arguments: PhotoUploadScript.arguments(project: project, file: file),
-                                                          in: nil, contentWorld: .defaultClient)
-        guard let text = value as? String else { throw WebAPIError.badResponse }
+        let view = webView, limit = WriteDeadline.upload(bytes: file.data.count) + WriteDeadline.grace
+        let text: String? = try await WriteDeadline.bridge(limit) {
+            try await view.callAsyncJavaScript(PhotoUploadScript.body,
+                                               arguments: PhotoUploadScript.arguments(project: project, file: file),
+                                               in: nil, contentWorld: .defaultClient) as? String
+        }
+        guard let text else { throw WebAPIError.badResponse }
         let reply = try PhotoUploadScript.result(of: Data(text.utf8), sent: file)
         if reply.status == 401 { sessionLost() }
         return reply
+    }
+}
+
+extension WebContainer {
+    /// `uploadFile`, as the uploaders' dependencies want it: nil for an upload
+    /// that was not made, the daemon's reply, or `PhotoUploadReply.unknown` for
+    /// one that may have been (no answer in time, a page that threw).
+    func uploadAnswer(project: String, file: UploadFile) async -> PhotoUploadReply? {
+        do {
+            return try await uploadFile(project: project, file: file)
+        } catch WebAPIError.notReady {
+            return nil
+        } catch WebAPIError.notAllowed {
+            return nil
+        } catch {
+            return .unknown
+        }
     }
 }

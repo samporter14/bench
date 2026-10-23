@@ -68,7 +68,7 @@ private final class Bench {
                 if Task.isCancelled { self.cancelledReads += 1 }
                 return self.reads[id] ?? nil
             },
-            respond: { [unowned self] request, _ in
+            respond: { [unowned self] request, _, _ in
                 self.requests.append(request)
                 if self.holdSends { await withCheckedContinuation { self.sendGates.append($0) } }
                 return self.results.isEmpty ? RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.answered)

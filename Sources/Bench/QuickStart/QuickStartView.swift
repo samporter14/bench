@@ -197,7 +197,7 @@ struct QuickStartView: View {
                 case .sent(let sentence):
                     Text(sentence).foregroundStyle(Solanum.ink)
                 case .sending:
-                    Text(model.shiftHeld ? "Sending…" : "Starting…").foregroundStyle(Solanum.muted)
+                    Text(model.sendingLine).foregroundStyle(Solanum.muted)
                 case .editing:
                     Text(model.footer).foregroundStyle(Solanum.muted)
                 }

@@ -509,7 +509,8 @@ struct LabPanelView: View {
     /// What a question or plan card asks, in words, for VoiceOver.
     private static func spokenAsk(plan: PlanCardState?, question: QuestionCardState?) -> String? {
         switch plan {
-        case .ready(let preview)?, .approving(let preview)?, .approved(let preview)?, .problem(_, let preview)?:
+        case .ready(let preview)?, .approving(let preview)?, .checking(let preview)?, .approved(let preview)?,
+             .problem(_, let preview)?, .retry(_, let preview)?:
             return preview.summary
         default: break
         }
@@ -677,6 +678,21 @@ struct LabPanelView: View {
             planSummary(preview.summary)
             stepsLine(preview)
             if let list = preview.stepList { stepsDisclosure(list, sessionID: session.id) }
+        case .checking(let preview):
+            // The approval got no answer; the plan is being read to see whether it landed.
+            planSummary(preview.summary)
+            note(PlanApprover.Sentence.checking, tint: Theme.clayText)
+            if let list = preview.stepList { stepsDisclosure(list, sessionID: session.id) }
+        case .retry(let message, let preview):
+            // Read again: it didn't land (or couldn't be told). Approve is offered again.
+            planSummary(preview.summary)
+            note(message, tint: Theme.clayText)
+            HStack(spacing: 10) {
+                if let list = preview.stepList { stepsToggle(list, sessionID: session.id) }
+                requestChangesLink(session)
+            }
+            .padding(.top, 2)
+            if let list = preview.stepList, plans.isShowingSteps(session.id) { stepRows(list) }
         case .problem(let message, let preview):
             planSummary(preview.summary)
             detail(message)
@@ -715,6 +731,8 @@ struct LabPanelView: View {
         case .ready(let ask):
             planSummary(ask.items.first?.question ?? "")
             detail(QuestionCardState.shape(ask))
+            // An answer that got no answer, being looked for in the session.
+            if let problem = offer.problem { note(problem, tint: Theme.clayText) }
         case .permission(let request):
             let words = RemotePermission.words(for: request)
             let decision = RemotePermission.decideOnMac(request)

@@ -12,6 +12,11 @@
 // back. Phase 4's permission answer is the same `resolve-input` route, to the
 // frame that holds the request, with its own body builder
 // (Remote/RemotePermissions.swift): never a `scope`.
+//
+// Every write here has a deadline (Remote/WriteDeadline.swift): in the page,
+// one AbortController over the CSRF refresh, the POST and its answer, and in
+// Swift another beyond it. A write that got no answer in time is not a failure
+// and not a success but unknown: `RemoteWriteResult.unknown`.
 import Foundation
 import WebKit
 
@@ -56,6 +61,8 @@ enum RemoteWrite: Equatable, Sendable {
                                   "planMode": NSNull(), "attachment": false, "files": false] // Phase 3 browse
         all["requestId"] = NSNull() // Phase 4 permissions
         all["decision"] = NSNull() // Phase 4 permissions
+        // The whole write, the CSRF refresh and the POST, has this long in the page (WriteDeadline).
+        all["timeoutMS"] = WriteDeadline.milliseconds(WriteDeadline.small)
         switch self {
         case .approvePlan(let frame):
             all["kind"] = "approve"
@@ -142,9 +149,17 @@ struct RemoteWriteResult: Equatable, Sendable {
     /// The body says the question isn't waiting any more ("Frame not awaiting
     /// user response", "No pending request with tool_id").
     let staleInput: Bool
+    /// The write went out and no answer came back in time, or at all: it may
+    /// or may not have been made. Neither done nor failed; the callers settle
+    /// it with a fresh read, and never send it again on their own.
+    let isUnknown: Bool
+
+    /// What a write that got no answer is.
+    static let unknown = RemoteWriteResult(status: 0, isJSON: false, isUnknown: true)
 
     init(status: Int, isJSON: Bool = true, code: String? = nil, bodyStatus: String? = nil, remaining: Int? = nil,
-         noPlanAwaiting: Bool = false, askPending: Bool = false, staleInput: Bool = false, rootFrameID: String? = nil) {
+         noPlanAwaiting: Bool = false, askPending: Bool = false, staleInput: Bool = false, rootFrameID: String? = nil,
+         isUnknown: Bool = false) {
         self.status = status
         self.isJSON = isJSON
         self.code = code
@@ -154,6 +169,7 @@ struct RemoteWriteResult: Equatable, Sendable {
         self.askPending = askPending
         self.staleInput = staleInput
         self.rootFrameID = rootFrameID
+        self.isUnknown = isUnknown
     }
 
     static let knownBodyStatuses: Set<String> = [
@@ -313,10 +329,16 @@ enum SessionWriterScript {
     """#
 
     /// What `callAsyncJavaScript` runs, with the arguments of
-    /// `RemoteWrite.arguments`. Answers a JSON string: `{"result":{…}}`,
-    /// `{"refused":true}` (the arguments made no write) or `{"failed":true}`
-    /// (the request didn't complete).
-    static let body = builder + "\n" + summarizer + #"""
+    /// `RemoteWrite.arguments` and `timeoutMS`. Answers a JSON string:
+    /// `{"result":{…}}`, `{"refused":true}` (the arguments made no write) or
+    /// `{"unknown":true}` (no answer came back in time, or at all: the write
+    /// may have been made).
+    ///
+    /// The refresh after a stale secret and the POSTs share one deadline
+    /// (`WriteScript.bounded`). If it passes while the refresh runs, the first
+    /// POST's 403 is the answer: nothing was accepted. If it passes during a
+    /// POST, or a POST fails with no answer, the write is unknown.
+    static let body = WriteScript.bounded + "\n" + builder + "\n" + summarizer + #"""
 
     const write = benchBuildWrite({ kind: kind, frameId: frameId, toolId: toolId, mode: mode, answers: answers,
                                     agent: agent, projectId: projectId, text: text, intentId: intentId,
@@ -331,30 +353,40 @@ enum SessionWriterScript {
         const value = entry.slice("operon_csrf=".length);
         try { return decodeURIComponent(value); } catch (e) { return value; }
     };
-    const signal = () => typeof AbortSignal === "function" && typeof AbortSignal.timeout === "function"
-        ? AbortSignal.timeout(15000) : undefined;
-    const send = async () => {
-        let response;
-        try {
-            response = await fetch(write.path, {
-                method: "POST",
-                credentials: "include",
-                cache: "no-store",
-                headers: { "Content-Type": "application/json", "Accept": "application/json", "x-operon-csrf": secret() },
-                body: JSON.stringify(write.body),
-                signal: signal(),
-            });
-        } catch (e) { return null; }
-        let reply = "";
-        try { reply = await response.text(); } catch (e) { reply = ""; }
-        return benchSummarizeWrite(response.status, reply);
-    };
-    let result = await send();
-    if (result !== null && result.status === 403 && result.code === "csrf_stale") {
-        try { await fetch("/api/csrf", { credentials: "include", cache: "no-store" }); } catch (e) { }
-        result = await send();
+    let refused = null;
+    const outcome = await benchBounded(timeoutMS, async (signal) => {
+        const send = async () => {
+            if (signal && signal.aborted) { return null; }
+            let response;
+            try {
+                response = await fetch(write.path, {
+                    method: "POST",
+                    credentials: "include",
+                    cache: "no-store",
+                    headers: { "Content-Type": "application/json", "Accept": "application/json", "x-operon-csrf": secret() },
+                    body: JSON.stringify(write.body),
+                    signal: signal,
+                });
+            } catch (e) { return null; }
+            let reply = "";
+            try { reply = await response.text(); } catch (e) { if (signal && signal.aborted) { return null; } reply = ""; }
+            if (signal && signal.aborted) { return null; }
+            return benchSummarizeWrite(response.status, reply);
+        };
+        let result = await send();
+        if (result !== null && result.status === 403 && result.code === "csrf_stale") {
+            refused = result;
+            try { await fetch("/api/csrf", { credentials: "include", cache: "no-store", signal: signal }); } catch (e) { }
+            if (signal && signal.aborted) { return null; }
+            refused = null;
+            result = await send();
+        }
+        return result === null ? { unknown: true } : { result: result };
+    });
+    if (outcome === null || outcome.timedOut === true || outcome.unknown === true) {
+        return JSON.stringify(refused !== null ? { result: refused } : { unknown: true });
     }
-    return JSON.stringify(result === null ? { failed: true } : { result: result });
+    return JSON.stringify(outcome);
     """#
 
     /// The page's answer, checked again here.
@@ -363,6 +395,7 @@ enum SessionWriterScript {
             throw WebAPIError.badResponse
         }
         if Pick.bool(root["refused"]) == true { throw WebAPIError.notAllowed }
+        if Pick.bool(root["unknown"]) == true { throw WebAPIError.timedOut }
         guard let result = RemoteWriteResult(object: root["result"]) else { throw WebAPIError.badResponse }
         return result
     }
@@ -376,14 +409,41 @@ extension WebContainer {
     /// `x-operon-csrf`, the page's `Origin`, a 403 `csrf_stale` refreshed with
     /// `GET /api/csrf` and retried once. Any status comes back as a result;
     /// a 401 also starts signing in again.
+    ///
+    /// The whole write has `WriteDeadline.small` in the page and `grace` more
+    /// in Swift. One that got no answer in time throws
+    /// `WebAPIError.timedOut`: it may have been made.
     func writeSession(_ write: RemoteWrite) async throws -> RemoteWriteResult {
         guard status == .ready else { throw WebAPIError.notReady }
-        let value = try await webView.callAsyncJavaScript(SessionWriterScript.body, arguments: write.arguments,
-                                                          in: nil, contentWorld: .defaultClient)
-        guard let text = value as? String else { throw WebAPIError.badResponse }
+        let view = webView, kind = write
+        let text: String? = try await WriteDeadline.bridge(WriteDeadline.small + WriteDeadline.grace) {
+            try await view.callAsyncJavaScript(SessionWriterScript.body, arguments: kind.arguments,
+                                               in: nil, contentWorld: .defaultClient) as? String
+        }
+        guard let text else { throw WebAPIError.badResponse }
         let result = try SessionWriterScript.result(of: Data(text.utf8))
         // Refused: the page's session didn't take. Sign in again.
         if result.status == 401 { sessionLost() }
         return result
+    }
+}
+
+extension WebContainer {
+    /// `writeSession`, as the writers' dependencies want it: nil for a write
+    /// that was not made (the page isn't up, or refused the arguments), the
+    /// daemon's answer, or `RemoteWriteResult.unknown` for anything that
+    /// happened after it could have gone: no answer in time, a page that
+    /// threw, an answer that isn't one. Those are settled by a fresh read
+    /// (`RemoteSessions.settling`), not called failures.
+    func writeAnswer(_ write: RemoteWrite) async -> RemoteWriteResult? {
+        do {
+            return try await writeSession(write)
+        } catch WebAPIError.notReady {
+            return nil
+        } catch WebAPIError.notAllowed {
+            return nil
+        } catch {
+            return .unknown
+        }
     }
 }

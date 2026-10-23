@@ -22,6 +22,16 @@
 // that intent id and its bytes, so a retry after a failed send reuses it
 // instead of saving a second copy. Nothing is deleted. Nothing here logs
 // text or names.
+//
+// Cancel stops what is unsent. Every step checks for it, the ones that wait
+// (the project list, a file read, an upload, the session's turn in its queue)
+// give way to it at once, and the request itself, the one write that makes
+// the session or the message, is the point past which it can't be taken back.
+// A cancel before that ends with "Cancelled. Nothing was sent." (or says which
+// files already went up); one after it is not a cancel, and the outcome says
+// what happened. A write that gets no answer is unknown: the panel says "Not
+// sure that went through. Checking…", a fresh read settles it, and Retry is
+// the person's (Remote/WriteDeadline.swift).
 import CryptoKit
 import Foundation
 
@@ -30,6 +40,17 @@ import Foundation
 @MainActor
 protocol QuickStartSending: AnyObject {
     func perform(_ request: QuickStartFlow.Request) async -> QuickStartFlow.Outcome
+    /// The same, telling the panel where it stands (`QuickStartFlow.Progress`).
+    /// A sender that has nothing to tell takes the default.
+    func perform(_ request: QuickStartFlow.Request,
+                 progress: @escaping @MainActor (QuickStartFlow.Progress) -> Void) async -> QuickStartFlow.Outcome
+}
+
+extension QuickStartSending {
+    func perform(_ request: QuickStartFlow.Request,
+                 progress: @escaping @MainActor (QuickStartFlow.Progress) -> Void) async -> QuickStartFlow.Outcome {
+        await perform(request)
+    }
 }
 
 /// Keeps one intent id for as long as what is sent is the same: a retry after
@@ -119,6 +140,21 @@ final class QuickStartFlow: QuickStartSending {
         var succeeded: Bool {
             if case .failed = self { false } else { true }
         }
+
+        /// Cancel stopped it before anything was sent: nothing to say but
+        /// that, and the panel goes. (A cancel after files went up is a
+        /// `failed` of its own, whose sentence says which.)
+        var isCleanCancel: Bool { self == .failed(sentence: Sentence.cancelled) }
+    }
+
+    /// Where a send stands, for the panel.
+    enum Progress: Equatable, Sendable {
+        /// The request itself (the session's start, the message) is going:
+        /// past this, Cancel can't take it back.
+        case committed
+        /// It got no answer, and Capsid is looking in Claude Science for what
+        /// became of it.
+        case checking
     }
 
     enum Sentence {
@@ -149,6 +185,31 @@ final class QuickStartFlow: QuickStartSending {
 
         static func started(project: String) -> String { "Started in \(project)." }
 
+        // Cancel
+        static let cancelled = "Cancelled. Nothing was sent."
+
+        /// A cancel after some files went up, or while one was.
+        static func cancelled(uploaded: Int, uploading: Bool, project: String, starting: Bool) -> String {
+            let what = starting ? "started" : "sent"
+            if uploading { return "Cancelled. A file may already be in \(project). Nothing was \(what)." }
+            if uploaded == 0 { return cancelled }
+            return "Cancelled. \(uploaded == 1 ? "1 file was" : "\(uploaded) files were") already in \(project). Nothing was \(what)."
+        }
+
+        // A write that got no answer
+        static let startNotThere = "That didn't go through, as far as Capsid can see. Your request is still here: start it again, and it won't start twice."
+        static func savedStartNotThere(project: String) -> String {
+            "The files are in \(project), but no session shows. Start again: the files won't go up twice, and it won't start twice."
+        }
+        static let sendNotThere = "That didn't go through. Your message is still here."
+        static func savedSendNotThere(project: String) -> String {
+            "The files are in \(project), but the message didn't go through. Send again and they won't go up twice."
+        }
+        static let sendUnsure = "Not sure that went through. Look at the session before you send again. Your message is still here."
+        static func uploadUnsure(_ name: String, project: String, starting: Bool) -> String {
+            "Not sure \u{201C}\(name)\u{201D} reached \(project). Nothing was \(starting ? "started" : "sent"). Your request is still here: sending it again may add a second copy."
+        }
+
         /// A message the session won't take, in the Mac's words.
         static func blocked(_ sentence: String) -> String { sentence + " Your message is still here." }
     }
@@ -167,7 +228,7 @@ final class QuickStartFlow: QuickStartSending {
                 ready: { Demo.mode == nil && WebContainer.shared.status == .ready },
                 upload: { project, file in
                     guard Demo.mode == nil else { return nil }
-                    return try? await WebContainer.shared.uploadFile(project: project, file: file)
+                    return await WebContainer.shared.uploadAnswer(project: project, file: file)
                 },
                 now: { Date() })
         }
@@ -199,11 +260,16 @@ final class QuickStartFlow: QuickStartSending {
     // MARK: Perform
 
     func perform(_ request: Request) async -> Outcome {
+        await perform(request, progress: { _ in })
+    }
+
+    func perform(_ request: Request, progress: @escaping @MainActor (Progress) -> Void) async -> Outcome {
         if let refusal = Self.check(request) { return .failed(sentence: refusal) }
         guard dependencies.ready() else { return .failed(sentence: Sentence.notReady) }
+        guard !Task.isCancelled else { return .failed(sentence: Sentence.cancelled) }
         switch request.target {
-        case .newSession(let project): return await start(project, request: request)
-        case .session(let id): return await send(to: id, request: request)
+        case .newSession(let project): return await start(project, request: request, progress: progress)
+        case .session(let id): return await send(to: id, request: request, progress: progress)
         }
     }
 
@@ -226,26 +292,63 @@ final class QuickStartFlow: QuickStartSending {
         return nil
     }
 
+    // MARK: Waiting, and giving way to Cancel
+
+    private enum Step<Value: Sendable> {
+        case done(Value)
+        /// Cancel came first. What was being waited for is not stopped (a read
+        /// or an upload under way can't be), only left behind: its answer goes nowhere.
+        case cancelled
+    }
+
+    /// `work`, or Cancel, whichever comes first.
+    private func step<Value: Sendable>(_ work: @escaping @MainActor () async -> Value) async -> Step<Value> {
+        switch await WriteDeadline.race(nil, cancel: .finish, work) {
+        case .finished(let value): .done(value)
+        case .timedOut, .cancelled: .cancelled
+        }
+    }
+
+    /// What Cancel ended, in words: nothing was sent, or some files already were.
+    private func cancelled(uploaded: Int, uploading: Bool, project: String, starting: Bool) -> Outcome {
+        .failed(sentence: Sentence.cancelled(uploaded: uploaded, uploading: uploading, project: project, starting: starting))
+    }
+
     // MARK: A new session
 
-    private func start(_ project: String, request: Request) async -> Outcome {
-        guard let listed = await browser.projectIDs() else { return .failed(sentence: Sentence.projectsUnreadable) }
+    private func start(_ project: String, request: Request, progress: @escaping @MainActor (Progress) -> Void) async -> Outcome {
+        let browser = browser
+        guard case .done(let listedOrNil) = await step({ await browser.projectIDs() }) else {
+            return cancelled(uploaded: 0, uploading: false, project: request.projectName, starting: true)
+        }
+        guard let listed = listedOrNil else { return .failed(sentence: Sentence.projectsUnreadable) }
         guard listed.contains(project) else { return .failed(sentence: Sentence.projectGone) }
         let text = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let attached: [PhotoAttachment]
         switch await attach(request.files, intent: request.intentID, project: project, name: request.projectName, starting: true) {
-        case .failure(let failed): return failed
-        case .success(let made): attached = made.map(\.attachment)
+        case .failed(let failed): return failed
+        case .cancelled(let uploaded, let uploading):
+            return cancelled(uploaded: uploaded, uploading: uploading, project: request.projectName, starting: true)
+        case .done(let made): attached = made.map(\.attachment)
+        }
+        // Past this, the session is being made, and Cancel can't take it back.
+        guard !Task.isCancelled else {
+            return cancelled(uploaded: attached.count, uploading: false, project: request.projectName, starting: true)
         }
         let body = Self.requestText(text: text, attachments: attached)
         let started = NewSessionRequest(text: body, intentID: request.intentID, planFirst: request.planFirst,
                                         attachment: false, files: !attached.isEmpty)
         let title = text.isEmpty ? (request.files.first?.name ?? "Files") : String(text.prefix(50))
-        guard let reply = await browser.start(project, request: started, title: title), let id = Self.startedID(in: reply) else {
-            return .failed(sentence: attached.isEmpty ? Sentence.notStarted
-                           : Sentence.savedNotStarted(project: request.projectName))
+        progress(.committed)
+        switch await browser.attempt(project, request: started, title: title, checking: { progress(.checking) }) {
+        case .started(let reply):
+            guard let id = Self.startedID(in: reply) else { fallthrough }
+            return .started(sessionID: id, sentence: Sentence.started(project: request.projectName))
+        case .notStarted:
+            return .failed(sentence: attached.isEmpty ? Sentence.notStarted : Sentence.savedNotStarted(project: request.projectName))
+        case .notThere:
+            return .failed(sentence: attached.isEmpty ? Sentence.startNotThere : Sentence.savedStartNotThere(project: request.projectName))
         }
-        return .started(sessionID: id, sentence: Sentence.started(project: request.projectName))
     }
 
     /// The new session's id from `RemoteBrowser.start`'s answer: 200 and
@@ -259,20 +362,29 @@ final class QuickStartFlow: QuickStartSending {
 
     // MARK: A message
 
-    private func send(to id: String, request: Request) async -> Outcome {
+    private func send(to id: String, request: Request, progress: @escaping @MainActor (Progress) -> Void) async -> Outcome {
         var outcome = Outcome.failed(sentence: Sentence.notSent)
-        _ = await sessions.actSerially(on: id) { [weak self] in
-            if let self { outcome = await self.sendToSession(id, request: request) }
+        // The turn is bounded, uploads and all, so a message behind a stalled one still goes.
+        let end = await sessions.runSerially(on: id, limit: WriteDeadline.turn(uploadBytes: request.files.map(\.size))) { [weak self] in
+            if let self { outcome = await self.sendToSession(id, request: request, progress: progress) }
             return .ok(.unavailable)
         }
-        return outcome
+        switch end {
+        case .finished: return outcome
+        // Never began: nothing was sent.
+        case .cancelled: return .failed(sentence: Sentence.cancelled)
+        // The turn ran out of time somewhere, and the message may have gone.
+        case .stalled: return .failed(sentence: Sentence.sendUnsure)
+        }
     }
 
-    private func sendToSession(_ id: String, request: Request) async -> Outcome {
+    private func sendToSession(_ id: String, request: Request, progress: @escaping @MainActor (Progress) -> Void) async -> Outcome {
         let text = request.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessions = sessions
+        let stopped = cancelled(uploaded: 0, uploading: false, project: request.projectName, starting: false)
         // First the check the message route makes, so that nothing goes up for
         // a session that can't take a message now (its status, agent, project).
-        let before = await sessions.photoDependencies.read(id, false)
+        guard case .done(let before) = await step({ await sessions.photoDependencies.read(id, false) }) else { return stopped }
         let probe = RemoteDecide.message(.message(text: text.isEmpty ? "Files" : text, intentID: request.intentID),
                                          session: id, fresh: before)
         let project: String
@@ -286,15 +398,28 @@ final class QuickStartFlow: QuickStartSending {
         var retried = false
         if !request.files.isEmpty {
             switch await attach(request.files, intent: request.intentID, project: project, name: request.projectName, starting: false) {
-            case .failure(let failed): return failed
-            case .success(let made):
+            case .failed(let failed): return failed
+            case .cancelled(let uploaded, let uploading):
+                return cancelled(uploaded: uploaded, uploading: uploading, project: request.projectName, starting: false)
+            case .done(let made):
                 attached = made.map(\.attachment)
                 retried = made.contains { $0.retried }
             }
         }
+        guard !Task.isCancelled else {
+            return cancelled(uploaded: attached.count, uploading: false, project: request.projectName, starting: false)
+        }
         // Then the message route's own re-read: the status says send, queue or
         // resume, and the agent is the one it names.
-        let fresh = attached.isEmpty ? before : await sessions.photoDependencies.read(id, false)
+        let fresh: SessionProjection?
+        if attached.isEmpty {
+            fresh = before
+        } else {
+            guard case .done(let again) = await step({ await sessions.photoDependencies.read(id, false) }) else {
+                return cancelled(uploaded: attached.count, uploading: false, project: request.projectName, starting: false)
+            }
+            fresh = again
+        }
         let body = Self.requestText(text: text, attachments: attached)
         guard case .write(.message(let frame, let agent, let sentTo?, _, let intent, _)) = RemoteDecide.message(
             .message(text: body, intentID: request.intentID), session: id, fresh: fresh), sentTo == project else {
@@ -303,13 +428,22 @@ final class QuickStartFlow: QuickStartSending {
         let write: RemoteWrite = attached.isEmpty
             ? .message(frame: frame, agent: agent, projectID: sentTo, text: body, intentID: intent)
             : .messageWithFiles(frame: frame, agent: agent, projectID: sentTo, text: body, intentID: intent)
-        let reply = await sessions.photoDependencies.write(write)
-        var result = RemoteDecide.messaged(reply, status: fresh?.status ?? "")
+        // Past this, the message is going, and Cancel can't take it back.
+        guard !Task.isCancelled else {
+            return cancelled(uploaded: attached.count, uploading: false, project: request.projectName, starting: false)
+        }
+        progress(.committed)
+        let delivered = await sessions.deliver(write, text: body, session: id, before: fresh, checking: { progress(.checking) })
+        var result = delivered.result
         // A retry the daemon refuses as a repeat (409): the first try went.
-        if retried, reply?.status == 409 { result = RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.sent) }
+        if retried, delivered.reply?.status == 409 { result = RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.sent) }
         switch result.result {
         case .sent, .queued, .resumed:
             return .sent(result.result, sentence: result.sentence)
+        case .retry:
+            return .failed(sentence: attached.isEmpty ? Sentence.sendNotThere : Sentence.savedSendNotThere(project: request.projectName))
+        case .unknown:
+            return .failed(sentence: Sentence.sendUnsure)
         default:
             return .failed(sentence: attached.isEmpty ? Self.outcome(of: result).sentence : Sentence.savedNotSent(project: request.projectName))
         }
@@ -335,44 +469,69 @@ final class QuickStartFlow: QuickStartSending {
         return text.isEmpty ? lines : text + "\n\n" + lines
     }
 
+    private enum Attach {
+        case done([(attachment: PhotoAttachment, retried: Bool)])
+        case failed(Outcome)
+        /// Cancel came: how many files were in the project, and whether one
+        /// was on its way (it may be there too).
+        case cancelled(uploaded: Int, uploading: Bool)
+    }
+
     /// Every file read and in the project (or reused from an earlier try of
     /// this intent): its place there, and whether it was reused. The first
     /// that can't be read or uploaded ends it, with the sentence; what already
-    /// went up stays and is reused by the retry.
-    private func attach(_ files: [QuickStartFile], intent: String, project: String, name: String, starting: Bool) async
-        -> Result<[(attachment: PhotoAttachment, retried: Bool)], Outcome> {
+    /// went up stays and is reused by the retry. Cancel ends it before the
+    /// next file, or at once if one is being read or sent.
+    private func attach(_ files: [QuickStartFile], intent: String, project: String, name: String, starting: Bool) async -> Attach {
         var made: [(attachment: PhotoAttachment, retried: Bool)] = []
         for file in files {
-            guard let upload = await file.read() else {
-                return .failure(.failed(sentence: AttachmentRefusal.unreadable(file.name).sentence))
+            guard !Task.isCancelled else { return .cancelled(uploaded: made.count, uploading: false) }
+            guard case .done(let read) = await step({ await file.read() }) else {
+                return .cancelled(uploaded: made.count, uploading: false)
             }
-            guard let placed = await place(upload, intent: intent, project: project) else {
-                return .failure(.failed(sentence: Sentence.uploadFailed(file.name, project: name, starting: starting)))
+            guard let upload = read else {
+                return .failed(.failed(sentence: AttachmentRefusal.unreadable(file.name).sentence))
             }
-            made.append(placed)
+            guard !Task.isCancelled else { return .cancelled(uploaded: made.count, uploading: false) }
+            guard case .done(let placed) = await step({ await self.place(upload, intent: intent, project: project) }) else {
+                return .cancelled(uploaded: made.count, uploading: true)
+            }
+            switch placed {
+            case .placed(let attachment, let retried): made.append((attachment, retried))
+            case .failed: return .failed(.failed(sentence: Sentence.uploadFailed(file.name, project: name, starting: starting)))
+            case .unsure: return .failed(.failed(sentence: Sentence.uploadUnsure(file.name, project: name, starting: starting)))
+            }
         }
-        return .success(made)
+        return .done(made)
+    }
+
+    private enum Placed: Sendable {
+        case placed(PhotoAttachment, retried: Bool)
+        case failed
+        /// The upload got no answer: the file may be in the project.
+        case unsure
     }
 
     /// The file's place in the project: what an earlier try of this intent
     /// uploaded (the same bytes, the same project, within ten minutes), else a
-    /// new upload, which is remembered. Nil when there is none.
-    private func place(_ file: UploadFile, intent: String, project: String) async -> (attachment: PhotoAttachment, retried: Bool)? {
+    /// new upload, which is remembered.
+    private func place(_ file: UploadFile, intent: String, project: String) async -> Placed {
         let now = dependencies.now()
         uploaded = uploaded.filter { $0.value.at <= now && now.timeIntervalSince($0.value.at) < Self.uploadedLifetime }
         let digest = SHA256.hash(data: file.data)
         let key = intent + "|" + digest.map { String(format: "%02x", $0) }.joined()
         if let earlier = uploaded[key], earlier.digest == digest, earlier.project == project {
-            return (earlier.attachment, true)
+            return .placed(earlier.attachment, retried: true)
         }
-        guard BrowseSQL.isProjectID(project),
-              let reply = await dependencies.upload(project, file), reply.status == 200, let upload = reply.upload,
+        guard BrowseSQL.isProjectID(project), let reply = await dependencies.upload(project, file) else { return .failed }
+        if reply.isUnknown { return .unsure }
+        guard reply.status == 200, let upload = reply.upload,
               upload.filename == file.name, upload.contentType == file.contentType, upload.sizeBytes == file.data.count
-        else { return nil }
+        else { return .failed }
         uploaded[key] = Uploaded(digest: digest, project: project, attachment: upload, at: now)
         while uploaded.count > Self.uploadedLimit, let oldest = uploaded.min(by: { $0.value.at < $1.value.at }) {
             uploaded[oldest.key] = nil
         }
-        return (upload, false)
+        return .placed(upload, retried: false)
     }
 }

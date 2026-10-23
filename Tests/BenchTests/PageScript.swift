@@ -30,6 +30,38 @@ final class PageScript {
         evaluate(source)
     }
 
+    /// Timers that run when a test says the time is up (`__expire()`), and an
+    /// AbortController that tells its listeners, as a page's does. JavaScriptCore
+    /// has neither.
+    static let timerShim = """
+var __timers = [];
+var setTimeout = function (fn, ms) { __timers.push({ fn: fn, ms: ms, live: true }); return __timers.length; };
+var clearTimeout = function (id) { if (__timers[id - 1]) { __timers[id - 1].live = false; } };
+var __expire = function () {
+    for (var i = 0; i < __timers.length; i++) { if (__timers[i].live) { __timers[i].live = false; __timers[i].fn(); } }
+};
+var __signals = [];
+var __Signal = function () { this.aborted = false; this.__listeners = []; __signals.push(this); };
+__Signal.prototype.addEventListener = function (type, fn) { this.__listeners.push(fn); };
+__Signal.prototype.removeEventListener = function (type, fn) {
+    this.__listeners = this.__listeners.filter(function (f) { return f !== fn; });
+};
+var AbortController = function () { this.signal = new __Signal(); };
+AbortController.prototype.abort = function () {
+    if (this.signal.aborted) { return; }
+    this.signal.aborted = true;
+    this.signal.__listeners.slice().forEach(function (f) { f(); });
+};
+// A request that never answers: it rejects when its signal aborts (body "__hang__"), or it doesn't ("__hang-ignore__").
+var __hangs = function (answer, init) {
+    if (answer.body !== "__hang__" && answer.body !== "__hang-ignore__") { return null; }
+    var signal = init && init.signal;
+    return new Promise(function (resolve, reject) {
+        if (answer.body === "__hang__" && signal) { signal.addEventListener("abort", function () { reject(new Error("aborted")); }); }
+    });
+};
+"""
+
     /// Evaluates `script`; returns the value as a string, nil for an
     /// exception (recorded in `exception`).
     @discardableResult
@@ -67,6 +99,11 @@ final class PageScript {
         return evaluate("JSON.stringify(\(function)(\(names.joined(separator: ", "))))")
     }
 
+    /// How many signals the script's controllers aborted.
+    var abortedSignals: Int { Int(evaluate("String(__signals.filter(function (s) { return s.aborted; }).length)") ?? "") ?? 0 }
+    /// How many timers are still waiting.
+    var pendingTimers: Int { Int(evaluate("String(__timers.filter(function (t) { return t.live; }).length)") ?? "") ?? 0 }
+
     // MARK: Running an in-page body
 
     /// Runs `body` as `callAsyncJavaScript` would, as an async function of
@@ -74,7 +111,7 @@ final class PageScript {
     /// `answers` (by path, in turn: the last one repeats) and `document.cookie`
     /// as given. Returns what the body returned, and the requests it made.
     func runPage(_ body: String, arguments: [(String, String)], answers: [String: [Answer]],
-                 cookie: String = "theme=dark; operon_csrf=secret-one") -> (result: String?, requests: [Request]) {
+                 cookie: String = "theme=dark; operon_csrf=secret-one", expire: Bool = false) -> (result: String?, requests: [Request]) {
         let table = (try? JSONEncoder().encode(answers)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         set("__answers", table)
         set("__cookie", cookie)
@@ -85,6 +122,7 @@ final class PageScript {
         var document = { cookie: __cookie };
         var AbortSignal = function () {};
         AbortSignal.timeout = function () { return undefined; };
+        \(Self.timerShim)
         var fetch = function (path, init) {
             init = init || {};
             var headers = init.headers || {};
@@ -96,6 +134,8 @@ final class PageScript {
             var n = __seen[path] || 0;
             __seen[path] = n + 1;
             var answer = list[Math.min(n, list.length - 1)];
+            var hung = __hangs(answer, init);
+            if (hung) { return hung; }
             return Promise.resolve({ status: answer.status, ok: answer.status >= 200 && answer.status < 300,
                                      text: function () { return Promise.resolve(answer.body); } });
         };
@@ -109,6 +149,8 @@ final class PageScript {
         \(body)
         })(\(values)).then(function (v) { __result = v; }, function (e) { __result = "threw: " + e; });
         """)
+        // The time is up: every timer the script set goes off.
+        if expire { evaluate("__expire()") }
         let result = evaluate("__result")
         let requestsJSON = evaluate("JSON.stringify(__requests)") ?? "[]"
         let list = (try? JSONSerialization.jsonObject(with: Data(requestsJSON.utf8))) as? [[String: Any]] ?? []

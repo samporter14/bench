@@ -187,7 +187,7 @@ private final class FakeCore {
                 await Task.yield()
                 return self.read
             },
-            respond: { [unowned self] request, _ in
+            respond: { [unowned self] request, _, _ in
                 self.requests.append(request)
                 if self.holdSends { await withCheckedContinuation { self.gates.append($0) } }
                 return self.results.isEmpty ? Self.sent : self.results.removeFirst()
@@ -481,7 +481,7 @@ struct NativeReplyCoreTests {
         let replier = QuestionReplier(model: model, dependencies: QuestionReplier.Dependencies(
             isEnabled: { true }, isReady: { true },
             read: { await sessions.readFrame($0) },
-            respond: { await sessions.respond($0, session: $1) }))
+            respond: { await sessions.respond($0, session: $1, checking: $2) }))
         replier.sync()
         await replier.settled()
         #expect(replier.beginReply(session))
