@@ -451,3 +451,94 @@ struct SessionQueueDeadlineTests {
         guard case .finished = after else { Issue.record("not finished: \(after)"); return }
     }
 }
+
+// MARK: The phone
+
+/// The phone's side of a write that got no answer: it says the Mac's sentence, reads the
+/// session afresh, and leaves the words where they are, so a second try is the same message.
+@Suite(.serialized)
+struct PhoneUnknownTests {
+    private func describe(_ result: String, sentence: String? = nil, status: Int = 200) throws -> [String: Any] {
+        let app = try PhoneAppHarness(hash: "#/", now: Date(timeIntervalSince1970: 1_791_986_400), answers: [:])
+        let data = sentence.map { #"{"result":"\#(result)","sentence":"\#($0)"}"# } ?? #"{"result":"\#(result)"}"#
+        let json = try #require(app.string("JSON.stringify(describe({status:\(status),data:\(data)}))"))
+        return try #require((try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any])
+    }
+
+    @Test func aWriteThatDidntGoThroughIsSaidSoAndTheSessionIsReadAgain() throws {
+        let said = try describe("retry", sentence: RemoteDecide.Sentence.notThere)
+        #expect(said["ok"] as? Bool == false)
+        #expect(said["refetch"] as? Bool == true)
+        #expect(said["text"] as? String == "That didn't go through. Try again.")
+        // No "Open on Mac" link: nothing is wrong that opening it would fix.
+        #expect(said["open"] == nil)
+    }
+
+    @Test func aWriteThatCantBeToldIsNotCalledSentOrFailed() throws {
+        let said = try describe("unknown", sentence: RemoteDecide.Sentence.unsure)
+        #expect(said["ok"] as? Bool == false)
+        #expect(said["refetch"] as? Bool == true)
+        #expect(said["text"] as? String == RemoteDecide.Sentence.unsure)
+        #expect(said["open"] == nil)
+    }
+
+    @Test func withoutASentenceThePhoneHasItsOwn() throws {
+        #expect(try describe("retry")["text"] as? String == "That didn’t go through. Try again.")
+        #expect((try describe("unknown")["text"] as? String)?.hasPrefix("Not sure that went through.") == true)
+    }
+
+    @Test func aSettledWriteIsStillJustDone() throws {
+        let sent = try describe("sent", sentence: "Sent.")
+        #expect(sent["ok"] as? Bool == true)
+        #expect(sent["text"] as? String == "Sent.")
+    }
+
+    private static let id = "00000000-0000-4000-8000-00000000bb01"
+    private static let session = #"{"can":{"answer":false,"approve":false,"message":"send","why":null},"id":"\#(id)","messages":[],"permission":null,"plan":null,"project":"Example project","question":null,"queued":null,"readable":true,"reason":null,"reply":null,"sentence":"Finished","startedAt":"2026-10-14T13:50:00Z","state":"finished","statusLine":null,"title":"Made-up screen","toYou":null,"turns":[],"updatedAt":"2026-10-14T13:59:00Z","version":2}"#
+
+    private func page() throws -> PhoneAppHarness {
+        try PhoneAppHarness(hash: "#/session/\(Self.id)", now: Date(timeIntervalSince1970: 1_791_986_400), answers: [
+            "/api/me": #"{"paired":true,"browse":false,"act":true}"#,
+            "/api/state": #"{"version":1,"bench":"1.0","updatedAt":"2026-10-14T14:00:00Z","problem":null,"needsYou":[],"failed":[],"working":[],"recent":[],"usage":null,"pause":null}"#,
+            "/api/sessions/\(Self.id)": Self.session,
+        ])
+    }
+
+    private func note(_ app: PhoneAppHarness) -> String? {
+        app.string("ui(\(PhoneAppHarness.quoted(Self.id))).note ? ui(\(PhoneAppHarness.quoted(Self.id))).note.text : null")
+    }
+
+    @Test func aWriteThatNothingHasAnsweredYetSaysTheMacIsChecking() throws {
+        let app = try page()
+        #expect(app.exceptions == [])
+        // The Mac never answers this message.
+        app.evaluate("doAction(\(PhoneAppHarness.quoted(Self.id)), 'message', '/api/sessions/\(Self.id)/message', { text: 'x', id: 'i' })")
+        app.advance(21_000)
+        #expect(note(app) == nil, "not before the Mac's own twenty seconds are up")
+        app.advance(2_000)
+        #expect(note(app) == "Not sure that went through. Checking…")
+    }
+
+    @Test func aPhotoGetsLongerBecauseItsUploadAloneTakesAMinute() throws {
+        let app = try page()
+        app.evaluate("doAction(\(PhoneAppHarness.quoted(Self.id)), 'message', '/api/sessions/\(Self.id)/photo', { image: 'x', text: '', id: 'i' }, PHOTO_SLOW_MS)")
+        app.advance(60_000)
+        #expect(note(app) == nil)
+        app.advance(26_000)
+        #expect(note(app) == "Not sure that went through. Checking…")
+    }
+
+    @Test func theMacsDeadlineIsTheNumberThePhoneWaitsFor() {
+        // The phone waits a little longer than the Mac gives a small write, and for a photo a little longer than its upload and the write.
+        let app = RemoteWebApp.files["/app.js"]?.body ?? ""
+        #expect(app.contains("const WRITE_SLOW_MS = 22000;"))
+        #expect(app.contains("const PHOTO_SLOW_MS = 85000;"))
+        #expect(WriteDeadline.small < .milliseconds(22_000))
+        #expect(WriteDeadline.upload(bytes: PhotoImage.maxBytes) + WriteDeadline.small < .milliseconds(85_000))
+    }
+
+    @Test func theEmbeddedPageIsTheSourceOfTheSameWords() {
+        let app = RemoteWebApp.files["/app.js"]?.body ?? ""
+        #expect(app.contains("result === 'retry'") && app.contains("result === 'unknown'"))
+    }
+}

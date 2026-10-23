@@ -242,6 +242,10 @@ private final class FakeBrowse {
     var history: RemoteBrowser.HistoryRead = .unreadable
     var turn: RemoteBrowser.TurnRead = .none
     var created: RemoteWriteResult? = nil
+    /// The write that makes a session goes in and never comes back.
+    var createNeverReturns = false
+    /// How long the Swift side gives it (read when `browser` is first used).
+    var createLimit: Duration = .seconds(60)
     var intents: [String?] = []
     var now = Date(timeIntervalSince1970: 1_791_833_400)
     private(set) var calls: [String] = []
@@ -278,14 +282,20 @@ private final class FakeBrowse {
             return self.history
         },
         turn: { [unowned self] _, index in self.calls.append("turn \(index)"); return self.turn },
-        create: { [unowned self] write in self.calls.append("create"); self.writes.append(write); return self.created },
+        create: { [unowned self] write in
+            self.calls.append("create")
+            self.writes.append(write)
+            if self.createNeverReturns { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
+            return self.created
+        },
         findIntent: { [unowned self] _, _ in
             self.calls.append("intent")
             return self.intents.isEmpty ? nil : self.intents.removeFirst()
         },
         listed: { [unowned self] files, device in self.listed.append((files.map(\.v), device)) },
         now: { [unowned self] in self.now },
-        pause: { [unowned self] in self.calls.append("pause") }))
+        pause: { [unowned self] in self.calls.append("pause") },
+        createLimit: createLimit))
 
     func respond(_ method: String, _ target: String, body: String = "", device: String = "device-1") async -> RemoteActionReply {
         let path = Substring(target.prefix { $0 != "?" })
@@ -686,6 +696,23 @@ struct RemoteBrowserUnknownTests {
         #expect(await fake.browser.start("proj_a", request: request) == nil)
         // Nothing is sent again on its own: one more write, from the second call, and no third.
         #expect(fake.writes.count == 2)
+    }
+
+    @Test func aWriteThatNeverReturnsIsCutOffAndLookedFor() async {
+        fake.createNeverReturns = true
+        fake.createLimit = .milliseconds(40)
+        fake.intents = [nil, root]
+        var checking = 0
+        let attempt = await fake.browser.attempt("proj_a", request: request, checking: { checking += 1 })
+        guard case .started = attempt else { Issue.record("not started: \(attempt)"); return }
+        #expect(checking == 1)
+        #expect(fake.writes.count == 1, "never sent again")
+        // And when nothing shows, it can be tried again.
+        let other = FakeBrowse()
+        other.createNeverReturns = true
+        other.createLimit = .milliseconds(40)
+        other.intents = [nil, nil]
+        guard case .notThere = await other.browser.attempt("proj_a", request: request) else { Issue.record("not notThere"); return }
     }
 
     @Test func aWriteThatWasNotMadeLooksForTheSessionButIsNotCalledUnknown() async {

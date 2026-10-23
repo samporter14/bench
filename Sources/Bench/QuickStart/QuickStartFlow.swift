@@ -225,6 +225,8 @@ final class QuickStartFlow: QuickStartSending {
         /// The most one message's turn in its session's queue may take, given
         /// the sizes of the files it uploads (`WriteDeadline.turn`).
         var turn: @MainActor ([Int]) -> Duration = { WriteDeadline.turn(uploadBytes: $0) }
+        /// Waits out an upload's deadline; tests stand in for the clock.
+        var wait: @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
 
         static func live() -> Dependencies {
             Dependencies(
@@ -302,13 +304,17 @@ final class QuickStartFlow: QuickStartSending {
         /// Cancel came first. What was being waited for is not stopped (a read
         /// or an upload under way can't be), only left behind: its answer goes nowhere.
         case cancelled
+        /// Its own time ran out (an upload whose page never answered).
+        case timedOut
     }
 
-    /// `work`, or Cancel, whichever comes first.
-    private func step<Value: Sendable>(_ work: @escaping @MainActor () async -> Value) async -> Step<Value> {
-        switch await WriteDeadline.race(nil, cancel: .finish, work) {
+    /// `work`, or Cancel, whichever comes first; with `limit`, or its time.
+    private func step<Value: Sendable>(limit: Duration? = nil,
+                                       _ work: @escaping @MainActor () async -> Value) async -> Step<Value> {
+        switch await WriteDeadline.race(limit, wait: dependencies.wait, cancel: .finish, work) {
         case .finished(let value): .done(value)
-        case .timedOut, .cancelled: .cancelled
+        case .timedOut: .timedOut
+        case .cancelled: .cancelled
         }
     }
 
@@ -496,8 +502,13 @@ final class QuickStartFlow: QuickStartSending {
                 return .failed(.failed(sentence: AttachmentRefusal.unreadable(file.name).sentence))
             }
             guard !Task.isCancelled else { return .cancelled(uploaded: made.count, uploading: false) }
-            guard case .done(let placed) = await step({ await self.place(upload, intent: intent, project: project) }) else {
-                return .cancelled(uploaded: made.count, uploading: true)
+            // The page bounds an upload (WriteDeadline.upload); this is the Swift side's own, beyond it.
+            let limit = WriteDeadline.upload(bytes: upload.data.count) + WriteDeadline.grace + WriteDeadline.grace
+            let placed: Placed
+            switch await step(limit: limit, { await self.place(upload, intent: intent, project: project) }) {
+            case .done(let made): placed = made
+            case .cancelled: return .cancelled(uploaded: made.count, uploading: true)
+            case .timedOut: placed = .unsure
             }
             switch placed {
             case .placed(let attachment, let retried): made.append((attachment, retried))

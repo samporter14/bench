@@ -682,6 +682,9 @@ struct QuickStartModelTests {
         rig.sender.release()
         await rig.waitForSend()
         #expect(rig.model.phase == .sent("Queued. Claude reads it at the next safe point."))
+        // Put away after a moment, as after any send; the test waits for it so nothing runs after it ends.
+        await rig.settle()
+        #expect(rig.closed == 1)
     }
 
     @Test func aWriteWithNoAnswerShowsTheCheckingLineThenWhatTheReadSays() async {
@@ -719,6 +722,8 @@ struct QuickStartModelTests {
         await rig.waitForSend()
         #expect(!rig.sender.cancelledWhenItAnswered)
         #expect(rig.model.phase == .sent("Started in Assay development."))
+        await rig.settle()
+        #expect(rig.closed == 1)
     }
 
     @Test func aSendThatIsLetGoOfNoLongerReportsToThePanel() async {

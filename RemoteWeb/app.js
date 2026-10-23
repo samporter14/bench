@@ -2080,23 +2080,35 @@ function describe(out) {
     return { ok: true, refetch: true, text: sentence || { approved: 'Approved', allowed: 'Allowed once', denied: 'Denied', sent: 'Sent', queued: 'Queued', resumed: 'Picked up again' }[result] };
   }
   if (result === 'blocked') return { ok: false, refetch: true, text: sentence || 'That isn’t possible right now.' };
+  // A write that got no answer, which Capsid has looked for in the session: it isn't there (send it again), or that can't be told.
+  // Either way the words stay where they are, so a second try is the same message, which the Mac knows.
+  if (result === 'retry') return { ok: false, refetch: true, text: sentence || 'That didn’t go through. Try again.' };
+  if (result === 'unknown') return { ok: false, refetch: true, text: sentence || 'Not sure that went through. Look at it on your Mac before you try again.' };
   if (status === 403 && !sentence) return { ok: false, refetch: true, text: 'Actions are off in Capsid’s Settings.' };
   return { ok: false, refetch: true, open: true, text: sentence || 'Couldn’t do that from here. Open it on your Mac.' };
 }
 
+// How long the Mac gives a write before it looks for it in the session (20 s, and a read), and a photo's upload as well.
+const WRITE_SLOW_MS = 22000;
+const PHOTO_SLOW_MS = 85000;
+
 // One path for approve, answer, permission and message: disable, post, say what happened, refetch.
-async function doAction(id, kind, path, body) {
+async function doAction(id, kind, path, body, slowMs = WRITE_SLOW_MS) {
   const u = ui(id);
   if (u.busy[kind]) return null;
   u.busy[kind] = true;
   redrawSession(id);
+  // No answer yet: by now the Mac is looking for the write in the session, and the phone says so until it hears.
+  const slow = setTimeout(() => setNote(id, { text: 'Not sure that went through. Checking…' }, 120000), slowMs);
   let result;
   try {
     result = describe(await send(path, body));
   } catch (e) {
+    clearTimeout(slow);
     if (e instanceof Unauth) { u.busy[kind] = false; showPair(); return null; }
     result = { ok: false, refetch: false, text: 'Couldn’t reach your Mac. Try again.' };
   }
+  clearTimeout(slow);
   u.busy[kind] = false;
   setNote(id, { text: result.text, open: !!result.open }, result.open ? 12000 : result.ok ? 5000 : 9000);
   if (result.refetch) await loadSession(id, true);
@@ -2140,7 +2152,7 @@ async function sendPhoto(id, text, photo) {
   try { image = await blobBase64(photo.blob); } catch { /* handled below */ }
   u.sending = false;
   if (!image) return setNote(id, { text: 'Couldn’t read the photo. Remove it and pick it again.' }, 9000);
-  const result = await doAction(id, 'message', '/api/sessions/' + id + '/photo', { image, text, id: photo.sent.id });
+  const result = await doAction(id, 'message', '/api/sessions/' + id + '/photo', { image, text, id: photo.sent.id }, PHOTO_SLOW_MS);
   if (result && result.ok) clearComposer(id);
 }
 

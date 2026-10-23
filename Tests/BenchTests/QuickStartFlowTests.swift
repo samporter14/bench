@@ -46,6 +46,8 @@ private final class FlowRig {
     /// Called as each read begins, with its place in turn.
     var onRead: ((Int) -> Void)?
     var turnLimit: Duration = .seconds(60)
+    /// An upload's deadline in Swift passes at once.
+    var uploadsRunOutOfTime = false
     private var readCalls = 0
 
     var ready = true
@@ -157,7 +159,14 @@ private final class FlowRig {
             }
         },
         now: { [unowned self] in self.now },
-        turn: { [unowned self] _ in self.turnLimit }))
+        turn: { [unowned self] _ in self.turnLimit },
+        wait: { [unowned self] in await self.waitOut($0) }))
+
+    /// An upload's deadline in Swift: real time, or at once.
+    func waitOut(_ duration: Duration) async {
+        if uploadsRunOutOfTime { return }
+        try? await Task.sleep(for: duration)
+    }
 
     func line(of file: UploadFile) -> String {
         PhotoAttachment(id: attachmentID, versionID: versionID, filename: file.name, contentType: file.contentType,
@@ -718,6 +727,17 @@ struct QuickStartFlowUnknownTests {
         #expect(!rig.log.contains("create"))
     }
 
+    @Test func anUploadThatNeverReturnsIsCutOffAndMayBeInTheProject() async throws {
+        // The Swift side's own deadline for the upload, beyond the page's: nothing is started.
+        rig.holdUploads = true
+        rig.uploadsRunOutOfTime = true
+        let outcome = await rig.flow.perform(rig.newSession(files: [try rig.file("a.csv")]))
+        #expect(outcome == .failed(sentence: QuickStartFlow.Sentence.uploadUnsure("a.csv", project: "Made-up", starting: true)))
+        #expect(rig.writes.isEmpty)
+        rig.gate.open()
+        for _ in 0..<60 { await Task.yield() }
+    }
+
     @Test func aTurnThatStallsEndsUnknownAndTheNextMessageGoes() async {
         // The session read never returns: the turn is given up, and the next message is not held behind it.
         rig.holdReads = [0]
@@ -733,5 +753,121 @@ struct QuickStartFlowUnknownTests {
         #expect(rig.writes.count == 1, "only the second message was written")
         rig.gate.open()
         for _ in 0..<60 { await Task.yield() }
+    }
+}
+
+// MARK: The panel over the real flow
+
+/// The panel's Cancel and the flow's checkpoints, together: what the person presses and what is sent.
+@MainActor
+struct QuickStartPanelCancelTests {
+    private let rig = FlowRig()
+    private var closed = Counter()
+
+    @MainActor
+    private final class Counter {
+        var count = 0
+    }
+
+    private func model(file: QuickStartFile? = nil) -> QuickStartModel {
+        let counter = closed
+        let made = QuickStartModel(dependencies: QuickStartModel.Dependencies(
+            recipes: { [] },
+            recentProjects: { [QuickStartProject(id: "proj-1", name: "Made-up")] },
+            allProjects: { nil },
+            viewed: { nil },
+            sender: rig.flow,
+            makeFile: { _ in file.map { .success($0) } ?? .failure(.unreadable("x")) },
+            close: { counter.count += 1 },
+            linger: .milliseconds(1),
+            sleep: { _ in }))
+        made.open()
+        return made
+    }
+
+    private func settle() async {
+        for _ in 0..<80 { await Task.yield() }
+    }
+
+    @Test func cancelBeforeAnythingWasSentClosesThePanelAndSendsNothing() async {
+        rig.holdProjects = true
+        let panel = model()
+        await settle()
+        panel.text = "QC this export"
+        panel.submit()
+        for _ in 0..<2_000 where rig.gate.holding == 0 { await Task.yield() }
+        #expect(panel.phase == .sending)
+        panel.cancel()
+        // The panel waits for the flow to say nothing went; then it goes, with the words kept.
+        for _ in 0..<2_000 where panel.phase == .sending { await Task.yield() }
+        #expect(panel.phase == .editing)
+        #expect(closed.count == 1)
+        #expect(panel.text == "QC this export")
+        rig.gate.open()
+        await settle()
+        #expect(rig.writes.isEmpty && rig.uploads.isEmpty)
+    }
+
+    @Test func cancelWithAnUploadOnItsWayKeepsThePanelAndSaysSoAndNothingStarts() async throws {
+        rig.holdUploads = true
+        let file = try rig.file("a.csv")
+        let panel = model(file: file)
+        await settle()
+        panel.text = "QC this export"
+        panel.addFiles([file.url])
+        panel.submit()
+        for _ in 0..<2_000 where rig.gate.holding == 0 { await Task.yield() }
+        panel.cancel()
+        for _ in 0..<2_000 where panel.phase == .sending { await Task.yield() }
+        #expect(panel.phase == .failed("Cancelled. A file may already be in Made-up. Nothing was started."))
+        #expect(closed.count == 0)
+        #expect(panel.files.count == 1 && panel.text == "QC this export")
+        rig.gate.open()
+        await settle()
+        #expect(rig.writes.isEmpty, "the upload is let go and no session follows it")
+        // Cancel once more, with nothing sending: the panel goes.
+        panel.cancel()
+        #expect(closed.count == 1)
+    }
+
+    @Test func cancelOnceTheSessionIsBeingMadeShowsItStartedNotCancelled() async {
+        rig.holdCreate = true
+        let panel = model()
+        await settle()
+        panel.text = "QC this export"
+        panel.submit()
+        for _ in 0..<2_000 where rig.gate.holding == 0 { await Task.yield() }
+        #expect(panel.progress == .committed)
+        panel.cancel()
+        #expect(panel.phase == .sending)
+        #expect(panel.sendingLine == "Already sent. Waiting for Claude Science…")
+        rig.gate.open()
+        for _ in 0..<2_000 where panel.phase == .sending { await Task.yield() }
+        #expect(panel.phase == .sent("Started in Made-up."))
+        await settle()
+        #expect(closed.count == 1)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aWriteWithNoAnswerShowsTheLineThenAsksForARetryThePersonMakes() async {
+        rig.createReplies = [.unknown]
+        rig.intents = [nil, nil]
+        let panel = model()
+        await settle()
+        panel.text = "QC this export"
+        panel.submit()
+        for _ in 0..<2_000 where panel.phase == .sending { await Task.yield() }
+        #expect(panel.phase == .failed(QuickStartFlow.Sentence.startNotThere))
+        #expect(rig.writes.count == 1, "nothing was sent again on its own")
+        #expect(closed.count == 0)
+        // The person presses Start again: the same intent id, so a session that did start is found.
+        rig.createReplies = [RemoteWriteResult(status: 409, code: "intent_conflict")]
+        rig.intents = [newID]
+        panel.submit()
+        for _ in 0..<2_000 where panel.phase == .sending || panel.phase == .failed(QuickStartFlow.Sentence.startNotThere) { await Task.yield() }
+        #expect(panel.phase == .sent("Started in Made-up."))
+        #expect(rig.writes.count == 2)
+        #expect(rig.writes[0] == rig.writes[1], "the same request, the same intent id")
+        await settle()
     }
 }

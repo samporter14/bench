@@ -62,6 +62,14 @@ var __hangs = function (answer, init) {
 };
 """
 
+    /// What a script that sets no timer and makes no controller (every reader) runs beside: no
+    /// `setTimeout` at all, as before, since some of them choose their path by whether it exists.
+    static let noTimers = """
+    var __timers = [];
+    var __signals = [];
+    var __hangs = function (answer, init) { return null; };
+    """
+
     /// Evaluates `script`; returns the value as a string, nil for an
     /// exception (recorded in `exception`).
     @discardableResult
@@ -122,7 +130,7 @@ var __hangs = function (answer, init) {
         var document = { cookie: __cookie };
         var AbortSignal = function () {};
         AbortSignal.timeout = function () { return undefined; };
-        \(Self.timerShim)
+        \(body.contains("benchBounded(") ? Self.timerShim : Self.noTimers)
         var fetch = function (path, init) {
             init = init || {};
             var headers = init.headers || {};

@@ -448,6 +448,12 @@ final class RemoteBrowser {
         var now: @MainActor () -> Date
         /// Before the intent lookup's second try.
         var pause: @MainActor () async -> Void
+        /// The most the write that makes a session may take in Swift, beyond the
+        /// page's own deadline and the bridge's (`WriteDeadline`): a write that
+        /// is still out then is unknown. Tests set their own.
+        var createLimit: Duration = WriteDeadline.small + WriteDeadline.grace + WriteDeadline.grace
+        /// Waits out that deadline; tests stand in for the clock.
+        var wait: @MainActor (Duration) async -> Void = WriteDeadline.sleep
 
         static func live() -> Dependencies {
             Dependencies(
@@ -667,7 +673,13 @@ final class RemoteBrowser {
             ? .newSessionWithFiles(project: project, text: request.text, planMode: request.planFirst, intentID: request.intentID)
             : .newSession(project: project, text: request.text, planMode: request.planFirst,
                           intentID: request.intentID, attachment: request.attachment)
-        let reply = await dependencies.create(write)
+        let create = dependencies.create
+        let raced = await WriteDeadline.race(dependencies.createLimit, wait: dependencies.wait, cancel: .ignore) { () async -> RemoteWriteResult? in
+            await create(write)
+        }
+        // A write still out when its time is up has got no answer.
+        let reply: RemoteWriteResult?
+        if case .finished(let answered) = raced { reply = answered } else { reply = .unknown }
         if let reply, reply.status == 200, reply.isJSON, reply.bodyStatus == "accepted", let id = reply.rootFrameID {
             return .started(started(id, project: project, request: request, title: title))
         }
