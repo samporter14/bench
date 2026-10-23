@@ -114,6 +114,10 @@ enum Demo {
         /// card instead. Nothing is read from Claude Science, and answering
         /// sends nothing anywhere.
         case sinceYouLeft = "since-you-left"
+        /// Find any figure (Find/FindDemo.swift): the Shelf window with a search
+        /// typed in it (`--query "<words>"`, "heatmap" when missing), so the shelf's
+        /// own matches and "In your sessions" both show, from made-up files.
+        case find
     }
 
     /// `--step` with `--demo since-you-left`; `sheet` when missing.
@@ -321,6 +325,8 @@ enum Demo {
             } else {
                 SinceYouLeftDemo.show(quiet: isQuiet)
             }
+        case .find?:
+            FindDemo.show(quiet: isQuiet)
         case nil:
             break
         }

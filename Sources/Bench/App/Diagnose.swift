@@ -141,7 +141,28 @@ enum Diagnose {
         } catch {
             out.append("✗ Project names: \(error)")
         }
+        out.append(contentsOf: fileLines(db: db))
         return out
+    }
+
+    /// Find's read (DESIGN.md, Find any figure): how many files it can list
+    /// across the sessions, and how long one search took, for the files made
+    /// today, which runs the very statement the Shelf's search runs. Counts and
+    /// a time: no file, session or project is named.
+    static func fileLines(db: URL, now: Date = Date(), calendar: Calendar = .current) -> [String] {
+        do {
+            let count = try fetchFileCount(db: db)
+            guard let query = FindQuery.parse("today", now: now, calendar: calendar) else { return [] }
+            let started = ContinuousClock.now
+            let today = try fetchFiles(db: db, query: query)
+            let took = ContinuousClock.now - started
+            let milliseconds = Int((took / .milliseconds(1)).rounded())
+            return ["✓ Files across sessions read: \(count) listed; a search for today's files returned \(today.count) in \(milliseconds) ms"]
+        } catch let error as ScienceError {
+            return ["✗ Files across sessions: \(error.label) (\(detail(error)))"]
+        } catch {
+            return ["✗ Files across sessions: \(error)"]
+        }
     }
 
     /// What `status` said about who started the daemon and how Capsid signs in

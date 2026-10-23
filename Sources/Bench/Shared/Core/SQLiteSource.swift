@@ -846,6 +846,15 @@ private final class ColumnProbe: @unchecked Sendable {
                  sql: "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2;", table, column)
     }
 
+    /// Whether `table` has an index called `name` (whole or partial). Find's
+    /// two speed-ups are hints for indexes Claude Science's own migrations
+    /// made; a hint at an index that isn't there would be an error, so the
+    /// read asks first. The same five minutes.
+    func hasIndex(db: URL, table: String, name: String) throws -> Bool {
+        try look(db: db, key: "named\u{1F}\(table)\u{1F}\(name)",
+                 sql: "SELECT COUNT(*) FROM pragma_index_list(?1) WHERE name = ?2;", table, name)
+    }
+
     /// Whether a whole (not partial) index on `table` starts with `column`, so
     /// SQLite can walk the table in that column's order. The same five minutes.
     func leadsIndex(db: URL, table: String, column: String) throws -> Bool {
@@ -1031,4 +1040,147 @@ func fetchSessionByIntent(db: URL, project: String, intent: String, now: Date = 
         LIMIT 1;
         """
     return try runReadOnlyQuery(db: db, sql: sql, arguments: [.text(project), .integer(since), .text(intent)]).first.flatMap { $0.first }.flatMap { PlanCheck.isFrameID($0) ? $0 : nil }
+}
+
+// MARK: Find any figure (Find/)
+//
+// Every figure and file Claude made, in every session, from the sessions'
+// database: one row for each artifact, its latest version, with the session it
+// belongs to (`artifacts.root_frame_id`, which is what Claude Science's own
+// list groups it by) and that session's project. Metadata only, like every
+// read here: names, kinds, sizes, times and ids. Never `storage_path`,
+// `checksum`, a version's code or lineage, or a frame's text but its name.
+//
+// One statement. For each word of the query (`FindQuery`): the artifacts whose
+// `filename` contains it, or that belong to a session whose title contains it
+// (`r<n>`), or to a project whose name does (`p<n>`), or are of the kind it
+// names, or were last made on the day it names (`d<n>`, the versions made
+// that day); every word must match one way or another. The matches are the
+// artifacts Claude Science's own list shows (not ephemeral, not an upload,
+// not `user_hidden`; their latest version not an intermediate), joined to
+// their latest version, newest first, cut at the limit, and only then to
+// their session and project, so the wide `frames` rows are read for the few
+// that are listed and never for the many that were looked at.
+//
+// Two optional speed-ups, each used only when the database has the index (a
+// probe, remembered five minutes): `ix_frames_bench_name_search`, the compact
+// partial index Claude Science's own ⌘K search reads titles from, instead of
+// the wide `frames` rows, whose names sit behind the blobs (it holds the
+// sessions that have a task summary, which are the ones its own list shows);
+// and `ix_artifact_versions_slim_covering`, so a version's facts come from the
+// index and never from the row, whose `is_intermediate` sits behind the code.
+// Measured on a made-up database of 79,688 artifacts, 142,960 versions and
+// 2,000 sessions with 1 GB of blobs, built from the 0.1.70 migrations: 50 to
+// 180 ms warm, 0.3 to 0.9 s cold; without the indexes' hints the title look
+// alone was 290 ms against 1.4 ms. Not measured on a real database. The read is
+// interrupted at `timeout` seconds, as Quick Open's is.
+enum FindSQL {
+    /// Which speed-ups the database has.
+    struct Shape: Equatable, Sendable {
+        var namesIndexed = false
+        var versionsIndexed = false
+    }
+
+    static let namesIndex = "ix_frames_bench_name_search"
+    static let versionsIndex = "ix_artifact_versions_slim_covering"
+
+    /// The statement and its arguments, every typed value bound. Pure.
+    static func statement(_ query: FindQuery, shape: Shape = Shape()) -> (sql: String, arguments: [SQLArgument]) {
+        var arguments: [SQLArgument] = []
+        func bind(_ argument: SQLArgument) -> String {
+            arguments.append(argument)
+            return "?\(arguments.count)"
+        }
+        let versions = shape.versionsIndexed ? " INDEXED BY \(versionsIndex)" : ""
+        // The roots whose title has the word. Through the compact index it
+        // holds only the sessions with a task summary and has no conversation
+        // type; without it, every root a session list could show.
+        let roots = shape.namesIndexed
+            ? "frames f INDEXED BY \(namesIndex) WHERE f.parent_frame_id IS NULL AND f.task_summary IS NOT NULL AND f.is_hidden IS NOT 1 AND f.agent_name NOT IN ('CONCIERGE','CANVAS_CONCIERGE')"
+            : "frames f WHERE f.parent_frame_id IS NULL AND \(sessionKindSQL("f"))"
+        var with: [String] = []
+        var matches: [String] = []
+        for (n, term) in query.terms.enumerated() {
+            let pattern = bind(.text(BrowseSQL.containsPattern(term.text)))
+            with.append("r\(n) AS MATERIALIZED (SELECT f.id FROM \(roots) AND f.name LIKE \(pattern) ESCAPE '\\')")
+            with.append("p\(n) AS MATERIALIZED (SELECT id FROM projects WHERE name LIKE \(pattern) ESCAPE '\\')")
+            var ways = ["a.filename LIKE \(pattern) ESCAPE '\\'", "a.root_frame_id IN r\(n)", "a.project_id IN p\(n)"]
+            if let kind = term.kind { ways.append("(\(FindExtensions.condition(kind, column: "a.filename")))") }
+            if let day = term.day {
+                let from = bind(.integer(day.from)), to = bind(.integer(day.to))
+                with.append("d\(n) AS MATERIALIZED (SELECT id FROM artifact_versions\(versions) WHERE created_at >= \(from) AND created_at < \(to))")
+                ways.append("a.latest_version_id IN d\(n)")
+            }
+            matches.append("(" + ways.joined(separator: " OR ") + ")")
+        }
+        var where_ = ["a.is_ephemeral = 0", "a.is_user_upload = 0", "a.priority IS NOT 'user_hidden'", "a.latest_version_id IS NOT NULL"]
+        if let project = query.project {
+            where_.append("a.project_id IN (SELECT id FROM projects WHERE name = \(bind(.text(project))))")
+        }
+        if let kind = query.kind { where_.append("(\(FindExtensions.condition(kind, column: "a.filename")))") }
+        where_ += matches
+        let limit = bind(.integer(Int64(max(1, min(query.limit, FindQuery.maxLimit)))))
+        with.append("""
+            hits AS MATERIALIZED (
+                SELECT a.id AS aid, a.latest_version_id AS vid, a.filename AS name, a.root_frame_id AS fid, a.project_id AS pid
+                FROM artifacts a
+                WHERE \(where_.joined(separator: "\n  AND ")))
+            """)
+        with.append("""
+            top AS MATERIALIZED (
+                SELECT v.id AS vid, h.aid, h.name, v.content_type AS mime, v.size_bytes AS size, v.created_at AS at,
+                       v.version_number AS n, h.fid, h.pid
+                FROM hits h JOIN artifact_versions v\(versions) ON v.id = h.vid
+                WHERE v.is_intermediate = 0
+                ORDER BY v.created_at DESC, v.id DESC
+                LIMIT \(limit))
+            """)
+        let sql = """
+            WITH \(with.joined(separator: ",\n"))
+            SELECT t.vid, t.aid, \(oneLineSQL("t.name")), COALESCE(t.mime,''), t.size, t.at, t.n,
+                   t.fid, \(oneLineSQL("f.name")), t.pid, \(oneLineSQL("p.name"))
+            FROM top t JOIN frames f ON f.id = t.fid LEFT JOIN projects p ON p.id = t.pid
+            WHERE \(sessionKindSQL("f"))
+            ORDER BY t.at DESC, t.vid DESC;
+            """
+        return (sql, arguments)
+    }
+
+    /// A row of the statement, or nil when an id isn't one the daemon writes
+    /// (a file Capsid could not safely name in a request) or the file is one
+    /// Claude Science hides from its own list.
+    static func file(_ cols: [String]) -> FoundFile? {
+        guard cols.count >= 11, PlanCheck.isVersionID(cols[0]), PlanCheck.isFrameID(cols[7]) else { return nil }
+        let name = (cols[2] as NSString).lastPathComponent.trimmingCharacters(in: .whitespaces)
+        guard !FindRanking.isPlanningFile(name) else { return nil }
+        let media = cols[3].split(separator: ";").first.map { $0.trimmingCharacters(in: .whitespaces).lowercased() } ?? ""
+        return FoundFile(version: cols[0], artifact: PlanCheck.isFrameID(cols[1]) ? cols[1] : nil,
+                         name: name.isEmpty ? "file" : String(name.prefix(255)), mime: media.contains("/") ? media : nil,
+                         size: Int(cols[4]) ?? 0, createdMs: Int64(cols[5]) ?? 0, number: Int(cols[6]) ?? 1,
+                         sessionID: cols[7], sessionTitle: cols[8], projectID: cols[9], projectName: cols[10])
+    }
+}
+
+/// The files whose name, session, project, kind or day match every word of
+/// `query` (see `FindSQL`), newest first, at most `query.limit`. Interrupted at
+/// `timeout` seconds, or as soon as `cancellation` trips.
+func fetchFiles(db: URL, query: FindQuery, timeout: TimeInterval = 3,
+                cancellation: SQLiteReadCancellation? = nil) throws -> [FoundFile] {
+    guard !query.terms.isEmpty else { return [] }
+    let shape = FindSQL.Shape(
+        namesIndexed: (try? ColumnProbe.shared.hasIndex(db: db, table: "frames", name: FindSQL.namesIndex)) ?? false,
+        versionsIndexed: (try? ColumnProbe.shared.hasIndex(db: db, table: "artifact_versions", name: FindSQL.versionsIndex)) ?? false)
+    let (sql, arguments) = FindSQL.statement(query, shape: shape)
+    return try runReadOnlyQuery(db: db, sql: sql, arguments: arguments, timeout: timeout,
+                                cancellation: cancellation).compactMap(FindSQL.file)
+}
+
+/// How many files Find can list: the artifacts Claude Science's own list
+/// would show (Diagnostics' count).
+func fetchFileCount(db: URL) throws -> Int {
+    let rows = try runReadOnlyQuery(db: db, sql: """
+        SELECT COUNT(*) FROM artifacts
+        WHERE is_ephemeral = 0 AND is_user_upload = 0 AND priority IS NOT 'user_hidden' AND latest_version_id IS NOT NULL;
+        """)
+    return rows.first?.first.flatMap { Int($0) } ?? 0
 }

@@ -1,8 +1,11 @@
 // QuickOpenSheet.swift — the sheet ⌘⇧O shows on the main window (DESIGN.md,
 // Quick Open): a search field and the recent sessions under it, narrowed and
 // ordered by `QuickOpen.rank`, with older sessions from the database ranked in
-// when they are found (QuickOpenSearch). ↑ ↓ move, Return or a click opens,
-// Esc closes.
+// when they are found (QuickOpenSearch), and under them a group of figures and
+// files from every session ("Figures and files", Find/QuickOpenFiles.swift).
+// ↑ ↓ move through both, Return or a click opens a session or shows where a
+// file came from, ⌥↩ opens a session as a reference or adds a file to the
+// shelf, Esc closes.
 import SwiftUI
 
 struct QuickOpenSheet: View {
@@ -12,6 +15,9 @@ struct QuickOpenSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// Older sessions, looked up by name once typing pauses.
     @StateObject private var search = QuickOpenSearch()
+    /// Figures and files from every session, looked up the same way.
+    @StateObject private var files = FindSearch()
+    private let find = FindActions.live()
     @State private var query = ""
     /// The highlighted session, by id: a read that reorders the list while
     /// you choose must not move the highlight to another one. Nil, or one that
@@ -24,7 +30,8 @@ struct QuickOpenSheet: View {
     private static let listHeight: CGFloat = 366
 
     var body: some View {
-        let results = QuickOpen.rank(reads.sessions, plus: search.found, query: query)
+        let results = QuickOpenFiles.entries(sessions: QuickOpen.rank(reads.sessions, plus: search.found, query: query),
+                                             files: files.files)
         let selected = results.first { $0.id == selectedID }?.id ?? results.first?.id
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -36,13 +43,13 @@ struct QuickOpenSheet: View {
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($searching)
-                    .onSubmit { open(results.first { $0.id == selected }) }
+                    .onSubmit { activate(results.first { $0.id == selected }) }
                     // ⌥↩ opens the highlighted session as a reference. Caught
                     // here, as the arrows are: in a text field Option-Return
                     // would insert a line break and never submit.
                     .onKeyPress(keys: [.return]) { press in
                         guard press.modifiers.contains(.option) else { return .ignored }
-                        reference(results.first { $0.id == selected })
+                        alternate(results.first { $0.id == selected })
                         return .handled
                     }
                     .onKeyPress(.upArrow) {
@@ -53,7 +60,7 @@ struct QuickOpenSheet: View {
                         selectedID = neighbour(of: selected, in: results, by: 1)
                         return .handled
                     }
-                if search.isSearching {
+                if search.isSearching || files.isSearching {
                     ProgressView()
                         .controlSize(.small)
                         .accessibilityLabel("Searching older sessions")
@@ -74,31 +81,61 @@ struct QuickOpenSheet: View {
         .defaultFocus($searching, true)
         .onExitCommand { dismiss() }
         .onAppear { searching = true }
-        .onDisappear { search.cancel() }
+        .onDisappear {
+            search.cancel()
+            files.cancel()
+        }
         .onChange(of: query) {
             selectedID = nil
             search.queryChanged(query)
+            files.update(query, limit: QuickOpenFiles.asked)
         }
         // Older sessions arriving must not move the highlight from under
         // the user: the row it was on stays, even if a better match now sits
         // above it. (Once they have moved it themselves, it follows its id.)
         .onChange(of: search.found) { previous, _ in
             if selectedID == nil {
-                selectedID = QuickOpen.rank(reads.sessions, plus: previous, query: query).first?.id
+                selectedID = QuickOpenFiles.entries(sessions: QuickOpen.rank(reads.sessions, plus: previous, query: query),
+                                                    files: files.files).first?.id
+            }
+        }
+        .onChange(of: files.files) { previous, _ in
+            if selectedID == nil {
+                selectedID = QuickOpenFiles.entries(sessions: QuickOpen.rank(reads.sessions, plus: search.found, query: query),
+                                                    files: previous).first?.id
             }
         }
     }
 
     // MARK: Parts
 
-    private func list(_ results: [SessionStatus], selected: String?) -> some View {
-        ScrollViewReader { proxy in
+    private func list(_ results: [QuickOpenEntry], selected: String?) -> some View {
+        let firstFile = results.first { if case .file = $0 { true } else { false } }?.id
+        return ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 2) {
-                    ForEach(results) { session in
-                        QuickOpenRow(session: session, isSelected: session.id == selected,
-                                     action: { open(session) }, reference: { reference(session) })
-                            .id(session.id)
+                    ForEach(results) { entry in
+                        switch entry {
+                        case .session(let session):
+                            QuickOpenRow(session: session, isSelected: entry.id == selected,
+                                         action: { open(session) }, reference: { reference(session) })
+                                .id(entry.id)
+                        case .file(let file):
+                            // The group's heading, once, before its first row.
+                            if entry.id == firstFile {
+                                Text(QuickOpenFiles.heading)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 8)
+                                    .padding(.top, 10)
+                                    .padding(.bottom, 2)
+                                    .accessibilityAddTraits(.isHeader)
+                            }
+                            QuickOpenFileRow(file: file, isSelected: entry.id == selected, onShelf: find.onShelf(file.version),
+                                             action: { showWhere(file) }, add: { addToShelf(file) })
+                                .id(entry.id)
+                        }
                     }
                 }
                 .padding(8)
@@ -114,7 +151,7 @@ struct QuickOpenSheet: View {
     @ViewBuilder
     private var nothingToShow: some View {
         Group {
-            if search.isSearching {
+            if search.isSearching || files.isSearching {
                 // The recent sessions had no match; the database may.
                 ProgressView("Searching…")
             } else if !query.allSatisfy(\.isWhitespace) {
@@ -134,9 +171,41 @@ struct QuickOpenSheet: View {
 
     /// The session `step` places from the highlighted one, stopping at the
     /// ends of the list.
-    private func neighbour(of id: String?, in results: [SessionStatus], by step: Int) -> String? {
+    private func neighbour(of id: String?, in results: [QuickOpenEntry], by step: Int) -> String? {
         guard let current = results.firstIndex(where: { $0.id == id }) else { return results.first?.id }
         return results[min(max(current + step, 0), results.count - 1)].id
+    }
+
+    /// Return: opens a session, or shows where a file came from.
+    private func activate(_ entry: QuickOpenEntry?) {
+        switch entry {
+        case .session(let session)?: open(session)
+        case .file(let file)?: showWhere(file)
+        case nil: break
+        }
+    }
+
+    /// ⌥↩: a session as a reference, a file onto the shelf.
+    private func alternate(_ entry: QuickOpenEntry?) {
+        switch entry {
+        case .session(let session)?: reference(session)
+        case .file(let file)?: addToShelf(file)
+        case nil: break
+        }
+    }
+
+    /// The reference window at the reply that showed the file.
+    private func showWhere(_ file: FoundFile) {
+        dismiss()
+        find.show(file)
+    }
+
+    /// The shelf's add, saying so in the toast on the main window. A file
+    /// that is there already is shown on the shelf instead.
+    private func addToShelf(_ file: FoundFile) {
+        dismiss()
+        let find = find
+        Task { @MainActor in await find.addSayingSo(file) }
     }
 
     /// Opens the session, which also clears its cards and reminder, and

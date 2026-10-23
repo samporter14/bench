@@ -609,6 +609,10 @@ private struct InventoryDatabase {
         _ = try fetchSession(db: url, id: frame)
         _ = try fetchSessionsNamed(db: url, words: ["x", "y"], limit: 5)
         _ = try fetchSessionByIntent(db: url, project: "proj_a", intent: "0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5")
+        // Find any figure: a name, a kind word, a day word, and the window's chip and pill.
+        let find = FindQuery.parse("x figures today", kind: .table, project: "proj_a")!
+        _ = try fetchFiles(db: url, query: find)
+        _ = try fetchFileCount(db: url)
     }
 }
 
@@ -641,12 +645,14 @@ struct CompatSchemaTests {
             "✓ Table projects: all 2 columns",
             "✓ Table frame_blobs: all 3 columns",
             "✓ Table frame_messages: all 2 columns",
+            "✓ Table artifacts: all 8 columns",
+            "✓ Table artifact_versions: all 6 columns",
         ])
         // The optional column missing is a note, not a problem.
         let without = try InventoryDatabase(withOptional: false)
         defer { without.remove() }
         let lines = Diagnose.schemaLines(db: without.url)
-        #expect(lines.count == 4 && lines.dropFirst().first == "✓ Table projects: all 2 columns (archived_at is optional and isn't there)")
+        #expect(lines.count == 6 && lines.dropFirst().first == "✓ Table projects: all 2 columns (archived_at is optional and isn't there)")
     }
 
     @Test func aMissingColumnIsNamedAndSoIsAMissingTable() throws {
@@ -664,6 +670,7 @@ struct CompatSchemaTests {
         // A database with no tables at all: every table is missing.
         #expect(Diagnose.schemaLines(db: empty) == [
             "✗ Table frames: missing", "✗ Table projects: missing", "✗ Table frame_blobs: missing", "✗ Table frame_messages: missing",
+            "✗ Table artifacts: missing", "✗ Table artifact_versions: missing",
         ])
     }
 
@@ -674,7 +681,7 @@ struct CompatSchemaTests {
 
     @Test func theTablesAreTheOnesTheDiagnosticsStepChecks() {
         let tables = CompatInventory.schemaTables
-        #expect(tables.map(\.table) == ["frames", "projects", "frame_blobs", "frame_messages"])
+        #expect(tables.map(\.table) == ["frames", "projects", "frame_blobs", "frame_messages", "artifacts", "artifact_versions"])
         #expect(tables.first { $0.table == "frames" }?.required.count == 18)
         // What the step used to check is still checked.
         let frames = Set(tables.first { $0.table == "frames" }?.required ?? [])

@@ -24,9 +24,11 @@ final class ShelfModel: ObservableObject {
     var index: KeptIndex { shelf.index }
 
     @Published private(set) var items: [ShelfItem] = []
-    @Published var project: String? { didSet { if project != oldValue { reconcile() } } }
-    @Published var kind: ShelfKind? { didSet { if kind != oldValue { reconcile() } } }
-    @Published var search = "" { didSet { if search != oldValue { reconcile() } } }
+    @Published var project: String? { didSet { if project != oldValue { reconcile(); findScopeChanged() } } }
+    @Published var kind: ShelfKind? { didSet { if kind != oldValue { reconcile(); findScopeChanged() } } }
+    @Published var search = "" { didSet { if search != oldValue { reconcile(); findScopeChanged() } } }
+    /// "In your sessions": what the search finds beyond the shelf (Find/ShelfFinder.swift).
+    @Published var finder: ShelfFinder
     /// The selected item's id (`ShelfItem.id`).
     @Published var selection: String?
     @Published private(set) var note: Note?
@@ -42,6 +44,8 @@ final class ShelfModel: ObservableObject {
         self.shelf = shelf
         self.now = now
         self.noteLifetime = noteLifetime
+        finder = ShelfFinder(actions: .live(shelf: shelf), changes: shelf.objectWillChange.map { _ in () }.eraseToAnyPublisher())
+        finder.selectFolder = { [weak self] in self?.select(folder: $0) }
         items = ShelfRules.items(from: shelf.index.results)
         subscription = shelf.index.$results.sink { [weak self] results in
             MainActor.assumeIsolated {

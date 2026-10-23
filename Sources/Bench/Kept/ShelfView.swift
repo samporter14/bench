@@ -71,12 +71,15 @@ struct ShelfView: View {
     private var content: some View {
         VStack(spacing: 0) {
             if model.isEmpty {
-                nothingOnTheShelf
+                // Nothing on the shelf, but a search worth a look in the sessions.
+                if model.finder.isWanted { ShelfFindPage(model: model) } else { nothingOnTheShelf }
             } else {
                 chips
                 if let selected = model.selected {
                     grid
                     detail(selected)
+                } else if model.finder.isWanted {
+                    ShelfFindPage(model: model)
                 } else {
                     empty
                 }
@@ -108,13 +111,19 @@ struct ShelfView: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top), count: ShelfModel.columns)
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
-                    ForEach(model.shown) { item in
-                        card(item)
+                VStack(spacing: 0) {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+                        ForEach(model.shown) { item in
+                            card(item)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    // Below the shelf's own matches: the same words, in every session.
+                    if model.finder.isWanted {
+                        ShelfFindSection(finder: model.finder, nothingMatches: "Nothing else in your sessions matches.")
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
             }
             .scrollBounceBehavior(.basedOnSize)
             .onChange(of: model.selection) { _, id in
