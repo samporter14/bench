@@ -306,7 +306,11 @@ struct LabPanelView: View {
         case .working(let session, let others):
             workingContent(session, others: others)
         case .card(let card, let count):
+            // Each card is its own view. When the top card changes straight from one to another of a kind
+            // (Finished to Finished), SwiftUI would keep the view: `.onDisappear { finished.forget }` would
+            // never run for the first, and the plate's `settled` would stay true for the second.
             cardContent(card, count: count)
+                .id(card.id)
         }
     }
 

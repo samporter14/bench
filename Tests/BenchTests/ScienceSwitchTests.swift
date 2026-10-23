@@ -517,40 +517,81 @@ struct CanonicalHostTests {
 // MARK: Signing in
 
 struct SignInPlanTests {
-    @Test func aDaemonThatRequiresATokenIsOnlyReadBesideTheAppWithNoCode() {
-        #expect(SignInPlan.decide(requireToken: true, appOwned: true, nonce: nil) == .readOnly(.tokenRequired))
-        // With a code, beside the app, its own page signs in.
-        #expect(SignInPlan.decide(requireToken: true, appOwned: true, nonce: "code-1") == .apiMe(nonce: "code-1"))
+    /// `require_token` decides nothing (it is not even an input): the daemon that reports it signs in with a code.
+    @Test func aDaemonTheAppStartedSignsInThroughItsOwnPageWithACode() {
+        #expect(SignInPlan.decide(appOwned: true, nonce: "code-1") == .apiMe(nonce: "code-1"))
     }
 
     @Test func theTabDaemonThatReportsATokenStillSignsInAsItAlwaysDid() {
         // Found on Sam's Mac: the browser-tab daemon says `require_token: true`,
-        // and the first cut went read-only on it.
-        #expect(SignInPlan.decide(requireToken: true, appOwned: false, nonce: "code-1") == .page(nonce: "code-1"))
-        #expect(SignInPlan.decide(requireToken: true, appOwned: false, nonce: nil) == .page(nonce: nil))
+        // and the first cut went read-only on it. It is not the app's, so the code goes on the page, with
+        // none the page loads anyway, and neither is ever asked twice.
+        #expect(SignInPlan.decide(appOwned: false, nonce: "code-1") == .page(nonce: "code-1"))
+        #expect(SignInPlan.decide(appOwned: false, nonce: nil) == .page(nonce: nil))
     }
 
     @Test func theLauncherThatOpensATabSignsInAsItAlwaysDid() {
-        for token in [nil, false] as [Bool?] {
-            #expect(SignInPlan.decide(requireToken: token, appOwned: false, nonce: "code-1") == .page(nonce: "code-1"))
-            // With no code it loads anyway: the cookie from last time may still work.
-            #expect(SignInPlan.decide(requireToken: token, appOwned: false, nonce: nil) == .page(nonce: nil))
-        }
+        #expect(SignInPlan.decide(appOwned: false, nonce: "code-1") == .page(nonce: "code-1"))
+        // With no code it loads anyway: the cookie from last time may still work.
+        #expect(SignInPlan.decide(appOwned: false, nonce: nil) == .page(nonce: nil))
     }
 
-    @Test func aDaemonTheAppStartedSignsInThroughItsOwnPageWhenItGivesACode() {
-        for token in [nil, false] as [Bool?] {
-            #expect(SignInPlan.decide(requireToken: token, appOwned: true, nonce: "code-1") == .apiMe(nonce: "code-1"))
-        }
-    }
-
-    @Test func withoutACodeTheAppsDaemonIsTriedWithTheCookieOnce() {
-        #expect(SignInPlan.decide(requireToken: nil, appOwned: true, nonce: nil) == .page(nonce: nil))
+    /// One failed `claude-science url` used to put an app-owned daemon into read-only for good, when it reported
+    /// `require_token`; now the page is tried on last time's cookie and the page's 401 decides.
+    @Test func withoutACodeTheAppsDaemonIsTriedWithTheCookieWhateverItsTokenSays() {
+        #expect(SignInPlan.decide(appOwned: true, nonce: nil) == .page(nonce: nil))
     }
 
     @Test func aRefusalWithNoCodeToTryAgainWithEndsInReadOnlyBesideTheAppAndInARetryOtherwise() {
         #expect(SignInPlan.outcomeWithoutCode(appOwned: true) == .readOnly(.noCode))
         #expect(SignInPlan.outcomeWithoutCode(appOwned: false) == .retryLater)
+    }
+
+    // MARK: Asking for the code (fakes: nothing runs `claude-science`)
+
+    /// Counts what the fakes were asked, and answers from a script.
+    private final class Asks: @unchecked Sendable {
+        var asked = 0
+        var waits: [Duration] = []
+        var answers: [String?]
+        init(_ answers: [String?]) { self.answers = answers }
+        func ask() async -> String? {
+            asked += 1
+            return answers.isEmpty ? nil : answers.removeFirst()
+        }
+        func wait(_ duration: Duration) async { waits.append(duration) }
+    }
+
+    @Test func aCodeThatCameIsUsedAndNothingIsAskedAgain() async {
+        for owned in [true, false] {
+            let asks = Asks(["unused"])
+            let code = await SignInPlan.code(first: "code-1", appOwned: owned, askAgain: asks.ask, wait: asks.wait)
+            #expect(code == "code-1")
+            #expect(asks.asked == 0 && asks.waits.isEmpty)
+        }
+    }
+
+    /// Sam's daemon is the launcher's: one ask, no wait, as it always was.
+    @Test func theTabDaemonIsAskedOnceNeverTwice() async {
+        let asks = Asks(["late-code"])
+        let code = await SignInPlan.code(first: nil, appOwned: false, askAgain: asks.ask, wait: asks.wait)
+        #expect(code == nil)
+        #expect(asks.asked == 0 && asks.waits.isEmpty, "no second ask and no wait on the tab daemon's sign-in")
+    }
+
+    @Test func theAppsDaemonThatGaveNoCodeIsAskedOnceMoreAfterAboutASecondAndAHalf() async {
+        let asks = Asks(["code-2"])
+        let code = await SignInPlan.code(first: nil, appOwned: true, askAgain: asks.ask, wait: asks.wait)
+        #expect(code == "code-2", "one failed ask is no verdict on the daemon")
+        #expect(asks.asked == 1 && asks.waits == [.milliseconds(1500)])
+        #expect(SignInPlan.decide(appOwned: true, nonce: code) == .apiMe(nonce: "code-2"))
+    }
+
+    @Test func ifTheSecondAskGivesNoneEitherThePageLoadsWithoutOneAndTheRefusalDecides() async {
+        let asks = Asks([nil])
+        let code = await SignInPlan.code(first: nil, appOwned: true, askAgain: asks.ask, wait: asks.wait)
+        #expect(code == nil && asks.asked == 1)
+        #expect(SignInPlan.decide(appOwned: true, nonce: code) == .page(nonce: nil))
     }
 
     @Test func whoOwnsTheDaemon() {
@@ -584,7 +625,6 @@ struct SignInPlanTests {
     }
 
     @Test func theReasonsAreSaidPlainly() {
-        #expect(ReadOnlyReason.tokenRequired.phrase == "the daemon requires a token")
         #expect(ReadOnlyReason.noCode.phrase == "the daemon gave no sign-in code")
     }
 }
@@ -936,7 +976,7 @@ struct ScienceSwitchDiagnosticsTests {
             "  address host: 127.0.0.1",
             "  requires a token to sign in: no",
             "• Capsid starts Claude Science's server: never, its own app starts it",
-            "• Signing in: through the daemon's own page with a code from claude-science url; with none, Capsid only reads the database",
+            "• Signing in: through the daemon's own page with a code from claude-science url (asked again after 1.5 s); with none, the page loads on last time's sign-in, and Capsid only reads the database if that is refused",
         ])
     }
 
@@ -952,10 +992,12 @@ struct ScienceSwitchDiagnosticsTests {
         ])
     }
 
-    @Test func aTokenRequiredBesideTheAppIsSaidAsOnlyReadingWithoutACode() {
+    @Test func aTokenRequiredBesideTheAppIsShownAndChangesNothingAboutSigningIn() {
         let lines = Diagnose.daemonLines(status: status(context: "app-child", token: true), install: .ownWindow)
-        #expect(lines.last == "• Signing in: through the daemon's own page with a code from claude-science url; with none (it requires a token), Capsid only reads the database")
+        let plain = Diagnose.daemonLines(status: status(context: "app-child", token: false), install: .ownWindow)
         #expect(lines.contains("  requires a token to sign in: yes"))
+        #expect(lines.last == plain.last, "the token is shown, and says nothing about how Capsid signs in")
+        #expect(lines.last?.contains("asked again after 1.5 s") == true)
     }
 
     @Test func aTabDaemonThatRequiresATokenStillSignsInWithACode() {

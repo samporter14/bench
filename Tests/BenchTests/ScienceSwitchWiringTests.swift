@@ -115,13 +115,14 @@ struct ScienceSwitchWiringTests {
 
     @Test func onlyReadingIsTheFailureSoEveryPageReadyGateIsAlreadyOff() {
         let container = Source.text("Web/WebContainer.swift")
-        #expect(container.contains("fail(CompanionSentence.readOnly, temporary: false, companion: .readOnly(reason))"))
-        // A failure that stops the tries: nothing here starts them again.
+        // A failure that may pass (a busy daemon gives a code the next time): `fail` keeps the quiet tries going,
+        // and nothing else here starts or stops them.
+        #expect(container.contains("fail(CompanionSentence.readOnly, temporary: true, companion: .readOnly(reason))"))
         let enter = container.range(of: "private func enterReadOnly")
         #expect(enter != nil)
         if let enter {
-            let body = String(container[enter.lowerBound...].prefix(600))
-            #expect(!body.contains("retry.begin()"))
+            let body = String(container[enter.lowerBound...].prefix(700))
+            #expect(!body.contains("retry.begin()") && !body.contains("retry.stop"))
         }
         // The window is only ever "ready" after a daemon page finished, and never for the sign-in step.
         #expect(container.contains("guard !SignInPlan.isSignInStep(url) else { return }"))
@@ -192,7 +193,23 @@ struct ScienceSwitchWiringTests {
         if let early, let once { #expect(early.lowerBound < once.lowerBound) }
     }
 
-    @Test func noCodeBesideTheAppEndsSigningInInsteadOfRetrying() {
+    /// Sam's daemon is the launcher's, reports `require_token: yes`, and signs in with its code on the page. A
+    /// sign-in change broke that once. `require_token` is not an input to the plan at all, the second ask is the
+    /// app's daemon's only, and both sign-in paths ask through the one routine.
+    @Test func theTabDaemonsSignInIsUntouchedByTheTokenAndTheSecondAsk() {
+        let policy = Source.text("Web/DaemonPolicy.swift")
+        #expect(!policy.contains("requireToken:") && !policy.contains("tokenRequired"))
+        #expect(policy.contains("guard appOwned, let nonce else { return .page(nonce: nonce) }"))
+        #expect(policy.contains("guard appOwned else { return nil }"))
+        let container = Source.text("Web/WebContainer.swift")
+        #expect(!container.contains("requireToken"))
+        #expect(container.contains("switch SignInPlan.decide(appOwned: owned, nonce: nonce) {"))
+        #expect(container.contains("SignInPlan.code(first: await code, appOwned: owned"))
+        #expect(container.contains("SignInPlan.code(first: await DaemonController.freshNonce(), appOwned: owned"))
+        #expect(!container.contains("try? await Task.sleep(for: .milliseconds(1500))"), "one routine asks twice")
+    }
+
+    @Test func noCodeBesideTheAppEndsInAReadOnlyThatKeepsTrying() {
         let container = Source.text("Web/WebContainer.swift")
         #expect(container.contains("switch SignInPlan.outcomeWithoutCode(appOwned: owned)"))
         #expect(container.contains("case .readOnly(let reason): enterReadOnly(reason)"))

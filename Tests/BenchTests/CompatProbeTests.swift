@@ -370,9 +370,9 @@ private final class FakePage {
 
     func environment(timeout: Duration = .seconds(5)) -> CompatProbeEnvironment {
         CompatProbeEnvironment(
-            isReady: { [unowned self] in self.ready },
-            shownSession: { [unowned self] in self.shown },
-            get: { [unowned self] path in
+            isReady: { [self] in self.ready },
+            shownSession: { [self] in self.shown },
+            get: { [self] path in
                 self.asked.append(path)
                 if self.hangs.contains(path) { try await Task.sleep(for: .seconds(30)) }
                 switch self.answers[path] {
@@ -381,20 +381,20 @@ private final class FakePage {
                 case nil: throw NSError(domain: "WKErrorDomain", code: 4, userInfo: ["WKJavaScriptExceptionMessage": "HTTP 404"])
                 }
             },
-            tabStrip: { [unowned self] in self.tabs },
-            signInShowing: { [unowned self] in self.signIn },
-            artifactRead: { [unowned self] read in
+            tabStrip: { [self] in self.tabs },
+            signInShowing: { [self] in self.signIn },
+            artifactRead: { [self] read in
                 self.readsAsked.append(read)
                 if self.readHangs.contains(read) { try await Task.sleep(for: .seconds(30)) }
                 if let error = self.readFailures[read] { throw error }
                 return self.reads[read] ?? .missing
             },
-            planProgress: { [unowned self] session in
+            planProgress: { [self] session in
                 self.progressAsked.append(session)
                 if let error = self.progressFailure { throw error }
                 return self.progress
             },
-            reviewerCounts: { [unowned self] session in
+            reviewerCounts: { [self] session in
                 self.reviewerAsked.append(session)
                 if self.reviewerHangs { try await Task.sleep(for: .seconds(30)) }
                 return self.reviewer

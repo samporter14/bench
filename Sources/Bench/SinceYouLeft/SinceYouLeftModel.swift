@@ -138,6 +138,9 @@ final class SinceYouLeftModel: ObservableObject {
     /// Reads started, for tests: sessions read for their answers or reasons.
     private(set) var readsStarted = 0
     private var loading: Task<Void, Never>?
+    /// Which loader `loading` is: a loader that was cancelled and has not yet noticed must not clear the handle
+    /// of the one that replaced it.
+    private var loader: UUID?
     /// The card was due but a focus session or a presentation holds it.
     private(set) var cardHeld = false
     private var cardID: String?
@@ -387,6 +390,7 @@ final class SinceYouLeftModel: ObservableObject {
     private func endPending(clearCard: Bool) {
         loading?.cancel()
         loading = nil
+        loader = nil
         pending = nil
         cardHeld = false
         if clearCard, let id = cardID, let card = lab.cards.first(where: { $0.id == id }) { lab.dismiss(card) }
@@ -410,8 +414,17 @@ final class SinceYouLeftModel: ObservableObject {
         guard !rows.isEmpty else { return }
         let actions = cardActions ?? CardActions(model: lab, plans: .shared, questions: .shared)
         let needsIDs = Set(summary.needs.map(\.id)), stoppedIDs = Set(summary.stopped.map(\.id))
+        let mine = UUID()
+        loader = mine
         loading = Task { [weak self] in
             guard let self else { return }
+            // Only this loader's own end clears the handle.
+            defer {
+                if self.loader == mine {
+                    self.loading = nil
+                    self.loader = nil
+                }
+            }
             for row in rows {
                 if Task.isCancelled || self.rule.isAway || self.pending == nil { break }
                 self.asked.insert(row.id)
@@ -437,7 +450,6 @@ final class SinceYouLeftModel: ObservableObject {
                     await self.dependencies.loadFiles(self.finished, row.session)
                 }
             }
-            self.loading = nil
         }
     }
 

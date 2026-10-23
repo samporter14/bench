@@ -222,6 +222,13 @@ struct CompanionRowsTests {
         #expect(sections.needs.first?.problem == "The plan changed.")
     }
 
+    @Test func aQuestionThatDidntSendKeepsItsSentenceForTheRowToo() {
+        let offer = offerForQuestion(.ready(ask), reply: .failed("Couldn't send it. Try again."))
+        let sections = CompanionSections.make(input(asks: [question], offers: [question.id: offer]))
+        #expect(sections.needs.first?.problem == "Couldn't send it. Try again.")
+        #expect(sections.needs.first?.pills.map(\.title) == ["Reply", "Open", "Later"], "Reply is the retry")
+    }
+
     @Test func theLineUnderATitleIsTheProjectTheStepsAndTheWait() {
         let base = now.addingTimeInterval(-12 * 60)
         #expect(CompanionText.needDetail(project: "RNA-seq pilot", steps: nil, waitingSince: base, now: now) == "RNA-seq pilot · 12 min")

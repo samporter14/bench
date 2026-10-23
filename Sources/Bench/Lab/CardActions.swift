@@ -146,6 +146,13 @@ struct CardOffer: Equatable, Sendable {
             return CardOffer(lead: .sending("Sending the answer"), hasOpen: true)
         case (.ready, .sent?):
             return CardOffer(lead: .done("Sent"))
+        case (.ready, .closed(let sentence)?):
+            // Nothing to answer any more (answered elsewhere, or the wait ended): its sentence, and Open.
+            return CardOffer(lead: .button(.open), problem: sentence)
+        case (.ready, .failed(let sentence)?), (.ready, .changed(let sentence)?):
+            // The draft is kept and Reply tries again, with why the last one didn't go. The card, the
+            // list's rows, the menu-bar home and the Since You Left sheet all draw `problem`.
+            return CardOffer(lead: .button(.reply), hasOpen: true, problem: sentence)
         case (.ready, _):
             return CardOffer(lead: .button(.reply), hasOpen: true)
         case (.permission(let request), _):

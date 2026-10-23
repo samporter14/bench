@@ -108,6 +108,9 @@ final class QuickStartModel: ObservableObject {
     @Published private(set) var viewed: ViewedSession?
     /// Bumped when the panel opens, so the field takes focus again.
     @Published private(set) var openCount = 0
+    /// The panel has been put away (the controller says so). A send that ends while it is hidden leaves its
+    /// outcome for the next opening, which shows it instead of starting clean.
+    var isHidden = false
 
     private let dependencies: Dependencies
     private var ledger = IntentLedger()
@@ -118,6 +121,8 @@ final class QuickStartModel: ObservableObject {
     /// Whose outcome counts: a send that a newer one or `open` has replaced is
     /// let go quietly.
     private var sendToken: UUID?
+    /// A send ended while the panel was hidden: nobody has read its sentence yet.
+    private var outcomeUnseen = false
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
@@ -139,7 +144,14 @@ final class QuickStartModel: ObservableObject {
             sending?.cancel()
             sendToken = nil
         }
-        if !keeping && !underway {
+        // A send that ended while the panel was hidden (the global key put it away mid-send): its sentence, and the
+        // request with it, wait here. They are shown now, not cleared.
+        let unseen = outcomeUnseen && !underway
+        outcomeUnseen = false
+        isHidden = false
+        if unseen {
+            if case .sent = phase { lingerThenClose() }
+        } else if !keeping && !underway {
             self.text = ""
             files = []
             appliedRecipe = nil
@@ -156,7 +168,8 @@ final class QuickStartModel: ObservableObject {
         recipes = RecipeKeys.keyed(dependencies.recipes())
         recents = dependencies.recentProjects()
         if projectID == nil { projectID = recents.first?.id }
-        if let start { self.text = start }
+        // What a Service or a Shortcut hands over while a send is in flight waits: the request on its way is kept.
+        if let start, !underway { self.text = start }
         addFiles(urls)
         Task { [weak self] in
             guard let self else { return }
@@ -247,7 +260,13 @@ final class QuickStartModel: ObservableObject {
 
     // MARK: Editing
 
+    /// A request on its way is what the panel shows until it ends: nothing in it changes meanwhile (the words and
+    /// the box are disabled in the view; a recipe, ⌘1 to ⌘9, a dropped file, a chip are no-ops here). Any of them
+    /// would otherwise put the phase back to editing, enable Start, and let a second ↩ make a second session.
+    private var inFlight: Bool { phase == .sending || sendToken != nil }
+
     func choose(_ project: QuickStartProject) {
+        guard !inFlight else { return }
         projectChosen = true
         guard projectID != project.id else { return }
         projectID = project.id
@@ -255,6 +274,7 @@ final class QuickStartModel: ObservableObject {
     }
 
     func apply(_ recipe: Recipe) {
+        guard !inFlight else { return }
         text = recipe.text
         planFirst = recipe.planFirst
         if let id = recipe.project {
@@ -274,6 +294,7 @@ final class QuickStartModel: ObservableObject {
     /// Dropped files, a Service's, a Shortcut's: each that can go joins, the
     /// rest are turned away, the first of them with its sentence.
     func addFiles(_ urls: [URL]) {
+        guard !inFlight else { return }
         var first: String?
         for url in urls {
             if files.contains(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) { continue }
@@ -292,6 +313,7 @@ final class QuickStartModel: ObservableObject {
     }
 
     func remove(_ file: QuickStartFile) {
+        guard !inFlight else { return }
         files.removeAll { $0.id == file.id }
         edited()
     }
@@ -323,7 +345,8 @@ final class QuickStartModel: ObservableObject {
 
     /// ↩ starts a session; ⇧↩ sends to the session in view.
     func submit(toViewed: Bool) {
-        guard canSubmit(toViewed: toViewed), let request = request(toViewed: toViewed) else { return }
+        // Not while one is in flight, whatever the phase says: a second ↩ is never a second session.
+        guard !inFlight, canSubmit(toViewed: toViewed), let request = request(toViewed: toViewed) else { return }
         phase = .sending
         progress = nil
         stopRequested = false
@@ -345,6 +368,8 @@ final class QuickStartModel: ObservableObject {
     private func finish(_ outcome: QuickStartFlow.Outcome) {
         sendToken = nil
         progress = nil
+        // Unless it is the clean Cancel below, which has nothing to say.
+        outcomeUnseen = isHidden && !(stopRequested && outcome.isCleanCancel)
         switch outcome {
         case .failed(let sentence):
             if stopRequested && outcome.isCleanCancel {
@@ -359,14 +384,19 @@ final class QuickStartModel: ObservableObject {
             // It went, whatever Cancel said: the panel says what happened.
             phase = .sent(sentence)
             ledger.sent()
-            lingering = Task { [weak self] in
-                guard let self else { return }
-                await dependencies.sleep(dependencies.linger)
-                guard !Task.isCancelled else { return }
-                dependencies.close()
-            }
+            lingerThenClose()
         }
         stopRequested = false
+    }
+
+    /// Once it has sent, the panel stays up long enough to read, then goes.
+    private func lingerThenClose() {
+        lingering = Task { [weak self] in
+            guard let self else { return }
+            await dependencies.sleep(dependencies.linger)
+            guard !Task.isCancelled else { return }
+            dependencies.close()
+        }
     }
 
     /// Cancel and Esc. Not sending, the panel goes. Sending, what is unsent is

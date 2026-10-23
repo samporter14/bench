@@ -60,16 +60,31 @@ final class QuickStartController: NSObject {
         window.makeKey()
     }
 
-    /// The global key: closes the panel when it is up.
-    func toggle() {
-        if isShowing { close() } else { show() }
+    /// What the global key does: puts the panel away when it is up, except mid-send, when the request on its
+    /// way is what the panel is showing and the outcome has to be read there: the key brings it forward
+    /// (or keeps it) and never hides it.
+    enum KeyAction: Equatable { case show, close }
+
+    static func keyAction(isShowing: Bool, phase: QuickStartModel.Phase?) -> KeyAction {
+        isShowing && phase != .sending ? .close : .show
     }
 
+    /// The global key.
+    func toggle() {
+        switch Self.keyAction(isShowing: isShowing, phase: model?.phase) {
+        case .close: close()
+        case .show: show()
+        }
+    }
+
+    /// Puts the panel away; not while a send is in flight (the same rule as switching apps), so no path loses
+    /// the outcome. A send that ends while it is hidden is kept for the next opening (`QuickStartModel.isHidden`).
     func close() {
-        guard let window else { return }
+        guard let window, model?.phase != .sending else { return }
         removeWatchers()
         window.orderOut(nil)
         model?.shiftHeld = false
+        model?.isHidden = true
     }
 
     // MARK: Building

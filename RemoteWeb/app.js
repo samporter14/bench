@@ -2100,8 +2100,10 @@ async function doAction(id, kind, path, body, slowMs = WRITE_SLOW_MS) {
   if (u.busy[kind]) return null;
   u.busy[kind] = true;
   redrawSession(id);
-  // No answer yet: by now the Mac is looking for the write in the session, and the phone says so until it hears.
-  const slow = setTimeout(() => setNote(id, { text: 'Not sure that went through. Checking…' }, 120000), slowMs);
+  // No answer yet. The Mac may be looking for the write in the session, or it may only be waiting its turn behind
+  // another: the phone can't tell which, so it says only what it knows until the Mac answers. "Not sure that went
+  // through" is the Mac's to say, and it does, as the answer (describe: result 'unknown').
+  const slow = setTimeout(() => setNote(id, { text: 'Still waiting for your Mac…' }, 120000), slowMs);
   let result;
   try {
     result = describe(await send(path, body));

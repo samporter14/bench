@@ -246,14 +246,14 @@ private final class World {
     private var cancelled: Set<Int> = []
     private var next = 0
 
-    lazy var model = UsagePauseModel(now: { [unowned self] in self.now },
-                                     schedule: { [unowned self] wait, action in self.schedule(wait, action) })
+    lazy var model = UsagePauseModel(now: { [self] in self.now },
+                                     schedule: { [self] wait, action in self.schedule(wait, action) })
 
     func start() {
         model.start(UsagePauseModel.Inputs(changes: changes.eraseToAnyPublisher(),
-                                           running: { [unowned self] in self.running },
-                                           plan: { [unowned self] in self.plan },
-                                           read: { [unowned self] age, _ in self.reads.append(age) }))
+                                           running: { [self] in self.running },
+                                           plan: { [self] in self.plan },
+                                           read: { [self] age, _ in self.reads.append(age) }))
     }
 
     /// When the watcher next looks by itself, from now.

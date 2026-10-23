@@ -85,6 +85,24 @@ struct CardOfferTests {
         #expect(question(.ready(ask), reply: .sent("Sent.")).lead == .done("Sent"))
     }
 
+    /// A send that didn't go says why, wherever the offer is drawn (card, row, menu-bar home, Since You Left
+    /// sheet): the same `problem` a permission request's failed send already had.
+    @Test func aQuestionThatDidntSendSaysWhyAndTheDraftCanBeSentAgain() {
+        for phase in [ReplyPhase.failed("Couldn't send it."), .changed("The question changed.")] {
+            let offer = question(.ready(ask), reply: phase)
+            let sentence = phase == .failed("Couldn't send it.") ? "Couldn't send it." : "The question changed."
+            #expect(offer.problem == sentence, "\(phase)")
+            #expect(offer.lead == .button(.reply) && offer.hasOpen && offer.rowActions == [.reply], "Reply is the retry")
+        }
+        let closed = question(.ready(ask), reply: .closed("Already answered."))
+        #expect(closed.problem == "Already answered.")
+        #expect(closed.lead == .button(.open) && closed.rowActions.isEmpty, "nothing left to answer: Open")
+        // The ones that are not a failure say nothing.
+        for phase in [ReplyPhase.editing, .sending, .sent("Sent.")] {
+            #expect(question(.ready(ask), reply: phase).problem == nil, "\(phase)")
+        }
+    }
+
     @Test func aWaitThatCantBeAnsweredHereOffersOpenOnly() {
         #expect(question(.unsupported).lead == .button(.openInCapsid) && question(.unsupported).rowActions.isEmpty)
         for state in [nil, .loading, .unavailable] as [QuestionCardState?] {
@@ -184,32 +202,32 @@ private final class Rig {
 
     init() {
         questions = QuestionReplier(model: model, dependencies: QuestionReplier.Dependencies(
-            isEnabled: { [unowned self] in self.enabled }, isReady: { true },
-            read: { [unowned self] id in
+            isEnabled: { [self] in self.enabled }, isReady: { true },
+            read: { [self] id in
                 self.frameReads.append(id)
                 await Task.yield()
                 return self.reads[id]
             },
-            respond: { [unowned self] request, session, _ in
+            respond: { [self] request, session, _ in
                 self.sent.append((request, session))
                 if self.holdSends { await withCheckedContinuation { self.held = $0 } }
                 return self.result
             }))
         plans = PlanApprover(model: model, dependencies: PlanApprover.Dependencies(
-            isEnabled: { [unowned self] in self.enabled }, isReady: { true },
-            get: { [unowned self] path in
+            isEnabled: { [self] in self.enabled }, isReady: { true },
+            get: { [self] path in
                 self.planReads.append(path)
                 if path.hasPrefix("/frames/") { return Self.frame }
                 if path.hasPrefix("/artifacts/versions/") { return Self.plan }
                 throw WebAPIError.notAllowed
             },
-            post: { [unowned self] path in
+            post: { [self] path in
                 self.posts.append(path)
                 return APIWriteResult(status: 200, isJSON: true, code: nil, accepted: true, noPlanAwaiting: false)
             },
             approvedPause: .milliseconds(20)))
         actions = CardActions(model: model, plans: plans, questions: questions,
-                              showReply: { [unowned self] in self.windows.append(($0, $1)) })
+                              showReply: { [self] in self.windows.append(($0, $1)) })
     }
 
     static let frame = Data(#"{"status": "awaiting_plan_approval", "context_data": {"_plan_version_id": "ver-001", "_plan_artifact_id": "art-001", "_plan_approved": false}, "output_data": null}"#.utf8)

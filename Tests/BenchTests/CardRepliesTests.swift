@@ -139,12 +139,12 @@ private final class FakePage {
 
     func sessions() -> RemoteSessions {
         RemoteSessions(dependencies: RemoteSessions.Dependencies(
-            actionsOn: { [unowned self] in self.actionsOn },
+            actionsOn: { [self] in self.actionsOn },
             known: { [Fixture.session(session, .needsInput, reason: .plan)] },
             cardPlan: { _ in nil },
-            read: { [unowned self] _, _ in self.read },
+            read: { [self] _, _ in self.read },
             readPlan: { _ in nil },
-            write: { [unowned self] write in
+            write: { [self] write in
                 self.writes.append(write)
                 return RemoteWriteResult(status: 200, bodyStatus: "accepted")
             },
@@ -290,19 +290,19 @@ private final class FakeCore {
     func dependencies() -> QuestionReplier.Dependencies {
         QuestionReplier.Dependencies(
             isEnabled: { true },
-            isReady: { [unowned self] in self.ready },
-            read: { [unowned self] id in
+            isReady: { [self] in self.ready },
+            read: { [self] id in
                 await Task.yield()
                 return self.reads[id] ?? nil
             },
-            respond: { [unowned self] request, _, checking in
+            respond: { [self] request, _, checking in
                 self.requests.append(request)
                 if self.callChecking { checking() }
                 return self.results.isEmpty ? RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.answered)
                     : self.results.removeFirst()
             },
-            plan: { [unowned self] in self.plans[$0] },
-            newIntentID: { [unowned self] in
+            plan: { [self] in self.plans[$0] },
+            newIntentID: { [self] in
                 let next = self.intents.removeFirst()
                 self.intents.append(next)
                 return next

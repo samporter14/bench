@@ -155,3 +155,35 @@ struct SinceYouLeftStateTests {
         #expect(told > afterReturn)
     }
 }
+
+// MARK: The finished row's pills and the keyboard
+
+/// The row's pills (Open, Results, Add to Shelf) are shown while the pointer or the keyboard is on the row. With
+/// the focus kept as a Bool on the row's button alone, Tab from the row moved the focus to a pill, the Bool went
+/// false, the pills went with it, and they could never be reached. A source scan: the row is a private view of
+/// the sheet, and the behaviour is SwiftUI's focus.
+struct FinishedRowFocusTests {
+    private func row() throws -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let sheet = try String(contentsOf: root.appendingPathComponent("Sources/Bench/SinceYouLeft/SinceYouLeftSheet.swift"), encoding: .utf8)
+        let start = try #require(sheet.range(of: "private struct FinishedRow: View {"))
+        let end = try #require(sheet.range(of: "// MARK: Hosting it as a sheet"))
+        return String(sheet[start.lowerBound..<end.lowerBound])
+    }
+
+    @Test func theFocusCoversTheRowAndEachPillAndThePillsStayWhileAnyOfThemHasIt() throws {
+        let source = try row()
+        #expect(source.contains("@FocusState private var focus: Focus?"))
+        #expect(source.contains("case row") && source.contains("case pill(String)"))
+        #expect(!source.contains("@FocusState private var focused: Bool"))
+        #expect(source.contains("private var showsPills: Bool { hovering || focus != nil }"))
+        #expect(source.contains(".focused($focus, equals: .row)"))
+        // Open, Results, and Add to Shelf (or On Shelf), each its own stop.
+        #expect(source.contains(".focused($focus, equals: .pill(\"open\"))"))
+        #expect(source.contains(".focused($focus, equals: .pill(\"results\"))"))
+        #expect(source.components(separatedBy: ".focused($focus, equals: .pill(\"shelf\"))").count - 1 == 2)
+        // The pills are drawn by the one rule, not by the row's own focus.
+        #expect(source.contains("if showsPills {"))
+        #expect(!source.contains("hovering || focused"))
+    }
+}

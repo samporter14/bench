@@ -30,16 +30,16 @@ private final class WatchRig {
     init() {
         breadcrumbs = harness.makeStore()
         watch = CompatWatch(CompatWatch.Dependencies(
-            remembered: { [unowned self] in self.remembered },
-            remember: { [unowned self] in self.remembered = $0 },
-            version: { [unowned self] in await self.answer() },
-            isReady: { [unowned self] in self.ready },
-            settle: { [unowned self] in await self.settleOnce() },
-            probe: { [unowned self] in self.probeOnce() },
-            post: { [unowned self] in self.posted.append($0) },
+            remembered: { [self] in self.remembered },
+            remember: { [self] in self.remembered = $0 },
+            version: { [self] in await self.answer() },
+            isReady: { [self] in self.ready },
+            settle: { [self] in await self.settleOnce() },
+            probe: { [self] in self.probeOnce() },
+            post: { [self] in self.posted.append($0) },
             breadcrumbs: breadcrumbs,
-            now: { [unowned self] in self.clock },
-            enabled: { [unowned self] in self.enabled }))
+            now: { [self] in self.clock },
+            enabled: { [self] in self.enabled }))
     }
 
     private func answer() async -> String? {

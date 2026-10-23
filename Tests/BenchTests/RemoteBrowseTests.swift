@@ -256,45 +256,45 @@ private final class FakeBrowse {
     private(set) var sessionReads: [(project: String, after: BrowseCursor?, search: String?)] = []
 
     lazy var sessions = RemoteSessions(dependencies: RemoteSessions.Dependencies(
-        actionsOn: { [unowned self] in self.actionsOn },
-        known: { [unowned self] in self.known },
+        actionsOn: { [self] in self.actionsOn },
+        known: { [self] in self.known },
         cardPlan: { _ in nil },
-        read: { [unowned self] _, _ in self.calls.append("read"); return nil },
+        read: { [self] _, _ in self.calls.append("read"); return nil },
         readPlan: { _ in nil },
         write: { _ in nil },
-        now: { [unowned self] in self.now },
-        browseOn: { [unowned self] in self.browseOn },
-        lookup: { [unowned self] id in self.calls.append("lookup"); return self.database[id] }))
+        now: { [self] in self.now },
+        browseOn: { [self] in self.browseOn },
+        lookup: { [self] id in self.calls.append("lookup"); return self.database[id] }))
 
     lazy var browser = RemoteBrowser(sessions: sessions, dependencies: RemoteBrowser.Dependencies(
-        browseOn: { [unowned self] in self.browseOn },
-        actionsOn: { [unowned self] in self.actionsOn },
-        projects: { [unowned self] in self.calls.append("projects"); return self.projects },
-        sessions: { [unowned self] project, after, search in
+        browseOn: { [self] in self.browseOn },
+        actionsOn: { [self] in self.actionsOn },
+        projects: { [self] in self.calls.append("projects"); return self.projects },
+        sessions: { [self] project, after, search in
             self.calls.append("sessions")
             self.sessionReads.append((project, after, search))
             return self.rows
         },
-        known: { [unowned self] in self.known },
-        history: { [unowned self] _, before, knownTotal in
+        known: { [self] in self.known },
+        history: { [self] _, before, knownTotal in
             self.calls.append("history \(before.map(String.init) ?? "last")")
             self.knownTotals.append(knownTotal)
             return self.history
         },
-        turn: { [unowned self] _, index in self.calls.append("turn \(index)"); return self.turn },
-        create: { [unowned self] write in
+        turn: { [self] _, index in self.calls.append("turn \(index)"); return self.turn },
+        create: { [self] write in
             self.calls.append("create")
             self.writes.append(write)
             if self.createNeverReturns { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
             return self.created
         },
-        findIntent: { [unowned self] _, _ in
+        findIntent: { [self] _, _ in
             self.calls.append("intent")
             return self.intents.isEmpty ? nil : self.intents.removeFirst()
         },
-        listed: { [unowned self] files, device in self.listed.append((files.map(\.v), device)) },
-        now: { [unowned self] in self.now },
-        pause: { [unowned self] in self.calls.append("pause") },
+        listed: { [self] files, device in self.listed.append((files.map(\.v), device)) },
+        now: { [self] in self.now },
+        pause: { [self] in self.calls.append("pause") },
         createLimit: createLimit))
 
     func respond(_ method: String, _ target: String, body: String = "", device: String = "device-1") async -> RemoteActionReply {

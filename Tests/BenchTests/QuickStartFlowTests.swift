@@ -93,9 +93,11 @@ private final class FlowRig {
 
     lazy var sessions = RemoteSessions(dependencies: RemoteSessions.Dependencies(
         actionsOn: { false },
-        known: { [unowned self] in self.known },
+        known: { [weak self] in self?.known ?? [] },
         cardPlan: { _ in nil },
-        read: { [unowned self] _, turns in
+        read: { [weak self] _, turns in
+            // The rig can be gone when a task the flow left behind comes back to it: then there is nothing to ask.
+            guard let self else { return nil }
             self.log.append(turns ? "turns" : "read")
             let call = self.readCalls
             self.readCalls += 1
@@ -106,7 +108,8 @@ private final class FlowRig {
             return self.reads.isEmpty ? nil : self.reads[index]
         },
         readPlan: { _ in nil },
-        write: { [unowned self] write in
+        write: { [weak self] write in
+            guard let self else { return nil }
             self.log.append("write")
             self.writes.append(write)
             if self.holdWrites > 0 {
@@ -115,24 +118,26 @@ private final class FlowRig {
             }
             return self.writeReply
         },
-        now: { [unowned self] in self.now },
+        now: { [weak self] in self?.now ?? Date() },
         browseOn: { false },
         lookup: { _ in nil },
-        wait: { [unowned self] in await self.clock.wait($0) }))
+        wait: { [weak self] in await self?.clock.wait($0) }))
 
     lazy var browser = RemoteBrowser(sessions: sessions, dependencies: RemoteBrowser.Dependencies(
         browseOn: { false },
         actionsOn: { false },
-        projects: { [unowned self] in
+        projects: { [weak self] in
+            guard let self else { return nil }
             self.log.append("projects")
             if self.holdProjects { await self.gate.wait() }
             return self.projects
         },
         sessions: { _, _, _ in nil },
-        known: { [unowned self] in self.known },
+        known: { [weak self] in self?.known ?? [] },
         history: { _, _, _ in .unreadable },
         turn: { _, _ in .none },
-        create: { [unowned self] write in
+        create: { [weak self] write in
+            guard let self else { return nil }
             self.log.append("create")
             self.writes.append(write)
             if self.holdCreate { await self.gate.wait() }
@@ -140,17 +145,19 @@ private final class FlowRig {
             self.createIndex += 1
             return self.createReplies.isEmpty ? nil : self.createReplies[index]
         },
-        findIntent: { [unowned self] _, _ in
+        findIntent: { [weak self] _, _ in
+            guard let self else { return nil }
             self.log.append("intent")
             return self.intents.isEmpty ? nil : self.intents.removeFirst()
         },
         listed: { _, _ in },
-        now: { [unowned self] in self.now },
-        pause: { [unowned self] in self.log.append("pause") }))
+        now: { [weak self] in self?.now ?? Date() },
+        pause: { [weak self] in self?.log.append("pause") }))
 
     lazy var flow = QuickStartFlow(sessions: sessions, browser: browser, dependencies: QuickStartFlow.Dependencies(
-        ready: { [unowned self] in self.ready },
-        upload: { [unowned self] project, file in
+        ready: { [weak self] in self?.ready ?? false },
+        upload: { [weak self] project, file in
+            guard let self else { return nil }
             self.log.append("upload")
             self.uploads.append((project, file))
             if self.holdUploads { await self.gate.wait() }
@@ -167,9 +174,20 @@ private final class FlowRig {
             case .unknown: return .unknown
             }
         },
-        now: { [unowned self] in self.now },
-        turn: { [unowned self] _ in self.turnLimit },
-        wait: { [unowned self] in await self.waitOut($0) }))
+        now: { [weak self] in self?.now ?? Date() },
+        turn: { [weak self] _ in self?.turnLimit ?? .seconds(60) },
+        wait: { [weak self] in await self?.waitOut($0) }))
+
+    /// Lets what a released gate started run its course: until nothing has been logged for a good while (bounded),
+    /// instead of a fixed number of turns that a loaded Mac can outrun.
+    func drain() async {
+        var quiet = 0
+        var seen = log.count
+        for _ in 0..<2_000 where quiet < 30 {
+            await Task.yield()
+            if log.count == seen { quiet += 1 } else { seen = log.count; quiet = 0 }
+        }
+    }
 
     /// An upload's deadline in Swift: real time, or at once.
     func waitOut(_ duration: Duration) async {
@@ -505,7 +523,7 @@ struct QuickStartFlowCancelTests {
     }
 
     private func settle() async {
-        for _ in 0..<60 { await Task.yield() }
+        await rig.drain()
     }
 
     @Test func aTaskCancelledBeforeItBeginsSendsNothing() async {
@@ -744,7 +762,7 @@ struct QuickStartFlowUnknownTests {
         #expect(outcome == .failed(sentence: QuickStartFlow.Sentence.uploadUnsure("a.csv", project: "Made-up", starting: true)))
         #expect(rig.writes.isEmpty)
         rig.gate.open()
-        for _ in 0..<60 { await Task.yield() }
+        await rig.drain()
     }
 
     @Test func aTurnThatStallsBeforeAnythingIsSentSaysSoAndTheNextMessageGoes() async {
@@ -767,7 +785,7 @@ struct QuickStartFlowUnknownTests {
         #expect(second == .sent(.sent, sentence: "Sent."))
         #expect(rig.writes.count == 1, "only the second message was written")
         rig.gate.open()
-        for _ in 0..<60 { await Task.yield() }
+        await rig.drain()
     }
 
     @Test func aTurnThatStallsWithTheMessageOutMayHaveGone() async {
@@ -787,7 +805,7 @@ struct QuickStartFlowUnknownTests {
         #expect(second == .sent(.sent, sentence: "Sent."))
         #expect(rig.writes.count == 2)
         rig.gate.open()
-        for _ in 0..<60 { await Task.yield() }
+        await rig.drain()
         // The stuck write came back late: nothing more was done for it (no look, no second write).
         #expect(rig.writes.count == 2)
         #expect(!rig.log.contains("turns"))
@@ -829,7 +847,7 @@ struct QuickStartPanelCancelTests {
     }
 
     private func settle() async {
-        for _ in 0..<80 { await Task.yield() }
+        await rig.drain()
     }
 
     @Test func cancelBeforeAnythingWasSentClosesThePanelAndSendsNothing() async {

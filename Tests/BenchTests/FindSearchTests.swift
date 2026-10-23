@@ -21,12 +21,16 @@ private final class FindRig {
 
     func search() -> FindSearch {
         FindSearch(dependencies: .init(
-            lookup: { [unowned self] query in
+            // Weak, with nothing to do once the rig is gone: its `deinit` lets every waiter go, and what
+            // they do next must not reach back into a rig that is being destroyed.
+            lookup: { [weak self] query in
+                guard let self else { return nil }
                 lookups.append(query)
                 return await withCheckedContinuation { replies.append($0) }
             },
             pause: .milliseconds(250),
-            wait: { [unowned self] _ in
+            wait: { [weak self] _ in
+                guard let self else { return }
                 waits += 1
                 await withCheckedContinuation { pauses.append($0) }
             },
@@ -236,16 +240,16 @@ private final class FinderRig {
     func finder() -> ShelfFinder {
         let actions = FindActions(
             isAvailable: available,
-            add: { [unowned self] file in
+            add: { [self] file in
                 added.append(file.version)
                 return outcome
             },
-            show: { [unowned self] in shown.append($0.version) },
-            results: { [unowned self] in results.append($0.version) },
-            onShelf: { [unowned self] in onShelf.contains($0) },
-            isAdding: { [unowned self] in adding.contains($0) })
+            show: { [self] in shown.append($0.version) },
+            results: { [self] in results.append($0.version) },
+            onShelf: { [self] in onShelf.contains($0) },
+            isAdding: { [self] in adding.contains($0) })
         return ShelfFinder(search: lookup.search(), actions: actions, thumbnails: ShelfThumbnails(),
-                           requestThumbnail: { [unowned self] in asked.append($0.version) }, changes: changes.eraseToAnyPublisher())
+                           requestThumbnail: { [self] in asked.append($0.version) }, changes: changes.eraseToAnyPublisher())
     }
 
     /// Types `text` and answers the read with `files`.

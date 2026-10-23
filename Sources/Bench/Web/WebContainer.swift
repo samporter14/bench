@@ -267,7 +267,10 @@ final class WebContainer: ObservableObject, WebPageWindow {
         async let code = Self.codeIfWanted(true)
         let remembered = pendingURL == nil
             ? await lastSession.reopenURL(port: port, host: host, isKnown: LastSession.databaseKnows) : nil
-        let nonce = await code
+        // Beside the app, a first ask that gave no code is asked once more after 1.5 s: a daemon too busy to answer
+        // one `claude-science url` answers the next. The launcher that opens a tab is asked once, as always.
+        let nonce = await SignInPlan.code(first: await code, appOwned: owned, askAgain: { await DaemonController.freshNonce() },
+                                          wait: { try? await Task.sleep(for: $0) })
         // A link that came before the port was known was built for the usual
         // one; it belongs on the port the daemon actually uses. One that comes
         // while the above runs waits for this, and wins over the remembered
@@ -276,9 +279,7 @@ final class WebContainer: ObservableObject, WebPageWindow {
         pendingURL = nil
         let destination = LastSession.launchDestination(link: link, remembered: remembered, root: root, port: port)
 
-        switch SignInPlan.decide(requireToken: daemon.requireToken, appOwned: owned, nonce: nonce) {
-        case .readOnly(let reason):
-            enterReadOnly(reason)
+        switch SignInPlan.decide(appOwned: owned, nonce: nonce) {
         case .page(let nonce):
             webView.load(URLRequest(url: nonce.map { addingLoginNonce($0, to: destination) } ?? destination))
         case .apiMe(let nonce):
@@ -322,10 +323,12 @@ final class WebContainer: ObservableObject, WebPageWindow {
         }
     }
 
-    /// There is no way in: Capsid reads the database only, and says so once.
+    /// There is no way in right now: Capsid reads the database only, and says so once. A failure that may
+    /// pass (a daemon too busy to give a code answers the next try), so the quiet tries keep going
+    /// (Web/StartRetry.swift) and sign in as soon as a code comes.
     private func enterReadOnly(_ reason: ReadOnlyReason) {
         Logger.web.notice("Only reading: \(reason.phrase, privacy: .public)")
-        fail(CompanionSentence.readOnly, temporary: false, companion: .readOnly(reason))
+        fail(CompanionSentence.readOnly, temporary: true, companion: .readOnly(reason))
         if !readOnlyAnnounced {
             readOnlyAnnounced = true
             LabModel.shared.post(CompanionSentence.readOnlyNotice)
@@ -415,11 +418,9 @@ final class WebContainer: ObservableObject, WebPageWindow {
             // Science's own app a missing code is asked for once more before
             // it is taken to mean there is none.
             let owned = await appOwned()
-            var nonce = await DaemonController.freshNonce()
-            if nonce == nil, owned {
-                try? await Task.sleep(for: .milliseconds(1500))
-                nonce = await DaemonController.freshNonce()
-            }
+            let nonce = await SignInPlan.code(first: await DaemonController.freshNonce(), appOwned: owned,
+                                              askAgain: { await DaemonController.freshNonce() },
+                                              wait: { try? await Task.sleep(for: $0) })
             guard let nonce else {
                 switch SignInPlan.outcomeWithoutCode(appOwned: owned) {
                 case .readOnly(let reason): enterReadOnly(reason)

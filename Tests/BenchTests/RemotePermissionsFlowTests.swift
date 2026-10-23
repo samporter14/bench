@@ -184,21 +184,21 @@ private final class PermissionPage {
 
     func sessions() -> RemoteSessions {
         RemoteSessions(dependencies: RemoteSessions.Dependencies(
-            actionsOn: { [unowned self] in self.actionsOn },
-            known: { [unowned self] in self.known },
+            actionsOn: { [self] in self.actionsOn },
+            known: { [self] in self.known },
             cardPlan: { _ in nil },
-            read: { [unowned self] id, turns in
+            read: { [self] id, turns in
                 self.readLog.append(turns ? "turns" : "frame")
                 await Task.yield()
                 guard let read = self.reads[id] else { return nil }
                 return turns ? read : read.withoutTurns
             },
             readPlan: { _ in nil },
-            write: { [unowned self] write in
+            write: { [self] write in
                 self.writes.append(write)
                 return self.reply
             },
-            now: { [unowned self] in self.now }))
+            now: { [self] in self.now }))
     }
 }
 

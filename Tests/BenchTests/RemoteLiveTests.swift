@@ -508,12 +508,12 @@ private final class FakeLiveReader {
     var known: [SessionStatus] = []
 
     func live() -> RemoteLive {
-        RemoteLive(read: { [unowned self] id, activity, text, mayWait in
+        RemoteLive(read: { [self] id, activity, text, mayWait in
             self.asked.append("\(activity ? "activity" : "-")/\(text ? "text" : "-")")
             self.mayWait.append(mayWait)
             await Task.yield()
             return self.answers[id]
-        }, now: { [unowned self] in self.now }, known: { [unowned self] in self.known })
+        }, now: { [self] in self.now }, known: { [self] in self.known })
     }
 }
 

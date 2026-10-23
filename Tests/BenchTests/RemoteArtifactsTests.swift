@@ -1527,9 +1527,9 @@ private final class FakeFiles {
     let info = ListedFileInfo()
 
     lazy var artifacts = RemoteArtifacts(dependencies: .init(
-        browseOn: { [unowned self] in self.browse },
-        isSession: { [unowned self] in self.sessions.contains($0) },
-        read: { [unowned self] read in
+        browseOn: { [self] in self.browse },
+        isSession: { [self] in self.sessions.contains($0) },
+        read: { [self] read in
             self.reads.append(read)
             return self.answers[read] ?? .unreadable
         },

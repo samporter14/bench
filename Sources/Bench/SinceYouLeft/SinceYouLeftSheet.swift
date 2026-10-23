@@ -610,7 +610,17 @@ private struct FinishedRow: View {
     /// Why the last add failed.
     var problem: String? = nil
     @State private var hovering = false
-    @FocusState private var focused: Bool
+    /// Where the keyboard is on the row: the row itself or one of its pills. The pills are shown while any of
+    /// them has the focus, not only the row, so Tab can get from one to the next (as on the activity list's rows).
+    @FocusState private var focus: Focus?
+
+    enum Focus: Hashable {
+        case row
+        case pill(String)
+    }
+
+    /// The pills are there while the pointer or the keyboard is on the row or on any of them.
+    private var showsPills: Bool { hovering || focus != nil }
 
     private var tilesWidth: CGFloat { tiles.isEmpty ? 0 : CGFloat(tiles.count) * 64 + CGFloat(tiles.count - 1) * 6 + 16 }
 
@@ -654,18 +664,22 @@ private struct FinishedRow: View {
                     }
                 }
                 .padding(8)
-                .background(hovering || focused ? Solanum.selection : .clear, in: .rect(cornerRadius: 8))
+                .background(showsPills ? Solanum.selection : .clear, in: .rect(cornerRadius: 8))
                 .padding(-8)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .focused($focused)
+            .focused($focus, equals: .row)
             .accessibilityLabel([session.displayTitle, session.projectName, answer].compactMap { $0 }.joined(separator: ". "))
             .accessibilityHint("Opens the session")
-            if hovering || focused {
+            if showsPills {
                 HStack(spacing: 6) {
                     Button("Open", action: open)
-                    if let results { Button("Results", action: results) }
+                        .focused($focus, equals: .pill("open"))
+                    if let results {
+                        Button("Results", action: results)
+                            .focused($focus, equals: .pill("results"))
+                    }
                     shelfPill
                 }
                 .buttonStyle(SolanumPillStyle(.small))
@@ -693,12 +707,15 @@ private struct FinishedRow: View {
         case .off?:
             if let addToShelf {
                 Button(ShelfWords.add, action: addToShelf)
+                    .focused($focus, equals: .pill("shelf"))
                     .help("Add to Shelf: this figure, with what Claude said about it and where it came from")
             }
         case .adding?:
             Button(ShelfWords.adding) {}.disabled(true)
         case .on?:
-            Button(ShelfWords.on, action: showShelf).help("Show the Shelf")
+            Button(ShelfWords.on, action: showShelf)
+                .focused($focus, equals: .pill("shelf"))
+                .help("Show the Shelf")
         case nil:
             EmptyView()
         }

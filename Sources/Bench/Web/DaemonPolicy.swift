@@ -68,15 +68,12 @@ enum StartPlan: Equatable, Sendable {
 
 /// Why Capsid can't sign in to the daemon, so it only reads.
 enum ReadOnlyReason: Equatable, Sendable {
-    /// `status` says the daemon requires a token, which only the app has.
-    case tokenRequired
-    /// `claude-science url` gave no code (a daemon started without its
-    /// control socket answers none).
+    /// `claude-science url` gave no code (asked twice, 1.5 s apart) and the page refused the cookie from last
+    /// time (a daemon started without its control socket answers none).
     case noCode
 
     var phrase: String {
         switch self {
-        case .tokenRequired: "the daemon requires a token"
         case .noCode: "the daemon gave no sign-in code"
         }
     }
@@ -90,20 +87,33 @@ enum SignInPlan: Equatable, Sendable {
     /// A daemon the app started: its own small page at `/api/me?nonce=<code>`
     /// has one Sign in button and ends on JSON; then the page loads.
     case apiMe(nonce: String)
-    /// There is no way in. Everything from the database keeps working.
-    case readOnly(ReadOnlyReason)
 
     /// `appOwned`: the daemon is the app's child, or the own-window app is
     /// installed, or the page has shown the handover dialog.
     ///
-    /// `require_token` alone never stops a sign-in: the browser-tab daemon
-    /// reports it too, and the one-time code signs in to it as it always has
-    /// (the first cut went read-only on it, on Sam's Mac, 2026-10-22). It
-    /// matters only beside the app, with no code to sign in with.
-    static func decide(requireToken: Bool?, appOwned: Bool, nonce: String?) -> SignInPlan {
-        guard appOwned else { return .page(nonce: nonce) }
-        if let nonce { return .apiMe(nonce: nonce) }
-        return requireToken == true ? .readOnly(.tokenRequired) : .page(nonce: nil)
+    /// `require_token` is no part of this, and never was a reason to stop: the browser-tab daemon reports it
+    /// too, and the one-time code signs in to it as it always has (the first cut went read-only on it, on Sam's
+    /// Mac, 2026-10-22). Beside the app, with no code even after asking again, the page is loaded without one: the
+    /// cookie from last time may still be good, and if it is not, the page's 401 asks for a code again and the
+    /// read-only companion (`outcomeWithoutCode`) is where that ends, not here. One failed `claude-science url`
+    /// (a busy daemon) used to end there for good.
+    static func decide(appOwned: Bool, nonce: String?) -> SignInPlan {
+        guard appOwned, let nonce else { return .page(nonce: nonce) }
+        return .apiMe(nonce: nonce)
+    }
+
+    /// How long after a first ask that gave no code the second one comes, beside the app.
+    static let askAgainAfter = Duration.milliseconds(1500)
+
+    /// The one-time code for signing in. `first` is what the first ask gave. With none, a daemon that is the
+    /// app's is asked once more after `askAgainAfter` (a busy daemon fails one `claude-science url` and answers
+    /// the next); with the launcher that opens a tab, nothing is asked twice, as it always was.
+    static func code(first: String?, appOwned: Bool, askAgain: @Sendable () async -> String?,
+                     wait: @Sendable (Duration) async -> Void) async -> String? {
+        if let first { return first }
+        guard appOwned else { return nil }
+        await wait(askAgainAfter)
+        return await askAgain()
     }
 
     /// Whether the daemon belongs to Claude Science's own app, so signing in

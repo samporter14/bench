@@ -355,24 +355,24 @@ private final class FakePage {
 
     func sessions() -> RemoteSessions {
         RemoteSessions(dependencies: RemoteSessions.Dependencies(
-            actionsOn: { [unowned self] in self.actionsOn },
-            known: { [unowned self] in self.known },
-            cardPlan: { [unowned self] _ in self.cardPlan },
-            read: { [unowned self] id, turns in
+            actionsOn: { [self] in self.actionsOn },
+            known: { [self] in self.known },
+            cardPlan: { [self] _ in self.cardPlan },
+            read: { [self] id, turns in
                 self.readLog.append(turns ? "turns" : "frame")
                 await Task.yield()
                 guard let read = self.reads[id] else { return nil }
                 return turns ? read : read.withoutTurns
             },
-            readPlan: { [unowned self] version in
+            readPlan: { [self] version in
                 self.planReads.append(version)
                 return self.document
             },
-            write: { [unowned self] write in
+            write: { [self] write in
                 self.writes.append(write)
                 return self.reply
             },
-            now: { [unowned self] in self.now }))
+            now: { [self] in self.now }))
     }
 }
 
@@ -393,7 +393,7 @@ private final class SlowPage {
             actionsOn: { true },
             known: { [Fixture.session(root, .running, title: "Made-up session")] },
             cardPlan: { _ in nil },
-            read: { [unowned self] _, turns in
+            read: { [self] _, turns in
                 self.reads += 1
                 if self.reads == 1 {
                     await withCheckedContinuation { self.gate = $0 }
@@ -404,7 +404,7 @@ private final class SlowPage {
             },
             readPlan: { _ in nil },
             write: { _ in RemoteWriteResult(status: 200, bodyStatus: "accepted") },
-            now: { [unowned self] in self.now }))
+            now: { [self] in self.now }))
     }
 
     /// Lets the hung read finish.

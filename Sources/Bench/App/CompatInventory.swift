@@ -336,7 +336,7 @@ extension CompatInventory {
             .start, "Shared/Core/CLIStatus.swift"),
         cli("status.daemon.url_host", #"the host its address uses: "localhost" or "127.0.0.1", which Capsid loads every page from"#,
             .signIn, "Shared/Core/CLIStatus.swift"),
-        cli("status.daemon.require_token", "true when the daemon insists on a token, which only the app has: Capsid then only reads the database",
+        cli("status.daemon.require_token", "true when the daemon insists on a token: shown in Diagnostics only (a browser-tab daemon reports it too, and signs in with a code as it always has)",
             .signIn, "Shared/Core/CLIStatus.swift"),
         cli("url", "prints the sign-in address, with a nonce query item", .signIn, "Shared/Core/CLIStatus.swift",
             check: .whenUsed("run only when signing in")),
