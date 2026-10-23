@@ -128,7 +128,21 @@ enum KeptLayout {
     /// and never `README.md`, which is Capsid's.
     static func fileName(_ name: String) -> String {
         let clean = ShelfFileName.sanitized(name)
-        return clean.lowercased() == readmeName.lowercased() ? ShelfFileName.numbered(clean, 2) : clean
+        return isReadme(clean) ? ShelfFileName.numbered(clean, 2) : clean
+    }
+
+    /// The figure's name at the top of a kept folder: as `fileName`, and never one
+    /// of the folders beside it ("data", "code" or "input", in any case), whose
+    /// place a file of that name would take.
+    static func figureFileName(_ name: String) -> String {
+        let clean = fileName(name)
+        return [dataFolder, codeFolder, inputFolder].contains(clean.lowercased()) ? ShelfFileName.numbered(clean, 2) : clean
+    }
+
+    /// Whether a (cleaned) file name is the folder's own README.md, in any case:
+    /// a disk that ignores case takes "readme.md" for it too.
+    static func isReadme(_ name: String) -> Bool {
+        name.lowercased() == readmeName.lowercased()
     }
 
     /// "data/z_prime_by_plate.csv", "z_prime.png": the path, relative to the

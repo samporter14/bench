@@ -459,3 +459,110 @@ struct KeepRecordTests {
         #expect(KeepRules.deepLink(Made.session) == "bench://session?project=p-1&frame=\(Made.session.id)")
     }
 }
+
+// MARK: A pick stays picked; a folder is its figure
+
+struct KeepPickedVersionTests {
+    @Test func aVersionTheUserPickedIsNotMovedByTheAnswer() {
+        // Version 1 picked while the answer shows version 3: version 1.
+        #expect(KeepRules.preselect(versions: Made.versions, showing: Made.showing, picked: Made.v1) == Made.v1)
+        // No answer at all: still version 1, not the newest.
+        #expect(KeepRules.preselect(versions: Made.versions, showing: nil, picked: Made.v1) == Made.v1)
+        // A pick that isn't one of the artifact's falls back to the old rule, not to a guess.
+        #expect(KeepRules.preselect(versions: Made.versions, showing: Made.showing, picked: "eeeeeeee-0000-4000-8000-000000000009") == Made.v3)
+        #expect(KeepRules.preselect(versions: Made.versions, showing: nil, picked: nil) == Made.v4)
+    }
+
+    @Test func aSubjectSaysWhetherItsVersionWasPicked() {
+        let results = KeepSubject(session: Made.session, entry: Made.entry)
+        #expect(!results.selectsItsVersion && !results.picksItsVersion)
+        let clicked = KeepSubject(session: Made.session, entry: Made.entry, selectsItsVersion: true)
+        #expect(clicked.selectsItsVersion && clicked.picksItsVersion && clicked.pinned == nil)
+        #expect(clicked != results)
+        // An answer pinned by the reference reader is a pick too.
+        let pinned = KeepSubject(session: Made.session, entry: Made.entry, pinned: KeepPinnedAnswer(text: "x", at: nil))
+        #expect(!pinned.selectsItsVersion && pinned.picksItsVersion)
+    }
+}
+
+struct KeepFigureFirstTests {
+    private func planFor(figure: String, input: String? = nil, version: String = Made.v3) throws -> KeepPlan {
+        var sources = Made.full
+        sources.chosenFacts = Made.facts(version, n: 3, name: figure)
+        sources.facts = Made.facts(Made.v4, n: 4, name: figure)
+        if let input {
+            sources.lineage = Made.lineage(inputs: [LineageInput(v: Made.input, a: Made.inputArtifact, name: input, file: nil, how: "runtime", inferred: false)])
+            sources.inputFacts = [Made.input: ArtifactFacts(v: Made.input, a: Made.inputArtifact, n: 1, name: input, mime: "text/plain", size: 4096,
+                                                            at: Made.at(0), sha: nil, isUpload: false, code: nil, codeCut: false, environment: nil)]
+        }
+        return try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: Made.choices))
+    }
+
+    @Test func aFigureCalledReadmeIsKeptUnderAnotherNameAndAllowedByTheDisk() throws {
+        for name in ["README.md", "readme.md", "Readme.MD"] {
+            let plan = try planFor(figure: name)
+            #expect(plan.figure.name == KeptLayout.fileName(name), "\(name)")
+            #expect(!KeptLayout.isReadme(plan.figure.name), "\(name)")
+            #expect(plan.figure.relativePath == plan.figure.name)
+            #expect(KeptLayout.isValidRelativePath(plan.figure.relativePath), "\(name)")
+        }
+        #expect(try planFor(figure: "README.md").figure.name == "README 2.md")
+        // Other names, and names that only contain it, are left alone.
+        #expect(try planFor(figure: "README.txt").figure.name == "README.txt")
+        #expect(try planFor(figure: "my README.md").figure.name == "my README.md")
+    }
+
+    @Test func aFigureCalledLikeAFolderBesideItIsKeptUnderAnotherName() throws {
+        // A file called "data" would be where the data folder has to go.
+        for (name, kept) in [("data", "data 2"), ("Code", "Code 2"), ("INPUT", "INPUT 2"), ("data.csv", "data.csv")] {
+            let plan = try planFor(figure: name, input: "z_prime_by_plate.csv")
+            #expect(plan.figure.name == kept, "\(name)")
+            #expect(KeptLayout.isValidRelativePath(plan.figure.relativePath))
+            #expect(Set(plan.all.map { $0.relativePath.lowercased() }).count == plan.all.count)
+        }
+    }
+
+    @Test func everyFileOfAPlanIsOneTheDiskTakes() throws {
+        let plan = try planFor(figure: "README.md", input: "README.md")
+        let paths = plan.all.map(\.relativePath)
+        #expect(paths.first == "README 2.md")
+        #expect(paths.contains { $0.hasPrefix("data/") } && paths.contains { $0.hasPrefix("code/") })
+        for path in paths { #expect(KeptLayout.isValidRelativePath(path), "\(path)") }
+        // The input called README.md doesn't take the figure's new name either.
+        #expect(plan.files.first { $0.role == .data }?.relativePath == "data/README 3.md")
+        // Lower-cased names are the same name on a disk that ignores case.
+        let again = try planFor(figure: "readme.md", input: "README.md")
+        #expect(Set(again.all.map { $0.relativePath.lowercased() }).count == again.all.count)
+        for path in again.all.map(\.relativePath) { #expect(KeptLayout.isValidRelativePath(path), "\(path)") }
+    }
+
+    @Test func aVersionOverTheCapSaysSoAndIsNotKeepable() throws {
+        let big = ArtifactVersion(v: Made.v2, n: 2, frame: nil, mime: "image/tiff", size: KeepRules.cap + 1, at: Made.at(4), parent: Made.v1)
+        let versions = [Made.versions[0], big, Made.versions[2], Made.versions[3]]
+        let tiles = KeepRules.tiles(versions: versions, showing: nil, gone: [])
+        let sentence = KeepRules.versionSentence(tiles: tiles, chosen: Made.v2, showing: nil)
+        #expect(sentence.hasPrefix("Version 2 of 4, from "))
+        #expect(sentence.hasSuffix("it\u{2019}s over the 8 MB Capsid can copy here, so this version can\u{2019}t be kept."))
+        // The others read as they did, and a version at the cap exactly is fine.
+        #expect(!KeepRules.versionSentence(tiles: tiles, chosen: Made.v3, showing: nil).contains("8 MB"))
+        let exact = ArtifactVersion(v: Made.v2, n: 2, frame: nil, mime: nil, size: KeepRules.cap, at: nil, parent: nil)
+        let atCap = KeepRules.tiles(versions: [exact], showing: nil, gone: [])
+        #expect(KeepRules.versionSentence(tiles: atCap, chosen: Made.v2, showing: nil) == "This file has one version.")
+
+        var sources = Made.full
+        sources.chosenFacts = Made.facts(Made.v3, n: 3, size: KeepRules.cap + 1)
+        let plan = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: Made.choices))
+        #expect(KeepRules.figureOverCap(plan))
+        #expect(!KeepRules.figureOverCap(try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: Made.choices))))
+    }
+
+    @Test func theSentencesSayWhatHappenedAndThatNothingWasKept() {
+        #expect(KeepRules.figureTooBig("z_prime.tif")
+            == "z_prime.tif is over 8 MB, which is more than Capsid can copy here, so nothing was kept. Choose another version, or Cancel.")
+        #expect(KeepRules.figureNotCopied("z_prime.png", because: "There isn\u{2019}t room on this disk.")
+            == "z_prime.png wasn\u{2019}t copied, so nothing was kept. There isn\u{2019}t room on this disk.")
+        for sentence in [KeepRules.figureTooBig("a.png"), KeepRules.figureNotCopied("a.png", because: "x."), KeepRules.overCapSentence(size: 9_000_000)] {
+            #expect(!sentence.contains("!"))
+        }
+    }
+}

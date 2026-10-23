@@ -16,6 +16,15 @@ struct KeepSubject: Equatable, Sendable {
     /// version is preselected and that answer is the one kept with it, whatever newer
     /// answer shows another version. Nil from Results.
     var pinned: KeepPinnedAnswer? = nil
+    /// The user picked this very version (a figure or a link they right-clicked in
+    /// the conversation), whether or not the caller knows its answer: it is the
+    /// selection, whatever answer is found, and the answer looked for is the one
+    /// that shows it. False from Results, whose entry is the latest version
+    /// project-wide, which Keep never takes as the user's pick.
+    var selectsItsVersion = false
+
+    /// Whether the entry's version is the user's own pick, by either way of saying so.
+    var picksItsVersion: Bool { selectsItsVersion || pinned != nil }
 }
 
 /// The answer a figure was shown in, when the caller knows it: its words and
@@ -181,9 +190,11 @@ enum KeepRules {
 
     // MARK: The versions
 
-    /// The version Claude's answer shows, when it is one of the artifact's;
-    /// else the newest.
-    static func preselect(versions: [ArtifactVersion], showing: ShowingMessage?) -> String? {
+    /// The version the user picked, when the caller says so and it is one of the
+    /// artifact's; else the one Claude's answer shows, when it is one of them;
+    /// else the newest. A pick is never moved by an answer.
+    static func preselect(versions: [ArtifactVersion], showing: ShowingMessage?, picked: String? = nil) -> String? {
+        if let picked, versions.contains(where: { $0.v == picked }) { return picked }
         if let showing, versions.contains(where: { $0.v == showing.v }) { return showing.v }
         return versions.max(by: { $0.n < $1.n })?.v
     }
@@ -200,6 +211,14 @@ enum KeepRules {
         guard let chosen, let tile = tiles.first(where: { $0.v == chosen }) else {
             return tiles.isEmpty ? "" : "Choose the version to keep."
         }
+        let sentence = versionSentence(for: tile, of: tiles, showing: showing)
+        // A figure over the cap can't be copied, so the folder would have no figure:
+        // said here, where the version is chosen, and Keep is off for it.
+        return tile.size > cap ? "\(sentence) \(overCapSentence(size: tile.size))" : sentence
+    }
+
+    private static func versionSentence(for tile: VersionTile, of tiles: [VersionTile], showing: ShowingMessage?) -> String {
+        let chosen = tile.v
         let from = tile.at.map { ", from \($0.formatted(date: .omitted, time: .shortened))" } ?? ""
         if tiles.count == 1 {
             return "This file has one version\(from)."
@@ -248,6 +267,30 @@ enum KeepRules {
     }
 
     static let uploadSentence = "You uploaded this file, so it has no inputs or script."
+
+    // MARK: When the figure itself can't be copied
+    // A kept folder is its figure: with none, the folder is not made. These say why.
+
+    /// Under the tiles, for a version whose listed size is over the cap.
+    static func overCapSentence(size: Int) -> String {
+        "At \(bytes(size)) it\u{2019}s over the 8 MB Capsid can copy here, so this version can\u{2019}t be kept."
+    }
+
+    /// After a keep in which Claude Science said the figure is over the cap (its
+    /// size wasn't listed, or was listed wrong).
+    static func figureTooBig(_ name: String) -> String {
+        "\(name) is over 8 MB, which is more than Capsid can copy here, so nothing was kept. Choose another version, or Cancel."
+    }
+
+    /// After a keep in which the figure couldn't be written; `reason` is the disk's sentence.
+    static func figureNotCopied(_ name: String, because reason: String) -> String {
+        "\(name) wasn\u{2019}t copied, so nothing was kept. \(reason)"
+    }
+
+    /// Whether the plan's figure is known to be over the cap.
+    static func figureOverCap(_ plan: KeepPlan) -> Bool {
+        (plan.figure.size ?? 0) > cap
+    }
 
     private static func answerRow(_ sources: KeepSources, chosen: String?) -> KeepRow {
         if let other = answerShowsAnother(sources, chosen: chosen) {
@@ -413,17 +456,21 @@ enum KeepRules {
         let version = sources.versions.first { $0.v == chosen }
         let facts = sources.chosenFacts?.v == chosen ? sources.chosenFacts : (sources.facts?.v == chosen ? sources.facts : nil)
         let figureName = facts?.name ?? sources.facts?.name ?? subject.entry.name
+        // Named as the Kept folder names its figure (`KeptLayout.figureFileName`): a file
+        // called README.md would otherwise be refused by the disk (README.md is Capsid's),
+        // and one called "data" would stand where the data folder goes.
         let figure = KeepItem(role: .figure, source: .download(version: chosen),
                               artifact: facts?.a ?? sources.facts?.a ?? subject.entry.artifact, version: chosen,
-                              name: ShelfFileName.sanitized(figureName), size: facts?.size ?? version?.size ?? subject.entry.size,
+                              name: KeptLayout.figureFileName(figureName), size: facts?.size ?? version?.size ?? subject.entry.size,
                               sha: facts?.sha)
         var files: [KeepItem] = []
         var taken: Set<String> = [figure.name.lowercased()]
         func unique(_ name: String) -> String {
-            var candidate = ShelfFileName.sanitized(name)
+            let clean = ShelfFileName.sanitized(name)
+            var candidate = clean
             var n = 2
-            while taken.contains(candidate.lowercased()) {
-                candidate = ShelfFileName.numbered(ShelfFileName.sanitized(name), n)
+            while taken.contains(candidate.lowercased()) || KeptLayout.isReadme(candidate) {
+                candidate = ShelfFileName.numbered(clean, n)
                 n += 1
             }
             taken.insert(candidate.lowercased())
