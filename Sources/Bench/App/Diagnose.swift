@@ -26,12 +26,16 @@ enum Diagnose {
     }
 
     /// What the window adds to `report()`: a look at the page and the API it
-    /// reads, what is checked only when used, and the last time a feature
-    /// found something changed. On the main actor, for the page.
+    /// reads, the Claude Science version Capsid last saw and what its look
+    /// after a change found (App/CompatWatch.swift), what is checked only when
+    /// used, and the last time a feature found something changed. On the main
+    /// actor, for the page.
     @MainActor
     static func pageReport(environment: CompatProbeEnvironment = .live(),
-                           breadcrumbs: CompatBreadcrumbs = .shared) async -> [String] {
+                           breadcrumbs: CompatBreadcrumbs = .shared,
+                           watch: CompatWatch = .shared) async -> [String] {
         var out = [""] + CompatReport.probeLines(await CompatProbes.run(environment))
+        out += [""] + watch.diagnosticsLines()
         out += [""] + CompatReport.whenUsedLines()
         if let problem = breadcrumbs.line() { out += ["", problem] }
         return out

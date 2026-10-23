@@ -49,6 +49,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
     case progressStatusNotUnderstood
     // The reviewer's findings on a finished card (Remote/InsightReader.swift)
     case reviewerAnswerNotUnderstood
+    // The one look after Claude Science's version changed (App/CompatWatch.swift)
+    case probesAfterUpdate
 
     var feature: CompatFeature {
         switch self {
@@ -70,6 +72,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
             .planProgress
         case .reviewerAnswerNotUnderstood:
             .reviewer
+        case .probesAfterUpdate:
+            .update
         }
     }
 
@@ -99,6 +103,7 @@ enum CompatMiss: String, CaseIterable, Sendable {
         case .progressTreeWithoutPlan: "an approved plan's session tree doesn't carry the plan"
         case .progressStatusNotUnderstood: "a plan step's status isn't one Capsid knows"
         case .reviewerAnswerNotUnderstood: "the findings answer has no checks and running lists of the shape Capsid reads"
+        case .probesAfterUpdate: "some of what Capsid reads didn't answer as it expects"
         }
     }
 }
@@ -110,6 +115,9 @@ final class CompatBreadcrumbs: @unchecked Sendable {
     struct Entry: Equatable, Sendable {
         let miss: CompatMiss
         let at: Date
+        /// The features a miss touches, when it touches several (the look
+        /// after an update). Fixed words, never read from the page.
+        var features: [CompatFeature] = []
     }
 
     /// How long a repeat of the same miss is ignored, by the log and by "Last
@@ -140,14 +148,15 @@ final class CompatBreadcrumbs: @unchecked Sendable {
     /// neither happens, so a read that keeps missing is one line in the log and
     /// one "Last problem" whose time is the first miss's, not a line that
     /// restarts every five minutes.
-    func record(_ miss: CompatMiss) {
+    func record(_ miss: CompatMiss, affecting features: [CompatFeature] = []) {
         let moment = now()
         lock.lock()
         let repeated = entry.map { $0.miss == miss && moment.timeIntervalSince($0.at) < Self.quietFor } ?? false
-        if !repeated { entry = Entry(miss: miss, at: moment) }
+        let made = Entry(miss: miss, at: moment, features: features)
+        if !repeated { entry = made }
         lock.unlock()
         if !repeated {
-            emit("Claude Science may have changed: \(miss.feature.shortTitle): \(miss.phrase)")
+            emit("Claude Science may have changed: \(miss.feature.shortTitle): \(Self.phrase(for: made))")
         }
     }
 
@@ -159,7 +168,15 @@ final class CompatBreadcrumbs: @unchecked Sendable {
     }
 
     static func line(for entry: Entry, now: Date) -> String {
-        "Last problem: \(entry.miss.feature.shortTitle), \(age(of: entry.at, now: now)): \(entry.miss.phrase)"
+        "Last problem: \(entry.miss.feature.shortTitle), \(age(of: entry.at, now: now)): \(phrase(for: entry))"
+    }
+
+    /// The miss's phrase, then the features it touches in brackets when it
+    /// names any: "some of what Capsid reads didn't answer as it expects
+    /// (Close Other Tabs, the usage readout)".
+    static func phrase(for entry: Entry) -> String {
+        guard !entry.features.isEmpty else { return entry.miss.phrase }
+        return "\(entry.miss.phrase) (\(entry.features.map(\.inASentence).joined(separator: ", ")))"
     }
 
     /// "just now", "1 minute ago", "12 minutes ago", "3 hours ago", "2 days ago".

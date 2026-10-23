@@ -38,6 +38,24 @@ enum ProbeVerdict: Equatable, Sendable {
     case failed(String)
 }
 
+extension ProbeVerdict {
+    /// Whether the verdict says Claude Science changed, rather than that
+    /// something ordinary happened. This is what the one look after an update
+    /// (App/CompatWatch.swift) acts on, so it is stricter than Diagnostics'
+    /// ✗: an answer in a shape Capsid doesn't read counts (except usage saying
+    /// `ok: false`, which the breadcrumbs treat as an ordinary state), and so
+    /// does a route that answered 404, 405 or 410. Not on screen, signed out,
+    /// refused, slow, too big or cancelled do not: they say nothing about
+    /// whether the page or the API moved.
+    var suggestsAChange: Bool {
+        switch self {
+        case .unexpectedShape(let why): why != CompatProbeRules.usageRefusedPhrase
+        case .failed(let why): why.contains(CompatProbeRules.routeMayHaveMoved)
+        case .ok, .notOnScreenNow: false
+        }
+    }
+}
+
 struct ProbeResult: Equatable, Sendable {
     let name: String
     let verdict: ProbeVerdict
@@ -60,6 +78,17 @@ struct ProbeTimeout: Error {}
 
 /// What each answer means. Pure, and tested on made-up data.
 enum CompatProbeRules {
+    /// What a 404, 405 or 410 from a read says, and the one phrase
+    /// `ProbeVerdict.suggestsAChange` looks for in it.
+    static let routeMayHaveMoved = "the route may have moved"
+    /// What usage's `ok: false` says; an ordinary state, not a changed shape.
+    static let usageRefusedPhrase = "the answer says ok: false"
+
+    /// A read that answered `status`, a route that is gone (404, 405 or 410).
+    static func answeredGone(_ status: Int) -> ProbeVerdict {
+        .failed("answered \(status): \(routeMayHaveMoved), or that session is gone")
+    }
+
     // MARK: Page
 
     /// How the tab strip looked (`PageTabsScript.probe`'s JSON).
@@ -114,7 +143,7 @@ enum CompatProbeRules {
             if limits.isEmpty { return .unexpectedShape(CompatMiss.usageWithoutLimits.phrase) }
             return .ok("\(limits.count) limit\(limits.count == 1 ? "" : "s") read")
         } catch PlanUsageModel.PlanUsageError.refused {
-            return .unexpectedShape("the answer says ok: false")
+            return .unexpectedShape(usageRefusedPhrase)
         } catch {
             return .unexpectedShape(CompatMiss.usageNotDecoded.phrase)
         }
@@ -190,7 +219,7 @@ enum CompatProbeRules {
             }
         case .unreadable: return .unexpectedShape(CompatMiss.progressTreeNotUnderstood.phrase)
         case .lost: return .failed("signed out (401); Capsid signs back in by itself")
-        case .missing: return .failed("answered 404: the route may have moved, or that session is gone")
+        case .missing: return answeredGone(404)
         case .tooBig: return .failed("the answer exceeded the read limit")
         case .cancelled: return .failed("the read didn't complete")
         }
@@ -204,7 +233,7 @@ enum CompatProbeRules {
             return .ok("\(counts.standing) standing, \(counts.fixed) fixed, \(counts.running) running, \(counts.reviews) finished")
         case .unreadable: return .unexpectedShape(CompatMiss.reviewerAnswerNotUnderstood.phrase)
         case .lost: return .failed("signed out (401); Capsid signs back in by itself")
-        case .missing: return .failed("answered 404: the route may have moved, or that session is gone")
+        case .missing: return answeredGone(404)
         case .tooBig: return .failed("the answer exceeded the read limit")
         case .cancelled: return .failed("the read didn't complete")
         }
@@ -214,7 +243,7 @@ enum CompatProbeRules {
     static func failure(_ outcome: ArtifactReadOutcome, miss: CompatMiss) -> ProbeVerdict {
         switch outcome {
         case .lost: .failed("signed out (401); Capsid signs back in by itself")
-        case .missing: .failed("answered 404: the route may have moved, or that session is gone")
+        case .missing: answeredGone(404)
         case .tooBig: .failed("the answer exceeded the read limit")
         case .cancelled: .failed("the read didn't complete")
         default: .unexpectedShape(miss.phrase)
@@ -238,7 +267,7 @@ enum CompatProbeRules {
         if let status = httpStatus(in: message) {
             switch status {
             case 401: return .failed("signed out (401); Capsid signs back in by itself")
-            case 404, 405, 410: return .failed("answered \(status): the route may have moved, or that session is gone")
+            case 404, 405, 410: return answeredGone(status)
             default: return .failed("answered \(status)")
             }
         }
@@ -309,6 +338,18 @@ enum CompatProbes {
         static let reviewer = "GET /api/frames/<session>/verification?resolved_limit=0&actionable_limit=500"
 
         static let all = [tabStrip, signIn, address, usage, context, frame, plan, versions, facts, progress, reviewer]
+    }
+
+    /// The feature a probe looks after, for the one look after an update to
+    /// name. The reads are named as the inventory names them, so the
+    /// inventory says; the three looks at the page are named here.
+    static func feature(ofProbe name: String) -> CompatFeature? {
+        switch name {
+        case Name.tabStrip: .closeTabs
+        case Name.signIn: .signIn
+        case Name.address: .sessionAddress
+        default: CompatInventory.readEndpoints.first { $0.token == name }?.feature
+        }
     }
 
     /// Every probe, in order. Never throws: what goes wrong is a verdict.

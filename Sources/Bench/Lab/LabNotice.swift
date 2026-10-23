@@ -175,6 +175,37 @@ enum NoticeRules {
             detail: parts.joined(separator: " · "), lifetime: .seconds(30))
     }
 
+    // MARK: After a Claude Science update
+
+    /// How many features the card names before it says "and 2 more".
+    static let updateNamesShown = 3
+
+    /// The one card when Claude Science's version changed and the look
+    /// Capsid took afterwards (App/CompatWatch.swift) found something that
+    /// answers differently. Nothing turns itself off: those features keep
+    /// trying and may quietly do nothing, so that is what it says, and that
+    /// Capsid only looked. `version` is named only when it is plain numbers.
+    /// Nil when nothing is affected: no card for a clean look.
+    static func afterUpdate(version: String?, features: [CompatFeature]) -> LabNotice? {
+        guard !features.isEmpty else { return nil }
+        let shown = features.prefix(updateNamesShown).map(\.inASentence)
+        let more = features.count - shown.count
+        var names = shown
+        if more > 0 { names.append("\(more) more") }
+        let list = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+        let named = version.flatMap { ScienceVersion.parse($0) != nil ? $0 : nil }
+        return LabNotice(
+            id: "compat-update-\(named ?? "unknown")", symbol: "arrow.triangle.2.circlepath", caption: "Claude Science",
+            title: named.map { "Claude Science updated to \($0)" } ?? "Claude Science updated",
+            detail: "\(capitalised(list)) may not work: \(features.count == 1 ? "it" : "they") didn't answer as Capsid reads \(features.count == 1 ? "it" : "them"). "
+                + "Capsid only looked. Help \u{2192} Capsid Diagnostics\u{2026} has the detail.",
+            lifetime: .seconds(20))
+    }
+
+    private static func capitalised(_ text: String) -> String {
+        text.prefix(1).uppercased() + text.dropFirst()
+    }
+
     // MARK: Nidus
 
     /// What Nidus publishes in its folder (`focus.json`): only whether a

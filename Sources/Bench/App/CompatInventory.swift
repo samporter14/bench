@@ -18,8 +18,9 @@ import Foundation
 enum CompatInventory {
     /// The Claude Science version Capsid was last checked with: the one whose
     /// web bundle the page markup was read from (DESIGN.md, Main window, and
-    /// TESTING.md, 2026-10-17). Move it only after walking `all` again.
-    static let checkedWith = "0.1.63"
+    /// TESTING.md). Walked again on 2026-10-22 against the 0.1.70 bundle, by
+    /// reading its files only. Move it only after walking `all` again.
+    static let checkedWith = "0.1.70"
 }
 
 // MARK: The kinds
@@ -58,6 +59,9 @@ enum CompatFeature: String, CaseIterable, Sendable {
     case handover
     case keep
     case planProgress, reviewer, notes
+    /// Not a feature: the checks Capsid makes once when Claude Science's
+    /// version changes (App/CompatWatch.swift), so "Last problem" can name them.
+    case update
 
     var title: String {
         switch self {
@@ -83,6 +87,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .planProgress: "Step n of m under a running session"
         case .reviewer: "The reviewer's findings on a finished card"
         case .notes: "Claude's messages to you, on a card"
+        case .update: "The checks after a Claude Science update"
         }
     }
 
@@ -94,7 +99,39 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .context: "The context ring"
         case .planCard: "The plan on a card"
         case .approve: "Approve"
+        case .update: "A Claude Science update"
         default: title
+        }
+    }
+
+    /// How a notice names it in the middle of a sentence ("Close Other Tabs
+    /// and the usage readout may not work"). Fixed words, so nothing read from
+    /// the page can reach a card.
+    var inASentence: String {
+        switch self {
+        case .closeTabs: "Close Other Tabs"
+        case .tabMenu: "the tab right-click menu"
+        case .shelfMenu: "Add to Shelf from the conversation"
+        case .signIn: "signing back in"
+        case .notifications: "needs-input cards from the page"
+        case .sessionAddress: "Open on a card"
+        case .previews: "HTML previews"
+        case .usage: "the usage readout"
+        case .context: "the context ring"
+        case .planCard: "plans on cards"
+        case .approve: "Approve"
+        case .errorCard: "the reason on a failure card"
+        case .phone: "Capsid on your phone"
+        case .start: "starting Claude Science"
+        case .sessions: "sessions in the Lab"
+        case .activity: "the usage graph"
+        case .browse: "Quick Open and Results"
+        case .handover: "staying with Claude Science's own window"
+        case .keep: "Keep"
+        case .planProgress: "step progress"
+        case .reviewer: "reviewer findings"
+        case .notes: "Claude's messages on a card"
+        case .update: "the checks after an update"
         }
     }
 }
@@ -173,19 +210,19 @@ extension CompatInventory {
              check: .whenUsed("seen only on a right-click"), literal: true),
         hook("button, a", "the elements searched for the sign-in button",
              .signIn, "Web/WebContainer.swift", literal: true),
-        hook("Sign in", #"a visible button or link reading exactly "Sign in" on the signed-out page"#,
+        hook("Sign in", #"a visible button or link reading exactly "Sign in": the page's "You've been signed out" banner (shown when the account login is stale) and its account menu have one; Capsid presses the first visible one"#,
              .signIn, "Web/WebContainer.swift", literal: true),
         hook("?nonce=<code>", "the page signs in with a one-time code on any of its addresses",
              .signIn, "Shared/Core/CLIStatus.swift", check: .whenUsed("seen only while signing in")),
         hook("/api/me?nonce=<code>", "a daemon the app started answers with its own small page, one Sign in button, and ends on JSON",
              .signIn, "Web/DaemonPolicy.swift", check: .whenUsed("seen only while signing in to a daemon the app started")),
-        hook(#"[data-testid="restarting-dialog"]"#, "the dialog the page shows when Claude Science moves to its own window; Capsid only notes that it is on screen, never its words",
+        hook(#"[data-testid="restarting-dialog"]"#, "the dialog the page shows whenever Claude Science restarts its server (an update, a sign-out, a move of its data, or the move to its own window, the only one that says it now opens in its own window); Capsid only notes that it is on screen, never its words",
              .handover, "Web/HandoverWatch.swift", check: .whenUsed("seen only when Claude Science moves to its own window"), literal: true),
         hook("window.Notification", "the page makes its desktop notifications with new Notification(title, {body, tag, requireInteraction}) and listens for click",
              .notifications, "Web/NotificationBridge.swift", check: .whenUsed("seen only when a session needs you")),
         hook("/projects/<project>/frames/<session>", "a session's page has this address",
              .sessionAddress, "Web/WebAPI.swift"),
-        hook("another localhost port", "generated HTML previews are served from a port of their own",
+        hook("another localhost port", "HTML previews draw in a sandboxed frame on the origin the daemon names in the page's own config (sandboxOrigin; a remote content host when it names none); a link to another localhost port opens in a preview window",
              .previews, "Web/Routing.swift", check: .whenUsed("seen only when a preview opens")),
     ]
 
@@ -234,7 +271,7 @@ extension CompatInventory {
         // Step progress, the reviewer's findings and Claude's notes (since 1.0): each is projected in the
         // page (Remote/InsightReader.swift; the notes by the history reader), so apiGET never reads them.
         read("plan statuses on GET /api/frames/<session>/trace-shallow?include_messages=false",
-             "the session's tree: each frame's status; on the root context_data._plan_approved (true), _plan_version_id, _plan_json (phases[].delegations[].steps[].title, in order) and _step_statuses; on each direct child context_data._plan_claims[] (plan_version_id, steps[].title) and _step_statuses; a status is {status: pending|in_progress|completed|blocked|skipped}. Projected in the page to a step number, a total and at most one title: never a step's description or a status's notes",
+             "the session's tree: each frame's status; on the root context_data._plan_approved (true), _plan_version_id, _plan_json (phases[].delegations[].steps[].title, in order) and _step_statuses; on each direct child context_data._plan_claims[] (plan_version_id, steps[].title) and _step_statuses; a status is {status: pending|in_progress|completed|blocked|skipped}. Projected in the page to a step number, a total and at most one title: never a step's description or a status's notes. The page itself reads only _plan_approved, _plan_artifact_id, _plan_version_id, _plan_generated_at, _step_statuses and _plan_claims; _plan_json is the daemon's own, so only this live read can confirm it",
              .planProgress, "Remote/InsightReader.swift"),
         read("GET /api/frames/<session>/verification?resolved_limit=0&actionable_limit=500",
              "{checks: [{verdict: pass|warn|fail|inconclusive, status: open|claimed|resolved|unaddressed, rebuttal, reflag_count}], running: [], completed_review_count, resolved_by_verdict: {fail, warn}}; projected in the page to four counts: never a claim, its evidence or a rebuttal",
