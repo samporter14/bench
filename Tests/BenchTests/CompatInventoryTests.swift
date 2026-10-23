@@ -172,7 +172,7 @@ struct CompatPageHookTests {
         #expect(tabs.contains("aria-current"))
         #expect(ScriptLiterals.selectors(in: TabContextMenu.script) == [#"[data-testid="right-tab-strip"] [data-tab-id]"#, "data-tab-id"])
         #expect(ScriptLiterals.selectors(in: ConversationMenu.script) == [
-            "img, a[href]", #"[data-testid="turn-tray-card"]"#, "img", #"[role="menu"][aria-label="Artifact actions"]"#,
+            "img, a[href]", #"[data-testid="turn-tray-card"]"#, "img", #"[role="menu"]"#, #"[role="menu"][aria-label="Artifact actions"]"#,
             #"[role="menuitem"]"#, #"[data-cds="Icon"]"#,
         ])
         #expect(ScriptLiterals.texts(in: SignInScript.press) == ["Sign in"])

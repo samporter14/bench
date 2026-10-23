@@ -345,6 +345,9 @@ yet checked live: a real failed session, and a real notification close.
   figure-beside → version-ok → menu-matched → placed". Every path is covered in the made-up page: each way to a
   figure, no figure, no version, no menu, another menu, unplaced, interrupted, and a made-up right-click (none).
   A trace never clears the Mac menu's pick, and Swift drops any word it doesn't know.
+  Its one new selector, `[role="menu"]` (any menu, for menu-other), is in the compatibility inventory. The first
+  install went in without it: the inventory tests failed, and the install script took a test named `running…` for
+  the passing summary. Both are fixed, and the build was reinstalled.
 - 933 tests in the Keep, Kept, Shelf and figure-menu suites pass.
 - ⏳ **Live**: a real keep of a version whose provenance is pending, and one real right-click read back from the log.
 
