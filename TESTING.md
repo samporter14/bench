@@ -323,6 +323,29 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23, review B's fixes, and test rigs that outlived their tests
+
+- ✅ All nine of review B's findings, each with a test, mutation-checked:
+  - a failed inline Send says why;
+  - Quick Start holds still mid-send;
+  - the sign-in path beside the app asks twice and then lets the page decide, and a read-only that keeps trying;
+  - Finished card identity and the queued reviewer read;
+  - the global key never hides a sending panel;
+  - Tab to a finished row's pills;
+  - the phone's "Still waiting for your Mac…";
+  - the Since You Left loader's handle.
+- ✅ **Sign-in against the real daemon after install** (browser tab, launchd, `require_token: yes`): Diagnostics says
+  "Signing in: with a code from claude-science url", and the log shows only the launch-time 401, then normal reads.
+  `ScienceSwitchWiringTests.theTabDaemonsSignInIsUntouchedByTheTokenAndTheSecondAsk` pins that `require_token`
+  can't reach the plan.
+- ✅ **"Attempted to read an unowned reference" crashes.** Three crash reports tonight named test fakes (one was
+  `CompatProbeTests`' `FakePage.environment`). A task the code under test left behind outlived its rig. Every rig
+  without a `deinit` now captures strongly (or weakly with a benign default), and "60 yields" settles became bounded
+  drains.
+- ✅ Load flakes given room: `QuickOpenDatabaseCancellationTests` and `RemoteStaticCacheTests` now allow 60 s. Seen
+  once more under load: `aReadThatNeverAnswersIsGivenUpOnSoon`.
+- ✅ The whole suite: 3,526 tests in 461 suites pass.
+
 ## 2026-10-23, test settings stay out of ~/Library/Preferences
 
 A suite named "x" is `~/Library/Preferences/x.plist`, and `removePersistentDomain` doesn't remove it: cfprefsd writes

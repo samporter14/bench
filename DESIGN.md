@@ -352,9 +352,15 @@ Capsid always asks `claude-science url` for a one-time code
 in with the code as it always did, whatever `require_token` says: Sam's 0.1.70
 daemon reports `require_token: yes`, and the first M9a build went read-only on
 it (fixed in b2a6bda; the lesson: check a sign-in change against the real
-daemon's `status` before installing). Only beside the app, with no code from
-`claude-science url` (asked twice, 1.5 s apart, after the cookie was refused)
-and `require_token` true, does Capsid stop retrying and only read: "Capsid
+daemon's `status` before installing). `require_token` is shown in Diagnostics
+and decides nothing (since review B). Beside Claude Science's own app,
+`claude-science url` is asked twice, 1.5 s apart, at the start and again when
+the page refuses the cookie (`SignInPlan.code`, one routine for both); with no
+code from either ask the page loads on last time's cookie, and only if the page
+refuses it does Capsid only read. That read-only is a failure that may pass:
+the quiet tries (Web/StartRetry.swift) keep going and sign in as soon as a code
+comes. The launcher that opens a tab is asked once and loads the page with or
+without a code, as it always did. The read-only says: "Capsid
 can't sign in to Claude Science's own server.
 Everything from your sessions' database keeps working; actions open Claude
 Science." with Open Claude Science and Try again, and one card says it once.
@@ -1686,6 +1692,12 @@ or request is in its ⓘ, with a paragraph on the failure card's reason.
 ready ("Screen 24 buffer conditions", "10 steps · feasibility: high", with
 10 made-up step titles, so the list shows "and 2 more…", one of them long
 enough to be cut). Its Approve shows the Approved state and calls nothing.
+
+**A send that didn't go** (since review B). A question's send that didn't go
+(failed, or the question changed) puts its sentence under the card, the
+activity row, the menu-bar home's row and the Since You Left card, and Reply
+tries again; one that closed (answered elsewhere, or the wait ended) shows its
+sentence and Open.
 
 ### Bounded writes (Remote/WriteDeadline.swift, Remote/WriteSettle.swift, since 1.0)
 
@@ -5889,6 +5901,12 @@ Cancel can't take it back: "Already sent. Waiting for Claude Science…", then
 what happened, never "cancelled". (Switching apps doesn't close the panel
 during a send.)
 
+While a request is on its way the panel holds still: a recipe, ⌘1 to ⌘9, a
+project chip, a dropped file or a × change nothing, ↩ sends nothing a second
+time, and a Service's text waits. The global key brings the panel forward and
+never hides it mid-send. If a send ends while the panel is hidden, its sentence
+and request are there at the next opening.
+
 ## The panel's moments and what it knows (Lab/, since 1.0)
 
 Board 6 of the 1.0 mock-ups: the panel's three moments, in its own glass.
@@ -6086,6 +6104,15 @@ minutes".
 return of 2 hours 14 minutes with a question, three finished sessions with
 pictures and files, and a stop, drawn by the real sheet in a window sized as
 the sheet is. Nothing is read.
+
+**After review B.** Each panel card is its own view (`.id(card.id)`), so one
+Finished card replacing another starts with an empty plate and forgets the
+first card's files; a reviewer line asked for before the page was up waits in
+the queue and is asked when it is. On the Since You Left sheet, Tab goes from a
+finished row to its pills, which stay while the keyboard is on any of them. On
+the phone, a write nobody has answered after 22 s (a photo, 85 s) says "Still
+waiting for your Mac…"; "Not sure that went through" appears only as the Mac's
+own answer.
 
 ## 1.0 spikes (2026-10-22, read-only)
 
