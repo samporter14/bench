@@ -729,6 +729,11 @@ struct RemotePhotosSessionTests {
     // A turn that runs out of time says what is known of how far it got.
 
     private func stalledReply(_ prepare: (PhotoRig) -> Void) async -> [String: Any] {
+        await stalled(prepare).said
+    }
+
+    /// What the turn answered when its time was up, and the rig once what it held has let go and run on.
+    private func stalled(_ prepare: (PhotoRig) -> Void) async -> (said: [String: Any], rig: PhotoRig) {
         let rig = PhotoRig()
         prepare(rig)
         let task = Task { @MainActor in await rig.session(PhotoFixture.body(text: "Look at this gel.")) }
@@ -739,13 +744,24 @@ struct RemotePhotosSessionTests {
         let said = decode(await task.value.body)
         rig.gate.open()
         await rig.drain()
-        return said
+        return (said, rig)
     }
 
     @Test func aTurnThatStallsBeforeAnythingWasDoneIsNotCalledUnknown() async {
         let said = await stalledReply { $0.holdFirstRead = true }
         #expect(said.string("result") == "retry")
         #expect(said.string("sentence") == RemoteDecide.Sentence.notThere)
+    }
+
+    @Test func aReadThatComesBackAfterTheTurnWasGivenUpOnUploadsAndSendsNothing() async {
+        // The session read hangs past the turn's deadline; the phone is told nothing went, and then the read returns.
+        let (said, rig) = await stalled { $0.holdFirstRead = true }
+        #expect(said.string("result") == "retry")
+        #expect(rig.log.first == "read")
+        #expect(rig.uploads.isEmpty, "the photo was never sent to the project")
+        #expect(!rig.log.contains("upload"))
+        #expect(rig.writes.isEmpty)
+        #expect(rig.log == ["read"], "no second read either")
     }
 
     @Test func aTurnThatStallsInTheUploadMayHaveLeftThePhotoInTheProject() async {

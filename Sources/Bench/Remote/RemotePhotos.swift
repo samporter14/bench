@@ -136,6 +136,9 @@ final class RemotePhotos {
         // uploaded for a session that can't take a message now (its status,
         // its agent and its project).
         let before = await sessions.photoDependencies.read(id, false)
+        // A turn given up on while it read (it ran out of time, or its caller
+        // went) uploads nothing: its answer has already been given.
+        guard !Task.isCancelled else { return .ok(.notThere) }
         let probe = RemoteDecide.message(.message(text: PhotoText.title(text: request.text), intentID: request.intentID),
                                          session: id, fresh: before)
         let project: String
@@ -150,11 +153,14 @@ final class RemotePhotos {
         case .placed(let placed, let again): (attachment, retried) = (placed, again)
         case .failed: return .ok(.notAttached)
         case .unsure: return .ok(.uploadUnsure)
+        case .notStarted: return .ok(.notThere)
         }
         progress.stage = .uploaded
         // Then the message route's own re-read, now the photo is up: the
         // status says send, queue or resume, and the agent is the one it names.
         let fresh = await sessions.photoDependencies.read(id, false)
+        // Given up on while it read again: the photo is up, and the message never leaves (`send` holds it too).
+        guard !Task.isCancelled else { return .ok(.savedNotThere) }
         let text = PhotoText.request(text: request.text, attachment: attachment)
         guard case .write(let write) = RemoteDecide.message(.message(text: text, intentID: request.intentID), session: id,
                                                             fresh: fresh, attachment: true),
@@ -199,6 +205,7 @@ final class RemotePhotos {
         case .placed(let placed, _): attachment = placed
         case .failed: return .ok(.notAttached)
         case .unsure: return .ok(.uploadUnsure)
+        case .notStarted: return .ok(.notThere)
         }
         let started = NewSessionRequest(text: PhotoText.request(text: request.text, attachment: attachment),
                                         intentID: request.intentID, planFirst: request.planFirst, attachment: true)
@@ -230,6 +237,8 @@ final class RemotePhotos {
         case failed
         /// The upload got no answer: the photo may be in the project.
         case unsure
+        /// Its caller had been given up on before the upload began: nothing went.
+        case notStarted
     }
 
     /// The photo's place in the project: what an earlier try of this intent
@@ -245,6 +254,7 @@ final class RemotePhotos {
         switch await upload(photo, to: project) {
         case .failed: return .failed
         case .unsure: return .unsure
+        case .notStarted: return .notStarted
         case .placed(let made, _):
             uploaded[request.intentID] = Uploaded(digest: digest, project: project, attachment: made, at: now)
             while uploaded.count > Self.uploadedLimit, let oldest = uploaded.min(by: { $0.value.at < $1.value.at }) {
@@ -257,6 +267,8 @@ final class RemotePhotos {
     /// The upload, and what the daemon says it stored; `failed` unless it
     /// passed the page's gate and is the 200 the gate wants.
     private func upload(_ photo: PhotoFile, to project: String) async -> Attached {
+        // The last moment to stop: a caller given up on starts no upload.
+        guard !Task.isCancelled else { return .notStarted }
         guard BrowseSQL.isProjectID(project), let reply = await dependencies.upload(project, photo) else { return .failed }
         if reply.isUnknown { return .unsure }
         guard reply.status == 200, let upload = reply.upload,
