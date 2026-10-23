@@ -2,11 +2,15 @@
 // Capsid 1.0 mock-ups (DESIGN.md, Menu bar home): one glass popover, 400 points
 // wide with 18-point corners and a hairline edge, from the top:
 //   - "Capsid", a Quiet While Presenting toggle and Settings;
-//   - the Quick Start field (typing and Return opens Quick Start with the text),
-//     with its key beside it;
+//   - the "Start a session…" field with its project pill (↩ starts the session
+//     in that project from here, through Quick Start's flow; ⌘↩ opens Quick
+//     Start with the words and the project), and under it a line while
+//     something is typed or sent: what ↩ does, "Starting…", the outcome;
 //   - Needs you · N, each row with its own buttons (the cards' own: Reply, Open,
 //     Later; Approve, Request changes…), a spinner while one sends, "Approved ✓" after;
 //   - Working · N, a small specimen and the turn's clock, ticking;
+//   - Recent, the sessions active latest that neither need you nor work: a dot,
+//     the title, "project · when"; a click opens one, ⌥-click as a reference;
 //   - Results today · N, four tiles and "Show all";
 //   - Since you left, when a return is waiting: its headline, and a press opens the sheet;
 //   - the 5-hour limit, a bar of what is used;
@@ -30,25 +34,27 @@ extension Solanum {
 struct CompanionHomeView: View {
     static let width: CGFloat = 400
     static let corner: CGFloat = 18
-    /// The header, the field, the limit and the foot never scroll; this is about what they take.
-    static let pinnedHeight: CGFloat = 214
+    /// The header, the field (and the line under it), the limit and the foot never scroll; this is about what
+    /// they take.
+    static let pinnedHeight: CGFloat = 236
 
     @ObservedObject private var model: CompanionModel
     @ObservedObject private var results: CompanionResults
     @ObservedObject private var presenting: PresentingMode
+    @ObservedObject private var start: CompanionStart
     private let actions: CompanionActions
     /// The tallest the popover may be: what is more scrolls.
     private let maxHeight: CGFloat
     /// The popover's height as drawn, for the window that holds it.
     private let onFit: (CGFloat) -> Void
 
-    @State private var text = ""
     @FocusState private var typing: Bool
 
     init(model: CompanionModel, presenting: PresentingMode = .shared, actions: CompanionActions = .none,
          maxHeight: CGFloat = 900, onFit: @escaping (CGFloat) -> Void = { _ in }) {
         _model = ObservedObject(wrappedValue: model)
         _results = ObservedObject(wrappedValue: model.sources.results)
+        _start = ObservedObject(wrappedValue: model.start)
         _presenting = ObservedObject(wrappedValue: presenting)
         self.actions = actions
         self.maxHeight = maxHeight
@@ -96,6 +102,7 @@ struct CompanionHomeView: View {
         case .quiet: quietLine
         case .needs: needsSection(sections)
         case .working: workingSection(sections)
+        case .recent: recentSection(sections)
         case .results: if let section = sections.results { resultsSection(section) }
         case .since: if let section = sections.since { sinceSection(section) }
         }
@@ -144,41 +151,150 @@ struct CompanionHomeView: View {
     }
 
     private var field: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "plus").font(.system(size: 12, weight: .semibold)).foregroundStyle(Solanum.muted)
-                .accessibilityHidden(true)
-            TextField(CompanionText.quickStartPlaceholder, text: $text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundStyle(Solanum.ink)
-                .focused($typing)
-                .onSubmit { startQuick() }
-                .accessibilityLabel("Start a session")
-            if let key = model.quickStartKey {
-                Text(key)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Solanum.muted)
-                    .accessibilityLabel("Quick Start key, \(key)")
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "plus").font(.system(size: 12, weight: .semibold)).foregroundStyle(Solanum.muted)
+                    .accessibilityHidden(true)
+                TextField(CompanionText.quickStartPlaceholder, text: $start.text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Solanum.ink)
+                    .focused($typing)
+                    .disabled(start.phase == .sending)
+                    // ↩ starts the session; ⌘↩ is the hidden button below, which a key equivalent reaches first.
+                    .onSubmit { submit(command: NSApp.currentEvent?.modifierFlags.contains(.command) == true) }
+                    .help(fieldHelp)
+                    .accessibilityLabel("Start a session")
+                    .accessibilityHint(fieldHelp)
+                projectPill
             }
+            .padding(.leading, 12)
+            .padding(.trailing, 6)
+            .frame(height: 36)
+            .background(Capsule().fill(Solanum.raised.opacity(0.85)))
+            .overlay(Capsule().strokeBorder(Solanum.strong, lineWidth: 1))
+            if let line = start.line { fieldLine(line) }
         }
-        .padding(.horizontal, 12)
-        .frame(height: 36)
-        .background(Capsule().fill(Solanum.raised.opacity(0.85)))
-        .overlay(Capsule().strokeBorder(Solanum.strong, lineWidth: 1))
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
+        .background {
+            // ⌘↩: Quick Start with the words and the project, wherever the focus is in the popover.
+            Button("Open in Quick Start") { submit(command: true) }
+                .keyboardShortcut(.return, modifiers: .command)
+                .opacity(0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .task {
             // The field has the keyboard as the popover comes up.
             await Task.yield()
             typing = true
         }
+        // It is off while a request goes; it has the keyboard again when the request has gone (or hasn't).
+        .onChange(of: start.phase == .sending) { _, sending in
+            if !sending { typing = true }
+        }
     }
 
-    private func startQuick() {
-        let entered = text
-        text = ""
-        actions.close()
-        actions.quickStart(entered)
+    /// ↩ starts the session from here; ⌘↩, or ↩ with nothing typed, opens Quick Start with what is here.
+    private func submit(command: Bool) {
+        switch CompanionStart.onReturn(command: command, hasText: start.hasText) {
+        case .start:
+            start.start()
+        case .quickStart:
+            guard let handOff = start.handOff() else { return }
+            actions.close()
+            actions.quickStart(handOff)
+        }
+    }
+
+    private var fieldHelp: String {
+        let key = model.quickStartKey.map { " (\($0) from any app)" } ?? ""
+        return "Return starts a session in the project beside it. Command-Return opens Quick Start\(key) with the words and the project, for files and recipes."
+    }
+
+    /// The project the field starts in: a quiet pill, its menu the projects as Quick Start's chips have them.
+    private var projectPill: some View {
+        Menu {
+            ForEach(start.menuProjects) { project in
+                Toggle(project.name, isOn: Binding(get: { start.projectID == project.id },
+                                                   set: { if $0 { start.choose(project) } }))
+            }
+            let others = start.otherProjects
+            if !others.isEmpty {
+                Divider()
+                Menu("Other Projects") {
+                    ForEach(others) { project in
+                        Button(project.name) { start.choose(project) }
+                    }
+                }
+            }
+            if start.menuProjects.isEmpty && others.isEmpty {
+                Text("No projects yet")
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(start.pillTitle)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Solanum.muted)
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Solanum.ink)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .frame(maxWidth: 156)
+            // Quiet: a faint tint inside the field, no edge of its own and no clay.
+            .background(Capsule().fill(Solanum.ink.opacity(0.06)))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(start.phase == .sending)
+        .help("The project a new session starts in")
+        .accessibilityLabel("Project, \(start.pillTitle)")
+        .accessibilityHint("Chooses the project a new session starts in")
+    }
+
+    /// Under the field: what ↩ does while something is typed, then the send's state and how it went.
+    @ViewBuilder
+    private func fieldLine(_ line: CompanionStart.Line) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            switch line {
+            case .hint(let hint):
+                Text(hint).foregroundStyle(Solanum.muted)
+                Spacer(minLength: 8)
+                Text(CompanionText.fullPanelHint).foregroundStyle(Solanum.muted)
+            case .sending(let words):
+                ProgressView().controlSize(.mini).accessibilityHidden(true)
+                Text(words).foregroundStyle(Solanum.muted)
+                Spacer(minLength: 0)
+            case .started(let sentence):
+                Text(sentence).foregroundStyle(Solanum.ink)
+                Spacer(minLength: 8)
+                if let started = start.started {
+                    Button("Open") {
+                        actions.close()
+                        actions.openStarted(started.sessionID, started.projectID)
+                    }
+                    .buttonStyle(SolanumPillStyle(.small))
+                    .help("Open the new session")
+                }
+            case .failed(let sentence):
+                Text(sentence)
+                    .foregroundStyle(Theme.clayText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+        }
+        .font(.system(size: 12))
+        .lineLimit(3)
+        .padding(.horizontal, 12)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Needs you
@@ -366,6 +482,82 @@ struct CompanionHomeView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("\(row.session.displayTitle), \(row.session.projectName)")
         .accessibilityHint("Opens the session")
+    }
+
+    // MARK: Recent
+
+    private func recentSection(_ sections: CompanionSections) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionTitle(CompanionText.recentTitle)
+            ForEach(sections.recent) { recentRow($0) }
+            if sections.recentHidden > 0 {
+                Button { actions.close(); actions.showQuickOpen() } label: {
+                    HStack(spacing: 4) {
+                        Text(CompanionText.more(sections.recentHidden))
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                        Spacer(minLength: 0)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Solanum.muted)
+                    .padding(.leading, 56)
+                    .padding(.vertical, 4)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Open Quick Open")
+                .accessibilityLabel("\(sections.recentHidden) more recent sessions")
+                .accessibilityHint("Opens Quick Open")
+            }
+        }
+    }
+
+    private func recentRow(_ row: CompanionRecentRow) -> some View {
+        Button {
+            Self.press(row.session, option: NSEvent.modifierFlags.contains(.option), actions: actions)
+        } label: {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(row.waits ? Theme.clay : Solanum.muted.opacity(0.7))
+                    .frame(width: 7, height: 7)
+                    .frame(width: 28, height: 28)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(row.session.displayTitle)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Solanum.ink)
+                        .lineLimit(1)
+                    Text(row.detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Solanum.muted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 5)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Open") { Self.press(row.session, option: false, actions: actions) }
+            Button("Open as Reference") { Self.press(row.session, option: true, actions: actions) }
+            Divider()
+            Button("Copy Link") { actions.copyLink(row.session) }
+        }
+        .help("Open the session. Option-click opens it as a reference.")
+        .accessibilityLabel("\(row.session.displayTitle), \(row.detail)")
+        .accessibilityHint("Opens the session")
+        .accessibilityAction(named: "Open as Reference") { Self.press(row.session, option: true, actions: actions) }
+    }
+
+    /// A Recent row's press: the session in Capsid's window, or with ⌥ as a reference beside the work. Either
+    /// way the popover steps aside first.
+    static func press(_ session: SessionStatus, option: Bool, actions: CompanionActions) {
+        actions.close()
+        switch CompanionRecentRow.route(option: option) {
+        case .open: actions.open(session)
+        case .reference: actions.reference(session)
+        }
     }
 
     // MARK: Results today
