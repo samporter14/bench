@@ -174,11 +174,11 @@ struct ShelfPickingTests {
         model.pick(model.shown[2].id, .toggle)
         let picked = model.picked
         let outside = model.shown[8]
-        model.makePDF(from: outside)
+        model.exportPDF(from: outside)
         #expect(model.picked == [outside.id])
         // On a card among them it leaves them alone.
         model.picked = picked
-        model.makePDF(from: model.shown[6])
+        model.exportPDF(from: model.shown[6])
         #expect(model.picked == picked)
     }
 

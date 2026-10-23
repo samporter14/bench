@@ -173,6 +173,73 @@ struct ShelfPDFFileTests {
     }
 }
 
+/// The command's name wherever it shows ("export figure(s) as PDF"), and nowhere the old one.
+@MainActor
+struct ShelfPDFNameTests {
+    @Test func theCommandIsNamedForHowManyArePicked() {
+        #expect(ShelfPDFRules.exportName(count: 1) == "Export Figure as PDF\u{2026}")
+        #expect(ShelfPDFRules.exportName(count: 2) == "Export 2 Figures as PDF\u{2026}")
+        #expect(ShelfPDFRules.exportName(count: 12) == "Export 12 Figures as PDF\u{2026}")
+        // Nothing picked is not a plural.
+        #expect(ShelfPDFRules.exportName(count: 0) == "Export Figure as PDF\u{2026}")
+        // VoiceOver hears the same words without the ellipsis.
+        #expect(ShelfPDFRules.exportSpoken(count: 1) == "Export Figure as PDF")
+        #expect(ShelfPDFRules.exportSpoken(count: 3) == "Export 3 Figures as PDF")
+        // The title bar's pill has no count, the progress has the page it is on, the panel's button is one word.
+        #expect(ShelfPDFRules.exportPillName == "Export as PDF\u{2026}")
+        #expect(ShelfPDFRules.exporting(done: 0, total: 1) == "Exporting\u{2026}")
+        #expect(ShelfPDFRules.exporting(done: 2, total: 3) == "Exporting\u{2026} 2/3")
+        #expect(ShelfPDFRules.savePanelPrompt == "Export")
+        // "Lab meeting <date>.pdf" is unchanged.
+        #expect(ShelfPDFRules.fileName(on: now, calendar: calendar) == "Lab meeting 2026-10-22.pdf")
+    }
+
+    /// The pill is the one place the count is left out, so it must be shorter than the full name for the most that can be picked
+    /// in the window's narrowest state, and the full name stays for the card and the menu.
+    @Test func thePillIsShorterThanTheFullNameForAnyCount() {
+        for count in [1, 2, 10, 99] {
+            #expect(ShelfPDFRules.exportPillName.count < ShelfPDFRules.exportName(count: count).count)
+        }
+    }
+
+    @Test func aCardsMenuNamesWhatItExports() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("shelf-pdf-name-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let disk = KeptDisk(root: { root })
+        await KeptDemo.seed(disk)
+        let index = KeptIndex(disk: disk, root: { root })
+        let shelf = KeptDemo.shelf(index: index, root: root)
+        await index.refreshAndWait()
+        let model = ShelfModel(shelf: shelf, pdf: ShelfPDFMaker(dependencies: .declining))
+        model.pick(model.shown[0].id, .only)
+        #expect(model.exportName(from: model.shown[0]) == "Export Figure as PDF\u{2026}")
+        // A card outside the picks is exported alone, whatever is picked.
+        model.pick(model.shown[2].id, .toggle)
+        model.pick(model.shown[4].id, .toggle)
+        #expect(model.pickCount == 3)
+        #expect(model.exportName(from: model.shown[4]) == "Export 3 Figures as PDF\u{2026}")
+        #expect(model.exportName(from: model.shown[7]) == "Export Figure as PDF\u{2026}")
+    }
+
+    /// The wiring the names can't see: the old name is gone from every file of the command, ⌘P stays, the save panel's
+    /// button and the accessibility labels come from the rules.
+    @Test func theOldNameIsGoneAndTheKeysAndLabelsAreWiredToTheNames() throws {
+        for file in ["Kept/ShelfPicking.swift", "Kept/ShelfPDFCommand.swift", "Kept/ShelfPDFRules.swift", "Kept/ShelfView.swift",
+                     "Kept/ShelfModel.swift", "App/ShelfPDFDemo.swift", "App/Demo.swift"] {
+            let source = FindRepo.source(file)
+            #expect(!source.isEmpty, "\(file)")
+            #expect(!source.contains("Make PDF") && !source.contains("Making PDF") && !source.contains("makePDF"), "\(file)")
+        }
+        let picking = FindRepo.source("Kept/ShelfPicking.swift")
+        #expect(picking.contains(#".keyboardShortcut("p", modifiers: .command)"#))
+        #expect(picking.contains("ShelfPDFRules.exportSpoken(count: model.pickCount)"))
+        #expect(picking.contains("ShelfPDFRules.exportName(count: model.pickCount)"))
+        #expect(picking.contains("ShelfPDFRules.exportPillName"))
+        #expect(FindRepo.source("Kept/ShelfPDFCommand.swift").contains("panel.prompt = ShelfPDFRules.savePanelPrompt"))
+        #expect(FindRepo.source("Kept/ShelfView.swift").contains("Button(model.exportName(from: item)) { model.exportPDF(from: item) }"))
+    }
+}
+
 struct ShelfPDFPictureTests {
     @Test func aPictureIsDrawnFromItsFileAndAPDFFromItsFirstPage() {
         #expect(ShelfPDFRules.picture(for: item("z.png"), text: nil) == .image(URL(fileURLWithPath: "/tmp/kept/Assay development/z/z.png")))

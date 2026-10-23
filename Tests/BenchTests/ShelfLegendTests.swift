@@ -253,11 +253,12 @@ struct ShelfLegendTests {
         let view = try String(contentsOf: kept.appending(path: "ShelfView.swift", directoryHint: .notDirectory), encoding: .utf8)
         let extras = try #require(view.range(of: "struct ShelfExtras: View"))
         let body = String(view[extras.lowerBound...].prefix(upTo: view.range(of: "// MARK: Pieces")!.lowerBound))
-        #expect(body.contains(".onDisappear { editor.flush() }"))
+        // Leaving hides the field, which flushes (ShelfLegendKeptTests holds the rest of the wiring).
+        #expect(body.contains(".onDisappear { editor.hide() }"))
         #expect(!body.contains("saveTask"), "the pending save is no longer cancelled")
         #expect(body.contains(".disabled(!editor.canEdit)"))
-        #expect(body.contains("@StateObject private var editor: ShelfLegendEditor"))
-        // The card makes one editor for each item.
+        #expect(body.contains("@ObservedObject private var editor: ShelfLegendEditor"))
+        // The card shows the model's editor for its item, and the field is made again for each item.
         #expect(view.contains("ShelfExtras(item: item, model: model)\n                        .id(item.id)"))
     }
 }

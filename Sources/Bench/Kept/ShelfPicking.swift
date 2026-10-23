@@ -4,7 +4,7 @@
 // click, an arrow key or Esc goes back to one. The selected item (the one the
 // detail card shows, and the arrows move from) is always among the picks, so
 // everything the Shelf did with one selection works as it did. What is picked
-// is what Make PDF… makes: one page each, in the order the cards are shown.
+// is what Export as PDF… makes: one page each, in the order the cards are shown.
 // The rules are an extension of `ShelfModel`; the pieces that draw them
 // (the toolbar's pill, the card that stands in for the detail while several
 // are picked, the page numbers on the cards) are here too, so ShelfView only
@@ -99,29 +99,42 @@ extension ShelfModel {
         self.selection = selection
     }
 
-    // MARK: Make PDF…
+    // MARK: Export as PDF…
 
-    /// Make PDF… on what is picked.
-    func makePDF() {
+    /// Export Figure as PDF… (or "Export 3 Figures as PDF…") on what is picked. The task is the command's, for a test to wait for.
+    ///
+    /// The pages are decided after the save panel is answered, from the README of each picked item as it is then
+    /// (`latest(of:)`): a legend typed in the last second, or one saved while the panel was up, is in the PDF.
+    @discardableResult
+    func exportPDF() -> Task<Void, Never> {
         let items = pickedItems
-        guard !items.isEmpty else { return }
-        Task { [weak self] in
+        guard !items.isEmpty else { return Task {} }
+        return Task { [weak self] in
             guard let self else { return }
-            await pdf.make(items, tell: { [weak self] in self?.say($0) })
+            await pdf.make(items, latest: { [weak self] in await self?.latest(of: $0) ?? $0 },
+                           tell: { [weak self] in self?.say($0) })
         }
     }
 
-    /// Make PDF… from a card's menu: on the picks when that card is one of them, else on that card alone.
-    func makePDF(from item: ShelfItem) {
+    /// The card menu's name for the command: "Export 3 Figures as PDF…" on a card among the picks, which is what it
+    /// exports, else "Export Figure as PDF…", the card alone.
+    func exportName(from item: ShelfItem) -> String {
+        ShelfPDFRules.exportName(count: picked.contains(item.id) ? picked.count : 1)
+    }
+
+    /// Export as PDF… from a card's menu: on the picks when that card is one of them, else on that card alone.
+    @discardableResult
+    func exportPDF(from item: ShelfItem) -> Task<Void, Never> {
         if !picked.contains(item.id) { pick(item.id, .only) }
-        makePDF()
+        return exportPDF()
     }
 }
 
 // MARK: - The pieces
 
-/// "Make PDF…" in the title bar: a quiet pill (the one that asks is on the picked card), ⌘P.
-struct ShelfMakePDFButton: View {
+/// "Export as PDF…" in the title bar: a quiet pill (the one that asks is on the picked card), ⌘P. The count is not
+/// in it (`ShelfPDFRules.exportPillName` says why); VoiceOver and the card say it.
+struct ShelfExportPDFButton: View {
     @ObservedObject var model: ShelfModel
     @ObservedObject var maker: ShelfPDFMaker
 
@@ -131,18 +144,18 @@ struct ShelfMakePDFButton: View {
     }
 
     private var label: String {
-        if case .making(let done, let total) = maker.phase { return total > 1 ? "Making PDF\u{2026} \(done)/\(total)" : "Making PDF\u{2026}" }
-        return "Make PDF\u{2026}"
+        if case .making(let done, let total) = maker.phase { return ShelfPDFRules.exporting(done: done, total: total) }
+        return ShelfPDFRules.exportPillName
     }
 
     var body: some View {
-        Button { model.makePDF() } label: { Text(label) }
+        Button { model.exportPDF() } label: { Text(label) }
             .buttonStyle(SolanumPillStyle(.small))
             .keyboardShortcut("p", modifiers: .command)
             .disabled(maker.isMaking)
             .fixedSize()
-            .help("One figure on each page, 16:9, for lab meeting")
-            .accessibilityLabel(model.pickCount > 1 ? "Make PDF of \(model.pickCount) items" : "Make PDF")
+            .help("\(ShelfPDFRules.exportSpoken(count: model.pickCount)). One figure on each page, 16:9, for lab meeting.")
+            .accessibilityLabel(ShelfPDFRules.exportSpoken(count: model.pickCount))
     }
 }
 
@@ -182,7 +195,7 @@ struct ShelfPageBadge: View {
 }
 
 /// In place of the detail while several are picked: how many, the pages in
-/// order as small pictures, and the one action that asks (Make PDF…, clay).
+/// order as small pictures, and the one action that asks (Export 3 Figures as PDF…, clay).
 struct ShelfPickedCard: View {
     @ObservedObject var model: ShelfModel
     @ObservedObject var thumbnails: KeptThumbnails
@@ -196,6 +209,12 @@ struct ShelfPickedCard: View {
 
     /// As many small pictures as fit the least width the window has, then a count.
     private static let thumbnailsShown = 6
+
+    /// "Export 3 Figures as PDF…", or "Exporting… 1/3" while it is made.
+    private var exportTitle: String {
+        if case .making(let done, let total) = maker.phase { return ShelfPDFRules.exporting(done: done, total: total) }
+        return ShelfPDFRules.exportName(count: model.pickCount)
+    }
 
     var body: some View {
         let items = model.pickedItems
@@ -213,7 +232,7 @@ struct ShelfPickedCard: View {
                 Button("Clear") { model.pickOnlySelected() }
                     .buttonStyle(SolanumPillStyle(.medium))
                     .help("Back to the one card")
-                Button(maker.isMaking ? "Making PDF\u{2026}" : "Make PDF\u{2026}") { model.makePDF() }
+                Button(exportTitle) { model.exportPDF() }
                     .buttonStyle(SolanumPillStyle(.medium, prominent: true))
                     .disabled(maker.isMaking)
                     .help("One figure on each page, 16:9, for lab meeting")

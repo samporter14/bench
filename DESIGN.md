@@ -5592,10 +5592,23 @@ adds a card or takes it away, ⇧-click picks the run from the last card
 clicked, ⌘A takes everything shown; a plain click, an arrow key or Esc goes
 back to one. While several are picked the cards wear their page number, and
 a card in place of the detail says how many, shows the pages small, and holds
-the one clay action, **Make PDF…**. The same command is a quiet pill in the
-title bar (⌘P) and in a card's menu. It opens a save panel on the Shelf
-window, in Downloads, named "Lab meeting 2026-10-23.pdf" with today's date,
-and then shows the file in Finder; nothing is opened. A page is 960 × 540
+the one clay action, **Export 3 Figures as PDF…** (the number picked; **Export
+Figure as PDF…** for one). The same command is a quiet pill in the title bar
+(⌘P) and in a card's menu. The menu names what it exports: with the count on
+a card among the picks, "Export Figure as PDF…" on a card outside them, which
+is exported alone. The pill says **Export as PDF…** without the count: at the
+window's narrowest, 620 points, the bar also holds "Shelf", the project pill
+and the search, and "Export 10 Figures as PDF…" collides with them as soon as
+a project's name is longer than "All projects"; the count is on the card, on
+the page badges, in the pill's tooltip and in what VoiceOver says. While it is
+made, the pill and the button read "Exporting… 2/3". The command opens a save
+panel on the Shelf window, its button "Export", in Downloads, named "Lab
+meeting 2026-10-23.pdf" with today's date, and then shows the file in Finder;
+nothing is opened. The pages are decided after the panel is answered, from
+each picked item's README read again then, with a legend typed in the last
+second saved first (`ShelfModel.latest(of:)`), so the PDF carries what is
+saved and not what the Shelf held when the command was given; a README
+changed in another app is not written over, and the PDF says what it holds. A page is 960 × 540
 points, 16:9, white, in Solanum's ink: the title (the keep's name, else the
 heading that opens the person's legend, else the file's name), the legend
 (the person's own, up to three lines, else Claude's first sentences, 220
@@ -5631,7 +5644,17 @@ at once when the card goes, so a legend typed just before moving on is kept;
 saves go one at a time, each from the README the last one wrote, and a README
 changed in another app is never written over. A README that can't be read
 turns the field off: "Couldn't read the README, so the legend can't be edited
-here." and the disk's own sentence.
+here." and the disk's own sentence. The editor is the model's, not the card's
+(`ShelfModel.legendEditor(for:)`, by the item's folder), and is kept while it
+holds text no save has taken, a save under way or a sentence: choosing another
+item hides the field and saves what was typed, and if that save then meets a
+README changed in another app, or a disk that says no, the Shelf's dark pill
+says "The legend for “Fig 2B” isn't saved: its README changed in another app.
+Choose the item to decide." (or "Couldn't save the legend for “Fig 2B”. Choose
+the item to see why; your text is kept."), and choosing the item again shows
+the draft with its Use Mine and Use Theirs, not the README's old words. An
+editor with nothing left to save or say is let go; with the field on screen a
+failure is the field's to say and the pill says nothing.
 
 ## Find any figure (Find/, since 1.0)
 
@@ -5672,7 +5695,18 @@ checksum, code or lineage, or any text of a frame but its name). One
 statement at a time, interrupted at 3 seconds or on cancel, newest 100 (200
 at most); what Claude Science's own list shows (not ephemeral, not an upload,
 not `user_hidden`, latest version not intermediate; `plan*.json` and
-`goal_*.html` dropped). A session is the artifact's `root_frame_id`, the one
+`goal_*.html` dropped; sessions that are hidden, the concierge's or uploads
+left out). All of it is decided before the limit, never after it: files of a
+hidden session or the planner's can be newer than every real match, and when
+they were removed after the cut they used the limit up and a search returned
+nothing. The planner's names are matched by their last part, case ignored,
+as `FindRanking.isPlanningFile` does (the Swift check stays as a second
+line); a `shown` step looks once at each session that has a match, with the
+session list's own test, so the wide `frames` rows are read for each such
+session and no longer only for the listed ones. On a made-up database of
+80,000 artifacts and 2,000 sessions with 900 MB of blobs the worst case (a
+word every session matches) went from 45–130 ms to 220–450 ms warm; a real
+database lists a few thousand files. A session is the artifact's `root_frame_id`, the one
 Results groups it by. Two optional indexes are used when present. Measured on
 a made-up database from the 0.1.70 migrations (79,688 artifacts): 60–140 ms
 warm; on Sam's Mac, Diagnostics' line said 2,938 files listed and a search

@@ -22,7 +22,7 @@ final class ShelfModel: ObservableObject {
 
     let shelf: Shelf
     var index: KeptIndex { shelf.index }
-    /// Make PDF… (ShelfPDFCommand.swift).
+    /// Export Figure as PDF… (ShelfPDFCommand.swift).
     let pdf: ShelfPDFMaker
 
     @Published private(set) var items: [ShelfItem] = []
@@ -39,7 +39,7 @@ final class ShelfModel: ObservableObject {
             pickAnchor = selection
         }
     }
-    /// Every item picked (⌘-click, ⇧-click, ⌘A), the selected one among them: what Make PDF… makes.
+    /// Every item picked (⌘-click, ⇧-click, ⌘A), the selected one among them: what Export as PDF… makes a page of each.
     @Published var picked: Set<String> = []
     /// The card a ⇧-click runs from.
     var pickAnchor: String?
@@ -50,6 +50,12 @@ final class ShelfModel: ObservableObject {
     /// put its error where the Undo was.
     private(set) var removing: Set<String> = []
 
+    /// The legend editors, by item id (its folder): one for each item whose field is or was on screen and still has
+    /// something to save or to say. The card shows the model's editor, so a draft outlives the card (ShelfLegend.swift),
+    /// and a PDF waits for the editors of the items it is made from (ShelfPicking.swift).
+    private var legendEditors: [String: ShelfLegendEditor] = [:]
+    private let legendDelay: Duration
+
     private var subscription: AnyCancellable?
     private var noteTask: Task<Void, Never>?
     private var pending: (folder: URL, until: Date)?
@@ -58,8 +64,9 @@ final class ShelfModel: ObservableObject {
     private let noteLifetime: Duration
 
     init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() },
-         pdf: ShelfPDFMaker? = nil) {
+         pdf: ShelfPDFMaker? = nil, legendDelay: Duration = .seconds(1)) {
         self.shelf = shelf
+        self.legendDelay = legendDelay
         self.pdf = pdf ?? .live(disk: shelf.index.disk)
         self.now = now
         self.noteLifetime = noteLifetime
@@ -74,6 +81,43 @@ final class ShelfModel: ObservableObject {
             }
         }
         reconcile()
+    }
+
+    // MARK: The legend fields
+
+    /// The editor for `item`'s legend: the one kept from before when it still holds a draft, a save under way or a
+    /// sentence, else a new one. Editors with nothing left to say are let go here. A save that fails after the field
+    /// is gone puts a line on the window's pill, naming the item.
+    func legendEditor(for item: ShelfItem) -> ShelfLegendEditor {
+        legendEditors = legendEditors.filter { $0.key == item.id || !$0.value.isIdle }
+        if let held = legendEditors[item.id] { return held }
+        let editor = ShelfLegendEditor(folder: item.folder, disk: index.disk, delay: legendDelay) { [weak self] in
+            await self?.index.reload(item.result)
+        }
+        let name = item.title
+        editor.failed = { [weak self] conflict in self?.say(ShelfLegendEditor.leftUnsaved(name, conflict: conflict)) }
+        legendEditors[item.id] = editor
+        return editor
+    }
+
+    /// Whether an editor is kept for `id`: a draft, a save or a sentence is waiting in it.
+    func keepsLegendEditor(for id: String) -> Bool { legendEditors[id].map { !$0.isIdle } ?? false }
+
+    /// `items` as the disk has them now: the legends typed in their fields written first (and a save that was
+    /// already under way finished), then each README read again, so a PDF is made from what is saved, not from the
+    /// words the shelf held when the command was given. An item whose README can't be read stays as it was.
+    func latest(of items: [ShelfItem]) async -> [ShelfItem] {
+        for item in items { await legendEditors[item.id]?.settle() }
+        var fresh: [ShelfItem] = []
+        for item in items {
+            guard let read = try? await index.disk.readme(at: item.folder) else {
+                fresh.append(item)
+                continue
+            }
+            let result = KeptResult(folder: item.folder, collection: item.collection, record: read.record, text: read.text)
+            fresh.append(ShelfItem(result: result, others: item.others))
+        }
+        return fresh
     }
 
     // MARK: What is shown

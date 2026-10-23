@@ -1,4 +1,4 @@
-// ShelfPDFCommand.swift — Make PDF… on the Shelf (DESIGN.md, Shelf → Lab-meeting
+// ShelfPDFCommand.swift — Export Figure as PDF… on the Shelf (DESIGN.md, Shelf → Lab-meeting
 // PDF): what happens between the pick and the file. A save panel (Downloads,
 // "Lab meeting 2026-10-23.pdf"), the words of each text file read through the
 // disk layer, the drawing off the main actor (ShelfPDF.swift), and then the
@@ -67,7 +67,13 @@ final class ShelfPDFMaker: ObservableObject {
     /// Asks where to save, makes the PDF of `items` (a page each, in the order given) and shows it in
     /// Finder. `tell` gets the one sentence when it can't be made. Nothing happens while another PDF is
     /// being made, or when the person cancels the panel.
-    func make(_ items: [ShelfItem], tell: @MainActor (String) -> Void) async {
+    ///
+    /// `latest` is asked once the panel is answered, the last moment before the pages are decided: it
+    /// gives the items as the disk has them then (a legend typed a second ago is saved, or the README was
+    /// changed in another app while the panel was up), so the pages carry what is saved and not what the
+    /// shelf held when the command was given. The default leaves them as they were.
+    func make(_ items: [ShelfItem], latest: @MainActor ([ShelfItem]) async -> [ShelfItem] = { $0 },
+              tell: @MainActor (String) -> Void) async {
         guard !isMaking, !asking else { return }
         guard !items.isEmpty else { return tell(ShelfPDFRules.nothingChosen) }
         let now = dependencies.now()
@@ -77,6 +83,7 @@ final class ShelfPDFMaker: ObservableObject {
         guard let url = chosen else { return }
         phase = .making(done: 0, total: items.count)
         defer { phase = .idle }
+        let items = await latest(items)
         var text: [String: String] = [:]
         for item in items where ShelfPeek.proseExtensions.contains((item.fileName as NSString).pathExtension.lowercased()) {
             if let words = await dependencies.words(item.fileURL) { text[item.id] = words }
@@ -117,7 +124,7 @@ final class ShelfPDFMaker: ObservableObject {
         panel.directoryURL = URL.downloadsDirectory
         panel.canCreateDirectories = true
         panel.isExtensionHidden = false
-        panel.prompt = "Make PDF"
+        panel.prompt = ShelfPDFRules.savePanelPrompt
         panel.message = "One figure on each page, 16:9, for lab meeting."
         return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             let done: @MainActor (NSApplication.ModalResponse) -> Void = { response in

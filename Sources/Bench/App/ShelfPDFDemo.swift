@@ -1,6 +1,6 @@
 // ShelfPDFDemo.swift — `--demo shelf-pdf` (DESIGN.md, Shelf → Lab-meeting PDF):
 // the Shelf window on the demo's made-up folders in a temporary root, with two
-// figures picked, and the PDF Make PDF… would make from them written into a
+// figures picked, and the PDF that Export 2 Figures as PDF… would make from them written into a
 // temporary folder (its path is printed). Nothing is read from Claude Science,
 // the save panel is never opened, nothing is shown in Finder, and everything
 // the demo made is deleted when Capsid quits.
@@ -37,7 +37,7 @@ enum ShelfPDFDemo {
         }
     }
 
-    /// The PDF of `items`, as Make PDF… makes it, into `folder`.
+    /// The PDF of `items`, as Export as PDF… makes it, into `folder`.
     private static func write(_ items: [ShelfItem], in folder: URL, disk: KeptDisk) async {
         var text: [String: String] = [:]
         for item in items where item.kind == .document {

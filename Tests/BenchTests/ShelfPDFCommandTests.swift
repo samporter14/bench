@@ -1,4 +1,4 @@
-// ShelfPDFCommandTests.swift — Make PDF… from the pick to Finder
+// ShelfPDFCommandTests.swift — Export Figure as PDF… from the pick to Finder
 // (Kept/ShelfPDFCommand.swift), with the panel, the drawing and Finder
 // replaced by fakes: what the panel is offered, that cancelling does nothing,
 // the pages that reach the drawing and the words of the text files among them,

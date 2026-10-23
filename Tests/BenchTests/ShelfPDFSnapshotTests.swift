@@ -50,7 +50,7 @@ struct ShelfPDFSnapshotTests {
         return (ShelfRules.items(from: index.results), disk)
     }
 
-    /// The made-up shelf's items by file name, with the first words of its text files read as Make PDF… reads them.
+    /// The made-up shelf's items by file name, with the first words of its text files read as Export as PDF… reads them.
     private static func madeShelf(in root: URL) async throws -> (items: [ShelfItem], text: [String: String]) {
         let (items, disk) = try await madeItems(in: root)
         var text: [String: String] = [:]
@@ -167,9 +167,9 @@ struct ShelfPDFSnapshotTests {
         }
     }
 
-    // MARK: The Shelf window with Make PDF…
+    // MARK: The Shelf window with Export as PDF…
 
-    /// The title bar the window draws around the content (the toolbar belongs to the window), with Make PDF… in it.
+    /// The title bar the window draws around the content (the toolbar belongs to the window), with Export as PDF… in it.
     private struct Window: View {
         let model: ShelfModel
         let content: ShelfView
@@ -183,7 +183,7 @@ struct ShelfPDFSnapshotTests {
                     Text("Shelf").font(.system(size: 15, weight: .semibold)).foregroundStyle(Solanum.ink).padding(.leading, 8)
                     ShelfProjectPill(model: model)
                     Spacer()
-                    if model.pickCount > 0 { ShelfMakePDFButton(model: model) }
+                    if model.pickCount > 0 { ShelfExportPDFButton(model: model) }
                     ShelfSearchPill(search: .constant(model.search))
                 }
                 .padding(.horizontal, 14)
@@ -232,7 +232,7 @@ struct ShelfPDFSnapshotTests {
         let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
         let size = NSSize(width: 880, height: 820)
 
-        // One selected, as the window opens: Make PDF… is in the title bar, the detail below.
+        // One selected, as the window opens: Export as PDF… is in the title bar, the detail below.
         let one = ShelfModel(shelf: shelf, pdf: ShelfPDFMaker(dependencies: .declining))
         try await draw(one, thumbnails: thumbnails, size: size, name: "shelf-pdf-one", to: directory)
 
