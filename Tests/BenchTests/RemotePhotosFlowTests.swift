@@ -450,7 +450,7 @@ struct PhotoWriterRoomTests {
 
 @MainActor
 private final class PhotoRig {
-    enum Upload { case echo, none, status(Int), noUpload, wrongSize }
+    enum Upload { case echo, none, status(Int), noUpload, wrongSize, unknown }
 
     var actionsOn = true
     var browseOn = true
@@ -532,6 +532,7 @@ private final class PhotoRig {
             case .none: return nil
             case .status(let status): return PhotoUploadReply(status: status)
             case .noUpload: return PhotoUploadReply(status: 200)
+            case .unknown: return .unknown
             }
         }))
 
@@ -672,6 +673,67 @@ struct RemotePhotosSessionTests {
             #expect(decode(reply.body).string("result") == "unavailable", "\(index)")
             #expect(decode(reply.body).string("sentence") == saved, "\(index)")
         }
+    }
+
+    // MARK: A write that gets no answer
+
+    private func turns(_ text: String, dated offset: TimeInterval = 1) -> [SessionProjection.Turn] {
+        [.init(role: .you, at: rig.now.addingTimeInterval(offset), text: text)]
+    }
+
+    private func sessionWithTurns(_ turns: [SessionProjection.Turn]?, status: String = "completed", queued: Int = 0) -> SessionProjection {
+        SessionProjection(status: status, agentName: "made-up-agent", projectID: "proj-1", queued: queued, turns: turns)
+    }
+
+    @Test func anUploadWithNoAnswerMayBeInTheProjectAndNothingIsSent() async {
+        rig.upload = .unknown
+        let reply = await rig.session(PhotoFixture.body(text: "x"))
+        #expect(decode(reply.body).string("result") == "unknown")
+        #expect(decode(reply.body).string("sentence") == RemotePhotos.Sentence.uploadUnsure)
+        #expect(rig.writes.isEmpty)
+        #expect(rig.uploads.count == 1)
+    }
+
+    @Test func aMessageWithNoAnswerThatTheSessionShowsIsSent() async {
+        rig.writeReply = .unknown
+        // The read before, the one after the upload, then the one that looks.
+        rig.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"), sessionWithTurns(turns("Look at this gel."))]
+        let reply = await rig.session(PhotoFixture.body(text: "Look at this gel."))
+        #expect(decode(reply.body).string("result") == "sent")
+        #expect(rig.log == ["read", "upload", "read", "write", "turns"])
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aMessageWithNoAnswerThatTheSessionDoesntShowCanBeTriedAgain() async {
+        rig.writeReply = .unknown
+        rig.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"), sessionWithTurns([])]
+        let reply = await rig.session(PhotoFixture.body(text: "Look at this gel."))
+        #expect(decode(reply.body).string("result") == "retry")
+        #expect(decode(reply.body).string("sentence") == RemotePhotos.Sentence.savedNotThere)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aMessageWithNoAnswerThatCantBeLookedForIsUnknown() async {
+        rig.writeReply = .unknown
+        rig.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"), nil]
+        let reply = await rig.session(PhotoFixture.body(text: "Look at this gel."))
+        #expect(decode(reply.body).string("result") == "unknown")
+        #expect(decode(reply.body).string("sentence") == RemotePhotos.Sentence.savedUnsure)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aNewSessionWithNoAnswerIsFoundByItsIntentOrOfferedAgain() async {
+        rig.createReply = .unknown
+        rig.intents = [nil, newID]
+        let found = await rig.project(PhotoFixture.body(text: "x"))
+        #expect(decode(found.body).string("result") == "started")
+        #expect(decode(found.body).string("id") == newID)
+        rig.createReply = .unknown
+        rig.intents = [nil, nil]
+        let missing = await rig.project(PhotoFixture.body(text: "x"), device: "device-2")
+        #expect(decode(missing.body).string("result") == "retry")
+        #expect(decode(missing.body).string("sentence") == RemotePhotos.Sentence.startNotThere)
+        #expect(rig.writes.count == 2)
     }
 
     // MARK: A retry

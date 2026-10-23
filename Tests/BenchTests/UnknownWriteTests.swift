@@ -1,0 +1,453 @@
+// UnknownWriteTests.swift — a write that gets no answer is unknown, and a fresh
+// read of the session settles it (Remote/WriteSettle.swift): it landed, it
+// didn't (and can be tried again, by the person), or that can't be told. Never
+// sent again on its own, and a session's queue moves on past a turn that stalls.
+// Made-up sessions and a fake page; nothing reaches a real daemon.
+import Foundation
+import Testing
+@testable import Bench
+
+private let root = "0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5"
+private let intent = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+
+private func projection(_ status: String, version: String? = nil, approval: PlanFrame.Approval = .no,
+                        asks: [SessionProjection.Ask?] = [], queued: Int = 0,
+                        turns: [SessionProjection.Turn]? = nil, permission: PermissionRequest? = nil) -> SessionProjection {
+    SessionProjection(status: status, agentName: "made-up-agent", projectID: "proj-made-up", queued: queued, asks: asks,
+                      planVersion: version, planArtifact: version == nil ? nil : "art-1", approval: approval,
+                      turns: turns, permission: permission)
+}
+
+private func question(_ text: String = "Which buffer?", tool: String = "toolu_1") -> SessionProjection.Ask {
+    SessionProjection.Ask(toolID: tool, items: [SessionProjection.Question(
+        question: text, header: "Buffer", multi: false,
+        options: [.init(label: "HEPES", detail: nil), .init(label: "Tris", detail: nil)])])
+}
+
+private let tool = PermissionRequest(requestID: "req-tool", toolID: "tool-1", mode: "parked", kind: "mcp_tool", frame: root,
+                                     tool: "search_made_up_papers", server: "Made-up Library", source: "directory", readOnly: true)
+
+/// A page that answers the read before a write from `before`, every read after it
+/// from `after`, and a write from `reply`, or never.
+@MainActor
+private final class Rig {
+    var before: SessionProjection? = projection("completed")
+    var after: SessionProjection?
+    var reply: RemoteWriteResult? = .unknown
+    /// The first write goes in and never comes back, until `release()`.
+    var firstWriteHangs = false
+    var afterHangs = false
+    var now = Date(timeIntervalSince1970: 1_791_833_400)
+    private(set) var reads: [Bool] = []
+    private(set) var writes: [RemoteWrite] = []
+    private var parked: CheckedContinuation<Void, Never>?
+
+    func sessions(turnLimit: Duration = .seconds(60), settleLimit: Duration = .seconds(60)) -> RemoteSessions {
+        var dependencies = RemoteSessions.Dependencies(
+            actionsOn: { true },
+            known: { [] },
+            cardPlan: { _ in nil },
+            read: { id, full in
+                self.reads.append(full)
+                if self.writes.isEmpty { return full ? self.before : self.before?.withoutTurns }
+                if self.afterHangs { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
+                return full ? self.after : self.after?.withoutTurns
+            },
+            readPlan: { _ in nil },
+            write: { write in
+                self.writes.append(write)
+                if self.firstWriteHangs && self.writes.count == 1 { await withCheckedContinuation { self.parked = $0 } }
+                return self.firstWriteHangs && self.writes.count > 1 ? RemoteWriteResult(status: 200, bodyStatus: "accepted") : self.reply
+            },
+            now: { self.now })
+        dependencies.turnLimit = turnLimit
+        dependencies.settleLimit = settleLimit
+        return RemoteSessions(dependencies: dependencies)
+    }
+
+    func release() {
+        parked?.resume()
+        parked = nil
+    }
+
+    var isParked: Bool { parked != nil }
+}
+
+/// What a request comes to, and how many times the checking line was called.
+@MainActor
+private func run(_ rig: Rig, _ request: RemoteActionRequest, sessions: RemoteSessions? = nil) async -> (result: RemoteActionResult, checking: Int) {
+    var checking = 0
+    let result = await (sessions ?? rig.sessions()).respond(request, session: root, checking: { checking += 1 })
+    return (result, checking)
+}
+
+// MARK: Approving
+
+@MainActor
+struct UnknownApprovalTests {
+    private let rig = Rig()
+    private let approve = RemoteActionRequest.approve(version: "ver-1")
+
+    @Test func aPlanStillWaitingMeansItDidNotGoThrough() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-1")
+        let (result, checking) = await run(rig, approve)
+        #expect(result == .notThere)
+        #expect(result.result == .retry && result.sentence == "That didn't go through. Try again.")
+        #expect(checking == 1)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aPlanThatIsWorkingNowWasApproved() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("processing", version: "ver-1")
+        let (result, _) = await run(rig, approve)
+        #expect(result == RemoteActionResult(result: .approved, sentence: RemoteDecide.Sentence.approved))
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aPlanFlaggedApprovedWasApproved() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-1", approval: .yes)
+        #expect(await run(rig, approve).result.result == .approved)
+    }
+
+    @Test func anotherPlanWaitingIsAChange() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-2")
+        let (result, _) = await run(rig, approve)
+        #expect(result == RemoteActionResult(result: .changed, sentence: RemoteDecide.Sentence.planChanged))
+    }
+
+    @Test func aSessionThatCantBeReadAfterwardsIsUnknown() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = nil
+        let (result, checking) = await run(rig, approve)
+        #expect(result == .unsure)
+        #expect(result.result == .unknown && result.sentence == RemoteDecide.Sentence.unsure)
+        #expect(checking == 1)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aStateThatSaysNeitherIsUnknown() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("failed", version: "ver-1")
+        #expect(await run(rig, approve).result == .unsure)
+    }
+
+    @Test func aReadThatNeverReturnsIsCutOffAndIsUnknown() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.afterHangs = true
+        let sessions = rig.sessions(settleLimit: .milliseconds(40))
+        #expect(await run(rig, approve, sessions: sessions).result == .unsure)
+    }
+
+    @Test func anAnswerThatCameBackNeverCallsTheCheckingLineOrReadsAgain() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.reply = RemoteWriteResult(status: 200, bodyStatus: "accepted")
+        let (result, checking) = await run(rig, approve)
+        #expect(result.result == .approved)
+        #expect(checking == 0)
+        #expect(rig.reads == [false])
+    }
+}
+
+// MARK: Answering
+
+@MainActor
+struct UnknownAnswerTests {
+    private let rig = Rig()
+    private let answer = RemoteActionRequest.answer(toolID: "toolu_1", answers: ["Which buffer?": "HEPES"])
+
+    @Test func aQuestionStillWaitingMeansItDidNotGoThrough() async {
+        rig.before = projection("awaiting_user_response", asks: [question()])
+        rig.after = projection("awaiting_user_response", asks: [question()])
+        let (result, checking) = await run(rig, answer)
+        #expect(result == .notThere)
+        #expect(checking == 1)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aQuestionThatIsGoneWasAnswered() async {
+        rig.before = projection("awaiting_user_response", asks: [question()])
+        rig.after = projection("processing")
+        let (result, _) = await run(rig, answer)
+        #expect(result == RemoteActionResult(result: .changed, sentence: RemoteDecide.Sentence.alreadyAnswered))
+    }
+
+    @Test func anotherQuestionWaitingMeansTheOneAskedWasAnswered() async {
+        rig.before = projection("awaiting_user_response", asks: [question()])
+        rig.after = projection("awaiting_user_response", asks: [question("Which temperature?", tool: "toolu_2")])
+        #expect(await run(rig, answer).result.sentence == RemoteDecide.Sentence.alreadyAnswered)
+    }
+
+    @Test func aQuestionTheReadCouldntUnderstandCouldBeThisOne() async {
+        rig.before = projection("awaiting_user_response", asks: [question()])
+        rig.after = projection("awaiting_user_response", asks: [nil])
+        #expect(await run(rig, answer).result == .unsure)
+    }
+
+    @Test func aSessionThatCantBeReadAfterwardsIsUnknown() async {
+        rig.before = projection("awaiting_user_response", asks: [question()])
+        rig.after = nil
+        #expect(await run(rig, answer).result == .unsure)
+    }
+
+    @Test func chooseForMeAndCancelAreSettledTheSameWay() async {
+        for request in [RemoteActionRequest.chooseForMe(toolID: "toolu_1"), .cancel(toolID: "toolu_1")] {
+            let rig = Rig()
+            rig.before = projection("awaiting_user_response", asks: [question()])
+            rig.after = projection("awaiting_user_response", asks: [question()])
+            #expect(await run(rig, request).result == .notThere)
+            #expect(rig.writes.count == 1)
+        }
+    }
+}
+
+// MARK: A message
+
+@MainActor
+struct UnknownMessageTests {
+    private let rig = Rig()
+    private let message = RemoteActionRequest.message(text: "Try one panel per condition.", intentID: intent)
+
+    private func you(_ text: String, after seconds: TimeInterval? = 1) -> SessionProjection.Turn {
+        .init(role: .you, at: seconds.map { rig.now.addingTimeInterval($0) }, text: text)
+    }
+
+    @Test func aMessageTheSessionShowsAsYoursWasSent() async {
+        rig.after = projection("processing", turns: [you("Try one panel per condition.")])
+        let (result, checking) = await run(rig, message)
+        #expect(result == RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.sent))
+        #expect(checking == 1)
+        #expect(rig.writes.count == 1)
+        // The read that looked had the turns.
+        #expect(rig.reads == [false, true])
+    }
+
+    @Test func toAFailedSessionItPicksUpAgain() async {
+        rig.before = projection("failed")
+        rig.after = projection("processing", turns: [you("Try one panel per condition.")])
+        #expect(await run(rig, message).result.result == .resumed)
+    }
+
+    @Test func anOlderMessageOfTheSameWordsIsNotThisOne() async {
+        rig.after = projection("completed", turns: [you("Try one panel per condition.", after: -3_600)])
+        #expect(await run(rig, message).result == .notThere)
+    }
+
+    @Test func aTurnWithNoTimeCouldBeAnOlderOne() async {
+        rig.after = projection("completed", turns: [you("Try one panel per condition.", after: nil)])
+        #expect(await run(rig, message).result == .unsure)
+    }
+
+    @Test func aTurnOfClaudesWordsIsNotYours() async {
+        rig.after = projection("completed", turns: [.init(role: .claude, at: rig.now.addingTimeInterval(1), text: "Try one panel per condition.")])
+        #expect(await run(rig, message).result == .notThere)
+    }
+
+    @Test func aMessageWaitingInTheQueueIsQueued() async {
+        rig.before = projection("processing", queued: 1)
+        rig.after = projection("processing", queued: 2, turns: [])
+        let (result, _) = await run(rig, message)
+        #expect(result == RemoteActionResult(result: .queued, sentence: RemoteDecide.Sentence.queued))
+    }
+
+    @Test func nothingShowingMeansItDidNotGoThrough() async {
+        rig.before = projection("processing", queued: 1)
+        rig.after = projection("processing", queued: 1, turns: [you("Something else entirely")])
+        let (result, _) = await run(rig, message)
+        #expect(result == .notThere)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aSessionThatCantBeReadWithItsTurnsIsUnknown() async {
+        rig.after = nil
+        #expect(await run(rig, message).result == .unsure)
+        let bare = Rig()
+        bare.after = projection("completed", turns: nil)
+        #expect(await run(bare, message).result == .unsure)
+    }
+
+    @Test func theWordsAreComparedByTheirFirstHundredsAndAttachmentLinesAreNotWords() {
+        let line = #"{"type":"attachment","id":"11111111-1111-4111-8111-111111111111","version_id":"22222222-2222-4222-8222-222222222222","filename":"plate.csv","artifact_ref":"{{artifact:11111111-1111-4111-8111-111111111111}}","content_type":"text/csv","size_bytes":10}"#
+        #expect(MessageSeen.key(of: "Look at this.\n\n" + line) == "Look at this.")
+        #expect(MessageSeen.key(of: line) == "")
+        #expect(MessageSeen.key(of: String(repeating: "word ", count: 100)).count == MessageSeen.compared)
+        #expect(MessageSeen.matches("Look at this.\n\nAttached: plate.csv", "Look at this."))
+        #expect(MessageSeen.matches("Attached: plate.csv", ""))
+        #expect(!MessageSeen.matches("Look at that.", "Look at this."))
+        // White space is one space.
+        #expect(MessageSeen.matches("Look   at\nthis.", MessageSeen.key(of: "Look at this.")))
+    }
+}
+
+// MARK: A permission answer
+
+@MainActor
+struct UnknownPermissionTests {
+    private let rig = Rig()
+    private let allow = RemoteActionRequest.permission(id: "req-tool", allow: true, kind: nil)
+
+    @Test func aRequestStillAtTheHeadMeansItDidNotGoThrough() async {
+        rig.before = projection("awaiting_user_response", permission: tool)
+        rig.after = projection("awaiting_user_response", permission: tool)
+        let (result, checking) = await run(rig, allow)
+        #expect(result == .notThere)
+        #expect(checking == 1)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aRequestThatIsGoneWasHandled() async {
+        rig.before = projection("awaiting_user_response", permission: tool)
+        rig.after = projection("processing")
+        let (result, _) = await run(rig, allow)
+        #expect(result == RemoteActionResult(result: .changed, sentence: PermissionDecide.Sentence.alreadyHandled))
+    }
+
+    @Test func aSessionStillWaitingThatShowsNoRequestIsUnknown() async {
+        rig.before = projection("awaiting_user_response", permission: tool)
+        rig.after = projection("awaiting_user_response")
+        #expect(await run(rig, allow).result == .unsure)
+    }
+
+    @Test func aSessionThatCantBeReadAfterwardsIsUnknown() async {
+        rig.before = projection("awaiting_user_response", permission: tool)
+        rig.after = nil
+        #expect(await run(rig, allow).result == .unsure)
+    }
+}
+
+// MARK: What to change in a plan
+
+@MainActor
+struct UnknownPlanFeedbackTests {
+    private let rig = Rig()
+    private let feedback = RemoteActionRequest.planFeedback(version: "ver-1", text: "Use two replicates.", intentID: intent)
+
+    private func you(_ text: String) -> SessionProjection.Turn {
+        .init(role: .you, at: rig.now.addingTimeInterval(1), text: text)
+    }
+
+    @Test func wordsTheSessionShowsAsYoursWereSent() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("processing", version: "ver-1", turns: [you("Use two replicates.")])
+        let (result, checking) = await run(rig, feedback)
+        #expect(result == RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.revising))
+        #expect(checking == 1)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aPlanStillWaitingAtTheSameVersionWithoutThemDidNotGoThrough() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-1", turns: [])
+        #expect(await run(rig, feedback).result == .notThere)
+    }
+
+    @Test func aPlanThatMovedOnWithoutThemIsAChange() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-2", turns: [])
+        #expect(await run(rig, feedback).result.result == .changed)
+    }
+
+    @Test func aSessionThatCantBeReadIsUnknown() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = nil
+        #expect(await run(rig, feedback).result == .unsure)
+    }
+}
+
+// MARK: The queue
+
+@MainActor
+struct SessionQueueDeadlineTests {
+    private let rig = Rig()
+    private let approve = RemoteActionRequest.approve(version: "ver-1")
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<2_000 where !condition() { await Task.yield() }
+    }
+
+    @Test func aTurnThatNeverEndsIsUnknownAndTheNextOneGoes() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-1")
+        rig.firstWriteHangs = true
+        let sessions = rig.sessions(turnLimit: .milliseconds(80))
+        let first = Task { @MainActor in await sessions.respond(approve, session: root) }
+        await waitUntil { rig.isParked }
+        // A second action on the same session, behind the stuck one.
+        let second = Task { @MainActor in await sessions.respond(approve, session: root) }
+        let stalled = await first.value
+        #expect(stalled == .unsure)
+        let next = await second.value
+        #expect(next.result == .approved)
+        // Both wrote once each; the stuck write was never sent again.
+        #expect(rig.writes.count == 2)
+        rig.release()
+    }
+
+    @Test func aWriteThatLeftAfterTheTurnWasGivenUpOnSendsNothingMore() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.firstWriteHangs = true
+        let sessions = rig.sessions(turnLimit: .milliseconds(40))
+        let first = Task { @MainActor in await sessions.respond(approve, session: root) }
+        await waitUntil { rig.isParked }
+        _ = await first.value
+        // The stuck write finally comes back: nothing follows it (no settle read, no second write).
+        let readsThen = rig.reads.count
+        rig.release()
+        for _ in 0..<50 { await Task.yield() }
+        #expect(rig.writes.count == 1)
+        #expect(rig.reads.count == readsThen)
+    }
+
+    @Test func aCallerCancelledWhileItWaitsItsTurnNeverRuns() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.reply = RemoteWriteResult(status: 200, bodyStatus: "accepted")
+        rig.firstWriteHangs = true
+        let sessions = rig.sessions()
+        let first = Task { @MainActor in await sessions.respond(approve, session: root) }
+        await waitUntil { rig.isParked }
+        let second = Task { @MainActor in await sessions.respond(approve, session: root) }
+        for _ in 0..<20 { await Task.yield() }
+        second.cancel()
+        // It is released at once, with nothing sent.
+        let cancelled = await second.value
+        #expect(cancelled == .unavailable)
+        rig.release()
+        _ = await first.value
+        #expect(rig.writes.count == 1)
+        #expect(rig.reads.count == 1)
+    }
+
+    @Test func turnsOfOneSessionRunOneAtATimeInOrder() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-1")
+        rig.reply = RemoteWriteResult(status: 200, bodyStatus: "accepted")
+        let sessions = rig.sessions()
+        async let a = sessions.respond(approve, session: root)
+        async let b = sessions.respond(approve, session: root)
+        let results = await [a, b]
+        #expect(results.map(\.result) == [.approved, .approved])
+        #expect(rig.writes.count == 2)
+    }
+
+    @Test func aTurnThatIsOverInTimeEndsAsFinishedNotStalled() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.reply = RemoteWriteResult(status: 200, bodyStatus: "accepted")
+        let sessions = rig.sessions(turnLimit: .seconds(30))
+        let end = await sessions.runSerially(on: root, limit: .seconds(30)) { .ok(.unavailable) }
+        guard case .finished = end else { Issue.record("not finished: \(end)"); return }
+    }
+
+    @Test func aTurnThatNeverReturnsIsStalledAndTheQueueIsFree() async {
+        let sessions = rig.sessions()
+        let end = await sessions.runSerially(on: root, limit: .milliseconds(30)) {
+            await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+            return .ok(.unavailable)
+        }
+        guard case .stalled = end else { Issue.record("not stalled: \(end)"); return }
+        let after = await sessions.runSerially(on: root, limit: .seconds(30)) { .ok(.unavailable) }
+        guard case .finished = after else { Issue.record("not finished: \(after)"); return }
+    }
+}

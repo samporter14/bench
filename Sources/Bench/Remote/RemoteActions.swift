@@ -844,6 +844,8 @@ final class RemoteSessions {
                   settle: (SessionProjection?) -> RemoteActionResult) async -> RemoteActionResult {
         let reply = await send(write)
         guard reply?.isUnknown == true else { return map(reply) }
+        // A turn that was given up on while the write was out has ended as unknown: it says and reads nothing more.
+        guard !Task.isCancelled else { return .unsure }
         checking?()
         return settle(await settledRead(id, full: full))
     }
@@ -858,6 +860,7 @@ final class RemoteSessions {
         let since = dependencies.now()
         let reply = await send(write)
         guard reply?.isUnknown == true else { return (reply, RemoteDecide.messaged(reply, status: before?.status ?? "")) }
+        guard !Task.isCancelled else { return (reply, .unsure) }
         checking?()
         let fresh = await settledRead(id, full: true)
         return (reply, RemoteDecide.settledMessage(text: text, before: before, since: since, fresh: fresh))

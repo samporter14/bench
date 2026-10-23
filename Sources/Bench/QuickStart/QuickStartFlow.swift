@@ -222,6 +222,9 @@ final class QuickStartFlow: QuickStartSending {
         /// The upload to a project: nil when it didn't complete.
         var upload: @MainActor (_ project: String, _ file: UploadFile) async -> PhotoUploadReply?
         var now: @MainActor () -> Date
+        /// The most one message's turn in its session's queue may take, given
+        /// the sizes of the files it uploads (`WriteDeadline.turn`).
+        var turn: @MainActor ([Int]) -> Duration = { WriteDeadline.turn(uploadBytes: $0) }
 
         static func live() -> Dependencies {
             Dependencies(
@@ -365,7 +368,7 @@ final class QuickStartFlow: QuickStartSending {
     private func send(to id: String, request: Request, progress: @escaping @MainActor (Progress) -> Void) async -> Outcome {
         var outcome = Outcome.failed(sentence: Sentence.notSent)
         // The turn is bounded, uploads and all, so a message behind a stalled one still goes.
-        let end = await sessions.runSerially(on: id, limit: WriteDeadline.turn(uploadBytes: request.files.map(\.size))) { [weak self] in
+        let end = await sessions.runSerially(on: id, limit: dependencies.turn(request.files.map(\.size))) { [weak self] in
             if let self { outcome = await self.sendToSession(id, request: request, progress: progress) }
             return .ok(.unavailable)
         }

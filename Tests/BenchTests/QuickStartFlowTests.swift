@@ -15,9 +15,38 @@ private let newID = "9f8e7d6c-5b4a-4321-8fed-cba987654321"
 private let attachmentID = "11111111-2222-4333-8444-555555555555"
 private let versionID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 
+/// Holds whoever waits on it until it is opened, as a page that is slow to answer does.
+@MainActor
+private final class Gate {
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    var holding: Int { waiting.count }
+
+    func wait() async {
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func open() {
+        let held = waiting
+        waiting = []
+        held.forEach { $0.resume() }
+    }
+}
+
 @MainActor
 private final class FlowRig {
-    enum Upload { case echo, none, status(Int), noUpload, wrongSize }
+    enum Upload { case echo, none, status(Int), noUpload, wrongSize, unknown }
+
+    // Holds, for the tests of Cancel: each waits on `gate` until `gate.open()`.
+    let gate = Gate()
+    var holdProjects = false
+    var holdUploads = false
+    var holdCreate = false
+    /// The reads (0-based, in turn) that wait.
+    var holdReads: Set<Int> = []
+    /// Called as each read begins, with its place in turn.
+    var onRead: ((Int) -> Void)?
+    var turnLimit: Duration = .seconds(60)
+    private var readCalls = 0
 
     var ready = true
     var known: [SessionStatus] = []
@@ -62,6 +91,10 @@ private final class FlowRig {
         cardPlan: { _ in nil },
         read: { [unowned self] _, turns in
             self.log.append(turns ? "turns" : "read")
+            let call = self.readCalls
+            self.readCalls += 1
+            self.onRead?(call)
+            if self.holdReads.contains(call) { await self.gate.wait() }
             let index = min(self.readIndex, self.reads.count - 1)
             self.readIndex += 1
             return self.reads.isEmpty ? nil : self.reads[index]
@@ -79,7 +112,11 @@ private final class FlowRig {
     lazy var browser = RemoteBrowser(sessions: sessions, dependencies: RemoteBrowser.Dependencies(
         browseOn: { false },
         actionsOn: { false },
-        projects: { [unowned self] in self.log.append("projects"); return self.projects },
+        projects: { [unowned self] in
+            self.log.append("projects")
+            if self.holdProjects { await self.gate.wait() }
+            return self.projects
+        },
         sessions: { _, _, _ in nil },
         known: { [unowned self] in self.known },
         history: { _, _, _ in .unreadable },
@@ -87,6 +124,7 @@ private final class FlowRig {
         create: { [unowned self] write in
             self.log.append("create")
             self.writes.append(write)
+            if self.holdCreate { await self.gate.wait() }
             let index = min(self.createIndex, self.createReplies.count - 1)
             self.createIndex += 1
             return self.createReplies.isEmpty ? nil : self.createReplies[index]
@@ -104,6 +142,7 @@ private final class FlowRig {
         upload: { [unowned self] project, file in
             self.log.append("upload")
             self.uploads.append((project, file))
+            if self.holdUploads { await self.gate.wait() }
             switch self.upload {
             case .echo:
                 return PhotoUploadReply(status: 200, upload: PhotoAttachment(
@@ -114,9 +153,11 @@ private final class FlowRig {
             case .none: return nil
             case .status(let status): return PhotoUploadReply(status: status)
             case .noUpload: return PhotoUploadReply(status: 200)
+            case .unknown: return .unknown
             }
         },
-        now: { [unowned self] in self.now }))
+        now: { [unowned self] in self.now },
+        turn: { [unowned self] _ in self.turnLimit }))
 
     func line(of file: UploadFile) -> String {
         PhotoAttachment(id: attachmentID, versionID: versionID, filename: file.name, contentType: file.contentType,
@@ -430,5 +471,267 @@ struct IntentLedgerTests {
         #expect(request(plan: false).signature != base)
         #expect(request(.newSession(project: "q")).signature != base)
         #expect(request(.session(id: sessionID)).signature != base)
+    }
+}
+
+// MARK: Cancel
+
+/// Cancel stops what is unsent, and tells "cancelled before anything was sent" from
+/// "already sent". Everything is held on a gate the test opens; nothing is real.
+@MainActor
+struct QuickStartFlowCancelTests {
+    private let rig = FlowRig()
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<4_000 where !condition() { await Task.yield() }
+    }
+
+    private func settle() async {
+        for _ in 0..<60 { await Task.yield() }
+    }
+
+    @Test func aTaskCancelledBeforeItBeginsSendsNothing() async {
+        let flow = rig.flow
+        let request = rig.newSession()
+        let task = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await flow.perform(request)
+        }
+        let outcome = await task.value
+        #expect(outcome == .failed(sentence: QuickStartFlow.Sentence.cancelled))
+        #expect(outcome.isCleanCancel)
+        #expect(rig.log.isEmpty)
+    }
+
+    @Test func cancelWhileTheProjectsAreReadSendsNothingAndAnswersAtOnce() async {
+        rig.holdProjects = true
+        let flow = rig.flow
+        let request = rig.newSession()
+        let task = Task { @MainActor in await flow.perform(request) }
+        await waitUntil { rig.gate.holding == 1 }
+        task.cancel()
+        // It answers while the read is still held.
+        let outcome = await task.value
+        #expect(outcome.isCleanCancel)
+        #expect(outcome.sentence == "Cancelled. Nothing was sent.")
+        rig.gate.open()
+        await settle()
+        #expect(rig.log == ["projects"])
+        #expect(rig.writes.isEmpty && rig.uploads.isEmpty)
+    }
+
+    @Test func cancelWhileAnUploadIsHeldNeverStartsTheSession() async throws {
+        rig.holdUploads = true
+        let flow = rig.flow
+        let request = rig.newSession(files: [try rig.file("a.csv")])
+        let task = Task { @MainActor in await flow.perform(request) }
+        await waitUntil { rig.gate.holding == 1 }
+        task.cancel()
+        let outcome = await task.value
+        // The upload is on its way and may land: said so, and not a clean cancel.
+        #expect(outcome == .failed(sentence: "Cancelled. A file may already be in Made-up. Nothing was started."))
+        #expect(!outcome.isCleanCancel)
+        rig.gate.open()
+        await settle()
+        #expect(rig.log == ["projects", "upload"])
+        #expect(rig.writes.isEmpty, "the session is never started after the upload is let go")
+    }
+
+    @Test func cancelWhileASendWaitsBehindAnotherActionNeverSends() async {
+        let sessions = rig.sessions
+        let flow = rig.flow
+        // Another action on the same session holds the queue.
+        let holder = Task { @MainActor in
+            await sessions.runSerially(on: sessionID, limit: .seconds(60)) {
+                await self.rig.gate.wait()
+                return .ok(.unavailable)
+            }
+        }
+        await waitUntil { rig.gate.holding == 1 }
+        let request = rig.message()
+        let task = Task { @MainActor in await flow.perform(request) }
+        await settle()
+        task.cancel()
+        let outcome = await task.value
+        #expect(outcome.isCleanCancel)
+        rig.gate.open()
+        _ = await holder.value
+        await settle()
+        // Nothing of the cancelled send ran: no read, no write.
+        #expect(rig.log.isEmpty)
+        #expect(rig.writes.isEmpty)
+    }
+
+    @Test func cancelWhileASendReadsTheSessionSendsNothing() async {
+        rig.holdReads = [0]
+        let flow = rig.flow
+        let request = rig.message()
+        let task = Task { @MainActor in await flow.perform(request) }
+        await waitUntil { rig.gate.holding == 1 }
+        task.cancel()
+        let outcome = await task.value
+        #expect(outcome.isCleanCancel)
+        rig.gate.open()
+        await settle()
+        #expect(rig.writes.isEmpty)
+    }
+
+    @Test func cancelAfterAFileWentUpSaysHowManyAreInTheProject() async throws {
+        let flow = rig.flow
+        let request = rig.message(files: [try rig.file("a.csv")])
+        // The re-read after the upload is the second read; hold it, and cancel there.
+        rig.holdReads = [1]
+        let task = Task { @MainActor in await flow.perform(request) }
+        await waitUntil { rig.gate.holding == 1 }
+        task.cancel()
+        let outcome = await task.value
+        #expect(outcome == .failed(sentence: "Cancelled. 1 file was already in Made-up. Nothing was sent."))
+        #expect(!outcome.isCleanCancel)
+        rig.gate.open()
+        await settle()
+        #expect(rig.writes.isEmpty)
+        #expect(rig.log.filter { $0 == "upload" }.count == 1)
+    }
+
+    @Test func cancelAfterTheSessionIsBeingMadeIsNotACancel() async {
+        rig.holdCreate = true
+        let flow = rig.flow
+        let request = rig.newSession()
+        var stages: [QuickStartFlow.Progress] = []
+        let task = Task { @MainActor in await flow.perform(request, progress: { stages.append($0) }) }
+        await waitUntil { rig.gate.holding == 1 }
+        #expect(stages == [.committed])
+        // Cancel arrives with the request already out: it can't be taken back, and the outcome says what happened.
+        task.cancel()
+        rig.gate.open()
+        let outcome = await task.value
+        #expect(outcome == .started(sessionID: newID, sentence: "Started in Made-up."))
+        #expect(!outcome.sentence.localizedCaseInsensitiveContains("cancel"))
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func cancelAfterTheMessageIsBeingSentIsNotACancelEither() async {
+        rig.holdReads = []
+        let flow = rig.flow
+        let request = rig.message()
+        var stages: [QuickStartFlow.Progress] = []
+        let task = Task { @MainActor in await flow.perform(request, progress: { stages.append($0) }) }
+        await waitUntil { stages == [.committed] }
+        task.cancel()
+        let outcome = await task.value
+        // The write is out by then (the fake answers at once): a cancel after it changes nothing.
+        #expect(outcome == .sent(.sent, sentence: "Sent."))
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func theSentencesSayWhatWentUp() {
+        typealias Said = QuickStartFlow.Sentence
+        #expect(Said.cancelled(uploaded: 0, uploading: false, project: "P", starting: true) == "Cancelled. Nothing was sent.")
+        #expect(Said.cancelled(uploaded: 1, uploading: false, project: "P", starting: true) == "Cancelled. 1 file was already in P. Nothing was started.")
+        #expect(Said.cancelled(uploaded: 3, uploading: false, project: "P", starting: false) == "Cancelled. 3 files were already in P. Nothing was sent.")
+        #expect(Said.cancelled(uploaded: 0, uploading: true, project: "P", starting: true) == "Cancelled. A file may already be in P. Nothing was started.")
+        #expect(QuickStartFlow.Outcome.failed(sentence: Said.cancelled).isCleanCancel)
+        #expect(!QuickStartFlow.Outcome.failed(sentence: Said.notStarted).isCleanCancel)
+        #expect(!QuickStartFlow.Outcome.started(sessionID: newID, sentence: "Started in P.").isCleanCancel)
+    }
+}
+
+// MARK: A write that gets no answer
+
+@MainActor
+struct QuickStartFlowUnknownTests {
+    private let rig = FlowRig()
+
+    @Test func aNewSessionWithNoAnswerThatTheDatabaseShowsIsStarted() async {
+        rig.createReplies = [.unknown]
+        rig.intents = [nil, newID]
+        var stages: [QuickStartFlow.Progress] = []
+        let outcome = await rig.flow.perform(rig.newSession(), progress: { stages.append($0) })
+        #expect(outcome == .started(sessionID: newID, sentence: "Started in Made-up."))
+        #expect(stages == [.committed, .checking])
+        #expect(rig.writes.count == 1, "never sent again")
+    }
+
+    @Test func aNewSessionWithNoAnswerThatTheDatabaseDoesntShowCanBeStartedAgain() async {
+        rig.createReplies = [.unknown]
+        rig.intents = [nil, nil]
+        var stages: [QuickStartFlow.Progress] = []
+        let outcome = await rig.flow.perform(rig.newSession(), progress: { stages.append($0) })
+        #expect(outcome == .failed(sentence: QuickStartFlow.Sentence.startNotThere))
+        #expect(stages == [.committed, .checking])
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func withFilesTheSentenceSaysTheyAreInTheProject() async throws {
+        rig.createReplies = [.unknown]
+        rig.intents = [nil, nil]
+        let outcome = await rig.flow.perform(rig.newSession(files: [try rig.file("a.csv")]))
+        #expect(outcome == .failed(sentence: QuickStartFlow.Sentence.savedStartNotThere(project: "Made-up")))
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aRetryUnderTheSameIntentFindsTheSessionTheFirstOneMade() async {
+        rig.createReplies = [.unknown, RemoteWriteResult(status: 409, code: "intent_conflict")]
+        rig.intents = [nil, nil, newID]
+        let first = await rig.flow.perform(rig.newSession())
+        #expect(first.succeeded == false)
+        let again = await rig.flow.perform(rig.newSession())
+        #expect(again == .started(sessionID: newID, sentence: "Started in Made-up."))
+        #expect(rig.writes.count == 2)
+    }
+
+    @Test func aMessageWithNoAnswerThatTheSessionShowsIsSent() async {
+        rig.writeReply = .unknown
+        let turns = [SessionProjection.Turn(role: .you, at: rig.now.addingTimeInterval(1), text: "Add the second plate")]
+        rig.reads = [FlowRig.session("completed"),
+                     SessionProjection(status: "completed", agentName: "made-up-agent", projectID: "proj-1", turns: turns)]
+        var stages: [QuickStartFlow.Progress] = []
+        let outcome = await rig.flow.perform(rig.message(), progress: { stages.append($0) })
+        #expect(outcome == .sent(.sent, sentence: "Sent."))
+        #expect(stages == [.committed, .checking])
+        #expect(rig.writes.count == 1)
+        #expect(rig.log == ["read", "write", "turns"])
+    }
+
+    @Test func aMessageWithNoAnswerThatTheSessionDoesntShowCanBeSentAgain() async {
+        rig.writeReply = .unknown
+        rig.reads = [FlowRig.session("completed"), SessionProjection(status: "completed", agentName: "made-up-agent", projectID: "proj-1", turns: [])]
+        let outcome = await rig.flow.perform(rig.message())
+        #expect(outcome == .failed(sentence: QuickStartFlow.Sentence.sendNotThere))
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aMessageWithNoAnswerThatCantBeLookedForIsUnknown() async {
+        rig.writeReply = .unknown
+        rig.reads = [FlowRig.session("completed"), nil]
+        let outcome = await rig.flow.perform(rig.message())
+        #expect(outcome == .failed(sentence: QuickStartFlow.Sentence.sendUnsure))
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func anUploadWithNoAnswerMayBeInTheProjectAndNothingIsStarted() async throws {
+        rig.upload = .unknown
+        let outcome = await rig.flow.perform(rig.newSession(files: [try rig.file("a.csv")]))
+        #expect(outcome == .failed(sentence: QuickStartFlow.Sentence.uploadUnsure("a.csv", project: "Made-up", starting: true)))
+        #expect(outcome.sentence.contains("Not sure"))
+        #expect(rig.writes.isEmpty)
+        #expect(!rig.log.contains("create"))
+    }
+
+    @Test func aTurnThatStallsEndsUnknownAndTheNextMessageGoes() async {
+        // The session read never returns: the turn is given up, and the next message is not held behind it.
+        rig.holdReads = [0]
+        rig.turnLimit = .milliseconds(60)
+        let flow = rig.flow
+        let stuck = Task { @MainActor in await flow.perform(rig.message("First")) }
+        for _ in 0..<2_000 where rig.gate.holding == 0 { await Task.yield() }
+        let next = Task { @MainActor in await flow.perform(rig.message("Second", intent: otherIntent)) }
+        let first = await stuck.value
+        #expect(first == .failed(sentence: QuickStartFlow.Sentence.sendUnsure))
+        let second = await next.value
+        #expect(second == .sent(.sent, sentence: "Sent."))
+        #expect(rig.writes.count == 1, "only the second message was written")
+        rig.gate.open()
+        for _ in 0..<60 { await Task.yield() }
     }
 }

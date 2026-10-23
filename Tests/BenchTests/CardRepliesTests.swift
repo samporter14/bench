@@ -283,6 +283,7 @@ private final class FakeCore {
     var plans: [String: PlanPreview] = [:]
     var ready = true
     var results: [RemoteActionResult] = []
+    var callChecking = false
     private(set) var requests: [RemoteActionRequest] = []
     private var intents = [intent, intent2]
 
@@ -294,8 +295,9 @@ private final class FakeCore {
                 await Task.yield()
                 return self.reads[id] ?? nil
             },
-            respond: { [unowned self] request, _, _ in
+            respond: { [unowned self] request, _, checking in
                 self.requests.append(request)
+                if self.callChecking { checking() }
                 return self.results.isEmpty ? RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.answered)
                     : self.results.removeFirst()
             },
@@ -647,5 +649,79 @@ struct NotificationAnswerTests {
         #expect(actions.draft(actionID: "reply", typed: String(repeating: "a", count: 1_001)) == nil)
         #expect(actions.draft(actionID: UUID().uuidString, typed: nil) == nil)
         #expect(NotificationRules.QuestionActions.categoryID(for: "needs-input-x") == "question.needs-input-x")
+    }
+}
+
+
+// MARK: A request or a plan's changes that get no answer
+
+@MainActor
+struct CardRepliesUnknownTests {
+    private let core = FakeCore()
+    private let model = LabModel()
+
+    private func card(_ reason: WaitingReason, read: SessionProjection?) async -> QuestionReplier {
+        core.reads[session] = read
+        model.ingest(Fixture.snapshot(Fixture.session(session, .running)))
+        model.ingest(Fixture.snapshot(Fixture.session(session, .needsInput, reason: reason, title: "Made-up screen")))
+        let replier = QuestionReplier(model: model, dependencies: core.dependencies())
+        replier.sync()
+        await replier.settled()
+        return replier
+    }
+
+    @Test func aPermissionThatDidNotGoThroughCanBeAnsweredAgainByThePerson() async {
+        let replier = await card(.tool, read: waiting(readOnlyTool))
+        core.results = [.notThere]
+        #expect(await replier.decide(session, allow: true)?.value == .failed(QuestionReplier.Sentence.requestNotThere))
+        #expect(core.requests.count == 1)
+        // The card offers it again, with the sentence.
+        let offer = CardOffer.of(reason: .tool, plan: nil, question: replier.cardState(for: session), reply: nil,
+                                 permission: replier.permissionReplies[session]?.phase)
+        #expect(offer.lead == .button(.allowOnce))
+        #expect(offer.problem == QuestionReplier.Sentence.requestNotThere)
+        core.results = [RemoteActionResult(result: .allowed, sentence: PermissionDecide.Sentence.allowed)]
+        #expect(await replier.decide(session, allow: true)?.value == .sent(PermissionDecide.Sentence.allowed))
+        #expect(core.requests.count == 2)
+    }
+
+    @Test func aPermissionThatCantBeToldIsNotCalledSentOrFailed() async {
+        let replier = await card(.tool, read: waiting(readOnlyTool))
+        core.results = [.unsure]
+        #expect(await replier.decide(session, allow: false)?.value == .failed(QuestionReplier.Sentence.requestUnsure))
+        #expect(core.requests.count == 1)
+    }
+
+    @Test func whileAPermissionIsLookedForTheCardSaysSo() async {
+        let replier = await card(.tool, read: waiting(readOnlyTool))
+        core.callChecking = true
+        core.results = [.notThere]
+        let send = replier.decide(session, allow: true)
+        // The checking callback runs inside the send; the card reads it from the replier.
+        #expect(replier.isChecking(session) || replier.permissionReplies[session]?.phase == .sending)
+        _ = await send?.value
+        #expect(!replier.isChecking(session))
+    }
+
+    @Test func changesToAPlanThatDidNotGoThroughKeepTheirWords() async {
+        core.plans[session] = plan
+        model.ingest(Fixture.snapshot(Fixture.session(session, .running)))
+        model.ingest(Fixture.snapshot(Fixture.session(session, .needsInput, reason: .plan, title: "Made-up screen")))
+        let replier = QuestionReplier(model: model, dependencies: core.dependencies())
+        #expect(replier.begin(session, plan: true))
+        replier.updatePlanFeedback(session, text: "Drop step 3.")
+        core.results = [.notThere, .unsure, RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.revising)]
+        replier.submitPlanFeedback(session)
+        await replier.settled()
+        #expect(replier.planReplies[session]?.phase == .failed(QuestionReplier.Sentence.feedbackNotThere))
+        #expect(replier.planReplies[session]?.text == "Drop step 3.")
+        replier.submitPlanFeedback(session)
+        await replier.settled()
+        #expect(replier.planReplies[session]?.phase == .failed(QuestionReplier.Sentence.feedbackUnsure))
+        // The same words keep their intent id, so the daemon knows a repeat.
+        replier.submitPlanFeedback(session)
+        await replier.settled()
+        let ids = core.requests.map { if case .planFeedback(_, _, let id) = $0 { id } else { "" } }
+        #expect(ids.count == 3 && Set(ids).count == 1)
     }
 }
