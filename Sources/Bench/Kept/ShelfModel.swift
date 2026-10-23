@@ -4,14 +4,16 @@
 // `ShelfRules.items`); everything the window shows follows from them and
 // from these choices, so the rules live here and the tests drive them without
 // drawing anything. A choice that hides the selected item moves the selection
-// to the first one shown, and the arrow keys move it through the grid.
+// to the first one shown, and the arrow keys move it through the cards, which
+// stand under their days (`days`) as many to a row as the window's width holds.
 import Combine
 import Foundation
 
 @MainActor
 final class ShelfModel: ObservableObject {
-    /// The grid's width in cards: the arrow keys count in it.
-    static let columns = 4
+    /// Cards to a row, as the window's width has it (`ShelfRules.columns(forWidth:)`): ↑ and ↓ count in it. The view
+    /// sets it when its width changes; nothing is drawn from it, so it isn't published.
+    var columns = 3
 
     /// A line on the window after a removal: what happened, and Undo while it can be.
     struct Note: Equatable, Identifiable {
@@ -60,15 +62,18 @@ final class ShelfModel: ObservableObject {
     private var noteTask: Task<Void, Never>?
     private var pending: (folder: URL, until: Date)?
     private let now: () -> Date
+    /// The user's calendar: the days the cards stand under.
+    let calendar: Calendar
     /// How long the line after a removal stays; one that only says what went wrong, twice as long.
     private let noteLifetime: Duration
 
-    init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() },
+    init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() }, calendar: Calendar = .current,
          pdf: ShelfPDFMaker? = nil, legendDelay: Duration = .seconds(1)) {
         self.shelf = shelf
         self.legendDelay = legendDelay
         self.pdf = pdf ?? .live(disk: shelf.index.disk)
         self.now = now
+        self.calendar = calendar
         self.noteLifetime = noteLifetime
         finder = ShelfFinder(actions: .live(shelf: shelf), changes: shelf.objectWillChange.map { _ in () }.eraseToAnyPublisher())
         finder.selectFolder = { [weak self] in self?.select(folder: $0) }
@@ -133,6 +138,10 @@ final class ShelfModel: ObservableObject {
     var counts: ShelfRules.Counts { ShelfRules.counts(of: scoped) }
     /// The grid: the scoped items of the chosen kind.
     var shown: [ShelfItem] { ShelfRules.items(scoped, of: kind) }
+    /// The grid under its headings: Today, Yesterday, This week… (the same items as `shown`, in the same order).
+    var days: [ShelfRules.DayGroup] { ShelfRules.days(shown, now: now(), calendar: calendar) }
+    /// A heading's words, said as of now.
+    func title(of day: ShelfRules.Day) -> String { day.title(now: now(), calendar: calendar) }
     var selected: ShelfItem? { shown.first { $0.id == selection } }
     var isEmpty: Bool { items.isEmpty }
     var isFiltered: Bool { project != nil || kind != nil || !search.isEmpty }
@@ -161,7 +170,8 @@ final class ShelfModel: ObservableObject {
 
     // MARK: Moving
 
-    /// ←, →, ↑ and ↓ through the grid: a card at a time, or a row.
+    /// ←, →, ↑ and ↓ through the cards: a card at a time, running on from one row and one day to the next, or a row,
+    /// to the card in the same column (the last of a row that is shorter), across a day's heading too.
     func move(_ dx: Int, _ dy: Int) {
         let shown = self.shown
         guard !shown.isEmpty else { return }
@@ -169,13 +179,17 @@ final class ShelfModel: ObservableObject {
             self.selection = shown.first?.id
             return
         }
-        let target = at + dx + dy * Self.columns
-        // Up from the first row and down from the last stay where they are; sideways stops at the ends.
-        guard (0..<shown.count).contains(target) else {
-            if dy > 0, at / Self.columns < (shown.count - 1) / Self.columns { self.selection = shown[shown.count - 1].id }
+        guard dy != 0 else {
+            // Sideways stops at the ends.
+            if shown.indices.contains(at + dx) { self.selection = shown[at + dx].id }
             return
         }
-        self.selection = shown[target].id
+        let rows = ShelfRules.rows(groupSizes: days.map(\.items.count), columns: columns)
+        guard let row = rows.firstIndex(where: { $0.contains(at) }), let column = rows[row].firstIndex(of: at) else { return }
+        // Up from the first row and down from the last stay where they are.
+        guard rows.indices.contains(row + dy) else { return }
+        let next = rows[row + dy]
+        self.selection = shown[next[min(column, next.count - 1)]].id
     }
 
     // MARK: Asking for an item

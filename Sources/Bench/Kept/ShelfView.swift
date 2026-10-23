@@ -1,13 +1,32 @@
 // ShelfView.swift — the Shelf window's content (DESIGN.md, Shelf), drawn as
-// board 11 of the Capsid 1.0 mock-ups: a project pill and a search pill in the
-// title bar, the kind chips (All, Figures, Documents, Tables, each with its
-// count), a grid of four cards a row with Quick Look pictures, and at the foot
-// the detail of the one selected: its picture, its name, where it came from,
-// what you asked, what Claude said, and four pills, the one that asks in clay.
-// An item kept with data and code also shows its legend and its files below.
+// board 12 of the Capsid 1.0 mock-ups ("the same shelf, a little prettier"):
+// the project pill by "Shelf" and the search at the right of the title bar,
+// the kind chips (All, Figures, Documents, Tables, each with its count), the
+// cards under quiet day headings (Today, Yesterday, This week…), three across
+// at the window's first width, each a picture on paper filling its card and
+// the file's name with its extension in grey, and at the foot the detail of
+// the one selected: its picture, its name, the session, project, version and
+// time, what you asked, what Claude said, and Show Where It Came From (clay),
+// Copy and a ⋯ menu with the rest. An item kept with data and code also shows
+// its legend and its files below. Hairlines, no shadows, 24-point gutters.
 // The rules are in ShelfRules, the choices in ShelfModel; this file only draws.
 import AppKit
 import SwiftUI
+
+/// Board 12's measures that aren't the Solanum kit's own.
+enum ShelfLook {
+    /// A card's edge: the hairline, softer (ink at 12% on ivory).
+    static let cardEdge = Solanum.hairline.opacity(0.8)
+    /// The detail card's edge, between the hairline and the strong edge (ink at 20%).
+    static let detailEdge = Solanum.strong.opacity(0.67)
+    /// An extension after a name: quieter than a caption.
+    static let extensionInk = Solanum.muted.opacity(0.72)
+    /// A card's picture: as wide as its column, this much less tall (board 12's 285 by 150).
+    static let tileAspect: CGFloat = 285.0 / 150.0
+    static let tileRadius: CGFloat = 12
+    /// Room under the detail card, at the window's foot.
+    static let foot: CGFloat = 22
+}
 
 struct ShelfView: View {
     @ObservedObject var model: ShelfModel
@@ -16,7 +35,7 @@ struct ShelfView: View {
     let quickLook: KeptQuickLook
     @FocusState private var gridFocused: Bool
     @State private var keeping: KeepModel?
-    @State private var size: CGSize = CGSize(width: 880, height: 820)
+    @State private var size: CGSize = KeptWindowController.size
 
     init(model: ShelfModel, thumbnails: KeptThumbnails, quickLook: KeptQuickLook) {
         self.model = model
@@ -29,6 +48,8 @@ struct ShelfView: View {
         content
             .frame(minWidth: 620, minHeight: 480)
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+            // ⌘P, with one card picked or several (ShelfPicking.swift).
+            .background(alignment: .topLeading) { ShelfExportPDFKey(model: model) }
             .background {
                 // The title bar's band under the transparent bar, the page below it.
                 GeometryReader { proxy in
@@ -52,14 +73,17 @@ struct ShelfView: View {
                     .fixedSize()
                 }
                 .sharedBackgroundVisibility(.hidden)
-                if model.pickCount > 0 {
-                    ToolbarItem(placement: .primaryAction) {
+                // On the Mac, items start at the leading edge, and with the title removed nothing pushes them right:
+                // board 12 has the search at the right of the bar (board 11's window drew it by the project pill).
+                ToolbarSpacer(.flexible)
+                if model.showsExportPill {
+                    ToolbarItem {
                         ShelfExportPDFButton(model: model)
                     }
                     .sharedBackgroundVisibility(.hidden)
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    ShelfSearchPill(search: $model.search)
+                ToolbarItem {
+                    ShelfSearchPill(search: $model.search, width: ShelfSearchPill.width(forWindow: size.width))
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
@@ -110,25 +134,39 @@ struct ShelfView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 14)
-        .padding(.bottom, 4)
+        .padding(.horizontal, ShelfRules.gutter)
+        .padding(.top, 16)
+        .padding(.bottom, 6)
     }
 
-    // MARK: The grid
+    // MARK: The cards, under their days
 
     private var grid: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top), count: ShelfModel.columns)
+        let count = ShelfRules.columns(forWidth: size.width)
+        let columns = Array(repeating: GridItem(.flexible(), spacing: ShelfRules.gap, alignment: .top), count: count)
+        let days = model.days
         return ScrollViewReader { proxy in
             ScrollView {
-                VStack(spacing: 0) {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
-                    ForEach(model.shown) { item in
-                        card(item)
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(days.enumerated()), id: \.element.id) { offset, day in
+                            Text(model.title(of: day.day))
+                                .font(.system(size: Solanum.captionSize, weight: .semibold))
+                                .tracking(0.12)
+                                .foregroundStyle(Solanum.muted)
+                                .padding(.top, offset == 0 ? 6 : 22)
+                                .padding(.bottom, 10)
+                                .accessibilityAddTraits(.isHeader)
+                            LazyVGrid(columns: columns, alignment: .leading, spacing: ShelfRules.gap) {
+                                ForEach(day.items) { item in
+                                    card(item)
+                                }
+                            }
+                        }
                     }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                    .padding(.horizontal, ShelfRules.gutter)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
                     // Below the shelf's own matches: the same words, in every session.
                     if model.finder.isWanted {
                         ShelfFindSection(finder: model.finder, nothingMatches: "Nothing else in your sessions matches.")
@@ -138,6 +176,13 @@ struct ShelfView: View {
             .scrollBounceBehavior(.basedOnSize)
             .onChange(of: model.selection) { _, id in
                 if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
+            }
+            // A window opened on an item further down (Show Shelf) starts with it in view, once the cards are laid out;
+            // on the first, at the top.
+            .task {
+                guard let id = model.selection, id != model.shown.first?.id else { return }
+                try? await Task.sleep(for: .milliseconds(50))
+                proxy.scrollTo(id)
             }
         }
         .focusable()
@@ -157,23 +202,30 @@ struct ShelfView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: model.note)
+        // ↑ and ↓ count in the rows drawn.
+        .onAppear { model.columns = count }
+        .onChange(of: count) { _, now in model.columns = now }
     }
 
     private func card(_ item: ShelfItem) -> some View {
         let isSelected = model.isPicked(item.id)
-        return VStack(alignment: .leading, spacing: 6) {
-            ShelfPaper(store: thumbnails, url: item.fileURL, side: item.kind == .figure ? 220 : 520, kind: item.kind, inset: 7, symbolSize: 30)
-                .frame(height: 120)
-                .background(Solanum.raised, in: .rect(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isSelected ? Solanum.ink : Solanum.hairline,
-                                                                         lineWidth: isSelected ? 2 : 1))
+        return VStack(alignment: .leading, spacing: 7) {
+            // The picture fills its card, a few points in from the edge: on its paper, which is white in both appearances.
+            Color.clear
+                .aspectRatio(ShelfLook.tileAspect, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .overlay {
+                    ShelfPaper(store: thumbnails, url: item.fileURL, side: item.kind == .figure ? 320 : 600, kind: item.kind, inset: 5,
+                               symbolSize: 34, radius: 8, peekScale: 1.15, margin: item.kind == .figure ? 4 : 10)
+                }
+                .background(Solanum.raised, in: .rect(cornerRadius: ShelfLook.tileRadius))
+                .overlay(RoundedRectangle(cornerRadius: ShelfLook.tileRadius)
+                    .strokeBorder(isSelected ? Solanum.ink : ShelfLook.cardEdge, lineWidth: isSelected ? 2 : 1))
                 .overlay(alignment: .topLeading) {
                     if let page = model.pageNumber(of: item.id) { ShelfPageBadge(number: page).offset(x: -5, y: -5) }
                 }
                 .accessibilityHidden(true)
-            Text(item.title)
-                .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                .foregroundStyle(Solanum.ink)
+            ShelfName(parts: item.nameParts, size: 13, weight: isSelected ? .semibold : .regular)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text(ShelfRules.caption(for: item))
@@ -256,7 +308,8 @@ struct ShelfView: View {
         ShelfDetail(item: item, model: model, thumbnails: thumbnails, quickLook: quickLook,
                     keep: { keepWithDataAndCode(item) },
                     // A search that also looks in the sessions leaves them more of the window.
-                    maxHeight: model.finder.isWanted ? max(220, size.height * 0.34) : max(220, size.height * 0.56))
+                    maxHeight: model.finder.isWanted ? max(220, size.height * 0.34) : max(220, size.height * 0.56),
+                    previewWidth: ShelfDetail.previewWidth(forWindow: size.width))
     }
 
     private func keepWithDataAndCode(_ item: ShelfItem) {
@@ -310,9 +363,14 @@ struct ShelfProjectPill: View {
     }
 }
 
-/// Search, as a pill.
+/// Search, as a pill at the right of the title bar.
 struct ShelfSearchPill: View {
     @Binding var search: String
+    var width: CGFloat = 200
+
+    /// Board 12's 200 points, and less in a narrow window, where the bar also holds "Shelf", the project pill and,
+    /// with several picked, Export as PDF….
+    static func width(forWindow width: CGFloat) -> CGFloat { width < 760 ? 160 : 200 }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -327,7 +385,7 @@ struct ShelfSearchPill: View {
                 .accessibilityLabel("Search the shelf")
         }
         .padding(.horizontal, 10)
-        .frame(width: 170, height: 26)
+        .frame(width: width, height: 26)
         .background(Capsule().fill(Solanum.raised))
         .overlay(Capsule().strokeBorder(Solanum.strong, lineWidth: 1))
     }
@@ -383,6 +441,9 @@ enum ShelfActions {
 
 // MARK: The detail card
 
+/// The selected item at the window's foot: its picture, its name, where it came from in one line, what was asked,
+/// what Claude said, and three controls: Show Where It Came From (the one that asks, clay), Copy, and ⋯ with Keep
+/// with Data and Code…, Export Figure as PDF… and Remove. Each of the ⋯ items is also a VoiceOver action on the card.
 struct ShelfDetail: View {
     let item: ShelfItem
     @ObservedObject var model: ShelfModel
@@ -390,23 +451,28 @@ struct ShelfDetail: View {
     let quickLook: KeptQuickLook
     let keep: () -> Void
     let maxHeight: CGFloat
+    var previewWidth: CGFloat = 250
     @State private var copied = false
     @State private var sayingMore = false
     /// The card's height as measured; a guess until then, so it never fills the window for a frame.
-    @State private var contentHeight: CGFloat = 230
+    @State private var contentHeight: CGFloat = 200
 
     private var said: String { item.text.claudeSaid.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var longSaid: Bool { said.count > 170 || said.filter(\.isNewline).count > 2 }
+    private var more: [ShelfRules.MoreItem] { ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode) }
+
+    /// Board 12's 250 points, less in a narrow window so the three controls stay on one row beside it.
+    static func previewWidth(forWindow width: CGFloat) -> CGFloat {
+        min(250, max(160, ((width - 2 * ShelfRules.gutter - 36) * 0.3).rounded()))
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .top, spacing: 20) {
+                HStack(alignment: .top, spacing: 22) {
                     preview
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(item.title)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(Solanum.ink)
+                        ShelfName(parts: item.nameParts, size: 17, weight: .semibold)
                             .lineLimit(2)
                             .textSelection(.enabled)
                         Text(ShelfRules.sourceLine(for: item))
@@ -419,7 +485,7 @@ struct ShelfDetail: View {
                                 .lineSpacing(19 - 15.5)
                                 .foregroundStyle(Solanum.muted)
                                 .lineLimit(2)
-                                .padding(.top, 4)
+                                .padding(.top, 2)
                         }
                         if !said.isEmpty {
                             Text(said)
@@ -436,11 +502,17 @@ struct ShelfDetail: View {
                                     .foregroundStyle(Solanum.muted)
                                     .underline()
                             }
+                            if let note = ShelfRules.lastAnswerNote(for: item) {
+                                Text(note)
+                                    .font(.system(size: Solanum.captionSize))
+                                    .foregroundStyle(Solanum.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         Spacer(minLength: 8)
                         buttons
                     }
-                    .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
                 }
                 if item.hasMore {
                     Solanum.hairline.frame(height: 1).padding(.top, 18)
@@ -454,11 +526,18 @@ struct ShelfDetail: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(height: min(contentHeight, maxHeight))
-        .background(Solanum.raised, in: .rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Solanum.strong, lineWidth: 1))
-        .clipShape(.rect(cornerRadius: 12))
-        .padding(.horizontal, 20)
-        .padding(.bottom, 20)
+        .background(Solanum.raised, in: .rect(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(ShelfLook.detailEdge, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
+        .accessibilityActions {
+            // What moved into ⋯, still a VoiceOver action away.
+            ForEach(more.filter { $0 != .divider }, id: \.self) { entry in
+                Button(entry.spoken) { perform(entry) }
+            }
+        }
+        .padding(.horizontal, ShelfRules.gutter)
+        .padding(.bottom, ShelfLook.foot)
         .padding(.top, 8)
         .onChange(of: item.id) { _, _ in
             sayingMore = false
@@ -467,10 +546,11 @@ struct ShelfDetail: View {
     }
 
     private var preview: some View {
-        ShelfPaper(store: thumbnails, url: item.fileURL, side: item.kind == .figure ? 280 : 560, kind: item.kind, inset: 8, symbolSize: 44)
-            .frame(width: 260, height: 170)
+        ShelfPaper(store: thumbnails, url: item.fileURL, side: item.kind == .figure ? 300 : 560, kind: item.kind, inset: 6, symbolSize: 40,
+                   radius: 6, margin: item.kind == .figure ? 6 : 8)
+            .frame(width: previewWidth, height: 150)
             .background(Solanum.raised, in: .rect(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Solanum.hairline, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ShelfLook.cardEdge, lineWidth: 1))
             .onDrag { NSItemProvider(contentsOf: item.fileURL) ?? NSItemProvider() }
             .onTapGesture(count: 2) { quickLook.show([item.fileURL], at: 0) }
             .accessibilityLabel("Preview of \(item.fileName)")
@@ -478,13 +558,13 @@ struct ShelfDetail: View {
     }
 
     private var buttons: some View {
-        ShelfFlow(spacing: 6) {
+        ShelfFlow(spacing: 8) {
             Button {
                 ShelfActions.showWhereItCameFrom(item)
             } label: {
-                Text("Show Where It Came From").padding(.horizontal, 2)
+                Text("Show Where It Came From")
             }
-            .buttonStyle(SolanumPillStyle(.medium, prominent: true))
+            .buttonStyle(SolanumPillStyle(.regular, prominent: true))
             .disabled(Demo.mode != nil)
             .help(item.record.sourceRow == nil
                   ? "The conversation it came from, in Capsid"
@@ -497,18 +577,84 @@ struct ShelfDetail: View {
                     copied = false
                 }
             }
-            .buttonStyle(SolanumPillStyle(.medium))
+            .buttonStyle(SolanumPillStyle(.regular))
             .help(item.kind == .figure ? "The file and its picture" : "The file")
-            if item.record.files.isEmpty, item.version != nil {
-                Button("Keep with Data and Code\u{2026}", action: keep)
-                    .buttonStyle(SolanumPillStyle(.medium))
-                    .disabled(Demo.mode != nil)
-                    .help("Also keep the data it was drawn from and the code that drew it")
+            Menu {
+                ForEach(Array(more.enumerated()), id: \.offset) { _, entry in
+                    if entry == .divider {
+                        Divider()
+                    } else {
+                        Button(entry == .exportPDF ? model.exportName(from: item) : entry.title) { perform(entry) }
+                            .disabled(entry == .keepWithDataAndCode && Demo.mode != nil)
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
             }
-            Button("Remove") { model.removeSelected() }
-                .buttonStyle(SolanumPillStyle(.medium))
-                .help("Moves it to the Trash")
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .buttonStyle(ShelfMoreStyle())
+            .fixedSize()
+            .help("Keep with Data and Code, Export as PDF, Remove")
+            .accessibilityLabel("More for \(item.fileName)")
         }
+    }
+
+    /// What a ⋯ item (or its VoiceOver action) does.
+    private func perform(_ entry: ShelfRules.MoreItem) {
+        switch entry {
+        case .keepWithDataAndCode:
+            guard Demo.mode == nil else { return }
+            keep()
+        case .exportPDF:
+            model.exportPDF(from: item)
+        case .remove:
+            model.removeSelected()
+        case .divider:
+            break
+        }
+    }
+}
+
+/// The detail's ⋯: a round button the height of the pills beside it (30 points), white with a strong hairline.
+private struct ShelfMoreStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .labelStyle(.iconOnly)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(isEnabled ? Solanum.ink : Solanum.muted)
+            .frame(width: 30, height: 30)
+            .background(Circle().fill(Solanum.raised))
+            .overlay(Circle().fill(Solanum.hairline).opacity(configuration.isPressed ? 1 : 0))
+            .overlay(Circle().strokeBorder(Solanum.strong, lineWidth: 1))
+            .contentShape(Circle())
+    }
+}
+
+/// A file's name with its extension in grey after it, or a keep's own name whole (`ShelfRules.nameParts`). The
+/// extension is never bold, as board 12 draws it; VoiceOver reads the name whole.
+struct ShelfName: View {
+    let parts: ShelfRules.NameParts
+    let size: CGFloat
+    var weight: Font.Weight = .regular
+
+    var body: some View {
+        Text(attributed)
+            .font(.system(size: size, weight: weight))
+            .foregroundStyle(Solanum.ink)
+            .accessibilityLabel(parts.whole)
+    }
+
+    private var attributed: AttributedString {
+        var name = AttributedString(parts.name)
+        guard !parts.ext.isEmpty else { return name }
+        var ext = AttributedString(parts.ext)
+        ext.swiftUI.foregroundColor = ShelfLook.extensionInk
+        ext.swiftUI.font = .system(size: size, weight: .regular)
+        name.append(ext)
+        return name
     }
 }
 
@@ -625,7 +771,7 @@ struct ShelfExtras: View {
 /// A picture on paper: Quick Look's, a text file's first lines (`ShelfPeek`),
 /// or the kind's symbol until it comes. The paper is white in both appearances
 /// (a figure is drawn for it), inset from its card so the card's own ground
-/// frames it.
+/// frames it in the dark; in the light the two are one white.
 struct ShelfPaper: View {
     @ObservedObject var store: KeptThumbnails
     let url: URL
@@ -633,6 +779,12 @@ struct ShelfPaper: View {
     let kind: ShelfKind
     let inset: CGFloat
     let symbolSize: CGFloat
+    /// The paper's corners; a little less than the inset by default.
+    var radius: CGFloat?
+    /// How large a text file's first lines are drawn: 1 at the old card's size; by default more past an inset of 8.
+    var peekScale: CGFloat?
+    /// Room between the paper's edge and a picture, so a figure drawn to its own edges doesn't touch it.
+    var margin: CGFloat = 0
     @Environment(\.displayScale) private var scale
 
     var body: some View {
@@ -641,12 +793,13 @@ struct ShelfPaper: View {
             if store.usesPeek(url) {
                 // Drawn from the file's text; blank until it has been read.
                 if let peek = store.peek(for: url) {
-                    ShelfPeekView(peek: peek, scale: inset >= 8 ? 1.3 : 1)
+                    ShelfPeekView(peek: peek, scale: peekScale ?? (inset >= 8 ? 1.3 : 1))
                 }
             } else if let image = store.image(for: url, side: side) {
                 Image(decorative: image, scale: scale)
                     .resizable()
                     .scaledToFit()
+                    .padding(margin)
             } else {
                 Image(systemName: ShelfPaper.symbol(kind))
                     .font(.system(size: symbolSize, weight: .light))
@@ -654,7 +807,7 @@ struct ShelfPaper: View {
                     .accessibilityHidden(true)
             }
         }
-        .clipShape(.rect(cornerRadius: max(3, inset - 2)))
+        .clipShape(.rect(cornerRadius: radius ?? max(3, inset - 2)))
         .padding(inset)
         .onAppear { request() }
         // The detail card keeps its picture's view when the selection moves, so
@@ -679,7 +832,7 @@ struct ShelfPaper: View {
     }
 }
 
-/// A text file's first lines on paper, as board 11 draws a note: a bold
+/// A text file's first lines on paper, as boards 11 and 12 draw a note: a bold
 /// heading and small grey paragraphs; a table's first rows in a light grid.
 /// The paper is white in both appearances, so the words are ink and grey
 /// whatever the window's.
@@ -693,8 +846,8 @@ struct ShelfPeekView: View {
 
     var body: some View {
         content
-            .padding(.horizontal, 8 * scale)
-            .padding(.vertical, 6 * scale)
+            .padding(.horizontal, 10 * scale)
+            .padding(.vertical, 8 * scale)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .clipped()
             .accessibilityHidden(true)

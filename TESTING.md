@@ -323,6 +323,42 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23, board 12: the shelf, a little prettier (days, bigger cards, quiet names, a calmer detail)
+
+- ✅ **Days.** The cards stand under Today, Yesterday, This week, Earlier this month, then the month, by `kept_at` in
+  the user's calendar (`ShelfRules.days`), newest first, empty days without a heading. Tested with a fixed clock in
+  a zone with summer time: midnight to the second, the sixth day back against the seventh, a 25-hour day, the turn
+  of the year (December's heading then names its year), the same instant on different days in New York and UTC,
+  a date after now (Today), and two items shelved in the same second (by folder).
+- ✅ **Rows and keys.** Three cards a row at 940 and 880 points, two at 620, four at 1,200
+  (`ShelfRules.columns(forWidth:)`). ↑ and ↓ move by the rows drawn, across the headings, to the same column or the
+  last card of a shorter row; ← and → run on. The old four-wide test now sets four columns itself.
+- ✅ **Names.** The extension in grey only for a file's own name, and only a last part of one to eight letters and
+  digits with a letter ("results_v1.0", "notes.", ".env", "a.verylongextension" stay whole; "archive.tar.gz" greys
+  ".gz"); a keep's own name never split.
+- ✅ **The detail.** "Session · Project · version N · time" (the old "From Claude's answer at … in “…”" line is
+  repinned), the question in quotes without "You asked:", a muted line when Claude's words are only the session's
+  last answer. Show Where It Came From stays the one clay action; Copy beside it; ⋯ holds Keep with Data and Code…
+  (only when there is something to keep), Export Figure as PDF…, and Remove after a rule, each also a VoiceOver
+  action. Export as PDF… in the title bar only with two or more picked; ⌘P on a button of its own, so it works
+  with one and never twice (a source check: the pill has no key).
+- ✅ **Offscreen renders**, light and dark, 940 × 820 and 620 × 480: the first card selected, an item kept with data
+  and code, Tables, a search with no match, three picked, the older days, one project (This week and Earlier this
+  month), the empty shelf. Compared beside board 12.
+- ✅ **Real windows** through `shoot.sh`, by window ID: `--demo shelf-pdf` (two picked, the pill beside the search)
+  and `--demo find` (the shelf's two heatmaps under Today and Earlier this month, then "In your sessions · 5").
+  The first run showed the search by the project pill: with the title removed nothing pushed the bar's items
+  right, so a flexible toolbar spacer now does, and the second build shows it at the right as the board does.
+- ⚠️ **One capture's window was active.** The first launch of a freshly built bundle came up with its window key
+  (coloured traffic lights), and one ↓ reached it: the demo's two picks became one on the card below. Later runs
+  (one after `lsregister -f` on the new bundle) stayed behind; a watch of the frontmost app every quarter second
+  saw only Sam's own Capsid in front through both final captures. Nothing in the Shelf demos opens a menu or a
+  popover or puts focus in a field.
+- The whole suite: 3,732 tests in 486 suites pass, before the toolbar spacer and again after it. No flakes.
+- ⏳ **Live**: ⌘P with one card picked (a key on a button nothing shows can't be pressed offscreen), the ⋯ menu and
+  the VoiceOver actions, the scroll to a selection further down when the window opens on it, and the headings
+  after midnight with the window left open (they follow the next change, as the captions do).
+
 ## 2026-10-23, shelf polish: "Export Figure as PDF…", a PDF from what is saved, drafts that survive, Find's limit
 
 - ✅ **The rename.** "Make PDF…" is "Export Figure as PDF…" / "Export 3 Figures as PDF…" on the card and in a

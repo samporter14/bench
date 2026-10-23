@@ -1,7 +1,7 @@
 // KeptWindow.swift — the Shelf window's shell (DESIGN.md, Keep and Shelf): the
 // window, its Quick Look panel and the controller that opens it (the file
 // keeps the Kept window's name; the window is the Shelf, drawn in
-// ShelfView.swift as board 11 of the 1.0 mock-ups), the empty-state view, the
+// ShelfView.swift as board 12 of the 1.0 mock-ups), the empty-state view, the
 // Settings section that names the folder, and the File menu's Keep…, which
 // acts on the Results window's selection.
 import AppKit
@@ -87,8 +87,8 @@ extension KeptQuickLook: @preconcurrency QLPreviewPanelDataSource {
 @MainActor
 final class KeptWindowController: NSObject, NSWindowDelegate {
     static let shared = KeptWindowController()
-    /// Board 11's window, and the least the grid and the detail card fit in.
-    static let size = NSSize(width: 880, height: 820)
+    /// Board 12's window: three cards across, and the detail card under them.
+    static let size = NSSize(width: 940, height: 820)
     static let frameName = "CapsidShelf"
     private var window: KeptWindow?
     private var quickLook: KeptQuickLook?
@@ -108,7 +108,7 @@ final class KeptWindowController: NSObject, NSWindowDelegate {
                                     styleMask: [.titled, .closable, .resizable, .miniaturizable],
                                     backing: .buffered, defer: false)
             window.contentViewController = hosting
-            // Drawn as board 11 of the 1.0 mock-ups (SolanumSurface.swift): the
+            // Drawn as board 12 of the 1.0 mock-ups (SolanumSurface.swift): the
             // title and the project pill in the toolbar, the page's colour
             // under a transparent title bar.
             window.title = "Shelf"

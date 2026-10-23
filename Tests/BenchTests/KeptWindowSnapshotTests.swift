@@ -1,10 +1,12 @@
 // KeptWindowSnapshotTests.swift — not a check: when `CAPSID_SNAPSHOT_DIR`
 // names a folder, draws the Shelf window's content (the demo's made-up shelf,
 // in a temporary root) into it as PNGs, light and dark, so it can be looked at
-// without opening a window: the board's first row selected, an item kept with
-// data and code, the kinds one by one, a search that finds nothing, the empty
-// shelf, and a shelf that can't be read. Without it the test does nothing. The
-// title bar belongs to the window and is not drawn here.
+// without opening a window: board 12's window with the first card selected, an
+// item kept with data and code, a kind, a search that finds nothing, the
+// narrowest window, three picked, the older days, one project, and the empty
+// shelf.
+// Without it the test does nothing. The title bar belongs to the window; a
+// stand-in for it is drawn here.
 import AppKit
 import SwiftUI
 import Testing
@@ -14,10 +16,12 @@ import Testing
 struct KeptWindowSnapshotTests {
     /// The title bar the window draws around the content, as the mock-up has it
     /// (the toolbar itself belongs to the window): the three dots, "Shelf", the
-    /// project pill and the search pill in a band under a hairline.
+    /// project pill, and at the right Export as PDF… (two or more picked) and
+    /// the search pill, in a band under a hairline.
     private struct Window<Content: View>: View {
         let model: ShelfModel
         let content: Content
+        var width: CGFloat = KeptWindowController.size.width
 
         var body: some View {
             VStack(spacing: 0) {
@@ -28,7 +32,8 @@ struct KeptWindowSnapshotTests {
                     Text("Shelf").font(.system(size: 15, weight: .semibold)).foregroundStyle(Solanum.ink).padding(.leading, 8)
                     ShelfProjectPill(model: model)
                     Spacer()
-                    ShelfSearchPill(search: .constant(model.search))
+                    if model.showsExportPill { ShelfExportPDFButton(model: model) }
+                    ShelfSearchPill(search: .constant(model.search), width: ShelfSearchPill.width(forWindow: width))
                 }
                 .padding(.horizontal, 14)
                 .frame(height: 52)
@@ -42,7 +47,7 @@ struct KeptWindowSnapshotTests {
 
     /// Draws a view the size of the window into `name-light.png` and `name-dark.png`.
     private func draw(_ content: ShelfView, size: NSSize, name: String, to directory: URL, settle: Int = 20) async throws {
-        let view = Window(model: content.model, content: content)
+        let view = Window(model: content.model, content: content, width: size.width)
         for dark in [false, true] {
             let host = NSHostingView(rootView: view)
             host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -127,7 +132,7 @@ struct KeptWindowSnapshotTests {
         index.refresh()
         for _ in 0..<100 where index.results.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
         let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
-        let size = NSSize(width: 880, height: 820)
+        let size = KeptWindowController.size
 
         // The board's window: the first card selected.
         let model = ShelfModel(shelf: shelf)
@@ -153,6 +158,25 @@ struct KeptWindowSnapshotTests {
         // A small window, the narrowest and shortest the window allows.
         try await draw(ShelfView(model: model, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: NSSize(width: 620, height: 480),
                        name: "shelf-window-small", to: directory, settle: 8)
+
+        // Three picked: the page badges, the picked card, and Export as PDF… in the title bar.
+        let picked = ShelfModel(shelf: shelf)
+        let figures = picked.shown.filter { $0.kind == .figure }
+        picked.pick(figures[0].id, .only)
+        picked.pick(figures[1].id, .toggle)
+        picked.pick(figures[2].id, .toggle)
+        try await draw(ShelfView(model: picked, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size,
+                       name: "shelf-window-picked", to: directory)
+        // Scrolled to the older days: the selection at the end, with the legend field of the item kept with data and code.
+        let older = ShelfModel(shelf: shelf)
+        older.selection = older.shown.last?.id
+        try await draw(ShelfView(model: older, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size,
+                       name: "shelf-window-older", to: directory)
+        // One project: its days, This week and Earlier this month among them.
+        let paper = ShelfModel(shelf: shelf)
+        paper.project = "Paper draft"
+        try await draw(ShelfView(model: paper, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size,
+                       name: "shelf-window-project", to: directory)
 
         // Nothing on the shelf yet.
         let emptyRoot = FileManager.default.temporaryDirectory.appendingPathComponent("shelf-snapshot-empty-\(UUID().uuidString)", isDirectory: true)

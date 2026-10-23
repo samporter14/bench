@@ -6,8 +6,9 @@
 // everything the Shelf did with one selection works as it did. What is picked
 // is what Export as PDF… makes: one page each, in the order the cards are shown.
 // The rules are an extension of `ShelfModel`; the pieces that draw them
-// (the toolbar's pill, the card that stands in for the detail while several
-// are picked, the page numbers on the cards) are here too, so ShelfView only
+// (the toolbar's pill, shown once two or more are picked, the ⌘P that works
+// with one too, the card that stands in for the detail while several are
+// picked, the page numbers on the cards) are here too, so ShelfView only
 // places them.
 import AppKit
 import SwiftUI
@@ -39,6 +40,9 @@ extension ShelfModel {
     var pickedItems: [ShelfItem] { shown.filter { picked.contains($0.id) } }
     var pickCount: Int { picked.count }
     func isPicked(_ id: String) -> Bool { picked.contains(id) }
+    /// The title bar's Export as PDF… pill: only once two or more are picked (board 12). With one, the card's menu, the
+    /// detail's ⋯ and ⌘P export it.
+    var showsExportPill: Bool { pickCount > 1 }
 
     /// A card's page in the PDF, 1 for the first: only while several are picked.
     func pageNumber(of id: String) -> Int? {
@@ -132,8 +136,9 @@ extension ShelfModel {
 
 // MARK: - The pieces
 
-/// "Export as PDF…" in the title bar: a quiet pill (the one that asks is on the picked card), ⌘P. The count is not
-/// in it (`ShelfPDFRules.exportPillName` says why); VoiceOver and the card say it.
+/// "Export as PDF…" in the title bar, once two or more are picked: a quiet pill (the one that asks is on the picked
+/// card). The count is not in it (`ShelfPDFRules.exportPillName` says why); VoiceOver and the card say it. ⌘P is
+/// `ShelfExportPDFKey`'s, so it works with one pick too, when the pill isn't there.
 struct ShelfExportPDFButton: View {
     @ObservedObject var model: ShelfModel
     @ObservedObject var maker: ShelfPDFMaker
@@ -151,11 +156,33 @@ struct ShelfExportPDFButton: View {
     var body: some View {
         Button { model.exportPDF() } label: { Text(label) }
             .buttonStyle(SolanumPillStyle(.small))
-            .keyboardShortcut("p", modifiers: .command)
             .disabled(maker.isMaking)
             .fixedSize()
-            .help("\(ShelfPDFRules.exportSpoken(count: model.pickCount)). One figure on each page, 16:9, for lab meeting.")
+            .help("\(ShelfPDFRules.exportSpoken(count: model.pickCount)). One figure on each page, 16:9, for lab meeting. \u{2318}P")
             .accessibilityLabel(ShelfPDFRules.exportSpoken(count: model.pickCount))
+    }
+}
+
+/// ⌘P: Export as PDF… on what is picked, one card or several, whether or not the pill is in the title bar. A button
+/// nobody sees (no size, no opacity, not hit, not read by VoiceOver: the pill, the card's menu and the detail's ⋯ are
+/// the ways to it that are), so the key needs nothing on screen; the pill has no key of its own, so ⌘P never asks twice.
+struct ShelfExportPDFKey: View {
+    @ObservedObject var model: ShelfModel
+    @ObservedObject var maker: ShelfPDFMaker
+
+    init(model: ShelfModel) {
+        self.model = model
+        self.maker = model.pdf
+    }
+
+    var body: some View {
+        Button(ShelfPDFRules.exportName(count: model.pickCount)) { model.exportPDF() }
+            .keyboardShortcut("p", modifiers: .command)
+            .disabled(maker.isMaking || model.pickCount == 0)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 
@@ -252,10 +279,10 @@ struct ShelfPickedCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Solanum.raised, in: .rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Solanum.strong, lineWidth: 1))
-        .padding(.horizontal, 20)
-        .padding(.bottom, 20)
+        .background(Solanum.raised, in: .rect(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(ShelfLook.cardEdge, lineWidth: 1))
+        .padding(.horizontal, ShelfRules.gutter)
+        .padding(.bottom, ShelfLook.foot)
         .padding(.top, 8)
         .accessibilityElement(children: .contain)
     }

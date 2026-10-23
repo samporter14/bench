@@ -49,7 +49,7 @@ struct ShelfFindSection: View {
                 .opacity(search.isSearching ? 0.55 : 1)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, ShelfRules.gutter)
         .padding(.top, 14)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -221,7 +221,7 @@ struct ShelfFindPage: View {
                         Button("Clear Search") { model.search = "" }
                             .buttonStyle(SolanumPillStyle(.small))
                     }
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, ShelfRules.gutter)
                     .padding(.top, 18)
                 }
                 ShelfFindSection(finder: model.finder)

@@ -183,7 +183,7 @@ struct ShelfPDFSnapshotTests {
                     Text("Shelf").font(.system(size: 15, weight: .semibold)).foregroundStyle(Solanum.ink).padding(.leading, 8)
                     ShelfProjectPill(model: model)
                     Spacer()
-                    if model.pickCount > 0 { ShelfExportPDFButton(model: model) }
+                    if model.showsExportPill { ShelfExportPDFButton(model: model) }
                     ShelfSearchPill(search: .constant(model.search))
                 }
                 .padding(.horizontal, 14)
@@ -230,7 +230,7 @@ struct ShelfPDFSnapshotTests {
         let shelf = KeptDemo.shelf(index: index, root: root)
         await index.refreshAndWait()
         let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
-        let size = NSSize(width: 880, height: 820)
+        let size = KeptWindowController.size
 
         // One selected, as the window opens: Export as PDF… is in the title bar, the detail below.
         let one = ShelfModel(shelf: shelf, pdf: ShelfPDFMaker(dependencies: .declining))
