@@ -2,7 +2,8 @@
 // a folder, draws the Keep sheet (on the demo's made-up reads, after they
 // have come in) into it as PNGs, light and dark, so it can be looked at
 // without opening a window: ready, reading, a name already kept, a partial
-// keep, a keep with a checksum that doesn't match, a failed read, and a ready
+// keep, a keep with a checksum that doesn't match, a failed read, the folder
+// being put in place (no count, Cancel off), and a ready
 // sheet on a short screen, where its body scrolls. Without the variable the
 // test does nothing. It draws through an `NSHostingView` that is never put in
 // a window, as the update popover's snapshot does, so a window-modal sheet's
@@ -69,6 +70,20 @@ struct KeepSheetSnapshotTests {
             try await Task.sleep(for: .milliseconds(50))
         }
         try await draw(mismatched, name: "keep-sheet-checksum", to: directory)
+
+        // The folder is being put in place: "Finishing…", and Cancel is off.
+        let hold = FinishHold()
+        let finishing = Self.model(root: root, corruptFigure: false, failFirstRead: false, hold: hold)
+        finishing.open()
+        try await settle(finishing)
+        finishing.keep()
+        for _ in 0..<100 where !finishing.isFinishing { try await Task.sleep(for: .milliseconds(50)) }
+        try await draw(finishing, name: "keep-sheet-finishing", to: directory)
+        hold.release()
+        for _ in 0..<100 {
+            if case .kept = finishing.phase { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
 
         // The first read failed: Cancel and Try Again.
         let failed = Self.model(root: root, corruptFigure: false, failFirstRead: true)
@@ -143,7 +158,8 @@ struct KeepSheetSnapshotTests {
 
     /// A sheet whose figure's checksum is stale, whose first read times out, or
     /// whose first read never comes back.
-    private static func model(root: URL, corruptFigure: Bool, failFirstRead: Bool, stall: Bool = false) -> KeepModel {
+    private static func model(root: URL, corruptFigure: Bool, failFirstRead: Bool, stall: Bool = false,
+                              hold: FinishHold? = nil) -> KeepModel {
         let figures = (0..<4).map { KeptDemo.chart(variant: $0) }
         let table = KeptDemo.csv()
         let thumbnails = ShelfThumbnails()
@@ -192,15 +208,43 @@ struct KeepSheetSnapshotTests {
             },
             lastAnswer: { _ in nil },
             thumbnails: thumbnails,
-            disk: KeptDisk(root: { root }),
+            disk: hold.map { hold in KeptDisk(root: { root }, run: { hold.run($0) }) } ?? KeptDisk(root: { root }),
             defaults: defaults,
             root: { root },
-            scienceVersion: { "0.1.70" },
+            // The last thing asked before the folder is put in place: with a hold, the disk stops answering then.
+            scienceVersion: {
+                hold?.arm()
+                return "0.1.70"
+            },
             capsidVersion: "1.0",
             now: { Date() },
             didKeep: { _ in })
         let entry = ArtifactEntry(version: versionIDs[3], artifact: artifact, name: "z_prime.png", mime: "image/png",
                                   size: figures[3].count, at: at(51))
         return KeepModel(subject: KeepSubject(session: session, entry: entry), dependencies: dependencies)
+    }
+}
+
+/// A disk that stops answering once armed, as a share does while the call that
+/// puts the folder in place is out: the calls after `arm` wait for `release`.
+private final class FinishHold: @unchecked Sendable {
+    private let lock = NSLock()
+    private var armed = false
+    private var held: [KeptDisk.Work] = []
+
+    func arm() { lock.withLock { armed = true } }
+
+    func run(_ work: @escaping KeptDisk.Work) {
+        if lock.withLock({ armed }) { lock.withLock { held.append(work) } } else { work() }
+    }
+
+    func release() {
+        let pending = lock.withLock { () -> [KeptDisk.Work] in
+            armed = false
+            let all = held
+            held = []
+            return all
+        }
+        for work in pending { work() }
     }
 }

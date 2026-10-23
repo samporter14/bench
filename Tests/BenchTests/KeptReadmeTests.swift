@@ -3,7 +3,9 @@
 // that what it writes is read back as it was (render, parse, render: the same
 // bytes, with names in every script, quotes, backslashes and line breaks), that
 // the parser refuses anything the renderer didn't write, and that replacing
-// the legend changes the legend and nothing else. Nothing here touches the disk.
+// the legend changes the legend and nothing else, and that updating what Try
+// Again changes (the file rows, "Not copied", "Checksums") changes nothing else
+// either. Nothing here touches the disk.
 import Foundation
 import Testing
 @testable import Bench
@@ -527,5 +529,164 @@ struct KeptReadmeLegendTests {
         let parsed = try #require(KeptReadme.parse(after))
         #expect(parsed.text.legend == legend)
         #expect(parsed.record == record())
+    }
+}
+
+// MARK: Updating only what Capsid keeps in it
+
+/// What Try Again does to a README: the file rows and the "Not copied" and
+/// "Checksums" sections change, and every other byte of the file is as it was.
+struct KeptReadmeUpdateTests {
+    private let landed = KeptFile(path: "input/plate_reader.xlsx", role: .input, artifact: "art_4", version: "ver_1",
+                                  sha256: "dddd", bytes: 9)
+    /// A file whose bytes didn't match Claude Science's checksum.
+    private let stale = KeptFile(path: "input/plate_layout.csv", role: .input, artifact: "art_5", version: "ver_2",
+                                 sha256: "eeee", bytes: 12, expectedSha256: "ffff0000")
+
+    private func update(_ markdown: String, to record: KeptRecord) -> String? {
+        KeptReadme.updating(markdown, files: record.files, missing: record.missing)
+    }
+
+    private func rendered(_ record: KeptRecord, zone: TimeZone = zone, legend: String = "") -> String {
+        KeptReadme.render(record, text: text(legend: legend), timeZone: zone, locale: english)
+    }
+
+    @Test func aReadmeNobodyTouchedComesOutAsTheRendererWouldWriteIt() throws {
+        let missing = record()
+        var whole = record(missing: false)
+        whole.files.append(landed)
+        var someMissing = record()
+        someMissing.missing[0].reason = "The folder didn\u{2019}t respond."
+        var checksum = record()
+        checksum.files.append(stale)
+        var checksumAndMissing = record()
+        checksumAndMissing.files.append(stale)
+        var neither = record(missing: false)
+        neither.files.append(landed)
+        var shelvedThenKept = shelved()
+        shelvedThenKept.files = [landed]
+        let cases: [(String, KeptRecord, KeptRecord)] = [
+            ("everything lands", missing, whole),
+            ("nothing changes", missing, missing),
+            ("a reason changes", missing, someMissing),
+            ("a checksum that doesn\u{2019}t match appears, a file is still missing", missing, checksum),
+            ("both sections appear", record(missing: false), checksumAndMissing),
+            ("both go", checksumAndMissing, neither),
+            ("the checksum goes, Not copied stays", checksum, missing),
+            ("a list that was empty gets a row", shelved(), shelvedThenKept),
+        ]
+        for (name, before, after) in cases {
+            let result = try #require(update(rendered(before), to: after), "\(name)")
+            #expect(result == rendered(after), "\(name)")
+        }
+    }
+
+    @Test func theFrontMattersTimeIsNotWrittenAgainInTheZoneOfTheMomentTheKeepWasMadeIn() throws {
+        // A README made on a Mac in India: its kept_at and the dates in it keep their zone.
+        let india = TimeZone(secondsFromGMT: 5 * 3600 + 1800)!
+        var whole = record(missing: false)
+        whole.files.append(landed)
+        let before = rendered(record(), zone: india)
+        #expect(before.contains("kept_at: 2026-10-22T18:42:00+05:30"))
+        let result = try #require(update(before, to: whole))
+        #expect(result == rendered(whole, zone: india))
+        #expect(result.contains("kept_at: 2026-10-22T18:42:00+05:30"))
+    }
+
+    @Test func aSectionAPersonAddedAndTheTextAroundItStayByteForByte() throws {
+        let original = rendered(record(), legend: "Plate 3 was re-run.")
+        // A section before the legend, one between Claude's words and the origin (with odd spacing and
+        // a Windows editor's line ends), one after "Not copied", and a line after the fine print.
+        let edited = original
+            .replacingOccurrences(of: "## Your legend", with: "## Lab notes\n\nBench 4, lot 2207.\n\n## Your legend")
+            .replacingOccurrences(of: "## Where it came from", with: "## Reviewer\r\n\r\n  Check plate 7.   \r\n\r\n\r\n## Where it came from")
+            .replacingOccurrences(of: "---\n\nCapsid changes", with: "## Follow-ups\n\n- Re-run plate 7\n\n---\n\nCapsid changes")
+            + "\nAdded by hand.\r\n"
+        #expect(KeptReadme.parse(edited) != nil)
+
+        var whole = record(missing: false)
+        whole.files.append(landed)
+        let result = try #require(update(edited, to: whole))
+
+        // Exactly the edited file, with the input listed, nothing missing, and "Not copied" gone.
+        let reason = "too big to keep here (over 8 MB)"
+        let expected = edited
+            .replacingOccurrences(of: "missing:\n  - { role: input, name: \"plate_reader.xlsx\", reason: \"\(reason)\" }\n",
+                                  with: "missing: []\n")
+            .replacingOccurrences(of: "  - { path: \"code/plot_z_prime.py\", role: code, artifact: \"art_3\", version: \"ver_7\", sha256: \"cccc\", bytes: 2048 }\n",
+                                  with: "  - { path: \"code/plot_z_prime.py\", role: code, artifact: \"art_3\", version: \"ver_7\", sha256: \"cccc\", bytes: 2048 }\n"
+                                      + "  - { path: \"input/plate_reader.xlsx\", role: input, artifact: \"art_4\", version: \"ver_1\", sha256: \"dddd\", bytes: 9 }\n")
+            .replacingOccurrences(of: "## Not copied\n\n- The raw input, plate_reader.xlsx: \(reason).\n\n", with: "")
+        #expect(result == expected)
+        for kept in ["## Lab notes\n\nBench 4, lot 2207.\n\n", "  Check plate 7.   \r\n\r\n\r\n", "## Follow-ups\n\n- Re-run plate 7\n\n",
+                     "Plate 3 was re-run.", "\nAdded by hand.\r\n"] {
+            #expect(result.contains(kept), "\(kept.debugDescription)")
+        }
+        let back = try #require(KeptReadme.parse(result))
+        #expect(back.record.files.map(\.path) == ["data/z_prime_by_plate.csv", "code/plot_z_prime.py", "input/plate_reader.xlsx"])
+        #expect(back.record.missing.isEmpty)
+        #expect(back.text.legend == "Plate 3 was re-run.")
+    }
+
+    @Test func aNewSectionOfCapsidsGoesBesideItsOwnAndAPersonsGoOnAfter() throws {
+        let original = rendered(record(missing: false))
+        let edited = original.replacingOccurrences(of: "---\n\nCapsid changes", with: "## Follow-ups\n\nRe-run plate 7.\n\n---\n\nCapsid changes")
+        var after = record()
+        after.files.append(stale)
+        let result = try #require(update(edited, to: after))
+        let order = ["## Where it came from", "## Not copied", "## Checksums", "## Follow-ups", "\n---\n\nCapsid changes"]
+        let places = try order.map { try #require(result.range(of: $0)?.lowerBound) }
+        #expect(places == places.sorted())
+        #expect(result.contains("## Follow-ups\n\nRe-run plate 7.\n\n---\n\nCapsid changes"))
+        let back = try #require(KeptReadme.parse(result))
+        #expect(back.record.missing == after.missing)
+        #expect(KeptReadme.mismatched(back.record).map(\.path) == ["input/plate_layout.csv"])
+
+        // The same when a person's text ends the "Where it came from" section.
+        let trailing = original.replacingOccurrences(of: "The link opens the session in Capsid on a Mac that has it.\n",
+                                                     with: "The link opens the session in Capsid on a Mac that has it.\nMy own line.\n")
+        let placed = try #require(update(trailing, to: after))
+        #expect(placed.contains("My own line.\n\n## Not copied"))
+    }
+
+    @Test func aPersonsNoteInsideNotCopiedStaysWhenTheListGoes() throws {
+        let original = rendered(record())
+        let note = "Chasing this with the vendor.\n\n"
+        let edited = original.replacingOccurrences(of: "over 8 MB).\n\n---", with: "over 8 MB).\n\n\(note)---")
+        #expect(edited != original)
+        var whole = record(missing: false)
+        whole.files.append(landed)
+        let result = try #require(update(edited, to: whole))
+        // The heading and the note stay, and the row doesn't.
+        #expect(result.contains("## Not copied\n\n\n\(note)---"))
+        #expect(!result.contains("plate_reader.xlsx: too big"))
+        #expect(KeptReadme.parse(result)?.record.missing.isEmpty == true)
+        // With the list back in it, the note is still after it.
+        let again = try #require(update(result, to: record()))
+        #expect(again.contains("\n\(note)---"))
+        #expect(again.contains("- The raw input, plate_reader.xlsx: too big to keep here (over 8 MB).\n"))
+    }
+
+    @Test func aSectionWhoseListAPersonDeletedGetsItBack() throws {
+        let original = rendered(record())
+        let emptied = original.replacingOccurrences(of: "- The raw input, plate_reader.xlsx: too big to keep here (over 8 MB).\n", with: "")
+        #expect(emptied != original)
+        #expect(update(emptied, to: record()) == original)
+    }
+
+    @Test func aByteOrderMarkStays() throws {
+        var whole = record(missing: false)
+        whole.files.append(landed)
+        let marked = "\u{FEFF}" + rendered(record())
+        let result = try #require(update(marked, to: whole))
+        #expect(result == "\u{FEFF}" + rendered(whole))
+    }
+
+    @Test func aFileThatIsntOneCapsidReadsIsLeftAlone() {
+        #expect(update("# Not ours\n\nText.\n", to: record()) == nil)
+        #expect(update("", to: record()) == nil)
+        // Nor one whose front matter is out of order.
+        let swapped = rendered(record()).replacingOccurrences(of: "capsid_kept: 1\nname:", with: "name:")
+        #expect(update(swapped, to: record()) == nil)
     }
 }
