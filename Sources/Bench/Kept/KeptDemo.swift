@@ -137,7 +137,7 @@ enum KeptDemo {
             lastAnswer: { _ in nil },
             thumbnails: thumbnails,
             disk: disk,
-            defaults: UserDefaults(suiteName: "kept-demo-\(UUID().uuidString)")!,
+            defaults: scratchDefaults(),
             root: { root },
             scienceVersion: { "0.1.70" },
             capsidVersion: "1.0",
@@ -146,6 +146,13 @@ enum KeptDemo {
     }
 
     private static func at(_ minutesAgo: Double) -> Date { Date().addingTimeInterval(-minutesAgo * 60) }
+
+    /// The demo's own settings (the collection a keep remembers). A suite named by a path is kept at that
+    /// path, in the temporary folder, not as a file in ~/Library/Preferences that nothing would ever remove.
+    private static func scratchDefaults() -> UserDefaults {
+        let name = NSTemporaryDirectory() + "kept-demo-\(UUID().uuidString)"
+        return UserDefaults(suiteName: name)!
+    }
 
     // MARK: Made-up folders
 

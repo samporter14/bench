@@ -164,26 +164,26 @@ struct SpecimenHoldRuleTests {
 
 @MainActor
 struct SpecimenHoldLimitTests {
-    private func defaults(_ value: Any?) -> UserDefaults {
-        let name = "SpecimenHoldTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
-        if let value { defaults.set(value, forKey: SpecimenHold.idleKey) }
-        return defaults
+    /// What the hold's default limit comes to over a suite holding `value` (nothing for nil).
+    private func limit(_ value: Any?) -> TimeInterval {
+        let scratch = ScratchDefaults.make(prefix: "SpecimenHoldTests")
+        defer { scratch.discard() }
+        if let value { scratch.defaults.set(value, forKey: SpecimenHold.idleKey) }
+        return SpecimenHold.defaultLimit(scratch.defaults)
     }
 
     @Test func tenMinutesUnlessTheHiddenDefaultSaysOtherwise() {
         #expect(SpecimenHold.idleLimit == 600)
-        #expect(SpecimenHold.defaultLimit(defaults(nil)) == 600)
-        #expect(SpecimenHold.defaultLimit(defaults(20)) == 20)
+        #expect(limit(nil) == 600)
+        #expect(limit(20) == 20)
         // A command-line `-specimenIdleSeconds 20` arrives as a string.
-        #expect(SpecimenHold.defaultLimit(defaults("20")) == 20)
+        #expect(limit("20") == 20)
     }
 
     @Test func nothingUsableMeansTenMinutes() {
-        #expect(SpecimenHold.defaultLimit(defaults(0)) == 600)
-        #expect(SpecimenHold.defaultLimit(defaults(-5)) == 600)
-        #expect(SpecimenHold.defaultLimit(defaults("soon")) == 600)
+        #expect(limit(0) == 600)
+        #expect(limit(-5) == 600)
+        #expect(limit("soon") == 600)
     }
 }
 

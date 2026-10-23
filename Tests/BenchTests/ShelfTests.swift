@@ -84,6 +84,15 @@ private final class Clock {
     var date = Made.at(100)
 }
 
+/// How many times a closure that runs on the disk's queue was called.
+private final class Tally: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+
+    var count: Int { lock.withLock { calls } }
+    func bump() { lock.withLock { calls += 1 } }
+}
+
 /// A scratch Kept folder, a stand-in Trash, a defaults suite of its own and the made-up reads.
 @MainActor
 private final class Rig {
@@ -92,11 +101,14 @@ private final class Rig {
     let scratch: URL
     let root: URL
     let trash: URL
+    /// The folders the stand-in Trash was asked to take.
+    private let trashings = Tally()
+    var trashCalls: Int { trashings.count }
     let disk: KeptDisk
     let index: KeptIndex
     let shelf: Shelf
-    let defaults: UserDefaults
-    private let suite = "capsid-tests-shelf-\(UUID().uuidString)"
+    private let settings = ScratchDefaults.make(prefix: "capsid-tests-shelf")
+    var defaults: UserDefaults { settings.defaults }
 
     init() throws {
         let scratch = FileManager.default.temporaryDirectory.appending(path: "capsid-tests-shelf-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -106,15 +118,16 @@ private final class Rig {
         self.scratch = scratch
         self.root = root
         self.trash = trash
-        defaults = UserDefaults(suiteName: suite)!
+        let trashings = self.trashings
         let disk = KeptDisk(root: { root }, trash: { folder in
+            trashings.bump()
             let target = trash.appending(path: "\(UUID().uuidString) \(folder.lastPathComponent)", directoryHint: .isDirectory)
             try FileManager.default.moveItem(at: folder, to: target)
             return target
         })
         self.disk = disk
         index = KeptIndex(disk: disk, root: { root })
-        let science = self.science, defaults = self.defaults, clock = self.clock
+        let science = self.science, defaults = settings.defaults, clock = self.clock
         shelf = Shelf(index: index, dependencies: {
             ShelfDependencies(
                 keep: KeepDependencies(
@@ -135,7 +148,7 @@ private final class Rig {
 
     func tearDown() {
         try? FileManager.default.removeItem(at: scratch)
-        defaults.removePersistentDomain(forName: suite)
+        settings.discard()
     }
 
     /// The README of the one folder in a collection, read back.
@@ -833,6 +846,53 @@ struct ShelfWindowRulesTests {
         try await until("it is selected") { model.selected?.fileName == "qc_notes.md" }
         #expect(rig.shelf.versions.contains(Made.notes))
         #expect(rig.trashed().isEmpty)
+    }
+
+    /// A double-click on Remove: the second press comes before the first removal has done anything, with the same
+    /// item still selected. It must not ask for the folder again: that fails (it has moved) and the error would
+    /// take the place of the Undo.
+    @Test func pressingRemoveAgainWhileTheFirstRemovalIsOutAsksForNothingMore() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        await rig.shelveTheBoardsRow()
+        let model = ShelfModel(shelf: rig.shelf)
+        let note = model.shown[1]
+        model.selection = note.id
+        model.removeSelected()
+        model.removeSelected()
+        #expect(model.removing == [note.id])
+        try await until("the removal") { model.note != nil }
+        // The disk's queue is in order: once it has answered this, a second removal would have been answered too.
+        _ = try await rig.disk.listCollections()
+        try await until("the removal is over") { model.removing.isEmpty }
+        #expect(model.note?.sentence == "Moved qc_notes.md to the Trash.")
+        #expect(model.note?.removal != nil, "the Undo is still there")
+        #expect(rig.trashCalls == 1)
+        #expect(rig.trashed().count == 1)
+    }
+
+    @Test func eachItemCanBeRemovedWhileAnotherIsOutAndAgainAfterUndo() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        await rig.shelveTheBoardsRow()
+        let model = ShelfModel(shelf: rig.shelf)
+        let first = model.shown[1], second = model.shown[2]
+        model.selection = first.id
+        model.removeSelected()
+        model.selection = second.id
+        model.removeSelected()
+        #expect(model.removing == [first.id, second.id])
+        try await until("both are off") { model.removing.isEmpty && rig.trashCalls == 2 }
+        #expect(rig.trashed().count == 2)
+
+        // Undo puts the last one back; the same item can then be taken off again.
+        model.undoRemoval()
+        try await until("it is back") { model.note == nil && model.items.count == 3 }
+        let back = try #require(model.items.first { $0.fileName == second.fileName })
+        model.selection = back.id
+        model.removeSelected()
+        try await until("taken off again") { model.removing.isEmpty && rig.trashCalls == 3 }
+        #expect(model.note?.sentence == "Moved \(second.fileName) to the Trash.")
     }
 
     @Test func aRemovalThatFailsSaysWhyAndOffersNoUndo() async throws {

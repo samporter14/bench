@@ -427,9 +427,9 @@ struct RemoteAuthHardeningTests {
     }
 
     @Test func anAddressAnEarlierBuildKeptIsHashedAndWrittenBack() throws {
-        let suite = "bench.tests.remoteLogin.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let scratch = ScratchDefaults.make(prefix: "bench.tests.remoteLogin")
+        defer { scratch.discard() }
+        let defaults = scratch.defaults
         #expect(RemoteLogin.recorded(defaults) == nil)
         defaults.set("Pat@example.com", forKey: SettingsKey.remoteLogin)
         let hashed = RemoteLogin.recorded(defaults)

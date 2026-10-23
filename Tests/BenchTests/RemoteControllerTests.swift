@@ -26,9 +26,9 @@ struct RemoteControllerTests {
 
     /// A throwaway settings suite: `served` as if a listener had run on an earlier launch.
     private func withDefaults(served: Bool, _ body: @MainActor (UserDefaults) async throws -> Void) async throws {
-        let name = "bench.tests.remote.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        let scratch = ScratchDefaults.make(prefix: "bench.tests.remote")
+        defer { scratch.discard() }
+        let defaults = scratch.defaults
         if served { defaults.set(47280, forKey: SettingsKey.remotePort) }
         try await body(defaults)
     }

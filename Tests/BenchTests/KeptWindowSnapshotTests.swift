@@ -64,6 +64,56 @@ struct KeptWindowSnapshotTests {
         }
     }
 
+    /// The legend and files under an item kept with data and code, as the detail card draws them: with its README read, and
+    /// with the README gone, where the field is off and a line says why.
+    @Test func theLegendFieldIsDrawnReadableAndUnreadableWhenAsked() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("shelf-snapshot-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let disk = KeptDisk(root: { root })
+        await KeptDemo.seed(disk)
+        let index = KeptIndex(disk: disk, root: { root })
+        let shelf = KeptDemo.shelf(index: index, root: root)
+        index.refresh()
+        for _ in 0..<100 where index.results.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        let model = ShelfModel(shelf: shelf)
+        let item = try #require(model.items.first { !$0.record.files.isEmpty })
+
+        func card(_ name: String) async throws {
+            let view = ShelfExtras(item: item, model: model)
+                .padding(18)
+                .frame(width: 840)
+                .background(Solanum.raised)
+                .background(Solanum.page)
+            for dark in [false, true] {
+                let host = NSHostingView(rootView: view)
+                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                host.frame = CGRect(origin: .zero, size: CGSize(width: 840 + 36, height: 190))
+                host.layoutSubtreeIfNeeded()
+                for _ in 0..<10 {
+                    try await Task.sleep(for: .milliseconds(100))
+                    host.layoutSubtreeIfNeeded()
+                }
+                let size = host.bounds.size
+                let rep = try #require(NSBitmapImageRep(
+                    bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+                rep.size = size
+                host.cacheDisplay(in: host.bounds, to: rep)
+                let png = try #require(rep.representation(using: .png, properties: [:]))
+                try png.write(to: directory.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
+            }
+        }
+
+        try await card("shelf-legend")
+        // The README is gone: the field is off, and the line says why.
+        try FileManager.default.removeItem(at: item.folder.appendingPathComponent("README.md"))
+        try await card("shelf-legend-unreadable")
+    }
+
     @Test func theShelfWindowIsDrawnToPNGsWhenAsked() async throws {
         guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
         let directory = URL(fileURLWithPath: path, isDirectory: true)

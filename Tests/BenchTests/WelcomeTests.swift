@@ -9,9 +9,9 @@ struct WelcomeTests {
     /// A suite of its own, with the defaults Bench registers at launch, as
     /// `SettingsKey.register()` does for the real ones.
     private func suite(registering: Bool = true, _ body: (UserDefaults, String) throws -> Void) throws {
-        let name = "WelcomeTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        let scratch = ScratchDefaults.make(prefix: "WelcomeTests")
+        defer { scratch.discard() }
+        let defaults = scratch.defaults
         if registering {
             defaults.register(defaults: [
                 SettingsKey.showPanel: true,
@@ -19,7 +19,7 @@ struct WelcomeTests {
                 SettingsKey.checkForUpdates: true,
             ])
         }
-        try body(defaults, name)
+        try body(defaults, scratch.name)
     }
 
     // MARK: Someone who used Bench before

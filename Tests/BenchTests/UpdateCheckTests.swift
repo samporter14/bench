@@ -75,15 +75,10 @@ private final class Posted {
 }
 
 private struct Scratch {
-    let defaults: UserDefaults
-    private let name: String
+    private let suite = ScratchDefaults.make(prefix: "bench-update-tests")
+    var defaults: UserDefaults { suite.defaults }
 
-    init() {
-        name = "bench-update-tests-\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: name)!
-    }
-
-    func clean() { defaults.removePersistentDomain(forName: name) }
+    func clean() { suite.discard() }
 }
 
 @MainActor

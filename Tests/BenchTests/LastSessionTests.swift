@@ -22,10 +22,9 @@ struct LastSessionTests {
 
     /// A suite of its own, and the memory over it. `demo` makes a demo's.
     private func memory(demo: Bool = false, _ body: @MainActor (LastSession, UserDefaults) async throws -> Void) async throws {
-        let name = "LastSessionTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
-        try await body(LastSession(defaults: defaults, isDemo: demo), defaults)
+        let scratch = ScratchDefaults.make(prefix: "LastSessionTests")
+        defer { scratch.discard() }
+        try await body(LastSession(defaults: scratch.defaults, isDemo: demo), scratch.defaults)
     }
 
     // MARK: Remembering

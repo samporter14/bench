@@ -329,9 +329,9 @@ struct RemoteBrowserTests {
     }
 
     @Test func theSwitchIsOnUnlessTurnedOff() throws {
-        let name = "bench-tests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        let scratch = ScratchDefaults.make(prefix: "bench-tests")
+        defer { scratch.discard() }
+        let defaults = scratch.defaults
         #expect(RemoteBrowse.setting(defaults))
         defaults.set(false, forKey: SettingsKey.remoteBrowse)
         #expect(!RemoteBrowse.setting(defaults))

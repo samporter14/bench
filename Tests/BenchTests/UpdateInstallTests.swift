@@ -164,6 +164,8 @@ private final class FakeSteps: @unchecked Sendable {
     var swaps: [SwapRequest] = []
     var terminated = 0
     var swapExit: (@MainActor @Sendable (String?) -> Void)?
+    /// The settings suites `UpdateCheckerInstallTests` made over this root, dropped by `tearDown`.
+    private var suites: [ScratchDefaults] = []
 
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("bench-install-\(UUID().uuidString)", isDirectory: true)
@@ -173,7 +175,17 @@ private final class FakeSteps: @unchecked Sendable {
 
     var state: URL { root.appendingPathComponent("state", isDirectory: true) }
 
-    func tearDown() { try? FileManager.default.removeItem(at: root) }
+    func tearDown() {
+        try? FileManager.default.removeItem(at: root)
+        for suite in suites { suite.discard() }
+    }
+
+    /// A settings suite that lasts until `tearDown`.
+    func suite() -> UserDefaults {
+        let scratch = ScratchDefaults.make(prefix: "UpdateCheckerInstallTests")
+        suites.append(scratch)
+        return scratch.defaults
+    }
 
     func dependencies() -> UpdateInstallDependencies {
         UpdateInstallDependencies(
@@ -342,8 +354,7 @@ struct UpdateCheckerInstallTests {
     /// install steps are the fakes.
     private func checker(_ steps: FakeSteps, failed: @escaping @MainActor (AvailableUpdate, UpdateInstallFailure) -> Void = { _, _ in })
         -> UpdateChecker {
-        let suite = "UpdateCheckerInstallTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
+        let defaults = steps.suite()
         defaults.set("0.9.8", forKey: "updateNewestVersion")
         defaults.set("v0.9.8", forKey: "updateNewestTag")
         defaults.set(Date().timeIntervalSince1970, forKey: "updateLastChecked")
