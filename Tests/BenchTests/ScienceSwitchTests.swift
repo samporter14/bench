@@ -517,12 +517,17 @@ struct CanonicalHostTests {
 // MARK: Signing in
 
 struct SignInPlanTests {
-    @Test func aDaemonThatRequiresATokenIsOnlyReadWhateverElse() {
-        for owned in [false, true] {
-            for nonce in [nil, "code-1"] as [String?] {
-                #expect(SignInPlan.decide(requireToken: true, appOwned: owned, nonce: nonce) == .readOnly(.tokenRequired))
-            }
-        }
+    @Test func aDaemonThatRequiresATokenIsOnlyReadBesideTheAppWithNoCode() {
+        #expect(SignInPlan.decide(requireToken: true, appOwned: true, nonce: nil) == .readOnly(.tokenRequired))
+        // With a code, beside the app, its own page signs in.
+        #expect(SignInPlan.decide(requireToken: true, appOwned: true, nonce: "code-1") == .apiMe(nonce: "code-1"))
+    }
+
+    @Test func theTabDaemonThatReportsATokenStillSignsInAsItAlwaysDid() {
+        // Found on Sam's Mac: the browser-tab daemon says `require_token: true`,
+        // and the first cut went read-only on it.
+        #expect(SignInPlan.decide(requireToken: true, appOwned: false, nonce: "code-1") == .page(nonce: "code-1"))
+        #expect(SignInPlan.decide(requireToken: true, appOwned: false, nonce: nil) == .page(nonce: nil))
     }
 
     @Test func theLauncherThatOpensATabSignsInAsItAlwaysDid() {
@@ -928,10 +933,16 @@ struct ScienceSwitchDiagnosticsTests {
         ])
     }
 
-    @Test func aTokenRequiredIsSaidAsOnlyReading() {
+    @Test func aTokenRequiredBesideTheAppIsSaidAsOnlyReadingWithoutACode() {
         let lines = Diagnose.daemonLines(status: status(context: "app-child", token: true), install: .ownWindow)
-        #expect(lines.last == "• Signing in: Capsid can't (the daemon requires a token), so it would only read the database")
+        #expect(lines.last == "• Signing in: through the daemon's own page with a code from claude-science url; with none (it requires a token), Capsid only reads the database")
         #expect(lines.contains("  requires a token to sign in: yes"))
+    }
+
+    @Test func aTabDaemonThatRequiresATokenStillSignsInWithACode() {
+        // Sam's Mac, 2026-10-22: the launcher's daemon says it requires a token.
+        let lines = Diagnose.daemonLines(status: status(context: nil, token: true), install: .browserTab)
+        #expect(lines.last == "• Signing in: with a code from claude-science url")
     }
 
     @Test func aHostCapsidCantUseIsSaidAndReplaced() {

@@ -260,10 +260,11 @@ final class WebContainer: ObservableObject, WebPageWindow {
         }
         // Reopen where the user was (Web/LastSession.swift), unless a link
         // already asked for somewhere. The database is asked while the
-        // sign-in code is fetched, so a launch waits for neither. A daemon
-        // that says it needs a token isn't asked for a code at all.
+        // sign-in code is fetched, so a launch waits for neither. The code is
+        // asked for whatever `require_token` says: the browser-tab daemon
+        // reports it too, and the code is how Capsid has always signed in.
         let owned = await appOwned()
-        async let code = Self.codeIfWanted(daemon.requireToken != true)
+        async let code = Self.codeIfWanted(true)
         let remembered = pendingURL == nil
             ? await lastSession.reopenURL(port: port, host: host, isKnown: LastSession.databaseKnows) : nil
         let nonce = await code

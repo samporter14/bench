@@ -95,11 +95,15 @@ enum SignInPlan: Equatable, Sendable {
 
     /// `appOwned`: the daemon is the app's child, or the own-window app is
     /// installed, or the page has shown the handover dialog.
+    ///
+    /// `require_token` alone never stops a sign-in: the browser-tab daemon
+    /// reports it too, and the one-time code signs in to it as it always has
+    /// (the first cut went read-only on it, on Sam's Mac, 2026-10-22). It
+    /// matters only beside the app, with no code to sign in with.
     static func decide(requireToken: Bool?, appOwned: Bool, nonce: String?) -> SignInPlan {
-        if requireToken == true { return .readOnly(.tokenRequired) }
         guard appOwned else { return .page(nonce: nonce) }
-        guard let nonce else { return .page(nonce: nil) }
-        return .apiMe(nonce: nonce)
+        if let nonce { return .apiMe(nonce: nonce) }
+        return requireToken == true ? .readOnly(.tokenRequired) : .page(nonce: nil)
     }
 
     /// Whether the daemon belongs to Claude Science's own app, so signing in

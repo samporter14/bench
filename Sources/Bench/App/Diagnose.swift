@@ -165,11 +165,12 @@ enum Diagnose {
         out.append("  requires a token to sign in: \(token)")
         out.append(startLine(status: status, install: install))
         let owned = SignInPlan.appOwned(daemon: status, install: install, handoverSeen: false)
+        // As `SignInPlan.decide`: a token matters only beside the app, with no code.
         let signIn: String
-        if status.requireToken == true {
-            signIn = "• Signing in: Capsid can't (the daemon requires a token), so it would only read the database"
-        } else if owned {
-            signIn = "• Signing in: through the daemon's own page with a code from claude-science url; with none, Capsid only reads the database"
+        if owned {
+            signIn = status.requireToken == true
+                ? "• Signing in: through the daemon's own page with a code from claude-science url; with none (it requires a token), Capsid only reads the database"
+                : "• Signing in: through the daemon's own page with a code from claude-science url; with none, Capsid only reads the database"
         } else {
             signIn = "• Signing in: with a code from claude-science url"
         }
