@@ -1032,11 +1032,12 @@ function wantSince(v) {
     Promise.resolve(run()).then(again, again);
   };
   v.asks.slice(0, SINCE_ASKS).forEach((a) => { if (!S.sess[a.id]) ask(a.id, 's', () => loadSession(a.id)); });
-  // content: false is the Mac's card setting keeping what sessions said off the rows: read none of it here either.
+  // content: false is the Mac's card setting keeping what sessions said off the rows: read none of it here either,
+  // and no file or picture of the session, which is as much of its content as its words are.
   const content = v.sn.content !== false;
   v.finished.slice(0, SINCE_ROWS).forEach((f) => {
     if (content && !f.line && !S.sess[f.id]) ask(f.id, 's', () => loadSession(f.id));
-    if (browseOn() && !art(f.id).loaded) ask(f.id, 'a', () => loadArtifacts(f.id));
+    if (content && browseOn() && !art(f.id).loaded) ask(f.id, 'a', () => loadArtifacts(f.id));
   });
 }
 
@@ -1084,8 +1085,10 @@ function sinceAskCard(a) {
     note ? h('p', { class: 'since-note', role: 'status', text: note }) : null);
 }
 
-// A finished row's picture: the first image its artifacts list, else a tile with the kind of its first file.
-function sinceTile(f) {
+// A finished row's picture: the first image its artifacts list, else a tile with the kind of its first file. With the
+// Mac's card setting off (content false) there is none, not even for files this page already has listed.
+function sinceTile(f, content) {
+  if (!content) return null;
   const A = browseOn() ? art(f.id) : null;
   const img = A && A.loaded ? A.items.find((x) => x.kind === 'image') : null;
   if (img) {
@@ -1100,7 +1103,7 @@ function sinceFinishedRow(f, content) {
   const d = content && S.sess[f.id] && S.sess[f.id].data;
   const line = content ? f.line || (d && d.reply && typeof d.reply.text === 'string' ? d.reply.text : '') : '';
   return h('a', { class: 'since-row', href: sessionHref(f.id), 'data-key': 'sf:' + f.id },
-    sinceTile(f),
+    sinceTile(f, content),
     h('span', { class: 'since-main' }, h('span', { class: 'since-title', text: f.title }), line ? h('span', { class: 'since-line', text: sinceLine(line) }) : null));
 }
 
