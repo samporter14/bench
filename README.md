@@ -157,8 +157,8 @@ from; Remove puts one in the Trash.
 shelf: type in the Shelf's search (or Open Session…) and what Claude made
 anywhere shows under your shelf's own matches, with Add to Shelf and Show
 Where It Came From. For lab meeting, pick several figures (⌘-click) and
-choose **Make PDF…** (⌘P): one 16:9 page each, with its title, legend and
-where it came from.
+choose **Export Figure as PDF…** (⌘P; "Export 3 Figures as PDF…" with
+several): one 16:9 page each, with its title, legend and where it came from.
 
 When a figure is going into a paper, **Keep with Data and Code…** (⌥⌘K) keeps
 the real version with the data it was drawn from and the script that drew it,

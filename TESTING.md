@@ -323,6 +323,27 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23, shelf polish: "Export Figure as PDF…", a PDF from what is saved, drafts that survive, Find's limit
+
+- ✅ **The rename.** "Make PDF…" is "Export Figure as PDF…" / "Export 3 Figures as PDF…" on the card and in a
+  card's menu, "Export as PDF…" in the title bar (no count: at 620 points the bar also holds the project pill and
+  the search), "Exporting… 2/3" while it is made, "Export" on the save panel's button. ⌘P and "Lab meeting
+  <date>.pdf" unchanged. Offscreen renders, light and dark, one, three and all ten picked (the narrowest window),
+  and a real `--demo shelf-pdf` window through `shoot.sh` (light; the demo follows the system's appearance).
+- ✅ **A PDF made right after typing a legend has that legend** (typed just before the command, typed while the
+  panel is up, changed in another app while it is up, a conflict, an unreadable README), each mutation-checked
+  by leaving `latest` out of the command.
+- ✅ **A legend draft whose save fails after the item was left is still there**: kept by the model, the pill says
+  so, choosing the item again shows the draft with its Use Mine / Use Theirs (a change made elsewhere, and a
+  README that went missing). Mutation-checked by letting the editor go with the card.
+- ✅ **Find's limit.** 200 files of a hidden session, the concierge, the uploads session and the planner, newer
+  than five real matches: the five come back, with and without the two indexes. On a made-up database of 80,000
+  artifacts and 2,000 sessions with 900 MB of blobs: 45–130 ms became 220–450 ms warm for words every session
+  matches. Not measured on a real database.
+- The whole suite: 3,593 tests in 466 suites pass.
+- ⏳ **Live**: the save panel's new button and the pill in the real toolbar with a long project name, a real
+  conflicting legend save after choosing another item (the pill line), and Find on a real database.
+
 ## 2026-10-23, Capsid 1.0 released and installed
 
 - ✅ Released as v1.0.0 (tag on c3fcdb4, "Capsid 1.0", by Sam with `gh release create`): `Bench.zip` with

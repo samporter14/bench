@@ -33,7 +33,6 @@ final class ShelfLegendEditor: ObservableObject {
     /// The README was changed in another app since it was read.
     @Published private(set) var changedOutside = false
 
-    /// The README as last read or written, so an edit made elsewhere is never written over.
     /// The field is on screen: a failed save is the field's to say, not the window's.
     private(set) var onScreen = false
     /// Saves asked for and not yet over.
@@ -42,6 +41,7 @@ final class ShelfLegendEditor: ObservableObject {
     /// failure. The Shelf's model puts a line on its dark pill.
     var failed: (@MainActor (_ conflict: Bool) -> Void)?
 
+    /// The README as last read or written, so an edit made elsewhere is never written over.
     private var lastRead: String?
     /// The field is being set from the README: that is not typing.
     private var loading = false
