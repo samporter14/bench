@@ -501,10 +501,10 @@ private final class PhotoRig {
     }
 
     lazy var sessions = RemoteSessions(dependencies: RemoteSessions.Dependencies(
-        actionsOn: { [unowned self] in self.actionsOn },
-        known: { [unowned self] in self.known },
+        actionsOn: { [self] in self.actionsOn },
+        known: { [self] in self.known },
         cardPlan: { _ in nil },
-        read: { [unowned self] _, turns in
+        read: { [self] _, turns in
             self.log.append(turns ? "turns" : "read")
             if self.holdFirstRead && self.readIndex == 0 { await self.gate.wait() }
             let index = min(self.readIndex, self.reads.count - 1)
@@ -512,41 +512,41 @@ private final class PhotoRig {
             return self.reads.isEmpty ? nil : self.reads[index]
         },
         readPlan: { _ in nil },
-        write: { [unowned self] write in
+        write: { [self] write in
             self.log.append("write")
             self.writes.append(write)
             if self.holdWrite { await self.gate.wait() }
             return self.writeReply
         },
-        now: { [unowned self] in self.now },
-        browseOn: { [unowned self] in self.browseOn },
+        now: { [self] in self.now },
+        browseOn: { [self] in self.browseOn },
         lookup: { _ in nil },
         turnLimit: turnLimit,
-        wait: { [unowned self] in await self.clock.wait($0) }))
+        wait: { [self] in await self.clock.wait($0) }))
 
     lazy var browser = RemoteBrowser(sessions: sessions, dependencies: RemoteBrowser.Dependencies(
-        browseOn: { [unowned self] in self.browseOn },
-        actionsOn: { [unowned self] in self.actionsOn },
-        projects: { [unowned self] in self.log.append("projects"); return self.projects },
+        browseOn: { [self] in self.browseOn },
+        actionsOn: { [self] in self.actionsOn },
+        projects: { [self] in self.log.append("projects"); return self.projects },
         sessions: { _, _, _ in nil },
-        known: { [unowned self] in self.known },
+        known: { [self] in self.known },
         history: { _, _, _ in .unreadable },
         turn: { _, _ in .none },
-        create: { [unowned self] write in
+        create: { [self] write in
             self.log.append("create")
             self.writes.append(write)
             return self.createReply
         },
-        findIntent: { [unowned self] _, _ in
+        findIntent: { [self] _, _ in
             self.log.append("intent")
             return self.intents.isEmpty ? nil : self.intents.removeFirst()
         },
         listed: { _, _ in },
-        now: { [unowned self] in self.now },
-        pause: { [unowned self] in self.log.append("pause") }))
+        now: { [self] in self.now },
+        pause: { [self] in self.log.append("pause") }))
 
     lazy var photos = RemotePhotos(sessions: sessions, browser: browser, dependencies: RemotePhotos.Dependencies(
-        upload: { [unowned self] project, photo in
+        upload: { [self] project, photo in
             self.log.append("upload")
             self.uploads.append((project, photo))
             if self.holdUpload { await self.gate.wait() }
@@ -565,6 +565,17 @@ private final class PhotoRig {
             case .unknown: return .unknown
             }
         }))
+
+    /// Lets what a released gate started run its course: until nothing has been logged for a good while (bounded),
+    /// instead of a fixed number of turns that a loaded Mac can outrun.
+    func drain() async {
+        var quiet = 0
+        var seen = log.count
+        for _ in 0..<2_000 where quiet < 30 {
+            await Task.yield()
+            if log.count == seen { quiet += 1 } else { seen = log.count; quiet = 0 }
+        }
+    }
 
     func session(_ body: Data, device: String = "device-1", id: String = root) async -> RemoteActionReply {
         await photos.respond(.session(id), device: device, body: body)
@@ -727,7 +738,7 @@ struct RemotePhotosSessionTests {
         rig.clock.fire()
         let said = decode(await task.value.body)
         rig.gate.open()
-        for _ in 0..<60 { await Task.yield() }
+        await rig.drain()
         return said
     }
 
