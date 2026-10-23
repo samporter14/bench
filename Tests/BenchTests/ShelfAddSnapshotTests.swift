@@ -66,6 +66,8 @@ struct ShelfAddSnapshotTests {
             ("already", .already(MadeShelf.placement())),
             ("adding", .adding),
             ("failed", .failed("That file is gone from Claude Science.")),
+            ("failed-long", .failed("Couldn\u{2019}t add z_prime_by_plate.png: Claude Science didn\u{2019}t answer in time. Check that it is running.")),
+            ("failed-longer", .failed("Couldn\u{2019}t add z_prime_by_plate.png: Claude Science didn\u{2019}t answer in time, and the Mac may be offline. Check that Claude Science is running, that you are signed in, and that this file is still in the session, then try again in a minute.")),
             ("undone", .undone("z_prime_by_plate.png")),
             ("long", .added(MadeShelf.placement("a_very_long_file_name_for_the_plate_reader_qc_of_the_overnight_run_21_october.png"))),
         ]

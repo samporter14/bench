@@ -130,6 +130,36 @@ struct ShelfToastTests {
         #expect(model.state == .adding)
     }
 
+    @Test func aToastDismissedUnderThePointerDoesntHoldTheNextOne() async {
+        // Show Shelf and Undo take the pill away from under the pointer, so its
+        // "pointer left" may never come; the next toast must still go.
+        let (model, _, clock, _) = make()
+        model.show(.added(MadeShelf.placement()))
+        await settle()
+        model.hover(true)
+        model.showShelf()
+        #expect(model.state == nil && !model.hovering)
+        model.show(.failed("Second."))
+        await settle()
+        #expect(await clock.requested == [.seconds(4), .seconds(6)])
+        await clock.fire()
+        await settle()
+        #expect(model.state == nil)
+    }
+
+    // MARK: Its shape
+
+    @Test func aFailureMayRunToTwoLinesAndIsCutAtItsEnd() {
+        let placement = MadeShelf.placement()
+        #expect(ShelfToastView.lines(.failed("Couldn\u{2019}t add it.")) == 2)
+        #expect(ShelfToastView.truncation(.failed("Couldn\u{2019}t add it.")) == .tail)
+        // Everything else is one line, a long file name cut in its middle so its ending shows.
+        for state in [ShelfToastModel.State.adding, .added(placement), .already(placement), .undone("x")] {
+            #expect(ShelfToastView.lines(state) == 1)
+            #expect(ShelfToastView.truncation(state) == .middle)
+        }
+    }
+
     // MARK: The buttons
 
     @Test func showShelfOpensTheShelfOnTheItemAndGoes() {
