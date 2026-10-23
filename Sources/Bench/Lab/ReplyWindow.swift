@@ -590,7 +590,9 @@ struct ReplyView: View {
             case .sending:
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("Sending…").font(.system(size: 12)).foregroundStyle(.secondary)
+                    // A send that got no answer is being looked for in the session.
+                    Text(replier.isChecking(sessionID) ? RemoteDecide.Sentence.checking : "Sending…")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 .accessibilityElement(children: .combine)
             case .sent(let sentence):

@@ -223,6 +223,7 @@ var __result = null;
 var document = { cookie: __cookie };
 var AbortSignal = function () {};
 AbortSignal.timeout = function () { return undefined; };
+\(PageScript.timerShim)
 var Blob = function (parts, options) {
     var size = 0;
     for (var i = 0; i < parts.length; i++) { size += parts[i].length; }
@@ -259,6 +260,8 @@ var fetch = function (path, init) {
     var n = __seen[path] || 0;
     __seen[path] = n + 1;
     var answer = list[Math.min(n, list.length - 1)];
+    var hung = __hangs(answer, init);
+    if (hung) { return hung; }
     return Promise.resolve({ status: answer.status, ok: answer.status >= 200 && answer.status < 300,
                              text: function () { return Promise.resolve(answer.body); } });
 };
@@ -274,7 +277,7 @@ struct FileUploadPageTests {
         script.set("__cookie", "theme=dark; operon_csrf=secret%20one")
         script.evaluate(uploadPrelude)
         let arguments = PhotoUploadScript.arguments(project: "proj_a", file: file)
-        let names = ["projectId", "filename", "contentType", "data", "size", "kind"]
+        let names = ["projectId", "filename", "contentType", "data", "size", "kind", "timeoutMS"]
         var values: [String] = []
         for (index, name) in names.enumerated() {
             let data = (try? JSONSerialization.data(withJSONObject: arguments[name] ?? NSNull(), options: [.fragmentsAllowed])) ?? Data("null".utf8)

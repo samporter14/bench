@@ -278,10 +278,21 @@ private final class FakeSender: QuickStartSending {
     private(set) var requests: [QuickStartFlow.Request] = []
     var gate: CheckedContinuation<Void, Never>?
     var hold = false
+    /// What the flow tells the panel before it answers.
+    var stages: [QuickStartFlow.Progress] = []
+    /// Whether the send's task had been cancelled when it answered.
+    private(set) var cancelledWhenItAnswered = false
 
     func perform(_ request: QuickStartFlow.Request) async -> QuickStartFlow.Outcome {
+        await perform(request, progress: { _ in })
+    }
+
+    func perform(_ request: QuickStartFlow.Request,
+                 progress: @escaping @MainActor (QuickStartFlow.Progress) -> Void) async -> QuickStartFlow.Outcome {
         requests.append(request)
+        for stage in stages { progress(stage) }
         if hold { await withCheckedContinuation { gate = $0 } }
+        cancelledWhenItAnswered = Task.isCancelled
         return outcomes[min(requests.count - 1, outcomes.count - 1)]
     }
 
@@ -589,6 +600,143 @@ struct QuickStartModelTests {
         model.cancel()
         #expect(rig.closed == 1)
         #expect(rig.sender.requests.isEmpty)
+    }
+
+    // MARK: Cancel while sending
+
+    private func submitHeld(_ rig: ModelRig, text: String = "QC this") async {
+        rig.sender.hold = true
+        rig.model.open()
+        await rig.settle()
+        rig.model.text = text
+        rig.model.submit()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(rig.model.phase == .sending)
+    }
+
+    @Test func cancelWhileSendingStopsWhatIsUnsentAndClosesOnceTheFlowSaysNothingWent() async {
+        rig.sender.outcomes = [.failed(sentence: QuickStartFlow.Sentence.cancelled)]
+        await submitHeld(rig)
+        rig.model.cancel()
+        // The panel waits for the flow to say how far it got; it doesn't just disappear.
+        #expect(rig.closed == 0)
+        #expect(rig.model.phase == .sending)
+        #expect(rig.model.stopRequested)
+        rig.sender.release()
+        await rig.waitForSend()
+        #expect(rig.sender.cancelledWhenItAnswered, "the flow was told to stop")
+        #expect(rig.closed == 1)
+        #expect(rig.model.phase == .editing)
+        #expect(rig.model.text == "QC this", "what was typed is kept")
+        #expect(!rig.model.stopRequested)
+        // Nothing is shown as sent, and the next request is the same request: same intent id.
+        #expect(rig.lingered.isEmpty)
+    }
+
+    @Test func cancelAfterFilesWentUpKeepsThePanelAndSaysWhat() async {
+        let said = "Cancelled. 1 file was already in Assay development. Nothing was started."
+        rig.sender.outcomes = [.failed(sentence: said)]
+        await submitHeld(rig)
+        rig.model.cancel()
+        rig.sender.release()
+        await rig.waitForSend()
+        #expect(rig.model.phase == .failed(said))
+        #expect(rig.closed == 0)
+        #expect(rig.model.text == "QC this")
+        // Cancel again, with nothing sending, puts the panel away.
+        rig.model.cancel()
+        #expect(rig.closed == 1)
+    }
+
+    @Test func cancelAfterTheRequestIsOutCanNotTakeItBackAndSaysSo() async {
+        rig.sender.stages = [.committed]
+        await submitHeld(rig)
+        #expect(rig.model.sendingLine == "Starting…")
+        rig.model.cancel()
+        // The flow is not cancelled, the panel stays, and it says why.
+        #expect(rig.model.stopRequested)
+        #expect(rig.model.sendingLine == "Already sent. Waiting for Claude Science…")
+        #expect(rig.closed == 0)
+        rig.sender.release()
+        await rig.waitForSend()
+        #expect(!rig.sender.cancelledWhenItAnswered)
+        #expect(rig.model.phase == .sent("Started in Assay development."))
+        if case .sent(let said) = rig.model.phase { #expect(!said.localizedCaseInsensitiveContains("cancel")) }
+        // And then the panel goes as it does after any send.
+        #expect(rig.closed == 1)
+        #expect(rig.lingered == [.milliseconds(1600)])
+    }
+
+    @Test func aMessageThatWentIsNotACancelEither() async {
+        rig.sender.outcomes = [.sent(.queued, sentence: "Queued. Claude reads it at the next safe point.")]
+        rig.sender.stages = [.committed]
+        rig.sender.hold = true
+        rig.model.open()
+        await rig.settle()
+        rig.model.text = "Add the second plate"
+        rig.model.submit(toViewed: true)
+        for _ in 0..<20 { await Task.yield() }
+        rig.model.shiftHeld = true
+        #expect(rig.model.sendingLine == "Sending…")
+        rig.model.cancel()
+        rig.sender.release()
+        await rig.waitForSend()
+        #expect(rig.model.phase == .sent("Queued. Claude reads it at the next safe point."))
+        // Put away after a moment, as after any send; the test waits for it so nothing runs after it ends.
+        await rig.settle()
+        #expect(rig.closed == 1)
+    }
+
+    @Test func aWriteWithNoAnswerShowsTheCheckingLineThenWhatTheReadSays() async {
+        rig.sender.stages = [.committed, .checking]
+        rig.sender.outcomes = [.failed(sentence: QuickStartFlow.Sentence.startNotThere)]
+        await submitHeld(rig)
+        #expect(rig.model.sendingLine == "Not sure that went through. Checking…")
+        #expect(rig.model.progress == .checking)
+        // Cancel in the middle of that is no cancel: nothing is stopped.
+        rig.model.cancel()
+        #expect(rig.model.sendingLine == "Not sure that went through. Checking…")
+        rig.sender.release()
+        await rig.waitForSend()
+        #expect(!rig.sender.cancelledWhenItAnswered)
+        // Retry is Start again: the words are kept, and so is the intent id.
+        #expect(rig.model.phase == .failed(QuickStartFlow.Sentence.startNotThere))
+        #expect(rig.model.text == "QC this")
+        #expect(rig.closed == 0)
+        #expect(rig.model.canSubmit(toViewed: false))
+        let first = rig.sender.requests[0].intentID
+        rig.sender.hold = false
+        rig.model.submit()
+        await rig.waitForSend()
+        #expect(rig.sender.requests.count == 2)
+        #expect(rig.sender.requests[1].intentID == first, "a retry dedupes at the daemon")
+    }
+
+    @Test func openingAgainDoesNotTakeASendInHandBack() async {
+        await submitHeld(rig)
+        rig.model.open(keeping: true)
+        #expect(rig.model.phase == .sending)
+        rig.model.open()
+        #expect(rig.model.phase == .sending)
+        rig.sender.release()
+        await rig.waitForSend()
+        #expect(!rig.sender.cancelledWhenItAnswered)
+        #expect(rig.model.phase == .sent("Started in Assay development."))
+        await rig.settle()
+        #expect(rig.closed == 1)
+    }
+
+    @Test func aSendThatIsLetGoOfNoLongerReportsToThePanel() async {
+        await submitHeld(rig)
+        rig.model.cancel()
+        // Not sending any more would only be true after the flow answered; until then the outcome counts.
+        rig.sender.outcomes = [.failed(sentence: QuickStartFlow.Sentence.cancelled)]
+        rig.sender.release()
+        await rig.waitForSend()
+        rig.model.open()
+        await rig.settle()
+        #expect(rig.model.phase == .editing)
+        #expect(rig.model.progress == nil)
     }
 
     @Test func theMadeUpDemoSendsNothingAndAnswersStarted() async throws {

@@ -348,7 +348,8 @@ struct SinceYouLeftSheet: View {
     /// it wants permission for. Nil until the card's read has it.
     private func askText(for session: SessionStatus) -> String? {
         switch plans.state(for: session.id) {
-        case .ready(let preview)?, .approving(let preview)?, .approved(let preview)?, .problem(_, let preview)?:
+        case .ready(let preview)?, .approving(let preview)?, .checking(let preview)?, .approved(let preview)?,
+             .problem(_, let preview)?, .retry(_, let preview)?:
             return preview.summary
         default: break
         }

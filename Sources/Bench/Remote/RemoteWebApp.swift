@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "0b830fd99945",
+        "/app.js": "82b5283f113b",
         "/app.css": "b948887bc2c7",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=0b830fd99945"></script>
+<script type="module" src="/app.js?v=82b5283f113b"></script>
 </body>
 </html>
 """#
@@ -1840,21 +1840,28 @@ if (['approved', 'allowed', 'denied', 'sent', 'queued', 'resumed'].includes(resu
 return { ok: true, refetch: true, text: sentence || { approved: 'Approved', allowed: 'Allowed once', denied: 'Denied', sent: 'Sent', queued: 'Queued', resumed: 'Picked up again' }[result] };
 }
 if (result === 'blocked') return { ok: false, refetch: true, text: sentence || 'That isn’t possible right now.' };
+if (result === 'retry') return { ok: false, refetch: true, text: sentence || 'That didn’t go through. Try again.' };
+if (result === 'unknown') return { ok: false, refetch: true, open: true, text: sentence || 'Not sure that went through. Look at it on your Mac before you try again.' };
 if (status === 403 && !sentence) return { ok: false, refetch: true, text: 'Actions are off in Capsid’s Settings.' };
 return { ok: false, refetch: true, open: true, text: sentence || 'Couldn’t do that from here. Open it on your Mac.' };
 }
-async function doAction(id, kind, path, body) {
+const WRITE_SLOW_MS = 22000;
+const PHOTO_SLOW_MS = 85000;
+async function doAction(id, kind, path, body, slowMs = WRITE_SLOW_MS) {
 const u = ui(id);
 if (u.busy[kind]) return null;
 u.busy[kind] = true;
 redrawSession(id);
+const slow = setTimeout(() => setNote(id, { text: 'Not sure that went through. Checking…' }, 120000), slowMs);
 let result;
 try {
 result = describe(await send(path, body));
 } catch (e) {
+clearTimeout(slow);
 if (e instanceof Unauth) { u.busy[kind] = false; showPair(); return null; }
 result = { ok: false, refetch: false, text: 'Couldn’t reach your Mac. Try again.' };
 }
+clearTimeout(slow);
 u.busy[kind] = false;
 setNote(id, { text: result.text, open: !!result.open }, result.open ? 12000 : result.ok ? 5000 : 9000);
 if (result.refetch) await loadSession(id, true);
@@ -1894,7 +1901,7 @@ let image = '';
 try { image = await blobBase64(photo.blob); } catch { /* handled below */ }
 u.sending = false;
 if (!image) return setNote(id, { text: 'Couldn’t read the photo. Remove it and pick it again.' }, 9000);
-const result = await doAction(id, 'message', '/api/sessions/' + id + '/photo', { image, text, id: photo.sent.id });
+const result = await doAction(id, 'message', '/api/sessions/' + id + '/photo', { image, text, id: photo.sent.id }, PHOTO_SLOW_MS);
 if (result && result.ok) clearComposer(id);
 }
 const quiet = (t) => h('p', { class: 'quiet', text: t });

@@ -18,6 +18,9 @@ enum WebAPIError: Error {
     case notReady
     case notAllowed
     case badResponse
+    /// A read had no answer in time. For a write (Remote/WriteDeadline.swift)
+    /// it is the unknown outcome: no answer came back in time, or at all, so
+    /// it may or may not have been made.
     case timedOut
     case responseTooLarge
 }
@@ -103,6 +106,112 @@ enum WebAPIReadAbort {
         } onCancel: {
             Task { @MainActor in await abort(nonce) }
         }
+    }
+}
+
+/// The deadline every page script that writes keeps: the whole write inside
+/// one `AbortController`, the CSRF refresh, the POST and its body alike. The
+/// writers (here, Remote/SessionWriter.swift, Remote/RemotePhotoUpload.swift)
+/// each put it ahead of their body.
+enum WriteScript {
+    /// `benchBounded(timeoutMS, run)` → what `run(signal)` answers, or
+    /// `{timedOut: true}` once `timeoutMS` has passed. `run` gives `signal` to
+    /// every `fetch`. The race settles the bridge even if a fetch doesn't
+    /// reject when its signal is aborted; a `run` that is left behind finds
+    /// the signal aborted and sends nothing more.
+    static let bounded = #"""
+    async function benchBounded(timeoutMS, run) {
+        "use strict";
+        const controller = typeof AbortController === "function" ? new AbortController() : null;
+        let timer = null;
+        const expired = new Promise(resolve => {
+            timer = setTimeout(() => {
+                if (controller) { try { controller.abort(); } catch (e) { } }
+                resolve({ timedOut: true });
+            }, timeoutMS);
+        });
+        try {
+            return await Promise.race([run(controller ? controller.signal : undefined), expired]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+    """#
+}
+
+/// The card's one write: approve a plan. The page answers a JSON string:
+/// `{"result":{…}}` or `{"unknown":true}` (no answer in time, or none at all).
+enum WebAPIWriteScript {
+    static let body = WriteScript.bounded + "\n" + #"""
+
+    const secret = () => {
+        const entry = document.cookie.split(";").map(part => part.trim())
+            .find(part => part.startsWith("operon_csrf="));
+        if (!entry) { return ""; }
+        const value = entry.slice("operon_csrf=".length);
+        try { return decodeURIComponent(value); } catch (e) { return value; }
+    };
+    // The first POST's 403 (a stale secret), while the refresh and the second POST run: if the deadline
+    // passes during the refresh, that 403 is the answer. Nothing was accepted.
+    let refused = null;
+    const outcome = await benchBounded(timeoutMS, async (signal) => {
+        const send = async () => {
+            if (signal && signal.aborted) { return null; }
+            let response;
+            try {
+                response = await fetch(path, {
+                    method: "POST",
+                    credentials: "include",
+                    cache: "no-store",
+                    headers: { "Content-Type": "application/json", "Accept": "application/json", "x-operon-csrf": secret() },
+                    body: "{}",
+                    signal: signal,
+                });
+            } catch (e) { return null; }
+            let text = "";
+            try { text = await response.text(); } catch (e) { if (signal && signal.aborted) { return null; } }
+            if (signal && signal.aborted) { return null; }
+            let json = null;
+            try { json = JSON.parse(text); } catch (e) { json = null; }
+            const isObject = json !== null && typeof json === "object" && !Array.isArray(json);
+            return {
+                status: response.status,
+                isJSON: isObject,
+                code: isObject && typeof json.code === "string" ? json.code : "",
+                accepted: isObject && json.status === "accepted",
+                noPlanAwaiting: text.includes("No plan awaiting"),
+            };
+        };
+        let result = await send();
+        if (result !== null && result.status === 403 && result.code === "csrf_stale") {
+            refused = result;
+            try { await fetch("/api/csrf", { credentials: "include", cache: "no-store", signal: signal }); } catch (e) { }
+            if (signal && signal.aborted) { return null; }
+            refused = null;
+            result = await send();
+        }
+        return result === null ? { unknown: true } : { result: result };
+    });
+    if (outcome === null || outcome.timedOut === true || outcome.unknown === true) {
+        return JSON.stringify(refused !== null ? { result: refused } : { unknown: true });
+    }
+    return JSON.stringify(outcome);
+    """#
+
+    /// The page's answer, checked again here. Throws
+    /// `WebAPIError.timedOut` when the write got no answer.
+    static func result(of data: Data) throws -> APIWriteResult {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { throw WebAPIError.badResponse }
+        if Pick.bool(root["unknown"]) == true { throw WebAPIError.timedOut }
+        guard let fields = root["result"] as? [String: Any], let status = Pick.int(fields["status"]), (100...599).contains(status) else {
+            throw WebAPIError.badResponse
+        }
+        let code = Pick.string(fields["code"])
+        return APIWriteResult(status: status,
+                              isJSON: Pick.bool(fields["isJSON"]) ?? false,
+                              code: code?.isEmpty == false ? code : nil,
+                              accepted: Pick.bool(fields["accepted"]) ?? false,
+                              noPlanAwaiting: Pick.bool(fields["noPlanAwaiting"]) ?? false)
     }
 }
 
@@ -194,56 +303,23 @@ extension WebContainer {
     /// POST is retried once, as the UI does. That GET is made here, inside the
     /// same script, not through `apiGET`'s list. Any status comes back as a
     /// result, not an error; a 401 also starts signing in again.
+    ///
+    /// The whole write, the refresh included, has one deadline in the page
+    /// (`WriteDeadline.small`) and another in Swift beyond it. A POST that got
+    /// no answer in time throws `WebAPIError.timedOut`: it may have been
+    /// made. A refresh that ran out of time after a 403 is that 403.
     func apiPOST(_ path: String) async throws -> APIWriteResult {
         guard status == .ready else { throw WebAPIError.notReady }
         guard Self.isWritablePath(path) else { throw WebAPIError.notAllowed }
-        let body = """
-        const secret = () => {
-            const entry = document.cookie.split(";").map(part => part.trim())
-                .find(part => part.startsWith("operon_csrf="));
-            if (!entry) { return ""; }
-            const value = entry.slice("operon_csrf=".length);
-            try { return decodeURIComponent(value); } catch (e) { return value; }
-        };
-        const send = async () => {
-            const response = await fetch(path, {
-                method: "POST",
-                credentials: "include",
-                headers: { "Content-Type": "application/json", "Accept": "application/json", "x-operon-csrf": secret() },
-                body: "{}",
-            });
-            const text = await response.text();
-            let json = null;
-            try { json = JSON.parse(text); } catch (e) { json = null; }
-            const isObject = json !== null && typeof json === "object" && !Array.isArray(json);
-            return {
-                status: response.status,
-                isJSON: isObject,
-                code: isObject && typeof json.code === "string" ? json.code : "",
-                accepted: isObject && json.status === "accepted",
-                noPlanAwaiting: text.includes("No plan awaiting"),
-            };
-        };
-        let result = await send();
-        if (result.status === 403 && result.code === "csrf_stale") {
-            await fetch("/api/csrf", { credentials: "include" });
-            result = await send();
+        let view = webView, target = "/api" + path, milliseconds = WriteDeadline.milliseconds(WriteDeadline.small)
+        let text: String? = try await WriteDeadline.bridge(WriteDeadline.small + WriteDeadline.grace) {
+            try await view.callAsyncJavaScript(WebAPIWriteScript.body, arguments: ["path": target, "timeoutMS": milliseconds],
+                                               in: nil, contentWorld: .defaultClient) as? String
         }
-        return result;
-        """
-        let value = try await webView.callAsyncJavaScript(body, arguments: ["path": "/api" + path],
-                                                          in: nil, contentWorld: .defaultClient)
-        guard let fields = value as? [String: Any], let status = (fields["status"] as? NSNumber)?.intValue else {
-            throw WebAPIError.badResponse
-        }
-        let code = fields["code"] as? String
-        let result = APIWriteResult(status: status,
-                                    isJSON: fields["isJSON"] as? Bool ?? false,
-                                    code: code?.isEmpty == false ? code : nil,
-                                    accepted: fields["accepted"] as? Bool ?? false,
-                                    noPlanAwaiting: fields["noPlanAwaiting"] as? Bool ?? false)
+        guard let text else { throw WebAPIError.badResponse }
+        let result = try WebAPIWriteScript.result(of: Data(text.utf8))
         // Refused: the page's session didn't take. Sign in again.
-        if status == 401 { sessionLost() }
+        if result.status == 401 { sessionLost() }
         return result
     }
 

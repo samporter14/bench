@@ -253,7 +253,9 @@ final class QuestionReplier: ObservableObject {
         /// requests (`RemoteSessions.readFrame(_:full:)`).
         var read: @MainActor (String) async -> SessionProjection?
         /// The phone's actions beneath their gates (`RemoteSessions.respond`).
-        var respond: @MainActor (RemoteActionRequest, String) async -> RemoteActionResult
+        /// The third argument is called once if the write gets no answer and
+        /// the session is about to be read to see whether it landed.
+        var respond: @MainActor (RemoteActionRequest, String, @escaping @MainActor () -> Void) async -> RemoteActionResult
         var now: @MainActor () -> Date = { Date() }
         /// The plan a plan's card shows, when it has one (`PlanApprover`).
         var plan: @MainActor (String) -> PlanPreview? = { _ in nil }
@@ -272,7 +274,7 @@ final class QuestionReplier: ObservableObject {
                 },
                 isReady: { WebContainer.shared.status == .ready },
                 read: { await RemoteSessions.shared.readFrame($0, full: true) },
-                respond: { await RemoteSessions.shared.respond($0, session: $1) },
+                respond: { await RemoteSessions.shared.respond($0, session: $1, checking: $2) },
                 plan: { PlanApprover.shared.state(for: $0)?.revisable })
         }
     }
@@ -293,6 +295,14 @@ final class QuestionReplier: ObservableObject {
         static let feedbackFailed = "Couldn't send it. What you wrote is still here: try again, or open the session in Capsid."
         static let feedbackTooLong = "At most 4,000 characters."
         static let feedbackReference = "This reads like a file reference, which can't be sent from here. Reword it, or send it in Capsid."
+        // A write that got no answer, and what a fresh read of the session said of it.
+        static let checking = RemoteDecide.Sentence.checking
+        static let answerNotThere = "It didn't go through. Your answer is still here: try again."
+        static let answerUnsure = "Not sure that went through. Your answer is still here. Look at the session in Capsid before you send it again."
+        static let requestNotThere = "It didn't go through. Try again."
+        static let requestUnsure = "Not sure that went through. Look at the request in Capsid before you try again."
+        static let feedbackNotThere = "It didn't go through. What you wrote is still here: try again."
+        static let feedbackUnsure = "Not sure that went through. What you wrote is still here. Look at the plan in Capsid before you send it again."
     }
 
     /// By session id: only sessions whose needs-input card is in the queue.
@@ -305,6 +315,10 @@ final class QuestionReplier: ObservableObject {
     @Published private(set) var permissionReplies: [String: PermissionReply] = [:]
     /// By session id: what to change in a waiting plan.
     @Published private(set) var planReplies: [String: PlanReply] = [:]
+    /// Sessions whose send got no answer and is being looked for in the
+    /// session ("Not sure that went through. Checking…"). Their reply stays
+    /// `sending` meanwhile: nothing can be sent twice.
+    @Published private(set) var checking: Set<String> = []
 
     static let retryAfter: TimeInterval = 15
 
@@ -330,6 +344,14 @@ final class QuestionReplier: ObservableObject {
     }
 
     func cardState(for sessionID: String) -> QuestionCardState? { cards[sessionID] }
+
+    /// Whether the session's send got no answer and is being looked for.
+    func isChecking(_ sessionID: String) -> Bool { checking.contains(sessionID) }
+
+    /// What a send calls when its write got no answer.
+    private func startedChecking(_ id: String) -> @MainActor () -> Void {
+        { [weak self] in self?.checking.insert(id) }
+    }
 
     /// Follows the cards, what waits, the settings and the page. Never in a demo.
     func start() {
@@ -586,7 +608,7 @@ final class QuestionReplier: ObservableObject {
         let toolID = reply.ask.toolID
         let task = Task { [weak self] () -> ReplyPhase? in
             guard let self else { return nil }
-            let result = await self.dependencies.respond(request, sessionID)
+            let result = await self.dependencies.respond(request, sessionID, self.startedChecking(sessionID))
             await self.finish(sessionID, toolID: toolID, result: result)
             return self.done(sessionID, phase: self.replies[sessionID]?.phase)
         }
@@ -598,6 +620,7 @@ final class QuestionReplier: ObservableObject {
     /// more is let go. Answers with the phase it ended in.
     private func done(_ id: String, phase: ReplyPhase?) -> ReplyPhase? {
         sending[id] = nil
+        checking.remove(id)
         prune(id)
         return phase
     }
@@ -729,7 +752,7 @@ final class QuestionReplier: ObservableObject {
         let shown = reply.request.id
         let task = Task { [weak self] () -> ReplyPhase? in
             guard let self else { return nil }
-            let result = await self.dependencies.respond(request, sessionID)
+            let result = await self.dependencies.respond(request, sessionID, self.startedChecking(sessionID))
             await self.finishPermission(sessionID, shown: shown, result: result)
             return self.done(sessionID, phase: self.permissionReplies[sessionID]?.phase)
         }
@@ -767,6 +790,12 @@ final class QuestionReplier: ObservableObject {
                 current.phase = .closed(result.sentence == Sentence.requestHandled ? result.sentence : Sentence.requestGone)
             }
             permissionReplies[id] = current
+        case .retry:
+            reply.phase = .failed(Sentence.requestNotThere)
+            permissionReplies[id] = reply
+        case .unknown:
+            reply.phase = .failed(Sentence.requestUnsure)
+            permissionReplies[id] = reply
         default:
             // A refusal names why in the phone's words; a failed write says try again.
             reply.phase = .failed(result.sentence == RemoteActionResult.unavailable.sentence
@@ -828,7 +857,7 @@ final class QuestionReplier: ObservableObject {
         }
         let task = Task { [weak self] () -> ReplyPhase? in
             guard let self else { return nil }
-            let result = await self.dependencies.respond(request, sessionID)
+            let result = await self.dependencies.respond(request, sessionID, self.startedChecking(sessionID))
             self.finishPlanFeedback(sessionID, result: result)
             return self.done(sessionID, phase: self.planReplies[sessionID]?.phase)
         }
@@ -849,6 +878,12 @@ final class QuestionReplier: ObservableObject {
             planReplies[id] = reply
         case .blocked:
             reply.phase = .failed(result.sentence)
+            planReplies[id] = reply
+        case .retry:
+            reply.phase = .failed(Sentence.feedbackNotThere)
+            planReplies[id] = reply
+        case .unknown:
+            reply.phase = .failed(Sentence.feedbackUnsure)
             planReplies[id] = reply
         default:
             reply.phase = .failed(Sentence.feedbackFailed)
@@ -954,6 +989,12 @@ final class QuestionReplier: ObservableObject {
                 current.phase = .closed(answered ? result.sentence : Sentence.stoppedWaiting)
             }
             replies[id] = current
+        case .retry:
+            reply.phase = .failed(Sentence.answerNotThere)
+            replies[id] = reply
+        case .unknown:
+            reply.phase = .failed(Sentence.answerUnsure)
+            replies[id] = reply
         default:
             reply.phase = .failed(Sentence.failed)
             replies[id] = reply
@@ -995,7 +1036,7 @@ extension PlanCardState {
     /// approved or approved.
     var revisable: PlanPreview? {
         switch self {
-        case .ready(let preview), .problem(_, let preview): preview
+        case .ready(let preview), .problem(_, let preview), .retry(_, let preview): preview
         default: nil
         }
     }

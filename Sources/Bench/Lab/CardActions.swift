@@ -100,13 +100,18 @@ struct CardOffer: Equatable, Sendable {
     /// the card has read: the plan's, the question or request's, and where
     /// each reply stands. A state is only read while the card's settings are
     /// on, so with them off there are none and the offer is just Open.
+    /// `checking`: the reply being sent got no answer and the session is being
+    /// read to see whether it landed.
     static func of(reason: WaitingReason?, plan: PlanCardState?, question: QuestionCardState?,
-                   reply: ReplyPhase?, permission: ReplyPhase?) -> CardOffer {
+                   reply: ReplyPhase?, permission: ReplyPhase?, checking: Bool = false) -> CardOffer {
         let reason = reason ?? .other
         let plan = reason == .plan ? plan : nil
         let question = QuestionCardState.reads(reason) ? question : nil
         if let question, plan == nil {
-            return offer(question, reply: reply, permission: permission)
+            var offer = offer(question, reply: reply, permission: permission)
+            // Sending stays "sending" while it is looked for; the card says what is going on.
+            if checking, case .sending = offer.lead { offer.problem = RemoteDecide.Sentence.checking }
+            return offer
         }
         return offer(plan)
     }
@@ -121,6 +126,11 @@ struct CardOffer: Equatable, Sendable {
             return CardOffer(lead: .button(.approve), hasOpen: true, canRequestChanges: true)
         case .approving?:
             return CardOffer(lead: .sending("Approving"), hasOpen: true)
+        case .checking?:
+            return CardOffer(lead: .sending("Checking"), hasOpen: true, problem: RemoteDecide.Sentence.checking)
+        case .retry(let message, _)?:
+            // Approve again is the retry: the daemon takes a plan already approved as approved.
+            return CardOffer(lead: .button(.approve), hasOpen: true, canRequestChanges: true, problem: message)
         case .problem(let message, _)?:
             return CardOffer(lead: .button(.open), canRequestChanges: true, problem: message)
         default:
@@ -205,7 +215,8 @@ struct CardActions {
     func offer(for session: SessionStatus) -> CardOffer {
         let id = session.id
         return CardOffer.of(reason: session.waitingReason, plan: plans.state(for: id), question: questions.cardState(for: id),
-                            reply: questions.replies[id]?.phase, permission: questions.permissionReplies[id]?.phase)
+                            reply: questions.replies[id]?.phase, permission: questions.permissionReplies[id]?.phase,
+                            checking: questions.isChecking(id))
     }
 
     /// Reads what a card in the queue would show, if nothing has: the card on

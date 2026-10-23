@@ -6,6 +6,12 @@
 // the page. What it reads of a plan (its summary, how many steps, their
 // titles, the confidence word) lives in memory only, for the card, and is
 // never logged or saved.
+//
+// The approval has a deadline (Remote/WriteDeadline.swift). One that gets no
+// answer is not "Couldn't approve here" but unknown: the card says "Not sure
+// that went through. Checking…", reads the plan once more, and then is done
+// (the plan is no longer waiting), or offers Approve again (it still is, or
+// the read couldn't tell). It never posts a second time on its own.
 import Combine
 import Foundation
 import OSLog
@@ -388,8 +394,15 @@ enum PlanCardState: Equatable, Sendable {
     case unavailable
     /// Pressed: checking the plan again, then posting. No second press.
     case approving(PlanPreview)
+    /// The approval got no answer: "Not sure that went through. Checking…",
+    /// while the plan is read once more. No second press.
+    case checking(PlanPreview)
     /// "Approved ✓", for a moment, then the card goes.
     case approved(PlanPreview)
+    /// The approval got no answer and the plan was read again: it is still
+    /// waiting (or could not be read), the sentence says which, and Approve is
+    /// offered again.
+    case retry(String, PlanPreview)
     /// It didn't approve: a short sentence, and Open.
     case problem(String, PlanPreview)
 }
@@ -416,6 +429,13 @@ final class PlanApprover: ObservableObject {
         var approvedPause: Duration
         /// Where a read or an answer that isn't what Capsid expects is noted.
         var breadcrumbs: CompatBreadcrumbs = .shared
+        /// The most the approval may take, in Swift, beyond the page's own
+        /// deadline and the bridge's (`WriteDeadline`).
+        var postLimit: Duration = WriteDeadline.small + WriteDeadline.grace + WriteDeadline.grace
+        /// The most the read that settles an approval with no answer may take.
+        var settleLimit: Duration = WriteDeadline.settleRead
+        /// Waits out a deadline; tests stand in for the clock.
+        var wait: @MainActor (Duration) async -> Void = WriteDeadline.sleep
 
         static func live() -> Dependencies {
             Dependencies(
@@ -510,7 +530,7 @@ final class PlanApprover: ObservableObject {
                 switch states[id] {
                 // A new request for the session lets the card go from under
                 // an approval: it asks something else now.
-                case .approving?, .approved?: keep = model.holdsPlanCard(id)
+                case .approving?, .checking?, .approved?: keep = model.holdsPlanCard(id)
                 default: keep = true
                 }
             }
@@ -550,7 +570,11 @@ final class PlanApprover: ObservableObject {
     /// Approve, once: only from `ready`, which it leaves at once, so a second
     /// press finds nothing to do and nothing is posted twice.
     func approve(_ sessionID: String) {
-        guard case .ready(let preview) = states[sessionID] else { return }
+        let preview: PlanPreview
+        switch states[sessionID] {
+        case .ready(let shown)?, .retry(_, let shown)?: preview = shown
+        default: return
+        }
         let id = sessionID
         states[id] = .approving(preview)
         if demoSessions.contains(id) {
@@ -566,8 +590,10 @@ final class PlanApprover: ObservableObject {
         model.holdPlanCard(id)
         tasks[id] = Task { [weak self] in
             guard let self else { return }
-            let outcome = await self.send(id, preview)
-            self.finish(id, preview, outcome)
+            switch await self.send(id, preview) {
+            case .outcome(let outcome): self.finish(id, preview, outcome)
+            case .noAnswer: await self.settle(id, preview)
+            }
         }
     }
 
@@ -625,23 +651,89 @@ final class PlanApprover: ObservableObject {
 
     // MARK: Approving
 
+    /// What the approval came to: the daemon's answer, or none.
+    private enum Sent {
+        case outcome(PlanOutcome)
+        /// The POST got no answer in time (or an answer Capsid can't read):
+        /// it may or may not have been made.
+        case noAnswer
+    }
+
     /// Reads the root frame again, and posts only if it still waits for the
     /// very plan the card shows.
-    private func send(_ id: String, _ shown: PlanPreview) async -> PlanOutcome {
+    private func send(_ id: String, _ shown: PlanPreview) async -> Sent {
         guard let framePath = PlanCheck.framePath(id), let approvePath = PlanCheck.approvePath(id),
-              let data = try? await dependencies.get(framePath) else { return .failed }
-        guard PlanCheck.isSamePlan(PlanFrame(json: data), as: shown) else { return .changed }
+              let data = try? await dependencies.get(framePath) else { return .outcome(.failed) }
+        guard PlanCheck.isSamePlan(PlanFrame(json: data), as: shown) else { return .outcome(.changed) }
         // The card went, or a new request took its place, during the check:
         // nothing is sent.
-        guard !Task.isCancelled, states[id] == .approving(shown) else { return .failed }
-        guard let result = try? await dependencies.post(approvePath) else { return .failed }
-        if let miss = PlanCheck.writeMiss(result) { dependencies.breadcrumbs.record(miss) }
-        return PlanCheck.outcome(result)
+        guard !Task.isCancelled, states[id] == .approving(shown) else { return .outcome(.failed) }
+        let post = dependencies.post
+        let raced = await WriteDeadline.race(dependencies.postLimit, wait: dependencies.wait, cancel: .ignore) { () async -> Result<APIWriteResult, any Error> in
+            do { return .success(try await post(approvePath)) } catch { return .failure(error) }
+        }
+        switch raced {
+        case .timedOut, .cancelled:
+            return .noAnswer
+        case .finished(.failure(let error)):
+            // Not made at all: the page isn't up, or refused the path. Anything else may have gone.
+            if case WebAPIError.notReady = error { return .outcome(.failed) }
+            if case WebAPIError.notAllowed = error { return .outcome(.failed) }
+            return .noAnswer
+        case .finished(.success(let result)):
+            if let miss = PlanCheck.writeMiss(result) { dependencies.breadcrumbs.record(miss) }
+            return .outcome(PlanCheck.outcome(result))
+        }
+    }
+
+    /// The approval got no answer: the card says so, the plan is read once
+    /// more, and the card shows what that read says. Nothing is posted again.
+    private func settle(_ id: String, _ shown: PlanPreview) async {
+        guard states[id] == .approving(shown) else { return }
+        states[id] = .checking(shown)
+        let frame = await settledFrame(id)
+        // The card went, or a new request took its place, during the read.
+        guard states[id] == .checking(shown) else { return }
+        log.notice("Approve from the card: no answer, read again")
+        switch PlanCheck.settle(frame, as: shown) {
+        case .approved:
+            finish(id, shown, .approved)
+        case .changed:
+            finish(id, shown, .changed)
+        case .waiting:
+            states[id] = .retry(Sentence.notThere, shown)
+            model.releasePlanCard(id, approved: false)
+        case .unclear:
+            states[id] = .retry(Sentence.unsure, shown)
+            model.releasePlanCard(id, approved: false)
+        }
+    }
+
+    /// The root frame, once, for at most `settleLimit`; nil when it can't be
+    /// read in time or isn't a frame.
+    private func settledFrame(_ id: String) async -> PlanFrame? {
+        guard let framePath = PlanCheck.framePath(id) else { return nil }
+        let get = dependencies.get
+        let raced = await WriteDeadline.race(dependencies.settleLimit, wait: dependencies.wait, cancel: .ignore) { () async -> Data? in
+            try? await get(framePath)
+        }
+        guard case .finished(let data?) = raced else { return nil }
+        return PlanFrame(json: data)
+    }
+
+    /// What the card says of an approval that got no answer.
+    enum Sentence {
+        /// While the plan is read again.
+        static let checking = RemoteDecide.Sentence.checking
+        /// It is still waiting: the approval did not land.
+        static let notThere = "That didn't go through. The plan is still waiting for you."
+        /// The read couldn't say.
+        static let unsure = "Not sure that went through. Open it to check, or approve again."
     }
 
     private func finish(_ id: String, _ shown: PlanPreview, _ outcome: PlanOutcome) {
         // Nothing to show on a card that has gone meanwhile.
-        guard states[id] == .approving(shown) else { return }
+        guard states[id] == .approving(shown) || states[id] == .checking(shown) else { return }
         log.notice("Approve from the card: \(String(describing: outcome), privacy: .public)")
         guard let message = outcome.message else {
             states[id] = .approved(shown)
@@ -668,7 +760,7 @@ final class PlanApprover: ObservableObject {
         stepsOpen.remove(id)
         demoSessions.remove(id)
         switch state {
-        case .approving?, .approved?: model.releasePlanCard(id, approved: false)
+        case .approving?, .checking?, .approved?: model.releasePlanCard(id, approved: false)
         default: break
         }
     }

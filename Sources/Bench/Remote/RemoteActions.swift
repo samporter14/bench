@@ -10,6 +10,12 @@
 // `RemoteSessions` is the thin part that reads and writes through injected
 // closures: the page in the app, made-up sessions in `--demo remote` and the
 // tests. Nothing here logs; the server logs the route's pattern and status.
+//
+// Every write has a deadline (Remote/WriteDeadline.swift). One that gets no
+// answer is unknown, not failed: the session is read once more to see whether
+// it landed (`RemoteDecide.settled…`), and the answer is then done, "didn't go
+// through" (safe to send again, by the person), or "not sure". Nothing is ever
+// sent again on its own, and a session's queue moves on past a turn that stalls.
 import Foundation
 import SwiftUI
 
@@ -27,6 +33,12 @@ struct RemoteActionResult: Encodable, Equatable, Sendable {
     enum Result: String, Encodable, Sendable {
         case approved, changed, unavailable, sent, queued, resumed, blocked
         case allowed, denied // Phase 4 permissions
+        /// The write got no answer, and a fresh read couldn't say whether it
+        /// landed either: neither done nor failed.
+        case unknown
+        /// The write got no answer, and a fresh read shows it did not land: it
+        /// is safe to send again, when the person chooses to.
+        case retry
     }
 
     let result: Result
@@ -34,6 +46,10 @@ struct RemoteActionResult: Encodable, Equatable, Sendable {
 
     static let unavailable = RemoteActionResult(result: .unavailable,
                                                 sentence: "Couldn't do that from here. Open it on your Mac.")
+    /// A write with no answer, and nothing to settle it by.
+    static let unsure = RemoteActionResult(result: .unknown, sentence: RemoteDecide.Sentence.unsure)
+    /// A write with no answer that the session shows did not land.
+    static let notThere = RemoteActionResult(result: .retry, sentence: RemoteDecide.Sentence.notThere)
 }
 
 /// The status and JSON body of an action's answer.
@@ -301,6 +317,12 @@ enum RemoteDecide {
         static let tooManyQueued = "Too many messages are waiting for it. Try again later."
         static let revising = "Sent. Claude is revising the plan."
         static let planGone = "The plan isn't waiting for you any more."
+        /// While a write that got no answer is looked for.
+        static let checking = "Not sure that went through. Checking…"
+        /// The read after an unanswered write found it did not land.
+        static let notThere = "That didn't go through. Try again."
+        /// The read couldn't tell either.
+        static let unsure = "Not sure that went through. Look at it on your Mac before you try again."
     }
 
     // MARK: Approve
@@ -510,6 +532,13 @@ final class RemoteSessions {
         /// asked for) and its activity line (when asked for). Nil when it
         /// can't be read.
         var readLive: RemoteLive.Reader = { _, _, _, _ in nil }
+        // Bounded writes
+        /// The most one turn in a session's queue may take (`WriteDeadline.turn`).
+        var turnLimit: Duration = WriteDeadline.turn()
+        /// The most the read that settles an unknown write may take.
+        var settleLimit: Duration = WriteDeadline.settleRead
+        /// Waits out a deadline; tests stand in for the clock.
+        var wait: @MainActor (Duration) async -> Void = WriteDeadline.sleep
 
         static func live() -> Dependencies {
             Dependencies(
@@ -527,7 +556,7 @@ final class RemoteSessions {
                 },
                 write: { write in
                     guard Demo.mode == nil else { return nil }
-                    return try? await WebContainer.shared.writeSession(write)
+                    return await WebContainer.shared.writeAnswer(write)
                 },
                 now: { Date() },
                 lookup: { await RemoteBrowser.lookUp($0) }, // Phase 3 browse
@@ -556,7 +585,7 @@ final class RemoteSessions {
     /// Bumped when an action may have changed the session: a read started
     /// before it isn't kept, nor handed out after the action.
     private var generation: [String: Int] = [:]
-    private var acting: [String: Task<RemoteActionReply, Never>] = [:]
+    private var acting: [String: Task<Void, Never>] = [:]
     private var limiter = ActionLimiter()
     private var sweep: Task<Void, Never>?
     /// Phase 3 browse: sessions found by id or just started, by id.
@@ -717,13 +746,26 @@ final class RemoteSessions {
     /// What was held of the session is dropped once it is done. The phone's
     /// own gates (Settings → Phone, the device's limit, which sessions it may
     /// open) are `act`'s, so a reply from the Mac works with the phone off.
-    func respond(_ request: RemoteActionRequest, session id: String) async -> RemoteActionResult {
-        var result = RemoteActionResult.unavailable
-        _ = await actSerially(on: id) { [weak self] in
-            if let self { result = await self.perform(request, session: id) }
+    ///
+    /// A write that gets no answer is unknown: `checking` is called, the
+    /// session is read once more, and the result says whether it landed
+    /// (the same result the daemon's answer would have made), didn't (`.retry`)
+    /// or can't be told (`.unknown`). Never sent again here. A turn that
+    /// stalls ends as `.unknown` and the queue moves on.
+    func respond(_ request: RemoteActionRequest, session id: String,
+                 checking: (@MainActor () -> Void)? = nil) async -> RemoteActionResult {
+        var result = RemoteActionResult.unsure
+        var wrote = false
+        let end = await runSerially(on: id, limit: dependencies.turnLimit) { [weak self] in
+            if let self { result = await self.perform(request, session: id, checking: checking, leaving: { wrote = true }) }
             return .ok(result)
         }
-        return result
+        switch end {
+        case .finished: return result
+        // The turn ran out of time: if the write hadn't left, nothing was sent; if it had, it may have gone.
+        case .stalled: return wrote ? .unsure : .notThere
+        case .cancelled: return .unavailable
+        }
     }
 
     /// The root frame as an action's check reads it, or with `full` its turns
@@ -733,36 +775,113 @@ final class RemoteSessions {
         await dependencies.read(id, full)
     }
 
-    private func perform(_ request: RemoteActionRequest, session id: String) async -> RemoteActionResult {
+    private func perform(_ request: RemoteActionRequest, session id: String,
+                         checking: (@MainActor () -> Void)?, leaving: (@MainActor () -> Void)?) async -> RemoteActionResult {
         // Phase 4 permissions: an answer to a request reads the helpers' frames too (a full read).
         let fresh = await dependencies.read(id, request.isPermission)
         switch request {
         case .approve(let version):
             switch RemoteDecide.approve(version: version, session: id, fresh: fresh) {
             case .answer(let result): return result
-            case .write(let write): return RemoteDecide.approved(await dependencies.write(write))
+            case .write(let write):
+                return await settling(write, session: id, full: false, checking: checking, leaving: leaving,
+                                      map: { RemoteDecide.approved($0) },
+                                      settle: { RemoteDecide.settledApprove(version: version, fresh: $0) })
             }
         case .answer, .chooseForMe, .cancel:
             switch RemoteDecide.answer(request, session: id, fresh: fresh) {
             case .answer(let result): return result
-            case .write(let write): return RemoteDecide.answered(await dependencies.write(write), request: request)
+            case .write(let write):
+                let toolID: String
+                switch request {
+                case .answer(let id, _), .chooseForMe(let id), .cancel(let id): toolID = id
+                default: return .unavailable
+                }
+                return await settling(write, session: id, full: false, checking: checking, leaving: leaving,
+                                      map: { RemoteDecide.answered($0, request: request) },
+                                      settle: { RemoteDecide.settledAnswer(toolID: toolID, fresh: $0) })
             }
         case .message:
             switch RemoteDecide.message(request, session: id, fresh: fresh) {
             case .answer(let result): return result
-            case .write(let write): return RemoteDecide.messaged(await dependencies.write(write), status: fresh?.status ?? "")
+            case .write(let write):
+                guard case .message(_, _, _, let text, _, _) = write else { return .unavailable }
+                return await deliver(write, text: text, session: id, before: fresh, checking: checking, leaving: leaving).result
             }
-        case .permission(_, let allow, _): // Phase 4 permissions
+        case .permission(let requestID, let allow, _): // Phase 4 permissions
             switch PermissionDecide.decide(request, session: id, fresh: fresh) {
             case .answer(let result): return result
-            case .write(let write): return PermissionDecide.answered(await dependencies.write(write), allow: allow)
+            case .write(let write):
+                return await settling(write, session: id, full: true, checking: checking, leaving: leaving,
+                                      map: { PermissionDecide.answered($0, allow: allow) },
+                                      settle: { PermissionDecide.settled(requestID: requestID, fresh: $0) })
             }
-        case .planFeedback:
+        case .planFeedback(let version, _, _):
             switch RemoteDecide.planFeedback(request, session: id, fresh: fresh) {
             case .answer(let result): return result
-            case .write(let write): return RemoteDecide.planFeedbackSent(await dependencies.write(write))
+            case .write(let write):
+                guard case .planFeedback(_, _, _, let text, _) = write else { return .unavailable }
+                let since = dependencies.now()
+                return await settling(write, session: id, full: true, checking: checking, leaving: leaving,
+                                      map: { RemoteDecide.planFeedbackSent($0) },
+                                      settle: { RemoteDecide.settledPlanFeedback(version: version, text: text, since: since, fresh: $0) })
             }
         }
+    }
+
+    // MARK: Writing, and settling a write that got no answer (Bounded writes)
+
+    /// The one place a write leaves for the daemon: not once the turn has been
+    /// cancelled or given up on, and not again on its own. Nil when it didn't
+    /// complete; `RemoteWriteResult.unknown` when it got no answer.
+    /// `leaving` is called just before it goes, so that a turn which runs out
+    /// of time can say whether anything was sent.
+    func send(_ write: RemoteWrite, leaving: (@MainActor () -> Void)? = nil) async -> RemoteWriteResult? {
+        guard !Task.isCancelled else { return nil }
+        leaving?()
+        return await dependencies.write(write)
+    }
+
+    /// A write, and its answer mapped by `map`; or, when it got none, `checking`
+    /// and then one fresh read, mapped by `settle`.
+    func settling(_ write: RemoteWrite, session id: String, full: Bool, checking: (@MainActor () -> Void)?,
+                  leaving: (@MainActor () -> Void)? = nil,
+                  map: (RemoteWriteResult?) -> RemoteActionResult,
+                  settle: (SessionProjection?) -> RemoteActionResult) async -> RemoteActionResult {
+        let reply = await send(write, leaving: leaving)
+        guard reply?.isUnknown == true else { return map(reply) }
+        // A turn that was given up on while the write was out has ended as unknown: it says and reads nothing more.
+        guard !Task.isCancelled else { return .unsure }
+        checking?()
+        return settle(await settledRead(id, full: full))
+    }
+
+    /// A message write and what it came to: the daemon's answer, as `messaged`
+    /// reads it, or the session as it reads now when there was none. `text` is
+    /// the request's words (attachment lines and all); `before` is the read
+    /// the write was decided by. The reply comes back too, for a caller that
+    /// reads a 409 as a repeat.
+    func deliver(_ write: RemoteWrite, text: String, session id: String, before: SessionProjection?,
+                 checking: (@MainActor () -> Void)? = nil,
+                 leaving: (@MainActor () -> Void)? = nil) async -> (reply: RemoteWriteResult?, result: RemoteActionResult) {
+        let since = dependencies.now()
+        let reply = await send(write, leaving: leaving)
+        guard reply?.isUnknown == true else { return (reply, RemoteDecide.messaged(reply, status: before?.status ?? "")) }
+        guard !Task.isCancelled else { return (reply, .unsure) }
+        checking?()
+        let fresh = await settledRead(id, full: true)
+        return (reply, RemoteDecide.settledMessage(text: text, before: before, since: since, fresh: fresh))
+    }
+
+    /// The session read once more, for at most `settleLimit`; nil when it
+    /// can't be read in time.
+    func settledRead(_ id: String, full: Bool) async -> SessionProjection? {
+        let read = dependencies.read
+        let raced = await WriteDeadline.race(dependencies.settleLimit, wait: dependencies.wait, cancel: .ignore) { () async -> SessionProjection? in
+            await read(id, full)
+        }
+        if case .finished(let projection) = raced { return projection }
+        return nil
     }
 
     // MARK: `--demo remote`
@@ -842,18 +961,88 @@ extension RemoteSessions {
 
     /// Runs `work` as one of this session's actions: after the ones before
     /// it on the same queue `act` uses, and with what was held of the session
-    /// dropped once it is done.
-    func actSerially(on id: String, _ work: @escaping @MainActor () async -> RemoteActionReply) async -> RemoteActionReply {
+    /// dropped once it is done. The reply of the turn, `stalled`'s when it ran
+    /// out of time (unknown, unless the caller knows nothing was sent) and
+    /// `.unavailable` when it was cancelled before it began.
+    func actSerially(on id: String, limit: Duration? = nil, stalled: @MainActor () -> RemoteActionReply = { .ok(.unsure) },
+                     _ work: @escaping @MainActor () async -> RemoteActionReply) async -> RemoteActionReply {
+        switch await runSerially(on: id, limit: limit ?? dependencies.turnLimit, work) {
+        case .finished(let reply): reply
+        case .stalled: stalled()
+        case .cancelled: .ok(.unavailable)
+        }
+    }
+
+    /// How a turn in a session's queue ended.
+    enum TurnEnd: Sendable {
+        case finished(RemoteActionReply)
+        /// It didn't finish within `limit`: the queue moved on without it, and
+        /// what it was doing is cancelled (and sends nothing more, `send`).
+        case stalled
+        /// Its caller was cancelled before it began: it never ran.
+        case cancelled
+    }
+
+    /// One turn of a session's queue: it waits for the turns before it (each
+    /// of which ends, at the latest, at its own `limit`), runs `work` for at
+    /// most `limit`, and lets the next begin. A caller that is cancelled while
+    /// it waits its turn never has one; once `work` has begun, the cancellation
+    /// reaches it as `Task.isCancelled`, to stop at its next step, and the turn
+    /// is waited for: what it has sent can't be taken back.
+    func runSerially(on id: String, limit: Duration,
+                     _ work: @escaping @MainActor () async -> RemoteActionReply) async -> TurnEnd {
         let previous = acting[id]
-        let task = Task { [weak self] () -> RemoteActionReply in
+        let turn = SessionTurn()
+        let wait = dependencies.wait
+        let task = Task { @MainActor [weak self] in
             _ = await previous?.value
-            let reply = await work()
+            guard !Task.isCancelled else {
+                turn.settle(.cancelled)
+                self?.forget(id)
+                return
+            }
+            turn.began = true
+            let raced = await WriteDeadline.race(limit, wait: wait, cancel: .propagate) { await work() }
+            switch raced {
+            case .finished(let reply): turn.settle(.finished(reply))
+            case .timedOut: turn.settle(.stalled)
+            case .cancelled: turn.settle(.cancelled)
+            }
             self?.forget(id)
-            return reply
         }
         acting[id] = task
-        let reply = await task.value
+        let end = await withTaskCancellationHandler {
+            await turn.wait()
+        } onCancel: {
+            task.cancel()
+            Task { @MainActor in turn.giveUpWaiting() }
+        }
         if acting[id] == task { acting[id] = nil }
-        return reply
+        return end
+    }
+}
+
+/// One turn's ending, for the caller that waits on it.
+@MainActor
+private final class SessionTurn {
+    var began = false
+    private var end: RemoteSessions.TurnEnd?
+    private var waiting: CheckedContinuation<RemoteSessions.TurnEnd, Never>?
+
+    func settle(_ value: RemoteSessions.TurnEnd) {
+        guard end == nil else { return }
+        end = value
+        waiting?.resume(returning: value)
+        waiting = nil
+    }
+
+    func wait() async -> RemoteSessions.TurnEnd {
+        if let end { return end }
+        return await withCheckedContinuation { waiting = $0 }
+    }
+
+    /// Its caller was cancelled: a turn that hasn't begun ends here, at once.
+    func giveUpWaiting() {
+        if !began { settle(.cancelled) }
     }
 }

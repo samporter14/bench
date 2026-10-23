@@ -32,6 +32,14 @@ final class RemotePhotos {
         static let notAttached = "Couldn't attach the photo from here. Send it from your Mac."
         /// The upload went and the message didn't.
         static let savedNotSent = "The photo was saved to the project, but the message didn't send. Open it on your Mac."
+        /// The upload went, the message got no answer, and the session doesn't show it.
+        static let savedNotThere = "The photo was saved to the project, but the message didn't go through. Try again."
+        /// The upload went, the message got no answer, and the session couldn't be read to see.
+        static let savedUnsure = "The photo was saved to the project. Not sure the message went through: look at the session on your Mac before you try again."
+        /// The upload got no answer: the photo may be in the project.
+        static let uploadUnsure = "Not sure the photo reached the project. Nothing was sent. Try again, or send it from your Mac."
+        /// The upload went, a new session's write got no answer, and none shows.
+        static let startNotThere = "The photo was saved to the project, but no new session shows. Try again: it won't start twice."
     }
 
     struct Dependencies {
@@ -41,7 +49,7 @@ final class RemotePhotos {
         static func live() -> Dependencies {
             Dependencies(upload: { project, photo in
                 guard Demo.mode == nil else { return nil }
-                return try? await WebContainer.shared.uploadPhoto(project: project, photo: photo)
+                return await WebContainer.shared.uploadAnswer(project: project, file: photo.upload)
             })
         }
     }
@@ -97,13 +105,33 @@ final class RemotePhotos {
         case .failure(let refusal): return refusal.reply
         case .success(let made): photo = made
         }
-        return await sessions.actSerially(on: id) { [weak self] in
+        let progress = Progress()
+        return await sessions.actSerially(on: id, limit: WriteDeadline.turn(uploadBytes: [photo.data.count]),
+                                          stalled: { progress.stalled }) { [weak self] in
             guard let self else { return .ok(.unavailable) }
-            return await self.sendToSession(id, request: request, photo: photo)
+            return await self.sendToSession(id, request: request, photo: photo, progress: progress)
         }
     }
 
-    private func sendToSession(_ id: String, request: PhotoRequest, photo: PhotoFile) async -> RemoteActionReply {
+    /// How far a photo's turn got, so that one that runs out of time can say
+    /// what is known: nothing sent, a photo that may be in the project, one
+    /// that is, or a message that may have gone.
+    @MainActor
+    private final class Progress {
+        enum Stage { case reading, uploading, uploaded, sending }
+        var stage = Stage.reading
+
+        var stalled: RemoteActionReply {
+            switch stage {
+            case .reading: .ok(.notThere)
+            case .uploading: .ok(.uploadUnsure)
+            case .uploaded: .ok(.savedNotThere)
+            case .sending: .ok(.savedUnsure)
+            }
+        }
+    }
+
+    private func sendToSession(_ id: String, request: PhotoRequest, photo: PhotoFile, progress: Progress) async -> RemoteActionReply {
         // First the check the message route makes, so that nothing is
         // uploaded for a session that can't take a message now (its status,
         // its agent and its project).
@@ -116,7 +144,14 @@ final class RemotePhotos {
         case .write(.message(_, _, let named?, _, _, _)): project = named
         case .write: return .ok(.unavailable)
         }
-        guard let (attachment, retried) = await attach(photo, request: request, to: project) else { return .ok(.notAttached) }
+        let attachment: PhotoAttachment, retried: Bool
+        progress.stage = .uploading
+        switch await attach(photo, request: request, to: project) {
+        case .placed(let placed, let again): (attachment, retried) = (placed, again)
+        case .failed: return .ok(.notAttached)
+        case .unsure: return .ok(.uploadUnsure)
+        }
+        progress.stage = .uploaded
         // Then the message route's own re-read, now the photo is up: the
         // status says send, queue or resume, and the agent is the one it names.
         let fresh = await sessions.photoDependencies.read(id, false)
@@ -124,12 +159,15 @@ final class RemotePhotos {
         guard case .write(let write) = RemoteDecide.message(.message(text: text, intentID: request.intentID), session: id,
                                                             fresh: fresh, attachment: true),
               case .message(_, _, let sentTo?, _, _, _) = write, sentTo == project else { return .ok(.savedNotSent) }
-        let reply = await sessions.photoDependencies.write(write)
-        var result = RemoteDecide.messaged(reply, status: fresh?.status ?? "")
+        let delivered = await sessions.deliver(write, text: text, session: id, before: fresh, leaving: { progress.stage = .sending })
+        var result = delivered.result
         // A retry the daemon refuses as a repeat (409): the first try went.
-        if retried, reply?.status == 409 { result = RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.sent) }
+        if retried, delivered.reply?.status == 409 { result = RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.sent) }
         switch result.result {
         case .sent, .queued, .resumed: return .ok(result)
+        // Got no answer, and the session was read to see: it isn't there, or can't be told.
+        case .retry: return .ok(.savedNotThere)
+        case .unknown: return .ok(.savedUnsure)
         default: return .ok(.savedNotSent)
         }
     }
@@ -156,11 +194,19 @@ final class RemotePhotos {
         case .failure(let refusal): return refusal.reply
         case .success(let made): photo = made
         }
-        guard let (attachment, _) = await attach(photo, request: request, to: project) else { return .ok(.notAttached) }
+        let attachment: PhotoAttachment
+        switch await attach(photo, request: request, to: project) {
+        case .placed(let placed, _): attachment = placed
+        case .failed: return .ok(.notAttached)
+        case .unsure: return .ok(.uploadUnsure)
+        }
         let started = NewSessionRequest(text: PhotoText.request(text: request.text, attachment: attachment),
                                         intentID: request.intentID, planFirst: request.planFirst, attachment: true)
-        return await browser.start(project, request: started, title: PhotoText.title(text: request.text))
-            ?? .ok(.savedNotSent)
+        switch await browser.attempt(project, request: started, title: PhotoText.title(text: request.text)) {
+        case .started(let reply): return reply
+        case .notStarted: return .ok(.savedNotSent)
+        case .notThere: return .ok(.startNotThere)
+        }
     }
 
     // MARK: Shared
@@ -176,34 +222,47 @@ final class RemotePhotos {
         return await Task.detached(priority: .userInitiated) { PhotoImage.process(image, at: now) }.value
     }
 
+    /// Where a photo ended up in the project.
+    private enum Attached {
+        /// Its place there, and whether an earlier try of this intent put it there.
+        case placed(PhotoAttachment, retried: Bool)
+        /// The upload wasn't made, or its answer wasn't what Bench expects.
+        case failed
+        /// The upload got no answer: the photo may be in the project.
+        case unsure
+    }
+
     /// The photo's place in the project: what an earlier try of this intent
     /// uploaded (the same bytes, the same project, within ten minutes, and
-    /// `retried`), else a new upload, which is remembered. Nil when there is
-    /// none.
-    private func attach(_ photo: PhotoFile, request: PhotoRequest, to project: String) async
-        -> (attachment: PhotoAttachment, retried: Bool)? {
+    /// `retried`), else a new upload, which is remembered.
+    private func attach(_ photo: PhotoFile, request: PhotoRequest, to project: String) async -> Attached {
         let now = sessions.photoDependencies.now()
         uploaded = uploaded.filter { $0.value.at <= now && now.timeIntervalSince($0.value.at) < Self.uploadedLifetime }
         let digest = SHA256.hash(data: request.image)
         if let earlier = uploaded[request.intentID], earlier.digest == digest, earlier.project == project {
-            return (earlier.attachment, true)
+            return .placed(earlier.attachment, retried: true)
         }
-        guard let made = await upload(photo, to: project) else { return nil }
-        uploaded[request.intentID] = Uploaded(digest: digest, project: project, attachment: made, at: now)
-        while uploaded.count > Self.uploadedLimit, let oldest = uploaded.min(by: { $0.value.at < $1.value.at }) {
-            uploaded[oldest.key] = nil
+        switch await upload(photo, to: project) {
+        case .failed: return .failed
+        case .unsure: return .unsure
+        case .placed(let made, _):
+            uploaded[request.intentID] = Uploaded(digest: digest, project: project, attachment: made, at: now)
+            while uploaded.count > Self.uploadedLimit, let oldest = uploaded.min(by: { $0.value.at < $1.value.at }) {
+                uploaded[oldest.key] = nil
+            }
+            return .placed(made, retried: false)
         }
-        return (made, false)
     }
 
-    /// The upload, and what the daemon says it stored; nil unless it passed
-    /// the page's gate and is the 200 the gate wants.
-    private func upload(_ photo: PhotoFile, to project: String) async -> PhotoAttachment? {
-        guard BrowseSQL.isProjectID(project),
-              let reply = await dependencies.upload(project, photo), reply.status == 200, let upload = reply.upload,
+    /// The upload, and what the daemon says it stored; `failed` unless it
+    /// passed the page's gate and is the 200 the gate wants.
+    private func upload(_ photo: PhotoFile, to project: String) async -> Attached {
+        guard BrowseSQL.isProjectID(project), let reply = await dependencies.upload(project, photo) else { return .failed }
+        if reply.isUnknown { return .unsure }
+        guard reply.status == 200, let upload = reply.upload,
               upload.filename == photo.name, upload.contentType == photo.contentType, upload.sizeBytes == photo.data.count
-        else { return nil }
-        return upload
+        else { return .failed }
+        return .placed(upload, retried: false)
     }
 
     // MARK: `--demo remote`
@@ -223,4 +282,8 @@ final class RemotePhotos {
 extension RemoteActionResult {
     static let notAttached = RemoteActionResult(result: .unavailable, sentence: RemotePhotos.Sentence.notAttached)
     static let savedNotSent = RemoteActionResult(result: .unavailable, sentence: RemotePhotos.Sentence.savedNotSent)
+    static let savedNotThere = RemoteActionResult(result: .retry, sentence: RemotePhotos.Sentence.savedNotThere)
+    static let savedUnsure = RemoteActionResult(result: .unknown, sentence: RemotePhotos.Sentence.savedUnsure)
+    static let uploadUnsure = RemoteActionResult(result: .unknown, sentence: RemotePhotos.Sentence.uploadUnsure)
+    static let startNotThere = RemoteActionResult(result: .retry, sentence: RemotePhotos.Sentence.startNotThere)
 }

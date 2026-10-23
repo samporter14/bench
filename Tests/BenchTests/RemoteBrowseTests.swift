@@ -242,6 +242,10 @@ private final class FakeBrowse {
     var history: RemoteBrowser.HistoryRead = .unreadable
     var turn: RemoteBrowser.TurnRead = .none
     var created: RemoteWriteResult? = nil
+    /// The write that makes a session goes in and never comes back.
+    var createNeverReturns = false
+    /// How long the Swift side gives it (read when `browser` is first used).
+    var createLimit: Duration = .seconds(60)
     var intents: [String?] = []
     var now = Date(timeIntervalSince1970: 1_791_833_400)
     private(set) var calls: [String] = []
@@ -278,14 +282,20 @@ private final class FakeBrowse {
             return self.history
         },
         turn: { [unowned self] _, index in self.calls.append("turn \(index)"); return self.turn },
-        create: { [unowned self] write in self.calls.append("create"); self.writes.append(write); return self.created },
+        create: { [unowned self] write in
+            self.calls.append("create")
+            self.writes.append(write)
+            if self.createNeverReturns { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
+            return self.created
+        },
         findIntent: { [unowned self] _, _ in
             self.calls.append("intent")
             return self.intents.isEmpty ? nil : self.intents.removeFirst()
         },
         listed: { [unowned self] files, device in self.listed.append((files.map(\.v), device)) },
         now: { [unowned self] in self.now },
-        pause: { [unowned self] in self.calls.append("pause") }))
+        pause: { [unowned self] in self.calls.append("pause") },
+        createLimit: createLimit))
 
     func respond(_ method: String, _ target: String, body: String = "", device: String = "device-1") async -> RemoteActionReply {
         let path = Substring(target.prefix { $0 != "?" })
@@ -650,6 +660,95 @@ struct RemoteBrowserTests {
         #expect(await start(device: "d").status == 429)
         #expect(await fake.sessions.act(.message, session: root, device: "d", body: Data("{}".utf8)).status == 429)
         #expect(await start(device: "other").status == 200)
+    }
+}
+
+// MARK: A new session whose write gets no answer
+
+@MainActor
+struct RemoteBrowserUnknownTests {
+    private let fake = FakeBrowse()
+    private let request = NewSessionRequest(text: "Made-up question", intentID: intent, planFirst: true, attachment: false)
+
+    @Test func aWriteWithNoAnswerThatTheDatabaseShowsIsStarted() async {
+        fake.created = .unknown
+        fake.intents = [root]
+        var checking = 0
+        let attempt = await fake.browser.attempt("proj_a", request: request, checking: { checking += 1 })
+        guard case .started(let reply) = attempt else { Issue.record("not started: \(attempt)"); return }
+        #expect(reply.status == 200)
+        #expect(checking == 1)
+        // One write, one look.
+        #expect(fake.writes.count == 1)
+        #expect(fake.calls == ["create", "intent"])
+    }
+
+    @Test func aWriteWithNoAnswerThatTheDatabaseDoesntShowCanBeTriedAgain() async {
+        fake.created = .unknown
+        fake.intents = [nil, nil]
+        var checking = 0
+        let attempt = await fake.browser.attempt("proj_a", request: request, checking: { checking += 1 })
+        guard case .notThere = attempt else { Issue.record("not notThere: \(attempt)"); return }
+        #expect(checking == 1)
+        #expect(fake.writes.count == 1)
+        #expect(fake.calls == ["create", "intent", "pause", "intent"])
+        // The plain start reports it as no session.
+        #expect(await fake.browser.start("proj_a", request: request) == nil)
+        // Nothing is sent again on its own: one more write, from the second call, and no third.
+        #expect(fake.writes.count == 2)
+    }
+
+    @Test func aWriteThatNeverReturnsIsCutOffAndLookedFor() async {
+        fake.createNeverReturns = true
+        fake.createLimit = .milliseconds(40)
+        fake.intents = [nil, root]
+        var checking = 0
+        let attempt = await fake.browser.attempt("proj_a", request: request, checking: { checking += 1 })
+        guard case .started = attempt else { Issue.record("not started: \(attempt)"); return }
+        #expect(checking == 1)
+        #expect(fake.writes.count == 1, "never sent again")
+        // And when nothing shows, it can be tried again.
+        let other = FakeBrowse()
+        other.createNeverReturns = true
+        other.createLimit = .milliseconds(40)
+        other.intents = [nil, nil]
+        guard case .notThere = await other.browser.attempt("proj_a", request: request) else { Issue.record("not notThere"); return }
+    }
+
+    @Test func aWriteThatWasNotMadeLooksForTheSessionButIsNotCalledUnknown() async {
+        fake.created = nil
+        fake.intents = [nil, nil]
+        var checking = 0
+        let attempt = await fake.browser.attempt("proj_a", request: request, checking: { checking += 1 })
+        guard case .notStarted = attempt else { Issue.record("not notStarted: \(attempt)"); return }
+        #expect(checking == 0)
+    }
+
+    @Test func aRefusalLooksForNothing() async {
+        fake.created = RemoteWriteResult(status: 404, code: "not_found")
+        let attempt = await fake.browser.attempt("proj_a", request: request)
+        guard case .notStarted = attempt else { Issue.record("not notStarted: \(attempt)"); return }
+        #expect(fake.calls == ["create"])
+    }
+
+    @Test func thePhonesRouteSaysItDidntGoThroughWhenNothingShows() async {
+        fake.created = .unknown
+        fake.intents = [nil, nil]
+        let reply = await fake.respond("POST", "/api/projects/proj_a/sessions", body: #"{"text":"Made-up question","id":"\#(intent)"}"#)
+        let body = (try? JSONSerialization.jsonObject(with: reply.body)) as? [String: Any]
+        #expect(reply.status == 200)
+        #expect(body?["result"] as? String == "retry")
+        #expect(body?["sentence"] as? String == RemoteBrowser.Sentence.notThere)
+        #expect(fake.writes.count == 1)
+    }
+
+    @Test func thePhonesRouteOpensTheSessionTheDatabaseShows() async {
+        fake.created = .unknown
+        fake.intents = [nil, root]
+        let reply = await fake.respond("POST", "/api/projects/proj_a/sessions", body: #"{"text":"Made-up question","id":"\#(intent)"}"#)
+        let body = (try? JSONSerialization.jsonObject(with: reply.body)) as? [String: Any]
+        #expect(body?["result"] as? String == "started")
+        #expect(body?["id"] as? String == root)
     }
 }
 

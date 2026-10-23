@@ -171,6 +171,8 @@ private final class FakeCore {
     /// What each send answers, in turn; then "sent".
     var results: [RemoteActionResult] = []
     var holdSends = false
+    /// A send that got no answer: the checking line is called before it ends.
+    var callChecking = false
     var now = Date(timeIntervalSince1970: 1_792_000_000)
     private(set) var reads = 0
     private(set) var requests: [RemoteActionRequest] = []
@@ -187,13 +189,16 @@ private final class FakeCore {
                 await Task.yield()
                 return self.read
             },
-            respond: { [unowned self] request, _ in
+            respond: { [unowned self] request, _, checking in
                 self.requests.append(request)
+                if self.callChecking { checking() }
                 if self.holdSends { await withCheckedContinuation { self.gates.append($0) } }
                 return self.results.isEmpty ? Self.sent : self.results.removeFirst()
             },
             now: { [unowned self] in self.now })
     }
+
+    var heldSends: Int { gates.count }
 
     func letGo() {
         let waiting = gates
@@ -481,7 +486,7 @@ struct NativeReplyCoreTests {
         let replier = QuestionReplier(model: model, dependencies: QuestionReplier.Dependencies(
             isEnabled: { true }, isReady: { true },
             read: { await sessions.readFrame($0) },
-            respond: { await sessions.respond($0, session: $1) }))
+            respond: { await sessions.respond($0, session: $1, checking: $2) }))
         replier.sync()
         await replier.settled()
         #expect(replier.beginReply(session))
@@ -509,5 +514,93 @@ struct NativeReplyCoreTests {
         #expect(page.writes.count == 1)
         let phoneResult = (try? JSONSerialization.jsonObject(with: phoneReply.body) as? [String: Any])?["result"] as? String
         #expect([macResult.result.rawValue, phoneResult].sorted { ($0 ?? "") < ($1 ?? "") } == ["changed", "sent"])
+    }
+}
+
+
+// MARK: A reply that gets no answer
+
+@MainActor
+struct QuestionReplierUnknownTests {
+    private let core = FakeCore()
+    private let model = LabModel()
+
+    private func replying() async -> QuestionReplier {
+        model.ingest(Fixture.snapshot(Fixture.session(session, .running)))
+        model.ingest(Fixture.snapshot(Fixture.session(session, .needsInput, reason: .question, title: "Made-up buffer screen")))
+        let replier = QuestionReplier(model: model, dependencies: core.dependencies())
+        replier.sync()
+        await replier.settled()
+        #expect(replier.beginReply(session))
+        replier.updateDraft(session) { $0.pick(0, in: 0, multi: false) }
+        return replier
+    }
+
+    private func offer(_ replier: QuestionReplier) -> CardOffer {
+        CardOffer.of(reason: .question, plan: nil, question: replier.cardState(for: session), reply: replier.replies[session]?.phase,
+                     permission: nil, checking: replier.isChecking(session))
+    }
+
+    @Test func whileItIsLookedForTheCardAndTheWindowSayIt() async {
+        core.callChecking = true
+        core.holdSends = true
+        core.results = [.notThere]
+        let replier = await replying()
+        #expect(!replier.isChecking(session))
+        let send = replier.submit(session)
+        while core.heldSends == 0 { await Task.yield() }
+        #expect(replier.isChecking(session))
+        // Still sending: nothing can be sent twice.
+        #expect(replier.replies[session]?.phase == .sending)
+        #expect(replier.submit(session) == nil)
+        let shown = offer(replier)
+        #expect(shown.lead == .sending("Sending the answer"))
+        #expect(shown.problem == RemoteDecide.Sentence.checking)
+        core.letGo()
+        _ = await send?.value
+        #expect(!replier.isChecking(session))
+        #expect(core.requests.count == 1)
+    }
+
+    @Test func aReplyThatDidNotGoThroughKeepsItsDraftAndSendIsTheRetry() async {
+        core.results = [.notThere]
+        let replier = await replying()
+        #expect(await replier.submit(session)?.value == .failed(QuestionReplier.Sentence.answerNotThere))
+        #expect(replier.canSend(session))
+        // The person presses Send again: one more request, and not before.
+        #expect(core.requests.count == 1)
+        core.results = []
+        #expect(await replier.submit(session)?.value == .sent(RemoteDecide.Sentence.answered))
+        #expect(core.requests.count == 2)
+    }
+
+    @Test func aReplyThatCantBeToldKeepsItsDraftToo() async {
+        core.results = [.unsure]
+        let replier = await replying()
+        #expect(await replier.submit(session)?.value == .failed(QuestionReplier.Sentence.answerUnsure))
+        #expect(replier.canSend(session))
+        #expect(replier.replies[session]?.draft.picks[0] == [0])
+        #expect(core.requests.count == 1)
+    }
+
+    @Test func aReplyThatWasAnsweredAlreadyIsClosedAsBefore() async {
+        core.results = [RemoteActionResult(result: .changed, sentence: RemoteDecide.Sentence.alreadyAnswered)]
+        let replier = await replying()
+        core.read = nil
+        let phase = await replier.submit(session)?.value
+        if case .changed? = phase { return }
+        if case .closed? = phase { return }
+        Issue.record("neither changed nor closed: \(String(describing: phase))")
+    }
+
+    @Test func theSentencesAreInTheMacsWordsNotThePhones() {
+        typealias Said = QuestionReplier.Sentence
+        for sentence in [Said.answerNotThere, Said.answerUnsure, Said.requestNotThere, Said.requestUnsure,
+                         Said.feedbackNotThere, Said.feedbackUnsure, Said.checking] {
+            #expect(!sentence.localizedCaseInsensitiveContains("phone"))
+            #expect(!sentence.contains("!"))
+            #expect(!sentence.localizedCaseInsensitiveContains("on your Mac"))
+        }
+        #expect(QuestionReplier.Sentence.checking == "Not sure that went through. Checking…")
     }
 }

@@ -539,28 +539,59 @@ struct PlanPathTests {
 @MainActor
 private final class FakeDaemon {
     var frame = Made.frame()
+    /// What the root frame reads as once a post has gone out (the read that settles an unknown one).
+    var frameAfterPost: Data?
     var plan = Made.phasedPlan
     var answer: APIWriteResult? = written(200, accepted: true)
+    /// A post that throws this.
+    var postError: (any Error)?
+    /// A post that never returns, as a page that never answers.
+    var postHangs = false
+    /// A read of the frame after a post that fails.
+    var settleReadFails = false
+    /// A read of the frame after a post that never returns.
+    var settleReadHangs = false
     var enabled = true
     private(set) var reads: [String] = []
     private(set) var posts: [String] = []
+    private var heldRead: CheckedContinuation<Void, Never>?
+    /// The settle read waits for `releaseSettleRead()`.
+    var holdSettleRead = false
 
-    func dependencies() -> PlanApprover.Dependencies {
-        PlanApprover.Dependencies(
-            isEnabled: { [unowned self] in self.enabled },
+    func releaseSettleRead() {
+        heldRead?.resume()
+        heldRead = nil
+    }
+
+    var settleReadIsHeld: Bool { heldRead != nil }
+
+    func dependencies(postLimit: Duration = .seconds(60), settleLimit: Duration = .seconds(60)) -> PlanApprover.Dependencies {
+        var dependencies = PlanApprover.Dependencies(
+            isEnabled: { self.enabled },
             isReady: { true },
-            get: { [unowned self] path in
+            get: { path in
                 self.reads.append(path)
-                if path.hasPrefix("/frames/") { return self.frame }
+                if path.hasPrefix("/frames/") {
+                    guard !self.posts.isEmpty else { return self.frame }
+                    if self.settleReadFails { throw WebAPIError.badResponse }
+                    if self.settleReadHangs { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
+                    if self.holdSettleRead { await withCheckedContinuation { self.heldRead = $0 } }
+                    return self.frameAfterPost ?? self.frame
+                }
                 if path.hasPrefix("/artifacts/versions/") { return self.plan }
                 throw WebAPIError.notAllowed
             },
-            post: { [unowned self] path in
+            post: { path in
                 self.posts.append(path)
+                if self.postHangs { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
+                if let error = self.postError { throw error }
                 guard let answer = self.answer else { throw WebAPIError.badResponse }
                 return answer
             },
             approvedPause: .milliseconds(20))
+        dependencies.postLimit = postLimit
+        dependencies.settleLimit = settleLimit
+        return dependencies
     }
 }
 
@@ -692,16 +723,26 @@ struct PlanApproverTests {
         #expect(!model.holdsPlanCard(Made.root))
     }
 
-    @Test func aPostThatThrowsFails() async throws {
-        daemon.answer = nil
-        let approver = try await ready()
-        approver.approve(Made.root)
-        await approver.settled()
-        guard case .problem(let message, _)? = approver.state(for: Made.root) else {
-            Issue.record("No problem shown")
-            return
+    @Test func aPostThatWasNotMadeFailsAtOnceAndIsNotLookedFor() async throws {
+        // The page isn't up, or refused the path: nothing went, so nothing is unknown.
+        for error in [WebAPIError.notReady, WebAPIError.notAllowed] {
+            let daemon = FakeDaemon()
+            let model = LabModel()
+            model.ingest(Fixture.snapshot(Fixture.session(Made.root, .running)))
+            model.ingest(Fixture.snapshot(waiting()))
+            let approver = PlanApprover(model: model, dependencies: daemon.dependencies())
+            approver.sync()
+            await approver.settled()
+            daemon.postError = error
+            approver.approve(Made.root)
+            await approver.settled()
+            guard case .problem(let message, _)? = approver.state(for: Made.root) else {
+                Issue.record("No problem shown for \(error)")
+                return
+            }
+            #expect(message == "Couldn't approve here")
+            #expect(daemon.reads.filter { $0.hasPrefix("/frames/") }.count == 2, "no read to settle it")
         }
-        #expect(message == "Couldn't approve here")
     }
 
     @Test func theCardGoingDropsItsPlan() async throws {
@@ -863,5 +904,184 @@ struct PlanHoldTests {
     @Test func onlyACardInTheQueueIsHeld() {
         model.holdPlanCard("b")
         #expect(!model.holdsPlanCard("b"))
+    }
+}
+
+// MARK: An approval that gets no answer
+
+/// The post goes out and nothing comes back in time: the card says so, reads the
+/// plan once more, and is done or offers Approve again. It never posts twice on its own.
+@MainActor
+struct PlanApproverUnknownTests {
+    private let daemon = FakeDaemon()
+    private let model = LabModel()
+
+    private func ready(postLimit: Duration = .seconds(60), settleLimit: Duration = .seconds(60)) async -> PlanApprover {
+        model.ingest(Fixture.snapshot(Fixture.session(Made.root, .running)))
+        model.ingest(Fixture.snapshot(Fixture.session(Made.root, .needsInput, reason: .plan, title: "Made-up plan session")))
+        let approver = PlanApprover(model: model, dependencies: daemon.dependencies(postLimit: postLimit, settleLimit: settleLimit))
+        approver.sync()
+        await approver.settled()
+        return approver
+    }
+
+    private func offer(_ approver: PlanApprover) -> CardOffer {
+        CardOffer.of(reason: .plan, plan: approver.state(for: Made.root), question: nil, reply: nil, permission: nil)
+    }
+
+    private func retryMessage(_ approver: PlanApprover) -> String? {
+        if case .retry(let message, _)? = approver.state(for: Made.root) { message } else { nil }
+    }
+
+    @Test func aPostWithNoAnswerThatTheFrameShowsStillWaitingOffersApproveAgain() async {
+        daemon.postError = WebAPIError.timedOut
+        let approver = await ready()
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(retryMessage(approver) == PlanApprover.Sentence.notThere)
+        // One post, and one read after it to see.
+        #expect(daemon.posts.count == 1)
+        #expect(daemon.reads.filter { $0.hasPrefix("/frames/") }.count == 3)
+        // The card offers Approve again, with the sentence, and the plan is still there to request changes to.
+        let shown = offer(approver)
+        #expect(shown.lead == .button(.approve))
+        #expect(shown.problem == PlanApprover.Sentence.notThere)
+        #expect(shown.canRequestChanges && shown.hasOpen)
+        #expect(!model.holdsPlanCard(Made.root))
+        #expect(model.cards.map(\.id) == ["needs-\(Made.root)"])
+    }
+
+    @Test func pressingApproveAgainIsThePersonsRetryAndPostsOnceMore() async {
+        daemon.postError = WebAPIError.timedOut
+        let approver = await ready()
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(daemon.posts.count == 1)
+        daemon.postError = nil
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(daemon.posts.count == 2)
+        #expect(approver.states.isEmpty)
+        #expect(model.cards.isEmpty)
+    }
+
+    @Test func aPostWithNoAnswerThatTheFrameShowsApprovedIsDone() async {
+        daemon.postError = WebAPIError.timedOut
+        daemon.frameAfterPost = Made.frame(status: "processing")
+        let approver = await ready()
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(daemon.posts.count == 1)
+        #expect(approver.states.isEmpty)
+        #expect(model.cards.isEmpty)
+    }
+
+    @Test func aPostWithNoAnswerThatTheFrameShowsApprovedFlagIsDone() async {
+        daemon.postError = WebAPIError.timedOut
+        daemon.frameAfterPost = Made.frame(status: "awaiting_plan_approval",
+                                           context: #"{"_plan_version_id": "ver-001", "_plan_artifact_id": "art-001", "_plan_approved": true}"#)
+        let approver = await ready()
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(approver.states.isEmpty)
+        #expect(daemon.posts.count == 1)
+    }
+
+    @Test func aPlanThatChangedMeanwhileIsSaidSoNotPostedAgain() async {
+        daemon.postError = WebAPIError.timedOut
+        daemon.frameAfterPost = Made.frame(context: #"{"_plan_version_id": "ver-002", "_plan_artifact_id": "art-001", "_plan_approved": false}"#)
+        let approver = await ready()
+        approver.approve(Made.root)
+        await approver.settled()
+        guard case .problem(let message, _)? = approver.state(for: Made.root) else {
+            Issue.record("No problem shown")
+            return
+        }
+        #expect(message == PlanOutcome.changed.message)
+        #expect(daemon.posts.count == 1)
+    }
+
+    @Test func aFrameThatCantBeReadAfterwardsLeavesWhatWasSeenUnsure() async {
+        daemon.postError = WebAPIError.timedOut
+        daemon.settleReadFails = true
+        let approver = await ready()
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(retryMessage(approver) == PlanApprover.Sentence.unsure)
+        #expect(offer(approver).lead == .button(.approve))
+        #expect(daemon.posts.count == 1)
+    }
+
+    @Test func aFrameInAnotherStateIsNotCalledApproved() async {
+        daemon.postError = WebAPIError.timedOut
+        daemon.frameAfterPost = Made.frame(status: "failed")
+        let approver = await ready()
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(retryMessage(approver) == PlanApprover.Sentence.unsure)
+    }
+
+    @Test func aPostThatNeverReturnsIsCutOffAndLookedFor() async {
+        daemon.postHangs = true
+        let approver = await ready(postLimit: .milliseconds(40))
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(daemon.posts.count == 1)
+        #expect(retryMessage(approver) == PlanApprover.Sentence.notThere)
+    }
+
+    @Test func aReadThatNeverReturnsIsCutOffToo() async {
+        daemon.postError = WebAPIError.timedOut
+        daemon.settleReadHangs = true
+        let approver = await ready(settleLimit: .milliseconds(40))
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(retryMessage(approver) == PlanApprover.Sentence.unsure)
+    }
+
+    @Test func whileItIsLookedForTheCardSaysSoAndNothingCanBePressed() async {
+        daemon.postError = WebAPIError.timedOut
+        daemon.holdSettleRead = true
+        let approver = await ready()
+        approver.approve(Made.root)
+        while !daemon.settleReadIsHeld { await Task.yield() }
+        guard case .checking? = approver.state(for: Made.root) else {
+            Issue.record("Not checking: \(String(describing: approver.state(for: Made.root)))")
+            return
+        }
+        let shown = offer(approver)
+        #expect(shown.lead == .sending("Checking"))
+        #expect(shown.problem == "Not sure that went through. Checking…")
+        #expect(model.holdsPlanCard(Made.root))
+        // A second press finds nothing to do.
+        approver.approve(Made.root)
+        daemon.releaseSettleRead()
+        await approver.settled()
+        #expect(daemon.posts.count == 1)
+        #expect(retryMessage(approver) == PlanApprover.Sentence.notThere)
+    }
+
+    @Test func theCardGoingWhileItIsLookedForLeavesNothingBehind() async {
+        daemon.postError = WebAPIError.timedOut
+        daemon.holdSettleRead = true
+        let approver = await ready()
+        approver.approve(Made.root)
+        while !daemon.settleReadIsHeld { await Task.yield() }
+        // The card is dismissed (a new request from the session would do the same).
+        if let card = model.cards.first { model.dismiss(card) }
+        approver.sync()
+        #expect(approver.states.isEmpty)
+        daemon.releaseSettleRead()
+        await approver.settled()
+        #expect(approver.states.isEmpty)
+        #expect(!model.holdsPlanCard(Made.root))
+    }
+
+    @Test func requestingChangesIsStillOfferedOnceItIsRetryable() async {
+        daemon.postError = WebAPIError.timedOut
+        let approver = await ready()
+        approver.approve(Made.root)
+        await approver.settled()
+        #expect(approver.state(for: Made.root)?.revisable != nil)
     }
 }

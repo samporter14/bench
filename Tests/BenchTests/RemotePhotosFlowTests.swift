@@ -100,6 +100,7 @@ var __result = null;
 var document = { cookie: __cookie };
 var AbortSignal = function () {};
 AbortSignal.timeout = function () { return undefined; };
+\(PageScript.timerShim)
 var Blob = function (parts, options) {
     var size = 0;
     for (var i = 0; i < parts.length; i++) { size += parts[i].length; }
@@ -138,6 +139,8 @@ var fetch = function (path, init) {
     var n = __seen[path] || 0;
     __seen[path] = n + 1;
     var answer = list[Math.min(n, list.length - 1)];
+    var hung = __hangs(answer, init);
+    if (hung) { return hung; }
     return Promise.resolve({ status: answer.status, ok: answer.status >= 200 && answer.status < 300,
                              text: function () { return Promise.resolve(answer.body); } });
 };
@@ -155,14 +158,14 @@ private struct UploadRun {
 
 private func runUpload(_ photo: PhotoFile, project: String = "proj_a", overrides: [String: Any] = [:],
                        answers: [String: [PageScript.Answer]],
-                       cookie: String = "theme=dark; operon_csrf=secret%20one") -> UploadRun {
+                       cookie: String = "theme=dark; operon_csrf=secret%20one", expire: Bool = false) -> UploadRun {
     let script = PageScript()
     script.set("__answers", (try? JSONEncoder().encode(answers)).map { String(decoding: $0, as: UTF8.self) } ?? "{}")
     script.set("__cookie", cookie)
     script.evaluate(uploadPrelude)
     var arguments = PhotoUploadScript.arguments(project: project, photo: photo)
     for (key, value) in overrides { arguments[key] = value }
-    let names = ["projectId", "filename", "contentType", "data", "size"]
+    let names = ["projectId", "filename", "contentType", "data", "size", "timeoutMS"]
     var values: [String] = []
     for (index, name) in names.enumerated() {
         let data = (try? JSONSerialization.data(withJSONObject: arguments[name] ?? NSNull(), options: [.fragmentsAllowed])) ?? Data("null".utf8)
@@ -174,6 +177,8 @@ private func runUpload(_ photo: PhotoFile, project: String = "proj_a", overrides
     \(PhotoUploadScript.body)
     })(\(values.joined(separator: ", "))).then(function (v) { __result = v; }, function (e) { __result = "threw: " + e; });
     """)
+    // The time is up: every timer the script set goes off.
+    if expire { script.evaluate("__expire()") }
     let raw = script.evaluate("__result")
     let json = script.evaluate("JSON.stringify(__requests)") ?? "[]"
     let requests = ((try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: Any]]) ?? []
@@ -291,10 +296,40 @@ struct PhotoUploadPageTests {
         }
     }
 
-    @Test func aRequestThatFailsIsNoResult() {
+    @Test func aRequestWithNoAnswerAtAllIsUnknownNotFailed() throws {
+        // A POST that fails with no response may have reached the daemon first.
         let run = runUpload(photo, answers: [:])
-        #expect(run.raw == #"{"failed":true}"#)
+        #expect(run.raw == #"{"unknown":true}"#)
         #expect(run.reply(sent: photo) == nil)
+        #expect(throws: WebAPIError.timedOut) { try PhotoUploadScript.result(of: Data(try #require(run.raw).utf8), sent: photo) }
+    }
+
+    @Test func anUploadThatNeverAnswersIsUnknownOnceTheTimeIsUp() throws {
+        let hangs = PageScript.Answer(status: 0, body: "__hang__")
+        let waiting = runUpload(photo, answers: [path: [hangs]])
+        #expect(waiting.raw == nil)
+        let run = runUpload(photo, answers: [path: [hangs]], expire: true)
+        #expect(run.raw == #"{"unknown":true}"#)
+        #expect(run.requests.count == 1)
+        #expect(throws: WebAPIError.timedOut) { try PhotoUploadScript.result(of: Data(try #require(run.raw).utf8), sent: photo) }
+    }
+
+    @Test func aStaleAnswerWhoseRefreshNeverAnswersStandsAsTheAnswer() throws {
+        // The first POST answered 403: the file was not accepted, so this is a failure, not unknown.
+        let stale = PageScript.Answer(status: 403, body: #"{"code":"csrf_stale"}"#)
+        let run = runUpload(photo, answers: [path: [stale], "/api/csrf": [.init(status: 0, body: "__hang-ignore__")]], expire: true)
+        #expect(run.requests.map { $0["path"] as? String } == [path, "/api/csrf"])
+        let reply = try PhotoUploadScript.result(of: Data(try #require(run.raw).utf8), sent: photo)
+        #expect(reply == PhotoUploadReply(status: 403, code: "csrf_stale"))
+        #expect(!reply.isUnknown)
+    }
+
+    @Test func theSecondPostThatNeverAnswersIsUnknown() {
+        let stale = PageScript.Answer(status: 403, body: #"{"code":"csrf_stale"}"#)
+        let run = runUpload(photo, answers: [path: [stale, .init(status: 0, body: "__hang__")], "/api/csrf": [.init(status: 204, body: "")]],
+                            expire: true)
+        #expect(run.requests.map { $0["path"] as? String } == [path, "/api/csrf", path])
+        #expect(run.raw == #"{"unknown":true}"#)
     }
 
     @Test func aThreeMebibytePhotoGoesThroughThePage() {
@@ -413,9 +448,26 @@ struct PhotoWriterRoomTests {
 
 // MARK: The flow, against fakes
 
+/// Holds whoever waits on it until it is opened, as a page that is slow to answer does.
+@MainActor
+private final class PhotoGate {
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    var holding: Int { waiting.count }
+
+    func wait() async {
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func open() {
+        let held = waiting
+        waiting = []
+        held.forEach { $0.resume() }
+    }
+}
+
 @MainActor
 private final class PhotoRig {
-    enum Upload { case echo, none, status(Int), noUpload, wrongSize }
+    enum Upload { case echo, none, status(Int), noUpload, wrongSize, unknown }
 
     var actionsOn = true
     var browseOn = true
@@ -425,6 +477,14 @@ private final class PhotoRig {
         didSet { readIndex = 0 }
     }
     var upload: Upload = .echo
+    // Holds, for the tests of a turn that runs out of time: each waits on `gate` until it is opened.
+    let gate = PhotoGate()
+    /// The deadline of a session's turn waits on this; `clock.fire()` is "the time is up".
+    let clock = ManualClock()
+    var turnLimit: Duration = .seconds(60)
+    var holdFirstRead = false
+    var holdUpload = false
+    var holdWrite = false
     var writeReply: RemoteWriteResult? = RemoteWriteResult(status: 200, bodyStatus: "accepted")
     var createReply: RemoteWriteResult? = RemoteWriteResult(status: 200, bodyStatus: "accepted", rootFrameID: newID)
     var intents: [String?] = []
@@ -446,6 +506,7 @@ private final class PhotoRig {
         cardPlan: { _ in nil },
         read: { [unowned self] _, turns in
             self.log.append(turns ? "turns" : "read")
+            if self.holdFirstRead && self.readIndex == 0 { await self.gate.wait() }
             let index = min(self.readIndex, self.reads.count - 1)
             self.readIndex += 1
             return self.reads.isEmpty ? nil : self.reads[index]
@@ -454,11 +515,14 @@ private final class PhotoRig {
         write: { [unowned self] write in
             self.log.append("write")
             self.writes.append(write)
+            if self.holdWrite { await self.gate.wait() }
             return self.writeReply
         },
         now: { [unowned self] in self.now },
         browseOn: { [unowned self] in self.browseOn },
-        lookup: { _ in nil }))
+        lookup: { _ in nil },
+        turnLimit: turnLimit,
+        wait: { [unowned self] in await self.clock.wait($0) }))
 
     lazy var browser = RemoteBrowser(sessions: sessions, dependencies: RemoteBrowser.Dependencies(
         browseOn: { [unowned self] in self.browseOn },
@@ -485,6 +549,7 @@ private final class PhotoRig {
         upload: { [unowned self] project, photo in
             self.log.append("upload")
             self.uploads.append((project, photo))
+            if self.holdUpload { await self.gate.wait() }
             switch self.upload {
             case .echo:
                 return PhotoUploadReply(status: 200, upload: PhotoAttachment(
@@ -497,6 +562,7 @@ private final class PhotoRig {
             case .none: return nil
             case .status(let status): return PhotoUploadReply(status: status)
             case .noUpload: return PhotoUploadReply(status: 200)
+            case .unknown: return .unknown
             }
         }))
 
@@ -637,6 +703,101 @@ struct RemotePhotosSessionTests {
             #expect(decode(reply.body).string("result") == "unavailable", "\(index)")
             #expect(decode(reply.body).string("sentence") == saved, "\(index)")
         }
+    }
+
+    // MARK: A write that gets no answer
+
+    private func turns(_ text: String, dated offset: TimeInterval = 1) -> [SessionProjection.Turn] {
+        [.init(role: .you, at: rig.now.addingTimeInterval(offset), text: text)]
+    }
+
+    private func sessionWithTurns(_ turns: [SessionProjection.Turn]?, status: String = "completed", queued: Int = 0) -> SessionProjection {
+        SessionProjection(status: status, agentName: "made-up-agent", projectID: "proj-1", queued: queued, turns: turns)
+    }
+
+    // A turn that runs out of time says what is known of how far it got.
+
+    private func stalledReply(_ prepare: (PhotoRig) -> Void) async -> [String: Any] {
+        let rig = PhotoRig()
+        prepare(rig)
+        let task = Task { @MainActor in await rig.session(PhotoFixture.body(text: "Look at this gel.")) }
+        for _ in 0..<2_000 where rig.gate.holding == 0 { await Task.yield() }
+        await rig.clock.until(waiting: 1)
+        // The time is up while the page still hasn't answered.
+        rig.clock.fire()
+        let said = decode(await task.value.body)
+        rig.gate.open()
+        for _ in 0..<60 { await Task.yield() }
+        return said
+    }
+
+    @Test func aTurnThatStallsBeforeAnythingWasDoneIsNotCalledUnknown() async {
+        let said = await stalledReply { $0.holdFirstRead = true }
+        #expect(said.string("result") == "retry")
+        #expect(said.string("sentence") == RemoteDecide.Sentence.notThere)
+    }
+
+    @Test func aTurnThatStallsInTheUploadMayHaveLeftThePhotoInTheProject() async {
+        let said = await stalledReply { $0.holdUpload = true }
+        #expect(said.string("result") == "unknown")
+        #expect(said.string("sentence") == RemotePhotos.Sentence.uploadUnsure)
+    }
+
+    @Test func aTurnThatStallsWithTheMessageOutMayHaveGone() async {
+        let said = await stalledReply { $0.holdWrite = true }
+        #expect(said.string("result") == "unknown")
+        #expect(said.string("sentence") == RemotePhotos.Sentence.savedUnsure)
+    }
+
+    @Test func anUploadWithNoAnswerMayBeInTheProjectAndNothingIsSent() async {
+        rig.upload = .unknown
+        let reply = await rig.session(PhotoFixture.body(text: "x"))
+        #expect(decode(reply.body).string("result") == "unknown")
+        #expect(decode(reply.body).string("sentence") == RemotePhotos.Sentence.uploadUnsure)
+        #expect(rig.writes.isEmpty)
+        #expect(rig.uploads.count == 1)
+    }
+
+    @Test func aMessageWithNoAnswerThatTheSessionShowsIsSent() async {
+        rig.writeReply = .unknown
+        // The read before, the one after the upload, then the one that looks.
+        rig.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"), sessionWithTurns(turns("Look at this gel."))]
+        let reply = await rig.session(PhotoFixture.body(text: "Look at this gel."))
+        #expect(decode(reply.body).string("result") == "sent")
+        #expect(rig.log == ["read", "upload", "read", "write", "turns"])
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aMessageWithNoAnswerThatTheSessionDoesntShowCanBeTriedAgain() async {
+        rig.writeReply = .unknown
+        rig.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"), sessionWithTurns([])]
+        let reply = await rig.session(PhotoFixture.body(text: "Look at this gel."))
+        #expect(decode(reply.body).string("result") == "retry")
+        #expect(decode(reply.body).string("sentence") == RemotePhotos.Sentence.savedNotThere)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aMessageWithNoAnswerThatCantBeLookedForIsUnknown() async {
+        rig.writeReply = .unknown
+        rig.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"), nil]
+        let reply = await rig.session(PhotoFixture.body(text: "Look at this gel."))
+        #expect(decode(reply.body).string("result") == "unknown")
+        #expect(decode(reply.body).string("sentence") == RemotePhotos.Sentence.savedUnsure)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aNewSessionWithNoAnswerIsFoundByItsIntentOrOfferedAgain() async {
+        rig.createReply = .unknown
+        rig.intents = [nil, newID]
+        let found = await rig.project(PhotoFixture.body(text: "x"))
+        #expect(decode(found.body).string("result") == "started")
+        #expect(decode(found.body).string("id") == newID)
+        rig.createReply = .unknown
+        rig.intents = [nil, nil]
+        let missing = await rig.project(PhotoFixture.body(text: "x"), device: "device-2")
+        #expect(decode(missing.body).string("result") == "retry")
+        #expect(decode(missing.body).string("sentence") == RemotePhotos.Sentence.startNotThere)
+        #expect(rig.writes.count == 2)
     }
 
     // MARK: A retry
