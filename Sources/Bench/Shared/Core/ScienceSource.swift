@@ -1,6 +1,6 @@
 // ScienceSource.swift
 // ScienceStatus — DroppyKit-free core. No DroppyKit import in this file.
-// Bench's own version since 0.5.3 (`activeAt`): Scripts/sync-shared.sh keeps it.
+// Bench's own version since 0.5.3 (`activeAt`); all of Shared/ is Capsid's own since 1.0.
 
 import Foundation
 

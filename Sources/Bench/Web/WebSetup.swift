@@ -23,8 +23,26 @@ enum WebSetup {
     /// made for us.
     @MainActor
     static func finish(_ webView: WKWebView) {
-        // An internal build, so the page can always be inspected.
-        webView.isInspectable = true
+        webView.isInspectable = inspectable()
         webView.allowsBackForwardNavigationGestures = true
     }
+
+    /// A hidden setting that lets Safari's Web Inspector attach to a release
+    /// build: `defaults write local.sam.bench webInspector -bool YES`, then
+    /// open the window again.
+    static let inspectorKey = "webInspector"
+
+    /// Whether Safari's Web Inspector may attach to Capsid's pages: always in
+    /// a debug build, and in a release build only with the hidden setting on.
+    /// The page holds the user's sessions, so it isn't open to inspection by
+    /// default.
+    static func inspectable(debug: Bool = isDebugBuild, defaults: UserDefaults = .standard) -> Bool {
+        debug || defaults.bool(forKey: inspectorKey)
+    }
+
+    #if DEBUG
+    static let isDebugBuild = true
+    #else
+    static let isDebugBuild = false
+    #endif
 }

@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "006c8d22076f",
+        "/app.js": "0b830fd99945",
         "/app.css": "b948887bc2c7",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=006c8d22076f"></script>
+<script type="module" src="/app.js?v=0b830fd99945"></script>
 </body>
 </html>
 """#
@@ -937,8 +937,9 @@ S.sinceAsked[what + id] = true;
 Promise.resolve(run()).then(again, again);
 };
 v.asks.slice(0, SINCE_ASKS).forEach((a) => { if (!S.sess[a.id]) ask(a.id, 's', () => loadSession(a.id)); });
+const content = v.sn.content !== false;
 v.finished.slice(0, SINCE_ROWS).forEach((f) => {
-if (!f.line && !S.sess[f.id]) ask(f.id, 's', () => loadSession(f.id));
+if (content && !f.line && !S.sess[f.id]) ask(f.id, 's', () => loadSession(f.id));
 if (browseOn() && !art(f.id).loaded) ask(f.id, 'a', () => loadArtifacts(f.id));
 });
 }
@@ -991,9 +992,9 @@ const other = A && A.loaded ? A.items[0] : null;
 const ext = other ? (String(other.name || '').split('.').pop() || '').toUpperCase() : '';
 return h('span', { class: 'since-pic kind', 'aria-hidden': 'true' }, ext && ext.length <= 5 && ext !== String(other.name || '').toUpperCase() ? ext : icon('doc', 'sm'));
 }
-function sinceFinishedRow(f) {
-const d = S.sess[f.id] && S.sess[f.id].data;
-const line = f.line || (d && d.reply && typeof d.reply.text === 'string' ? d.reply.text : '');
+function sinceFinishedRow(f, content) {
+const d = content && S.sess[f.id] && S.sess[f.id].data;
+const line = content ? f.line || (d && d.reply && typeof d.reply.text === 'string' ? d.reply.text : '') : '';
 return h('a', { class: 'since-row', href: sessionHref(f.id), 'data-key': 'sf:' + f.id },
 sinceTile(f),
 h('span', { class: 'since-main' }, h('span', { class: 'since-title', text: f.title }), line ? h('span', { class: 'since-line', text: sinceLine(line) }) : null));
@@ -1020,7 +1021,7 @@ const more = Math.max(0, Math.floor(Number(v.sn.more) || 0));
 return h('section', { class: 'since', 'aria-label': 'Since you left' },
 ...v.asks.map(sinceAskCard),
 v.finished.length ? h('h2', { class: 'since-label', text: 'Finished' }) : null,
-...v.finished.map(sinceFinishedRow),
+...v.finished.map((f) => sinceFinishedRow(f, v.sn.content !== false)),
 v.stopped.length ? h('h2', { class: 'since-label', text: 'Stopped' }) : null,
 ...v.stopped.map(sinceStoppedRow),
 more ? h('p', { class: 'since-more', text: 'and ' + more + ' more, under Recent' }) : null);

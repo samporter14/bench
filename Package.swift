@@ -6,10 +6,10 @@
 // that name (the tests `@testable import Bench`); only the product, and so the
 // binary and the app bundle, is named Capsid.
 //
-// Sources/Bench/Shared holds copies of the Science Status droplet's
-// DroppyKit-free files (the scenes and the session reader), compiled into this
-// target. They are written in the droplet: change them there, then run
-// Scripts/sync-shared.sh.
+// Sources/Bench/Shared began as copies of the Science Status droplet's
+// DroppyKit-free files (the scenes and the session reader). Droplets were
+// retired in October 2026, so since 1.0 they are Capsid's own: change them
+// here.
 import PackageDescription
 
 let package = Package(

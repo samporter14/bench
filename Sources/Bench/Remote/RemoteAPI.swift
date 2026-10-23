@@ -35,6 +35,9 @@ enum RemoteAPI {
         /// what is known of its rows: the last words of a finished session, why one stopped.
         var since: SinceYouLeftSummary?
         var sinceDetails: [String: SinceYouLeftDetail] = [:]
+        /// "Show plans, questions and requests on the card": off, the rows carry nothing a session said and the
+        /// phone reads none of it either.
+        var sinceContent = true
     }
 
     /// `pause` in `/api/state`: some of the running sessions (those marked
@@ -177,8 +180,12 @@ enum RemoteAPI {
         let stopped: [Stop]
         /// How many rows were left out of the three lists.
         let more: Int
+        /// False when the Mac's card setting keeps what sessions said off the rows: the phone then fetches no
+        /// session for a finished row and shows no reply it has cached. Added after version 1 shipped; an older
+        /// Mac leaves it out, which means true.
+        let content: Bool
 
-        private enum CodingKeys: String, CodingKey { case v, awayAt, back, counts, asks, finished, stopped, more }
+        private enum CodingKeys: String, CodingKey { case v, awayAt, back, counts, asks, finished, stopped, more, content }
 
         func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -190,13 +197,15 @@ enum RemoteAPI {
             try c.encode(finished, forKey: .finished)
             try c.encode(stopped, forKey: .stopped)
             try c.encode(more, forKey: .more)
+            try c.encode(content, forKey: .content)
         }
 
         /// Its own version, which grows only by adding fields.
         static let version = 1
 
-        init(_ summary: SinceYouLeftSummary, details: [String: SinceYouLeftDetail]) {
+        init(_ summary: SinceYouLeftSummary, details: [String: SinceYouLeftDetail], content: Bool = true) {
             let rows = summary.shown()
+            self.content = content
             v = Self.version
             awayAt = summary.since
             back = summary.back
@@ -207,10 +216,12 @@ enum RemoteAPI {
                            sentence: reason.sentence, since: $0.at)
             }
             finished = rows.finished.map {
-                Done(id: $0.id, title: $0.session.displayTitle, project: $0.session.projectName, at: $0.at, line: details[$0.id]?.answer)
+                Done(id: $0.id, title: $0.session.displayTitle, project: $0.session.projectName, at: $0.at,
+                 line: content ? details[$0.id]?.answer : nil)
             }
             stopped = rows.stopped.map {
-                Stop(id: $0.id, title: $0.session.displayTitle, project: $0.session.projectName, at: $0.at, reason: details[$0.id]?.reason)
+                Stop(id: $0.id, title: $0.session.displayTitle, project: $0.session.projectName, at: $0.at,
+                 reason: content ? details[$0.id]?.reason : nil)
             }
             more = rows.hidden
         }
@@ -343,7 +354,7 @@ enum RemoteAPI {
         let pause = input.working.lazy.compactMap { input.held[$0.id] }.first.map {
             Pause(limit: name($0.limit), until: $0.until, sentence: $0.sentence(now: input.now))
         }
-        let since = input.since.flatMap { $0.isEmpty ? nil : Since($0, details: input.sinceDetails) }
+        let since = input.since.flatMap { $0.isEmpty ? nil : Since($0, details: input.sinceDetails, content: input.sinceContent) }
         return State(version: version, bench: input.bench, updatedAt: input.now, problem: input.problem?.label,
                      needsYou: needsYou, failed: failed, working: working, recent: recent,
                      usage: limits.isEmpty ? nil : Usage(limits: limits), pause: pause, since: since)
@@ -642,6 +653,7 @@ enum RemoteAPI {
             input.since = summary
             let details = SinceYouLeftModel.shared.detailsForPhone(summary)
             input.sinceDetails = details
+            input.sinceContent = SinceYouLeftModel.shared.readsContent
         }
         return input
     }

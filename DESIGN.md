@@ -455,7 +455,9 @@ Every link goes through one function. The rules:
     their own writer (Capsid on your phone → Actions); `apiPOST` is unchanged,
     and unaffected by the limits above: no deadline, and no retry but the one
     after a stale CSRF token, so a write is never sent twice blindly.
-- `isInspectable = true` (internal build).
+- `isInspectable` only in a debug build, or in a release build with the hidden
+  setting `webInspector` (`defaults write local.sam.bench webInspector -bool
+  YES`): the page holds the user's sessions (since 1.0; it was always on).
 - `isElementFullscreenEnabled = true`.
 - Find (⌘F): a small find bar under the toolbar that uses
   `WKWebView.find(_:configuration:completionHandler:)`, with Return/⇧Return
@@ -2093,8 +2095,8 @@ among them); the rest keep their old still.
   with Reduce Motion, and the moment before a cell plays) and the flask under
   Reduce Motion (`StillSpecimen`). **Not** the panel's covered-screen still:
   `PlayedGlyphView` in Shared/ draws the middle frame of the scene it is on
-  when its window is covered or the screen sleeps, and Shared/ is the
-  droplet's. A poster there is a change to make in the droplet.
+  when its window is covered or the screen sleeps (Shared/, Capsid's own
+  since 1.0: a poster there is a change to make there).
 - **Lazily, and in line.** `ImageRenderer` and `GraphicsContext` need the
   main actor, so the choosing cannot go off the main thread. It costs
   0.7 ms a specimen (release; 0.4 s for all 528, `Capsid --measure-posters`),
@@ -2434,7 +2436,7 @@ Home Screen name) and the docs. What deliberately kept the old name:
   `samporter14/bench`, the raw `install.sh` address the install line names,
   the release file `Bench.zip`, and the script's `BENCH_INSTALL_DIR` switch,
   which Bench's updater clears (Update check, "From Bench to Capsid").
-- **`Sources/Bench/Shared`** (the droplet's copies) and
+- **`Sources/Bench/Shared`** (Capsid's own since 1.0) and
   **`Resources/AppIcon.icon`** with its `bench-glyph.png`: the icon is being
   redesigned separately.
 
@@ -3141,8 +3143,8 @@ unchanged: the sRGB window does not touch the frames. A harness that commits a
 window and 11.3 ms in an sRGB one.
 
 **Shared changes, made since 0.9.3** (`Shared/PlayedViews.swift` and
-`Shared/Core/DatabaseWatcher.swift` are the droplet's: written there,
-copied here by `Scripts/sync-shared.sh`):
+`Shared/Core/DatabaseWatcher.swift` were written in the droplet then; since 1.0
+Shared/ is Capsid's own):
 
 - **A second of frames at a time, not a scene** (`PlaybackPlan`,
   `ChunkedPlayback`, `PlayedGlyphView.restart`). Before, `restart` drew all of
@@ -3258,13 +3260,9 @@ Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, L
                           changes answered from its card), FailureReason (why a session stopped, on its
                           failure card)   (lab agent)
 Sources/Bench/Results/    ResultsShelf and ResultsWindow: the results shelf (Results)
-Sources/Bench/Shared/     COPIES of the Science Status droplet's scenes and ScienceCore. Don't edit here:
-                          change them in the droplet, then run Scripts/sync-shared.sh. Except
-                          Core/CLIStatus.swift and Core/SQLiteSource.swift, which are Capsid's own
-                          since 0.1.2 (the database is found through the daemon's `data_dir` and
-                          the live org), Core/ScienceEngine.swift (0.1.15), and
-                          Core/ScienceSource.swift and Core/SessionStatus.swift since 0.5.3
-                          (`activeAt`, the usage pause); the sync script keeps them.
+Sources/Bench/Shared/     The specimens (scenes) and ScienceCore, Capsid's own since 1.0: they began
+                          as copies of the Science Status droplet's, and Droplets were retired in
+                          October 2026, so `Scripts/sync-shared.sh` went with them. Edit them here.
 Resources/AppIcon.icon    Capsid's own icon, in Solanum's one-colour colourway (0.6.0): a Clay tile
                           (#D97757) with everything in Slate (#141413). The Solanum ring and its
                           escaped dot are kept pixel for pixel from Bench's glyph (the escaped node

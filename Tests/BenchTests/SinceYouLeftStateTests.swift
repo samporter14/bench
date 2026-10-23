@@ -60,7 +60,8 @@ struct SinceYouLeftStateTests {
         #expect(with["version"] as? Int == 1)
         let since = try #require(with["since"] as? [String: Any])
         #expect(since["v"] as? Int == 1)
-        #expect(Set(since.keys) == ["v", "awayAt", "back", "counts", "asks", "finished", "stopped", "more"])
+        #expect(Set(since.keys) == ["v", "awayAt", "back", "counts", "asks", "finished", "stopped", "more", "content"])
+        #expect(since["content"] as? Bool == true)
         #expect(since["awayAt"] as? String == "2026-10-12T17:16:00Z")
         #expect(since["back"] as? String == "2026-10-12T19:30:00Z")
         let counts = try #require(since["counts"] as? [String: Int])
@@ -94,6 +95,20 @@ struct SinceYouLeftStateTests {
         let stopped = try #require(since["stopped"] as? [[String: Any]])
         #expect(stopped[0]["reason"] as? String == "The R kernel ran out of memory.")
         #expect(stopped[0]["at"] as? String != nil)
+    }
+
+    @Test func withTheCardSettingOffTheRowsCarryNothingASessionSaid() throws {
+        let details: [String: SinceYouLeftDetail] = [
+            "f1": .init(answer: "All plates passed except plate 7."), "s1": .init(reason: "The R kernel ran out of memory."),
+        ]
+        var off = input(since: summary(), details: details)
+        off.sinceContent = false
+        let since = try #require(json(RemoteAPI.state(off))["since"] as? [String: Any])
+        #expect(since["content"] as? Bool == false)
+        let finished = try #require(since["finished"] as? [[String: Any]])
+        #expect(finished[0]["line"] is NSNull)
+        let stopped = try #require(since["stopped"] as? [[String: Any]])
+        #expect(stopped[0]["reason"] is NSNull)
     }
 
     @Test func atMostSixRowsGoAndTheCountsAreWhole() throws {

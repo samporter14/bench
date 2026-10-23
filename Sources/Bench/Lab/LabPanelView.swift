@@ -113,6 +113,10 @@ struct LabPanelView: View {
     @ObservedObject private var insights: PanelInsights
     /// The Finished card's files and pictures (Lab/FinishedResults.swift).
     @ObservedObject private var finished: FinishedResults
+    /// The shelf the Finished card's one figure is added to (Shelf/ShelfAccess.swift).
+    @ObservedObject private var onShelf: ShelfAccess = .live
+    /// Why the last Add to Shelf of a figure failed, by version, when it did.
+    @State private var shelfProblems: [String: String] = [:]
     /// What a card offers and does (Lab/CardActions.swift), over the same model and states.
     private var actions: CardActions { CardActions(model: model, plans: plans, questions: questions) }
     /// Reports the window size the content wants, whenever it changes.
@@ -565,7 +569,8 @@ struct LabPanelView: View {
 
     /// The Finished card (Lab/FinishedResults.swift): the plate that fills, the
     /// session's pictures and file count, what the reviewer found, and Results,
-    /// Open and, when there is one figure, Keep…
+    /// Open and, when there is one figure, Add to Shelf (then On Shelf ✓);
+    /// Keep with Data and Code… is VoiceOver's action and Results' own.
     private func finishedCard(_ session: SessionStatus, card: LabCard, position: String?) -> some View {
         let listing = finished.listing(for: session.id)
         let offer = FinishedOffer.of(listing)
@@ -591,14 +596,13 @@ struct LabPanelView: View {
                     Button("Open") { model.open(card) }.panelButton(prominent: true)
                     if offer.hasResults { resultsButton(session).panelButton() }
                 }
-                if let entry = offer.keepable {
-                    Button("Keep\u{2026}") { keep(entry, of: session) }
-                        .panelButton()
-                        .help("Keep this figure with its words, its data and its code")
-                }
+                if let entry = offer.keepable { shelfButton(entry, of: session) }
             }
             .padding(.horizontal, 4)
             .padding(.bottom, 2)
+            if let entry = offer.keepable, let problem = shelfProblems[entry.version] {
+                detail(problem).padding(.horizontal, 4)
+            }
         }
         // Only the card on top is here, so only its files are read.
         .task(id: session.id) {
@@ -611,7 +615,35 @@ struct LabPanelView: View {
             title: session.displayTitle, project: session.projectName, duration: session.duration,
             files: files, reviewer: reviewer))
         .accessibilityAction(named: "Results") { showResults(session) }
-        .accessibilityAction(named: "Keep\u{2026}") { if let entry = offer.keepable { keep(entry, of: session) } }
+        .accessibilityAction(named: ShelfWords.add) { if let entry = offer.keepable { addToShelf(entry, of: session) } }
+        .accessibilityAction(named: ShelfWords.keep) { if let entry = offer.keepable { keep(entry, of: session) } }
+    }
+
+    /// Add to Shelf, one click as in Results; "Adding…" while it is added, then On Shelf ✓, which shows the shelf.
+    @ViewBuilder
+    private func shelfButton(_ entry: ArtifactEntry, of session: SessionStatus) -> some View {
+        switch ShelfMark(entry.version, in: onShelf) {
+        case .off:
+            Button(ShelfWords.add) { addToShelf(entry, of: session) }
+                .panelButton()
+                .help("Add this figure to your shelf, with what Claude said about it and where it came from")
+        case .adding:
+            Button(ShelfWords.adding) {}.panelButton().disabled(true)
+        case .on:
+            Button(ShelfWords.on) { if Demo.mode == nil { onShelf.show(nil) } }
+                .panelButton()
+                .help("Show the Shelf")
+        }
+    }
+
+    private func addToShelf(_ entry: ArtifactEntry, of session: SessionStatus) {
+        guard Demo.mode == nil, ShelfMark(entry.version, in: onShelf) == .off else { return }
+        shelfProblems[entry.version] = nil
+        Task { @MainActor in
+            if case .failed(let sentence) = await onShelf.add(ShelfSource(session: session, entry: entry)) {
+                shelfProblems[entry.version] = sentence
+            }
+        }
     }
 
     private func resultsButton(_ session: SessionStatus) -> some View {

@@ -351,6 +351,6 @@ It builds `build/Capsid.app` and opens it.
   step of its setup checklist, `Capsid --demo remote` serves the phone page with them on
   `http://127.0.0.1:47280` (pairing code `000000`), and
   `Capsid --render-scenes` records the scene GIF.
-- `Sources/Bench/Shared` holds copies from the Science Status droplet, where
-  the specimens are written; `Scripts/sync-shared.sh` refreshes them.
+- `Sources/Bench/Shared` holds the specimens and the session reader. They
+  began in the Science Status droplet and are Capsid's own since 1.0.
 - MIT licensed; see [LICENSE](LICENSE).

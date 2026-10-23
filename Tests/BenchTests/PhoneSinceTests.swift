@@ -23,7 +23,8 @@ struct PhoneSinceTests {
     }
 
     private static func since(away: Double = 134, back: Bool = true, counts: String = #"{"finished":3,"stopped":1,"needs":1}"#,
-                              asks: [String]? = nil, finished: [String]? = nil, stopped: [String]? = nil, more: Int = 0, v: Int = 1) -> String {
+                              asks: [String]? = nil, finished: [String]? = nil, stopped: [String]? = nil, more: Int = 0, v: Int = 1,
+                              content: Bool? = nil) -> String {
         let asks = asks ?? [#"{"id":"\#(ask)","title":"Differential expression, KO vs WT","project":"RNA-seq pilot","reason":"question","sentence":"Asked you a question","since":"\#(iso(minutesAgo: 41))"}"#]
         let finished = finished ?? [
             #"{"id":"\#(plate)","title":"Plate reader QC","project":"Assay development","at":"\#(iso(minutesAgo: 100))","line":"All plates passed except plate 7 (edge effect, column 12)."}"#,
@@ -31,7 +32,7 @@ struct PhoneSinceTests {
             #"{"id":"\#(blot)","title":"Western blot quantification","project":"Knockdown validation","at":"\#(iso(minutesAgo: 30))","line":null}"#,
         ]
         let stopped = stopped ?? [#"{"id":"\#(rebuild)","title":"Figure 2 rebuild","project":"Manuscript figures","at":"\#(iso(minutesAgo: 120))","reason":"The R kernel ran out of memory."}"#]
-        return #"{"v":\#(v),"awayAt":"\#(iso(minutesAgo: away))","back":\#(back ? "\"\(iso(minutesAgo: 0))\"" : "null"),"counts":\#(counts),"asks":[\#(asks.joined(separator: ","))],"finished":[\#(finished.joined(separator: ","))],"stopped":[\#(stopped.joined(separator: ","))],"more":\#(more)}"#
+        return #"{"v":\#(v),"awayAt":"\#(iso(minutesAgo: away))","back":\#(back ? "\"\(iso(minutesAgo: 0))\"" : "null"),"counts":\#(counts),"asks":[\#(asks.joined(separator: ","))],"finished":[\#(finished.joined(separator: ","))],"stopped":[\#(stopped.joined(separator: ","))],"more":\#(more)\#(content.map { #","content":\#($0)"# } ?? "")}"#
     }
 
     private static func state(since: String?, needsYou: Bool = true, failed: Bool = true) -> String {
@@ -205,6 +206,30 @@ struct PhoneSinceTests {
         let pictures = app.string("document.querySelectorAll('.since-row .since-pic').map(function (e) { return e.querySelector('img') ? 'image' : e.textContent; }).join('|')")
         #expect(pictures == "image|CSV|image")
         #expect(app.requests(to: "/api/sessions/\(Self.plate)/artifacts") == 1)
+    }
+
+    @Test func withTheMacsCardSettingOffNoReplyIsReadOrShown() throws {
+        let stopped = #"{"id":"\#(Self.rebuild)","title":"Figure 2 rebuild","project":"Manuscript figures","at":"\#(Self.iso(minutesAgo: 120))","reason":null}"#
+        let app = try app(since: Self.since(stopped: [stopped], content: false))
+        #expect(app.exceptions == [])
+        // No session is read for its reply, and no line shows, not even the state's own.
+        #expect(app.requests(to: "/api/sessions/\(Self.literature)") == 0)
+        #expect(app.requests(to: "/api/sessions/\(Self.blot)") == 0)
+        #expect(lines(app) == "Stopped with an error")
+    }
+
+    private func lines(_ app: PhoneAppHarness) -> String? {
+        app.string("document.querySelectorAll('.since-row .since-line').map(function (e) { return e.textContent; }).join('|')")
+    }
+
+    @Test func aReplyAlreadyReadGoesWhenTheSettingTurnsOff() throws {
+        let app = try app(since: Self.since())
+        #expect(app.requests(to: "/api/sessions/\(Self.blot)") == 1)
+        #expect(lines(app)?.contains("Bands normalized to the loading control.") == true)
+        let stopped = #"{"id":"\#(Self.rebuild)","title":"Figure 2 rebuild","project":"Manuscript figures","at":"\#(Self.iso(minutesAgo: 120))","reason":null}"#
+        app.sendState(Self.state(since: Self.since(stopped: [stopped], content: false)))
+        #expect(app.stateFailures == [])
+        #expect(lines(app) == "Stopped with an error")
     }
 
     @Test func withoutBrowsingThereAreNoPicturesAndNoArtifactReads() throws {

@@ -1032,8 +1032,10 @@ function wantSince(v) {
     Promise.resolve(run()).then(again, again);
   };
   v.asks.slice(0, SINCE_ASKS).forEach((a) => { if (!S.sess[a.id]) ask(a.id, 's', () => loadSession(a.id)); });
+  // content: false is the Mac's card setting keeping what sessions said off the rows: read none of it here either.
+  const content = v.sn.content !== false;
   v.finished.slice(0, SINCE_ROWS).forEach((f) => {
-    if (!f.line && !S.sess[f.id]) ask(f.id, 's', () => loadSession(f.id));
+    if (content && !f.line && !S.sess[f.id]) ask(f.id, 's', () => loadSession(f.id));
     if (browseOn() && !art(f.id).loaded) ask(f.id, 'a', () => loadArtifacts(f.id));
   });
 }
@@ -1094,9 +1096,9 @@ function sinceTile(f) {
   return h('span', { class: 'since-pic kind', 'aria-hidden': 'true' }, ext && ext.length <= 5 && ext !== String(other.name || '').toUpperCase() ? ext : icon('doc', 'sm'));
 }
 
-function sinceFinishedRow(f) {
-  const d = S.sess[f.id] && S.sess[f.id].data;
-  const line = f.line || (d && d.reply && typeof d.reply.text === 'string' ? d.reply.text : '');
+function sinceFinishedRow(f, content) {
+  const d = content && S.sess[f.id] && S.sess[f.id].data;
+  const line = content ? f.line || (d && d.reply && typeof d.reply.text === 'string' ? d.reply.text : '') : '';
   return h('a', { class: 'since-row', href: sessionHref(f.id), 'data-key': 'sf:' + f.id },
     sinceTile(f),
     h('span', { class: 'since-main' }, h('span', { class: 'since-title', text: f.title }), line ? h('span', { class: 'since-line', text: sinceLine(line) }) : null));
@@ -1129,7 +1131,7 @@ function sinceBody(v) {
   return h('section', { class: 'since', 'aria-label': 'Since you left' },
     ...v.asks.map(sinceAskCard),
     v.finished.length ? h('h2', { class: 'since-label', text: 'Finished' }) : null,
-    ...v.finished.map(sinceFinishedRow),
+    ...v.finished.map((f) => sinceFinishedRow(f, v.sn.content !== false)),
     v.stopped.length ? h('h2', { class: 'since-label', text: 'Stopped' }) : null,
     ...v.stopped.map(sinceStoppedRow),
     more ? h('p', { class: 'since-more', text: 'and ' + more + ' more, under Recent' }) : null);

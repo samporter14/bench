@@ -97,7 +97,7 @@ struct ClayTextTests {
         var found: [String: Int] = [:]
         for case let url as URL in walker where url.pathExtension == "swift" {
             let relative = String(url.path.dropFirst(base.path.count + 1))
-            // Shared/ is the droplet's; Theme.swift defines the colours.
+            // Shared/ draws the specimens in their own inks; Theme.swift defines the colours.
             if relative.hasPrefix("Shared/") || relative == "App/Theme.swift" { continue }
             for line in try String(contentsOf: url, encoding: .utf8).split(separator: "\n") {
                 let text = line.trimmingCharacters(in: .whitespaces)

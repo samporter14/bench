@@ -300,6 +300,9 @@ final class SinceYouLeftModel: ObservableObject {
         return all
     }
 
+    /// Whether the card setting lets the rows carry what sessions said (the phone is told, too).
+    var readsContent: Bool { dependencies.readsContent() }
+
     /// What was read for a row, while the content setting allows it: turned off after the reads,
     /// a row is its title, project and time again, on the sheet and on the phone.
     func detail(for id: String) -> SinceYouLeftDetail? {
