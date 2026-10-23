@@ -275,6 +275,15 @@ enum KeepRules {
 
     static let uploadSentence = "You uploaded this file, so it has no inputs or script."
 
+    /// Whether Claude Science is still working out a provenance.
+    static func isPending(_ lineage: ArtifactLineage?) -> Bool {
+        guard let lineage else { return false }
+        return lineage.pending || lineage.mappingStatus == "pending"
+    }
+
+    /// In the README of a folder kept while Claude Science was still working out its provenance.
+    static let pendingSentence = "Its data and code weren\u{2019}t kept: Claude Science was still working out where it came from. Keep it again later to add them."
+
     // MARK: When the figure itself can't be copied
     // A kept folder is its figure: with none, the folder is not made. These say why.
 
@@ -375,7 +384,7 @@ enum KeepRules {
         }
         if lineage.pending || lineage.mappingStatus == "pending" {
             return KeepRow(kind: .data, title: title,
-                           detail: "Claude Science is still working out what this was drawn from. Try again in a minute.",
+                           detail: "Claude Science is still working out what this was drawn from. Keep waits for it, up to two minutes.",
                            available: false, onByDefault: false, info: nil)
         }
         if lineage.inputs.isEmpty {
@@ -669,8 +678,29 @@ enum KeepRules {
             origin += "\(figure.path), "
         }
         origin += "kept on \(longDate(keptAt)) at \(longTime(keptAt)) by Capsid \(capsidVersion), from Claude Science \(scienceVersion ?? "an unknown version"). The link opens the session in Capsid on a Mac that has it."
+        for line in leftOut(sources: sources, plan: plan, copied: copied, missing: missing) { origin += "\n" + line }
         let text = KeptText(legend: "", claudeSaid: plan.answer?.text ?? "", attribution: attribution, origin: origin)
         return (record, text)
+    }
+
+    /// Why a kept folder has no data or no code, a line for each, from the
+    /// rows the sheet showed: a folder holding the figure alone says why (since
+    /// 1.0.1, after one that didn't). Nothing for a role that was kept, or that
+    /// is listed as missing, which says why on its own.
+    static func leftOut(sources: KeepSources, plan: KeepPlan, copied: [KeptFile], missing: [KeptMissing]) -> [String] {
+        if isUpload(sources) { return [uploadSentence] }
+        if isPending(sources.lineage), !copied.contains(where: { $0.role == .data || $0.role == .code }) {
+            return [pendingSentence]
+        }
+        let rows = rows(sources: sources, chosen: plan.figure.version)
+        var lines: [String] = []
+        for (kind, role) in [(KeepRowKind.data, KeptRole.data), (.code, .code)] {
+            guard !copied.contains(where: { $0.role == role }), !missing.contains(where: { $0.role == role }),
+                  let row = rows.first(where: { $0.kind == kind }) else { continue }
+            let why = row.available ? "Left out when it was kept." : row.detail
+            lines.append("\(row.title): not kept. \(why)")
+        }
+        return lines
     }
 
     /// `bench://session?project=<id>&frame=<id>`, which `Router` opens.

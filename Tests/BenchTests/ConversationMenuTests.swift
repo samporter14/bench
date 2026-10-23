@@ -205,9 +205,11 @@ struct ConversationMenuTests {
     // MARK: Choosing in the page's own menu
 
     private func shelfMenu(accepting: Bool = true, port: Int? = ConversationMenuTests.port,
-                           breadcrumbs: CompatBreadcrumbs = CompatBreadcrumbs(), ran: @escaping @MainActor (ConversationAction, ConversationPick) -> Void)
+                           breadcrumbs: CompatBreadcrumbs = CompatBreadcrumbs(),
+                           traced: @escaping @MainActor (String) -> Void = { _ in },
+                           ran: @escaping @MainActor (ConversationAction, ConversationPick) -> Void)
         -> ConversationMenu {
-        ConversationMenu(now: { self.start }, daemonPort: { port }, breadcrumbs: breadcrumbs, run: ran)
+        ConversationMenu(now: { self.start }, daemonPort: { port }, breadcrumbs: breadcrumbs, traced: traced, run: ran)
     }
 
     @Test func theActionsHaveTheWordsTheScriptPosts() {
@@ -329,6 +331,45 @@ struct ConversationMenuTests {
         #expect(store.last?.miss.feature == .shelfMenu)
         #expect(lines.all == ["Claude Science may have changed: Add to Shelf from a figure or a file link in the conversation: the figure menu didn't look as Capsid expects"])
         #expect(ran == 0)
+    }
+
+    // MARK: The trace
+
+    @Test func aTraceIsReadAsTheScriptsFixedWordsAndNothingElse() {
+        #expect(ConversationMenuMessage.trace(in: ["trace": ["contextmenu", "figure-image", "version-ok", "menu-matched", "placed"]])
+                == [.contextmenu, .figureImage, .versionOK, .menuMatched, .placed])
+        // A word the script doesn't have, or not a word, is dropped: nothing from the page reaches the log.
+        #expect(ConversationMenuMessage.trace(in: ["trace": ["contextmenu", "plate_map.png", 3, NSNull(), "figure-none"] as [Any]])
+                == [.contextmenu, .figureNone])
+        #expect(ConversationMenuMessage.trace(in: ["trace": [String]()]) == [])
+        #expect(ConversationMenuMessage.trace(in: ["trace": Array(repeating: "contextmenu", count: 50)])?.count == ConversationMenuMessage.maxSteps)
+        // Other shapes aren't traces.
+        #expect(ConversationMenuMessage.trace(in: ["trace": "contextmenu"]) == nil)
+        #expect(ConversationMenuMessage.trace(in: ["kind": NSNull()]) == nil)
+        #expect(ConversationMenuMessage.trace(in: ["unplaced": true]) == nil)
+        #expect(ConversationMenuMessage.trace(in: nil) == nil)
+    }
+
+    @Test func aTracesLineIsItsStepsInOrder() {
+        #expect(ConversationMenuMessage.line([.contextmenu, .figureLink, .versionNone]) == "Figure menu: contextmenu → figure-link → version-none")
+        #expect(ConversationMenuMessage.line([]) == "Figure menu: no steps")
+    }
+
+    @Test func aTraceFromThePageIsLoggedAndLeavesThePickForTheMacsMenu() {
+        // A plain picture's trace comes right after its pick, before WebKit asks for the Mac's menu.
+        var lines: [String] = []
+        var ran = 0
+        let menu = shelfMenu(traced: { lines.append($0) }) { _, _ in ran += 1 }
+        menu.hear(["kind": "image", "url": Self.address, "name": "Figure"], accepted: true)
+        menu.hear(["trace": ["contextmenu", "figure-image", "version-ok", "menu-none"]], accepted: true)
+        #expect(lines == ["Figure menu: contextmenu → figure-image → version-ok → menu-none"])
+        let figure = self.menu("Copy", "Inspect Element")
+        menu.addItems(to: figure)
+        #expect(titles(figure).contains("Add to Shelf"))
+        #expect(ran == 0)
+        // From anyone else it is nothing, as every message is, and is not logged.
+        menu.hear(["trace": ["contextmenu", "figure-none"]], accepted: false)
+        #expect(lines.count == 1)
     }
 
     @Test func theMainWindowHandsTheMessagesStraightToTheMenusOneEntry() {
