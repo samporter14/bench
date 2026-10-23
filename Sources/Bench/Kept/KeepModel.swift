@@ -70,6 +70,21 @@ struct KeepDependencies {
     /// read can start a model call on the daemon, so stepping through the
     /// tiles must not ask once for each. The tests hold it.
     var settle: @MainActor (Duration) async -> Void = KeepDependencies.pause
+    /// Where the sheet's steps go: the log, in fixed words and counts only
+    /// (since 1.0.1, when a keep that "didn't work" had left no line at all).
+    var note: @MainActor (String) -> Void = KeepDependencies.logNote
+    /// The wait between two asks for a provenance Claude Science is still
+    /// working out (`recheckTime`, at most `rechecks` times). The tests don't wait.
+    var recheck: @MainActor (Duration) async -> Void = KeepDependencies.pause
+
+    static let recheckTime: Duration = .seconds(5)
+    /// Two minutes of asking, 5 seconds apart.
+    static let rechecks = 24
+
+    /// The real note: kept in the log, public, since it holds no names.
+    static func logNote(_ line: String) {
+        log.notice("\(line, privacy: .public)")
+    }
 
     /// How long a choice must stay before its provenance is read.
     static let settleTime: Duration = .milliseconds(400)
@@ -266,6 +281,7 @@ final class KeepModel: ObservableObject, Identifiable {
     /// the chosen version's provenance.
     func open() {
         guard openTask == nil else { return }
+        dependencies.note("Keep: the sheet opened")
         openTask = Task { [weak self] in
             await self?.load()
         }
@@ -278,17 +294,21 @@ final class KeepModel: ObservableObject, Identifiable {
         case .answered(.facts(let facts)):
             sources.facts = facts
         case .answered(.missing):
+            dependencies.note("Keep: the figure's first read failed: missing")
             phase = .failed(ShelfFailure.missing.sentence, retry: nil)
             return
         case .answered(.cancelled), .cancelled:
             return
         case .answered(let other):
+            dependencies.note("Keep: the figure's first read failed: \(ShelfFailure(other))")
             phase = .failed(ShelfFailure(other).sentence, retry: .load)
             return
         case .timedOut:
+            dependencies.note("Keep: the figure's first read failed: timedOut")
             phase = .failed(ShelfFailure.timedOut.sentence, retry: .load)
             return
         case .notReady:
+            dependencies.note("Keep: the figure's first read failed: notReady")
             phase = .failed(ShelfFailure.notReady.sentence, retry: .load)
             return
         }
@@ -351,6 +371,9 @@ final class KeepModel: ObservableObject, Identifiable {
         // 4. Where it can go.
         collections = (try? await dependencies.disk.listCollections()) ?? []
         if Task.isCancelled { return }
+        let answer = subject.pinned != nil ? "its answer" : sources.showing != nil ? "the answer that shows it"
+            : sources.lastAnswer != nil ? "the last answer" : "no answer"
+        dependencies.note("Keep: ready, \(sources.versions.count) versions, \(answer)")
         phase = .ready
         // 5. The chosen version: its provenance. A pinned answer shows the
         // subject's own version, so that one is preselected; so is a version the
@@ -453,6 +476,7 @@ final class KeepModel: ObservableObject, Identifiable {
         if Task.isCancelled { return }
         if KeepRules.isUpload(sources) {
             rows = currentRows()
+            dependencies.note("Keep: an upload, so no provenance; \(planNote)")
             return
         }
         switch await dependencies.read(.lineage(version: version)) {
@@ -466,29 +490,57 @@ final class KeepModel: ObservableObject, Identifiable {
         if Task.isCancelled { return }
         rows = currentRows()
         applyRowDefaults()
-        // Each copyable input's name and size, a few at a time.
         if let lineage = sources.lineage {
-            for input in lineage.inputs.prefix(KeepRules.inputLimit) where input.fetchable {
-                guard let v = input.v, sources.inputFacts[v] == nil else { continue }
-                if case .answered(.facts(let facts)) = await dependencies.read(.facts(version: v)), facts.v == v {
-                    sources.inputFacts[v] = facts
-                }
-                if Task.isCancelled { return }
+            let pending = KeepRules.isPending(lineage) ? ", still pending" : ""
+            dependencies.note("Keep: provenance read, \(lineage.inputs.count) inputs, "
+                              + "\(lineage.inputs.filter(\.fetchable).count) copyable\(pending); \(planNote)")
+        } else {
+            dependencies.note("Keep: provenance unreadable; \(planNote)")
+        }
+        await readInputFacts()
+        if Task.isCancelled { return }
+        // Claude Science may still be working out the provenance (its inputs, and
+        // the script it writes with a model call, which takes a while the first
+        // time a version is asked about). A keep now would hold the figure alone,
+        // so Keep stays off (`readingProvenance`) while it is asked again every
+        // 5 seconds, for up to two minutes. Once it's there the rows are ticked
+        // as for any provenance (they were unticked while it was pending) and the
+        // inputs' names and sizes read. After two minutes Keep is on again and
+        // the rows still say it is being worked out.
+        guard KeepRules.isPending(sources.lineage) else { return }
+        for check in 1...KeepDependencies.rechecks {
+            await dependencies.recheck(KeepDependencies.recheckTime)
+            if Task.isCancelled { return }
+            guard case .answered(.lineage(let again)) = await dependencies.read(.lineage(version: version)) else {
+                dependencies.note("Keep: provenance unreadable while pending; \(planNote)")
+                return
             }
+            if Task.isCancelled { return }
+            sources.lineage = again
             rows = currentRows()
-        }
-        // The provenance's mapping may still be pending: once more in a while.
-        if sources.lineage?.pending == true || sources.lineage?.mappingStatus == "pending" {
-            readingProvenance = false
-            for _ in 0..<6 {
-                try? await Task.sleep(for: .seconds(5))
+            if !KeepRules.isPending(again) {
+                applyRowDefaults()
+                await readInputFacts()
                 if Task.isCancelled { return }
-                guard case .answered(.lineage(let again)) = await dependencies.read(.lineage(version: version)) else { return }
-                sources.lineage = again
-                rows = currentRows()
-                if !again.pending, again.mappingStatus != "pending" { return }
+                dependencies.note("Keep: provenance ready after \(check) checks, \(again.inputs.count) inputs, "
+                                  + "\(again.inputs.filter(\.fetchable).count) copyable; \(planNote)")
+                return
             }
         }
+        dependencies.note("Keep: provenance still pending after two minutes; \(planNote)")
+    }
+
+    /// Each copyable input's name and size, one at a time, then the rows again.
+    private func readInputFacts() async {
+        guard let lineage = sources.lineage else { return }
+        for input in lineage.inputs.prefix(KeepRules.inputLimit) where input.fetchable {
+            guard let v = input.v, sources.inputFacts[v] == nil else { continue }
+            if case .answered(.facts(let facts)) = await dependencies.read(.facts(version: v)), facts.v == v {
+                sources.inputFacts[v] = facts
+            }
+            if Task.isCancelled { return }
+        }
+        rows = currentRows()
     }
 
     func toggle(_ kind: KeepRowKind, _ on: Bool) {
@@ -559,10 +611,17 @@ final class KeepModel: ObservableObject, Identifiable {
 
     // MARK: Keeping
 
+    /// What Keep would do now, for the log: how many files, or why there's nothing to keep.
+    private var planNote: String {
+        guard let plan else { return "nothing to keep" }
+        return KeepRules.figureOverCap(plan) ? "the figure is over the cap" : "\(plan.all.count) files to keep"
+    }
+
     func keep() {
         guard canKeep, let plan, keepTask == nil else { return }
         keptPlan = plan
         let total = plan.all.count
+        dependencies.note("Keep: keeping \(total) files")
         phase = .keeping(done: 0, total: total)
         keepTask = Task { [weak self] in
             await self?.perform(plan)
@@ -596,13 +655,14 @@ final class KeepModel: ObservableObject, Identifiable {
         do {
             destination = try await d.disk.prepare(collection: choices.collection, name: KeptName.sanitized(choices.name), at: keptAt)
         } catch {
+            d.note("Keep failed: the folder couldn't be made")
             phase = .failed(KeptDiskError.sentence(error), retry: nil)
             return
         }
         var copied: [KeptFile] = []
         var missing: [KeptMissing] = []
         for (index, item) in plan.all.enumerated() {
-            if Task.isCancelled { await d.disk.abandon(destination); phase = .ready; return }
+            if Task.isCancelled { await d.disk.abandon(destination); d.note("Keep: cancelled"); phase = .ready; return }
             switch await fetch(item) {
             case .bytes(let data, let expected):
                 do {
@@ -615,6 +675,7 @@ final class KeepModel: ObservableObject, Identifiable {
                     // one goes. (Listing the figure as missing would finish a folder that
                     // Try Again, which copies only the other files, could never complete.)
                     await d.disk.abandon(destination)
+                    d.note("Keep failed: the figure couldn't be written")
                     phase = .failed(KeepRules.figureNotCopied(item.name, because: Self.reason(for: error)), retry: nil)
                     return
                 } catch {
@@ -622,6 +683,7 @@ final class KeepModel: ObservableObject, Identifiable {
                 }
             case .gone where item.role == .figure:
                 await d.disk.abandon(destination)
+                d.note("Keep failed: the figure's version is gone")
                 if let version = item.version { sources.gone.insert(version) }
                 tiles = KeepRules.tiles(versions: sources.versions, showing: sources.showing, gone: sources.gone)
                 let n = tiles.first { $0.v == item.version }?.n ?? 0
@@ -633,18 +695,21 @@ final class KeepModel: ObservableObject, Identifiable {
             case .tooBig where item.role == .figure:
                 // Not a thing Try Again can change: another version, or Cancel.
                 await d.disk.abandon(destination)
+                d.note("Keep failed: the figure is too big")
                 phase = .failed(KeepRules.figureTooBig(item.name), retry: nil)
                 return
             case .tooBig:
                 missing.append(KeptMissing(role: item.role, name: item.name, reason: "too big to keep here (over 8 MB)"))
             case .failed(let sentence) where item.role == .figure:
                 await d.disk.abandon(destination)
+                d.note("Keep failed: the figure couldn't be read")
                 phase = .failed(sentence, retry: .keep)
                 return
             case .failed(let sentence):
                 missing.append(KeptMissing(role: item.role, name: item.name, reason: sentence))
             case .cancelled:
                 await d.disk.abandon(destination)
+                d.note("Keep: cancelled")
                 phase = .ready
                 return
             }
@@ -652,9 +717,9 @@ final class KeepModel: ObservableObject, Identifiable {
         }
         // The last copy is done. A write goes on whatever happens to the task that
         // asked for it, so a Cancel pressed during it is seen here, and not before.
-        if Task.isCancelled { await d.disk.abandon(destination); phase = .ready; return }
+        if Task.isCancelled { await d.disk.abandon(destination); d.note("Keep: cancelled"); phase = .ready; return }
         let scienceVersion = await d.scienceVersion()
-        if Task.isCancelled { await d.disk.abandon(destination); phase = .ready; return }
+        if Task.isCancelled { await d.disk.abandon(destination); d.note("Keep: cancelled"); phase = .ready; return }
         // From here the folder is put in place, and a Cancel can't stop it: the sheet says so.
         isFinishing = true
         defer { isFinishing = false }
@@ -666,6 +731,7 @@ final class KeepModel: ObservableObject, Identifiable {
             folder = try await d.disk.finish(destination, readme: KeptReadme.render(record, text: text))
         } catch {
             await d.disk.abandon(destination)
+            d.note("Keep failed: the folder couldn't be put in place")
             phase = .failed(KeptDiskError.sentence(error), retry: nil)
             return
         }

@@ -323,6 +323,31 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23, Keep waits for its provenance; the figure menu and Keep explain themselves in the log
+
+- ✅ **Walkthrough 7, Keep with Data and Code, works**: "Kept 1 of 1 files" at 12:34. The first ✗ was the figure menu's:
+  when 7 was first tried, a right-click on a figure showed none of Capsid's items, so no keep ever started. The log
+  had no keep, and the morning's two folders were Add to Shelf (`files: []`).
+- ✅ **Why that keep held the figure alone, found and fixed.** Keep was on while Claude Science was still working out
+  the version's provenance, and the data and code rows, unticked while it was pending, stayed unticked once it came.
+  Sam pressed Keep about ten seconds after the sheet opened. Now:
+  - Keep stays off while the provenance is pending, for up to two minutes, asked every 5 seconds;
+  - once the provenance is there, the rows are ticked and the inputs' names and sizes are read;
+  - a README says why a folder has no data or no code (pending, no source data recorded, left out, and the like),
+    and the Kept window reads it back byte for byte.
+
+  Four new tests: the wait (Keep off at each of three waits, then figure, data and code kept), the two minutes
+  running out, no inputs recorded, and a row left out.
+- ✅ **Keep's log** (`keep`): the sheet opened, the first read's failure, ready with N versions, provenance with N
+  inputs and M copyable (or unreadable, an upload, pending, ready after N checks), keeping N files, each failure and
+  cancel. Fixed words and counts only; a test checks that the made-up figure, project and session names are in none.
+- ✅ **The figure menu's step trace** (`figure-menu`): one line per right-click, e.g. "Figure menu: contextmenu →
+  figure-beside → version-ok → menu-matched → placed". Every path is covered in the made-up page: each way to a
+  figure, no figure, no version, no menu, another menu, unplaced, interrupted, and a made-up right-click (none).
+  A trace never clears the Mac menu's pick, and Swift drops any word it doesn't know.
+- 933 tests in the Keep, Kept, Shelf and figure-menu suites pass.
+- ⏳ **Live**: a real keep of a version whose provenance is pending, and one real right-click read back from the log.
+
 ## 2026-10-23, board 12: the shelf, a little prettier (days, bigger cards, quiet names, a calmer detail)
 
 - ✅ **Days.** The cards stand under Today, Yesterday, This week, Earlier this month, then the month, by `kept_at` in

@@ -50,6 +50,9 @@ private final class Science {
     var inputsByVersion: [String: [String]] = [:]
     /// The versions whose provenance was read, in order.
     private(set) var lineageReads: [String] = []
+    /// The first provenance reads say Claude Science is still working it out (no
+    /// inputs, no script yet), this many of them.
+    var pendingLineage = 0
     /// A provenance read waits here while `holdLineage`; `releaseLineage` lets them go.
     var holdLineage = false
     private var lineageWaiters: [CheckedContinuation<Void, Never>] = []
@@ -162,6 +165,13 @@ private final class Science {
             }))
         case .lineage(let v):
             lineageReads.append(v)
+            if pendingLineage > 0 {
+                pendingLineage -= 1
+                return .answered(.lineage(ArtifactLineage(
+                    v: v, code: nil, codeCut: false, description: nil, language: "python", pending: true,
+                    unavailableModel: nil, unavailableReason: nil, hasCells: true, hasEnvironment: true, mappingStatus: "pending",
+                    inputs: [])))
+            }
             return .answered(.lineage(ArtifactLineage(
                 v: v, code: Made.script, codeCut: false, description: nil, language: "python", pending: false,
                 unavailableModel: nil, unavailableReason: nil, hasCells: true, hasEnvironment: true, mappingStatus: "complete",
@@ -221,6 +231,11 @@ private final class Rig {
     var defaults: UserDefaults { settings.defaults }
     /// The keeps the Results window was told about (`didKeep`).
     private(set) var kept: [KeepOutcome] = []
+    /// The sheet's steps as it would log them (`note`).
+    private(set) var notes: [String] = []
+    /// The model `model()` made last, and whether Keep was on at each wait for a pending provenance.
+    private weak var current: KeepModel?
+    private(set) var keepOnWhilePending: [Bool] = []
 
     /// `hold` makes the disk one that can stop answering, as a dropped volume does:
     /// its held calls time out at once, unless `patient`, which waits for them.
@@ -260,9 +275,13 @@ private final class Rig {
             capsidVersion: "1.0",
             now: { Made.at(100) },
             didKeep: { [self] outcome in kept.append(outcome) },
-            settle: { _ in await science.settle() })
-        return KeepModel(subject: KeepSubject(session: Made.session, entry: entry, pinned: pinned, selectsItsVersion: selectsItsVersion),
-                         dependencies: dependencies)
+            settle: { _ in await science.settle() },
+            note: { [self] line in notes.append(line) },
+            recheck: { [self] _ in keepOnWhilePending.append(current?.canKeep ?? true) })
+        let model = KeepModel(subject: KeepSubject(session: Made.session, entry: entry, pinned: pinned, selectsItsVersion: selectsItsVersion),
+                              dependencies: dependencies)
+        current = model
+        return model
     }
 
     func tearDown() {
@@ -1416,5 +1435,128 @@ struct KeepCancelTests {
         #expect(lines.contains(".disabled(!model.canCancel)"))
         #expect(lines.contains { $0.hasPrefix(".help(model.canCancel ? \"\" : KeepRules.finishingHelp)") })
         #expect(lines.contains(".interactiveDismissDisabled(!model.canCancel)"))
+    }
+}
+
+// MARK: The log: what the sheet did, in fixed words
+
+@MainActor
+struct KeepNoteTests {
+    @Test func aKeepThatLandsNotesEachStepAndNoName() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let notes = rig.notes
+        #expect(notes.first == "Keep: the sheet opened")
+        #expect(notes.contains { $0.hasPrefix("Keep: ready, 4 versions, ") }, "\(notes)")
+        #expect(notes.contains { $0.hasPrefix("Keep: provenance read, ") && $0.hasSuffix(" files to keep") }, "\(notes)")
+        #expect(notes.last == "Keep: keeping \(model.keptOutcome?.total ?? -1) files")
+        // The made-up figure's, project's and session's names are nowhere in them.
+        for note in notes {
+            #expect(!note.contains("z_prime") && !note.contains("Assay") && !note.contains(Made.session.title), "\(note)")
+        }
+    }
+
+    @Test func aFirstReadThatFailsSaysWhichWay() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.factsFailures = 1
+        let model = rig.model()
+        model.open()
+        try await until("the first read fails") { model.failure != nil }
+        #expect(rig.notes == ["Keep: the sheet opened", "Keep: the figure's first read failed: timedOut"])
+    }
+
+    @Test func aFigureThatCouldNotBeReadIsAFailureInTheLog() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.downloadFailures[Made.v4] = 1
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep fails") { model.failure != nil }
+        #expect(rig.notes.last == "Keep failed: the figure couldn't be read")
+    }
+}
+
+// MARK: A provenance Claude Science is still working out
+
+@MainActor
+struct KeepPendingTests {
+    private func readme(_ outcome: KeepOutcome) throws -> String {
+        try String(contentsOf: outcome.folder.appending(path: "README.md", directoryHint: .notDirectory), encoding: .utf8)
+    }
+
+    @Test func keepWaitsWhilePendingThenKeepsTheDataAndCodeOnceTheyAreThere() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.pendingLineage = 3
+        let model = rig.model()
+        model.open()
+        try await until("the provenance is there") { model.isReady }
+        // Keep was off at every wait: a keep then would have held the figure alone.
+        #expect(rig.keepOnWhilePending == [false, false, false])
+        // The rows are ticked as for any provenance (they were unticked while it was pending).
+        #expect(model.row(.data)?.available == true && model.row(.code)?.available == true)
+        #expect(model.choices.withData && model.choices.withCode)
+        #expect(rig.notes.contains { $0.hasPrefix("Keep: provenance ready after 3 checks, 1 inputs, 1 copyable; ") }, "\(rig.notes)")
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.isComplete && outcome.kept == 3, "the figure, its data and its code")
+        #expect(!(try readme(outcome)).contains("not kept"))
+    }
+
+    @Test func afterTwoMinutesKeepIsOnAndTheReadmeSaysWhyThereIsNoDataOrCode() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.pendingLineage = 1 + KeepDependencies.rechecks
+        let model = rig.model()
+        model.open()
+        try await until("the waiting is over") { model.isReady }
+        #expect(rig.keepOnWhilePending.count == KeepDependencies.rechecks)
+        #expect(!rig.keepOnWhilePending.contains(true))
+        #expect(rig.notes.last?.hasPrefix("Keep: provenance still pending after two minutes; ") == true, "\(rig.notes)")
+        #expect(model.canKeep)
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.kept == 1 && outcome.total == 1)
+        #expect(try readme(outcome).contains(KeepRules.pendingSentence))
+    }
+
+    @Test func aFigureWithNoInputsRecordedSaysSoInItsReadme() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.inputs = []
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let text = try readme(try #require(model.keptOutcome))
+        #expect(text.contains("The data it was drawn from: not kept. No source data recorded."))
+        #expect(!text.contains("The code that drew it: not kept"), "the script was kept")
+        // The Kept window still reads it, and reads the line back as written.
+        let parsed = try #require(KeptReadme.parse(text))
+        #expect(parsed.text.origin.hasSuffix("\nThe data it was drawn from: not kept. No source data recorded."))
+        #expect(KeptReadme.render(parsed.record, text: parsed.text) == text)
+    }
+
+    @Test func aRowLeftOutByChoiceSaysSo() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.toggle(.code, false)
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        #expect(try readme(try #require(model.keptOutcome)).contains("The code that drew it: not kept. Left out when it was kept."))
     }
 }

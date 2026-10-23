@@ -5267,8 +5267,16 @@ foreground priority:
    the script, which is the page's own "Claude-generated reconstruction", not
    a recording of what ran), then each input's facts for its name and size.
    Reading lineage can start the daemon's reconstruction when the version has
-   none yet (a model call), so it is read once per sheet and polled six times
-   five seconds apart while `pending`, and it is never a Diagnostics probe.
+   none yet (a model call), so it is read once per sheet and polled five
+   seconds apart while `pending`, and it is never a Diagnostics probe. Since
+   1.0.1, Keep stays off while it is pending, for up to two minutes
+   (`KeepDependencies.rechecks`). Once the provenance is there, the data and
+   code rows are ticked as for any provenance, and the inputs' names and sizes
+   are read. Before, Keep was on while pending, and the rows, unticked while it
+   was, stayed unticked. So Sam's first real keep, about ten seconds after
+   opening the sheet, held the figure alone. After the two minutes Keep is on
+   again, and that folder's README says its data and code weren't kept because
+   Claude Science was still working out where it came from.
    The thumbnails in the strip are the shelf's own 120-px read.
 
 **The sheet** (Kept/KeepSheet.swift, Kept/KeepModel.swift), drawn as board 8 of the
@@ -5304,7 +5312,7 @@ Return.
   kept."); *The data it was drawn from* ("z_prime_by_plate.csv · 4 KB · listed
   in its provenance"; "No source data recorded." with an ⓘ saying Capsid
   doesn't guess from file names; "Claude Science is still working out what
-  this was drawn from. Try again in a minute."; inputs found only by static
+  this was drawn from. Keep waits for it, up to two minutes."; inputs found only by static
   analysis are offered off, tagged "inferred"; inputs over 8 MB or not saved
   in Claude Science are listed and not copied); *The code that drew it*
   ("z_prime.py · 2 KB · Claude-generated reconstruction", and the page's other
@@ -5418,6 +5426,22 @@ Claude Science's checksum; see README.md before you use it.", until Done. (The
 first fix refused such bytes outright, which would have made a reference
 file's figure impossible to keep; the review allowed either, so it's the
 warning.)
+
+**The log** (since 1.0.1). In the 1.0 walkthrough a keep "didn't work" and
+left no line at all, since only a finished keep was logged. Now the sheet notes
+each step under `keep` (`KeepDependencies.note`), in fixed words and counts:
+- the sheet opened;
+- the figure's first read failed, and how (`missing`, `timedOut`,
+  `notReady`, `signedOut`, `unreadable`);
+- ready, with N versions and which answer;
+- provenance read, with N inputs and M copyable, or unreadable, or an upload,
+  and what Keep would do: N files, nothing to keep, or a figure over the cap;
+- keeping N files;
+- each way a keep fails before its folder is in place;
+- cancelled;
+- "Kept N of M files".
+
+Never a name, a title or a path.
 
 **On disk** (Kept/KeptFolder.swift, Kept/KeptReadme.swift, Kept/KeptDisk.swift).
 Files are named the way the folder names them: one called README.md, in any
@@ -5596,6 +5620,27 @@ session's history. You asked: “…”"). The legend comment and fine print say
   page and get no items; Results and the Shelf's search are the way in for
   them. The menu's selectors are page hooks in the inventory, checked when
   used.
+
+  **The step trace** (since 1.0.1). The first retry after the fix showed no
+  items and logged nothing, so nobody could say which step stopped. Now each
+  right-click, once it is done with, posts its steps (`{trace}`) and Capsid
+  logs one line under `figure-menu`, for example "Figure menu: contextmenu →
+  figure-beside → version-ok → menu-matched → placed". The steps are fixed
+  words (`FigureMenuStep`):
+  - the right-click heard;
+  - how the figure was found (`figure-image`, `figure-link`, `figure-card`,
+    `figure-beside`) or `figure-none`;
+  - `version-ok` or `version-none`;
+  - `menu-matched`, `menu-other` (only another menu in the two seconds) or
+    `menu-none`;
+  - `placed` or `unplaced`;
+  - or `interrupted` by another right-click first.
+
+  Swift drops any word not on that list, so nothing from the page reaches the
+  log. A trace is logged and leaves the last pick alone, since a plain
+  picture's trace comes before WebKit asks for the Mac's menu. Read it with
+  `log show --last 5m --predicate 'subsystem == "local.sam.bench" AND category
+  == "figure-menu"'`.
 - *The toast* (board 10): a dark glass pill at the bottom centre of the main
   window, 96 points above its foot: a clay check, "On your shelf: <name>",
   Undo and Show Shelf (ivory), about four seconds, held while the pointer is

@@ -38,8 +38,14 @@ struct FigureMenuScriptTests {
         return try? JSONSerialization.jsonObject(with: Data(text.utf8), options: [.fragmentsAllowed])
     }
 
+    /// What the script posted, its traces left out (they are `traces`).
     private func posted(_ script: PageScript) -> [[String: Any]] {
-        (json(script, "__posted") as? [[String: Any]]) ?? []
+        ((json(script, "__posted") as? [[String: Any]]) ?? []).filter { $0["trace"] == nil }
+    }
+
+    /// The traces the script posted, one list of words per right-click.
+    private func traces(_ script: PageScript) -> [[String]] {
+        ((json(script, "__posted") as? [[String: Any]]) ?? []).compactMap { $0["trace"] as? [String] }
     }
 
     private func shape(_ script: PageScript) -> [String] {
@@ -650,6 +656,95 @@ struct FigureMenuScriptTests {
         #expect(watching(script) == 1)
         script.evaluate("__closeMenu(); __flush(); __openMenu();")
         #expect(shape(script) == Self.grouped)
+    }
+
+    // MARK: The trace: each right-click's steps, in fixed words
+
+    static let found = ["contextmenu", "figure-image", "version-ok"]
+
+    @Test func aFigureWhoseMenuTakesTheItemsTracesEveryStepOnceTheyAreIn() {
+        let script = page()
+        script.evaluate("__rightClick(__tileImg)")
+        #expect(traces(script).isEmpty, "nothing until the right-click is done with")
+        script.evaluate("__openMenu()")
+        #expect(traces(script) == [Self.found + ["menu-matched", "placed"]])
+        // Nothing more for the same right-click: not the page drawing it again, a choice, or the menu closing.
+        script.evaluate("__ours().forEach(function (b) { b.remove(); }); __flush();")
+        script.evaluate("__click(__ours()[1]); __advance(200); __closeMenu(); __flush(); __advance(130000);")
+        #expect(traces(script).count == 1)
+        #expect(script.exception == nil, "\(script.exception ?? "")")
+    }
+
+    @Test(arguments: [
+        ("a picture", "__tileImg", "[__tileImg, __tileBox, __tile]", "figure-image"),
+        ("the layer over one", "__layer", "[__layer, __tileImg, __tileBox, __tile]", "figure-beside"),
+        ("a tray card's words", "__captionText", "[__captionText, __caption, __card, __cardWrap, __tray]", "figure-card"),
+        ("a file link", "__link", "[__link]", "figure-link"),
+    ])
+    func eachWayToAFigureIsNamed(_ place: String, _ target: String, _ under: String, _ word: String) {
+        let script = page()
+        script.evaluate("__rightClick(\(target), { under: \(under) })")
+        script.evaluate("__openMenu()")
+        #expect(traces(script) == [["contextmenu", word, "version-ok", "menu-matched", "placed"]], "\(place)")
+    }
+
+    @Test func aRightClickOnNoFigureOrOneWithNoVersionSaysSoAtOnce() {
+        let script = page()
+        script.evaluate("__rightClick(__paragraph)")
+        script.evaluate("__rightClick(__plainLink)")
+        script.evaluate("__tileImg.attrs.src = 'http://localhost:8123/static/chart.png'; __rightClick(__tileImg);")
+        #expect(traces(script) == [["contextmenu", "figure-none"],
+                                   ["contextmenu", "figure-link", "version-none"],
+                                   ["contextmenu", "figure-image", "version-none"]])
+        // The pick messages are as before, one per right-click.
+        #expect(posted(script).count == 3)
+    }
+
+    @Test func noMenuInTheTwoSecondsOrOnlyAnotherMenuSaysWhich() {
+        let none = page()
+        none.evaluate("__rightClick(__tileImg); __advance(2001);")
+        #expect(traces(none) == [Self.found + ["menu-none"]])
+        let other = page()
+        other.evaluate("__rightClick(__tileImg)")
+        other.evaluate("__openMenu(['Settings', 'Sign out'], { label: 'Account' })")
+        #expect(traces(other).isEmpty, "another menu doesn't end the wait")
+        other.evaluate("__advance(2001)")
+        #expect(traces(other) == [Self.found + ["menu-other"]])
+    }
+
+    @Test func aMenuWithNothingToCopyTracesUnplaced() {
+        let script = page()
+        script.evaluate("__rightClick(__tileImg)")
+        script.evaluate("__openMenu(['!Delete'])")
+        #expect(traces(script) == [Self.found + ["menu-matched", "unplaced"]])
+        #expect(posted(script).last?["unplaced"] as? Bool == true, "the breadcrumb's message is still sent")
+    }
+
+    @Test func anotherRightClickBeforeTheMenuEndsTheFirstOnesTrace() {
+        let script = page()
+        script.evaluate("__rightClick(__tileImg)")
+        script.evaluate("__rightClick(__paragraph)")
+        #expect(traces(script) == [Self.found + ["interrupted"], ["contextmenu", "figure-none"]])
+        // A made-up right-click is not heard, so it neither traces nor ends one.
+        let real = page()
+        real.evaluate("__rightClick(__tileImg)")
+        real.evaluate("__rightClick(__paragraph, { trusted: false })")
+        #expect(traces(real).isEmpty)
+        real.evaluate("__openMenu()")
+        #expect(traces(real) == [Self.found + ["menu-matched", "placed"]])
+    }
+
+    @Test func everyWordTheScriptCanTraceIsOneSwiftKnows() {
+        // Each word is in the script, quoted, as Swift spells it; and every trace above is read whole by Swift.
+        for step in FigureMenuStep.allCases {
+            #expect(ConversationMenu.script.contains("\"\(step.rawValue)\""), "\(step)")
+        }
+        let script = page()
+        script.evaluate("__rightClick(__tileImg); __rightClick(__paragraph); __rightClick(__plainLink); __rightClick(__tileImg); __advance(2001);")
+        for trace in traces(script) {
+            #expect(ConversationMenuMessage.trace(in: ["trace": trace])?.map(\.rawValue) == trace)
+        }
+        #expect(traces(script).count == 4)
     }
 
     // MARK: What the script says to Swift, as before

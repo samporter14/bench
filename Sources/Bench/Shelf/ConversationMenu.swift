@@ -29,7 +29,10 @@
 // reads the text of the page's own menu items.
 import AppKit
 import Foundation
+import os
 import WebKit
+
+private let log = Logger(subsystem: "local.sam.bench", category: "figure-menu")
 
 // MARK: What was clicked
 
@@ -105,6 +108,38 @@ enum ConversationMenuMessage {
         guard let body = body as? [String: Any] else { return false }
         return body["unplaced"] as? Bool == true
     }
+
+    /// The most steps a trace is read for; one right-click makes five at most.
+    static let maxSteps = 8
+
+    /// The steps a trace names, `{trace: [word, …]}`, as the script's own
+    /// fixed words. Any other word is dropped, so nothing the page could put
+    /// there is logged. Nil when the message isn't a trace.
+    static func trace(in body: Any?) -> [FigureMenuStep]? {
+        guard let body = body as? [String: Any], let words = body["trace"] as? [Any] else { return nil }
+        return words.prefix(maxSteps).compactMap { ($0 as? String).flatMap(FigureMenuStep.init(rawValue:)) }
+    }
+
+    /// The log line for a trace: "Figure menu: contextmenu → figure-image → …".
+    static func line(_ steps: [FigureMenuStep]) -> String {
+        "Figure menu: " + (steps.isEmpty ? "no steps" : steps.map(\.rawValue).joined(separator: " → "))
+    }
+}
+
+/// One step of a right-click as the page script saw it, in the script's fixed
+/// words, so one right-click says in Capsid's log where the items stopped
+/// (since 1.0.1, after a retry that showed nothing and logged nothing):
+/// heard; the figure found under it (a picture, a link, a tray card's
+/// thumbnail, the picture beside a layer over it) or none; a version in its
+/// address or none; the page's menu matched, some other menu, or no menu in
+/// the two seconds; the items placed or not; or another right-click first.
+enum FigureMenuStep: String, CaseIterable, Sendable {
+    case contextmenu
+    case figureImage = "figure-image", figureLink = "figure-link", figureCard = "figure-card"
+    case figureBeside = "figure-beside", figureNone = "figure-none"
+    case versionOK = "version-ok", versionNone = "version-none", noObserver = "no-observer"
+    case menuMatched = "menu-matched", menuOther = "menu-other", menuNone = "menu-none"
+    case placed, unplaced, interrupted
 }
 
 /// The pick the last right-click made, for one menu, within a second of the
@@ -149,18 +184,27 @@ final class ConversationMenu {
     private let daemonPort: @MainActor () -> Int?
     private let run: @MainActor (ConversationAction, ConversationPick) -> Void
     private let breadcrumbs: CompatBreadcrumbs
+    private let traced: @MainActor (String) -> Void
 
     /// `run` is what an item does, in the Mac's menu and in the page's own.
-    /// `now` is the clock, which tests replace, and `breadcrumbs` is where
-    /// "the figure menu didn't look as Capsid expects" goes.
+    /// `now` is the clock, which tests replace, `breadcrumbs` is where "the
+    /// figure menu didn't look as Capsid expects" goes, and `traced` where a
+    /// right-click's steps go (the log).
     init(now: @escaping () -> ContinuousClock.Instant = { .now },
          daemonPort: @escaping @MainActor () -> Int?,
          breadcrumbs: CompatBreadcrumbs = .shared,
+         traced: @escaping @MainActor (String) -> Void = ConversationMenu.logTrace,
          run: @escaping @MainActor (ConversationAction, ConversationPick) -> Void) {
         self.now = now
         self.daemonPort = daemonPort
         self.breadcrumbs = breadcrumbs
+        self.traced = traced
         self.run = run
+    }
+
+    /// A trace's line, kept: fixed words only, so it is public.
+    static func logTrace(_ line: String) {
+        log.notice("\(line, privacy: .public)")
     }
 
     /// Adds the user script and its message handler. The controller keeps a
@@ -234,13 +278,15 @@ final class ConversationMenu {
     }
 
     /// What a message from the page means, once its sender is known to be the
-    /// main window's own page (`accepted`). Three shapes:
+    /// main window's own page (`accepted`). Four shapes:
     /// - `{kind, url, name}`: what the last right-click was on, kept a second
     ///   for the Mac's menu (anything else clears it);
     /// - `{action, version, name}`: an item chosen in the page's own menu, run
     ///   at once (that menu can stay open far longer than a second);
     /// - `{unplaced: true}`: the page's menu opened and the items had nowhere
-    ///   to go, which is a change in Claude Science worth a breadcrumb.
+    ///   to go, which is a change in Claude Science worth a breadcrumb;
+    /// - `{trace: [...]}`: a right-click's steps, logged, and leaving the pick
+    ///   as it is (it can come before WebKit asks for the Mac's menu).
     /// From anyone else a message is nothing, and clears the last pick.
     func hear(_ body: Any?, accepted: Bool) {
         guard accepted else {
@@ -251,6 +297,8 @@ final class ConversationMenu {
             run(choice.action, choice.pick)
         } else if ConversationMenuMessage.isUnplaced(body) {
             breadcrumbs.record(.figureMenuNotUnderstood)
+        } else if let steps = ConversationMenuMessage.trace(in: body) {
+            traced(ConversationMenuMessage.line(steps))
         } else {
             record(ConversationMenuMessage.pick(in: body, daemonPort: daemonPort()))
         }
@@ -287,7 +335,10 @@ final class ConversationMenu {
     /// `{action, version, name, kind}` and closes the menu with Escape on the
     /// document, which is what the page listens for, else a pointer-down
     /// outside the menu. If the menu opens and has nothing to copy it posts
-    /// `{unplaced: true}`.
+    /// `{unplaced: true}`. Once a right-click is done with (no figure, no
+    /// version, the items placed or not, no menu in the two seconds, or
+    /// another right-click first) it posts its steps, `{trace}`, in the fixed
+    /// words of `FigureMenuStep`.
     private nonisolated static let template = #"""
     (() => {
       "use strict";
@@ -359,16 +410,47 @@ final class ConversationMenu {
         return null;
       }
 
+      // The steps of one right-click, in fixed words only (never anything read
+      // from the page), posted once as `{trace}` when it ends, so that Capsid's
+      // log says how far it got.
+      let trail = null;
+
+      function step(word) {
+        if (trail) trail.push(word);
+      }
+
+      function report(word) {
+        if (!trail) return;
+        trail.push(word);
+        handler.postMessage({ trace: trail });
+        trail = null;
+      }
+
       // The figure or the link a right-click was on.
       function figureAt(event) {
         const node = event.target;
         const element = node && node.nodeType === 1 ? node : (node && node.parentElement) || null;
         if (!element || !element.closest) return null;
         const found = element.closest("img, a[href]");
-        if (found) return found;
+        if (found) {
+          step(isImage(found) ? "figure-image" : "figure-link");
+          return found;
+        }
         const card = element.closest('[data-testid="turn-tray-card"]');
-        if (card) return card.querySelector("img");
-        return pictureBeside(element, event);
+        const thumbnail = card ? card.querySelector("img") : pictureBeside(element, event);
+        if (thumbnail) step(card ? "figure-card" : "figure-beside");
+        return thumbnail;
+      }
+
+      // Whether any menu at all, named or not, is among the nodes just added.
+      function anyMenuIn(records) {
+        for (const record of records) {
+          for (const added of record.addedNodes) {
+            if (!added || added.nodeType !== 1) continue;
+            if ((added.closest && added.closest('[role="menu"]')) || (added.querySelector && added.querySelector('[role="menu"]'))) return true;
+          }
+        }
+        return false;
       }
 
       let watch = null;
@@ -386,11 +468,15 @@ final class ConversationMenu {
       }
 
       function startWatch(figure) {
-        if (typeof MutationObserver !== "function") return;
-        const view = { figure: figure, menu: null, nodes: [], observer: null, timer: null, hold: null, held: null };
+        if (typeof MutationObserver !== "function") { report("no-observer"); return; }
+        const view = { figure: figure, menu: null, nodes: [], observer: null, timer: null, hold: null, held: null, other: false };
         view.observer = new MutationObserver((records) => changed(view, records));
         view.observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
-        view.timer = setTimeout(() => { if (watch === view && !view.menu) stopWatch(); }, WAIT_MS);
+        view.timer = setTimeout(() => {
+          if (watch !== view || view.menu) return;
+          report(view.other ? "menu-other" : "menu-none");
+          stopWatch();
+        }, WAIT_MS);
         watch = view;
       }
 
@@ -412,6 +498,7 @@ final class ConversationMenu {
         if (!view.menu) {
           const menu = menuIn(records);
           if (menu) place(view, menu);
+          else if (!view.other && anyMenuIn(records)) view.other = true;
           return;
         }
         if (view.menu.isConnected) { restore(view); return; }
@@ -442,6 +529,7 @@ final class ConversationMenu {
 
       function place(view, menu) {
         const doc = menu.ownerDocument || document;
+        step("menu-matched");
         // The first item that isn't the red one, for its classes and its icon box.
         let template = null;
         const items = menu.querySelectorAll('[role="menuitem"]');
@@ -450,6 +538,7 @@ final class ConversationMenu {
         }
         if (!template) {
           handler.postMessage({ unplaced: true });
+          report("unplaced");
           stopWatch();
           return;
         }
@@ -486,6 +575,7 @@ final class ConversationMenu {
         view.hold = setTimeout(() => { if (watch === view) stopWatch(); }, HOLD_MS);
         nodes.forEach((node) => menu.insertBefore(node, anchorIn(menu, nodes)));
         fit(view);
+        report("placed");
         // From here the page's whole body is not watched: only the menu, what
         // it sits in and what that sits in, one level each (the menu's items
         // dropped, the menu drawn again or taken away).
@@ -605,9 +695,16 @@ final class ConversationMenu {
 
       document.addEventListener("contextmenu", (event) => {
         if (!event.isTrusted) return;
+        // A right-click before the last one's menu came ends that one's trace.
+        report("interrupted");
         stopWatch();
+        trail = ["contextmenu"];
         const found = figureAt(event);
-        if (!found) { handler.postMessage({ kind: null }); return; }
+        if (!found) {
+          handler.postMessage({ kind: null });
+          report("figure-none");
+          return;
+        }
         const image = isImage(found);
         const address = String((image ? (found.currentSrc || found.src) : found.href) || "");
         const hint = image ? (found.alt || found.title) : (found.download || found.textContent || found.title);
@@ -615,7 +712,12 @@ final class ConversationMenu {
         const kind = image ? "image" : "link";
         handler.postMessage({ kind: kind, url: address.slice(0, 4096), name: name });
         const version = versionOf(address);
-        if (version) startWatch({ kind: kind, version: version, name: name });
+        if (!version) {
+          report("version-none");
+          return;
+        }
+        step("version-ok");
+        startWatch({ kind: kind, version: version, name: name });
       }, true);
     })();
     """#
