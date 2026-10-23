@@ -260,7 +260,11 @@ struct CompanionFootTests {
         let files = [entry("a.png", "image/png"), entry("b.png", "image/png")]
         #expect(CompanionSections.make(input(results: files, partial: true)).results?.title == "Results today · 2+")
         #expect(CompanionSections.make(input(results: files, partial: false)).results?.title == "Results today · 2")
-        #expect(CompanionSections.make(input(results: [], partial: true)).results == nil, "nothing found is no section")
+        #expect(CompanionSections.make(input(results: [], partial: false)).results == nil, "no session made files today: no section")
+        let unknown = CompanionSections.make(input(results: [], partial: true)).results
+        #expect(unknown?.title == "Results today" && unknown?.tiles.isEmpty == true,
+                "sessions made files today and none is in memory: the title and Show all, which opens Results")
+        #expect(CompanionSections.make(input(results: [], partial: true)).blocks == [.quiet, .results])
     }
 
     @Test func sinceYouLeftIsItsTitleAndHeadline() {

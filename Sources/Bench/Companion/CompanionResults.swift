@@ -1,10 +1,16 @@
 // CompanionResults.swift — "Results today" in the home popover (DESIGN.md, Menu
 // bar home): the files Claude made today, in a count and four tiles.
 //
-// It starts from what the app already holds in memory: the lists the Results
-// window, the Finished card and Since You Left have read, and the pictures
-// they decoded. Where a session made today has no list in memory it reads that
-// list, and only while the popover is open:
+// It shows what the app already holds in memory and nothing more: the lists the
+// Results window, the Finished card and Since You Left have read, and the
+// pictures they decoded, filtered to today. A session updated today whose list
+// is not in memory is not read; the count says so ("3+") rather than counting
+// only some of them, and with nothing in memory at all the section is its title
+// and "Show all", which opens Results.
+//
+// A bounded read pass is built and tested, and off (`readsListsWhenOpen`), so
+// that the popover reads nothing from the page. Turned on, it reads the lists
+// that are missing, and only while the popover is open:
 //   - at most `sessionLimit` sessions, newest first, one read at a time, each
 //     in the typing gate's turn (ReadingGate), through the page's own reader
 //     with the same checks as the Results shelf (`ArtifactGate`);
@@ -13,8 +19,6 @@
 //   - closing the popover cancels the pass, down to the page's fetch, and lets
 //     go of everything it read. Nothing is written to disk, and nothing is read
 //     while the popover is closed.
-// When more sessions made files today than were looked at, the count says so
-// ("7+") rather than counting only some of them.
 import Combine
 import Foundation
 import SwiftUI
@@ -33,7 +37,7 @@ final class CompanionResults: ObservableObject {
         /// Runs one read in its turn, once the typing has paused.
         var gate: @MainActor (@escaping @MainActor () async -> ShelfTransferResult) async -> ShelfTransferResult
         /// False reads nothing at all: what is in memory is all there is.
-        var readsLists = true
+        var readsLists = CompanionResults.readsListsWhenOpen
         var now: @MainActor () -> Date = { Date() }
         var calendar: Calendar = .current
 
@@ -69,7 +73,10 @@ final class CompanionResults: ObservableObject {
         }
     }
 
-    /// How many sessions' lists one opening reads, at the most: what the Results window reads when it opens.
+    /// Whether the app's popover reads the lists that are missing from memory while it is open. Off: the
+    /// popover reads only what the app already holds. One switch for the day that is not enough.
+    nonisolated static let readsListsWhenOpen = false
+    /// How many sessions' lists one opening reads, at the most (when it reads at all): what the Results window reads when it opens.
     static let sessionLimit = 8
     /// The pictures a pass may keep: four tiles' worth.
     static let thumbnailBudget = 512 * 1024

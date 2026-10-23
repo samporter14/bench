@@ -390,16 +390,18 @@ struct CompanionHomeView: View {
             .padding(.horizontal, 16)
             .padding(.top, 4)
             .padding(.bottom, 6)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: CompanionResultsSection.tileLimit),
-                      alignment: .leading, spacing: 8) {
-                ForEach(section.tiles) { tile in
-                    Button(action: actions.showResults) {
-                        CompanionTileView(tile: tile, picture: results.picture(for: tile.version))
+            if !section.tiles.isEmpty {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: CompanionResultsSection.tileLimit),
+                          alignment: .leading, spacing: 8) {
+                    ForEach(section.tiles) { tile in
+                        Button(action: actions.showResults) {
+                            CompanionTileView(tile: tile, picture: results.picture(for: tile.version))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 16)
             }
-            .padding(.horizontal, 16)
         }
     }
 
@@ -477,7 +479,8 @@ struct CompanionHomeView: View {
     }
 }
 
-/// One of Results today's tiles: a picture of an image, or a tile naming the kind of file, and the name.
+/// One of Results today's tiles: a picture of an image when the app holds one, else a tile naming the kind of
+/// file ("PNG", "CSV"), and the name.
 struct CompanionTileView: View {
     let tile: CompanionTile
     let picture: CGImage?
@@ -491,9 +494,8 @@ struct CompanionTileView: View {
                 .overlay {
                     if tile.isPicture, let picture {
                         Image(decorative: picture, scale: 1).resizable().scaledToFill()
-                    } else if tile.isPicture {
-                        Image(systemName: "photo").font(.system(size: 14, weight: .light)).foregroundStyle(Solanum.muted.opacity(0.6))
                     } else {
+                        // A file that has no picture, or an image whose picture isn't in memory: its kind.
                         Text(tile.label).font(.system(size: 11, weight: .semibold)).foregroundStyle(Solanum.muted)
                     }
                 }

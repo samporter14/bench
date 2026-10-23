@@ -7,7 +7,9 @@
 // anywhere; the ones that would open a window do nothing.
 //
 // `--step`: `board` (default), `since` (a return is waiting), `empty` (nothing
-// to do), `busy` (more rows than fit: "N more" and the scroll), `panel` (the
+// to do), `busy` (more rows than fit: "N more" and the scroll), `unread`
+// (sessions made files today and none is in memory: "Results today" and Show
+// all), `panel` (the
 // real panel, glass and all, at the top right of the screen on a neutral
 // backdrop of our own, with no menu bar item and without taking the keyboard).
 import AppKit
@@ -17,7 +19,7 @@ import SwiftUI
 @MainActor
 enum CompanionDemo {
     enum Step: String, CaseIterable {
-        case board, since, empty, busy, panel
+        case board, since, empty, busy, unread, panel
     }
 
     /// What the popover sits on in a plain window or a picture: a stand-in for the blurred wallpaper the
@@ -119,7 +121,7 @@ enum CompanionDemo {
         var working = [made.plate, made.screen]
         var asking = [made.question, made.plan]
         switch step {
-        case .board, .since, .panel: break
+        case .board, .since, .unread, .panel: break
         case .empty:
             working = []
             asking = []
@@ -145,8 +147,10 @@ enum CompanionDemo {
 
         let files = entries(now: now, calendar: calendar)
         let drawn = pictures ? Self.pictures() : [:]
-        let results = CompanionResults(dependencies: .made(entries: step == .empty ? [] : files, pictures: drawn,
-                                                           now: now, calendar: calendar))
+        // `unread`: a session made files today, and nothing of them is in memory.
+        let results = CompanionResults(dependencies: .made(
+            entries: step == .empty || step == .unread ? [] : files, pictures: drawn,
+            candidates: step == .unread ? [made.plate] : [], now: now, calendar: calendar))
         let since = SinceYouLeftModel(lab: lab, finished: FinishedResults(dependencies: .init(read: { _ in .unreadable }, isReady: { false })),
                                       dependencies: SinceYouLeftDemo.demoDependencies(model: nil))
         if step == .since {
@@ -281,9 +285,10 @@ enum CompanionDemo {
 extension CompanionResults.Dependencies {
     /// Made-up files and pictures, and nothing read: a demo's, a snapshot's, a test's.
     @MainActor
-    static func made(entries: [ArtifactEntry], pictures: [String: CGImage], now: Date, calendar: Calendar = .current) -> Self {
+    static func made(entries: [ArtifactEntry], pictures: [String: CGImage], candidates: [SessionStatus] = [],
+                     now: Date, calendar: Calendar = .current) -> Self {
         CompanionResults.Dependencies(
-            candidates: { [] }, held: { entries.isEmpty ? [:] : ["demo": entries] }, picture: { pictures[$0] },
+            candidates: { candidates }, held: { entries.isEmpty ? [:] : ["demo": entries] }, picture: { pictures[$0] },
             reader: .init(read: { _ in .unreadable }, isReady: { false }),
             gate: { _ in .cancelled }, readsLists: false, now: { now }, calendar: calendar)
     }

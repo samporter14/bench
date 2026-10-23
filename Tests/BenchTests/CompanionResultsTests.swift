@@ -112,6 +112,11 @@ private struct Rig {
 
 @MainActor
 struct CompanionResultsTests {
+    @Test func theAppsPopoverReadsNothingFromThePageByDefault() {
+        #expect(CompanionResults.readsListsWhenOpen == false, "the brief: only what the app already holds in memory")
+        #expect(CompanionResults.Dependencies.live().readsLists == CompanionResults.readsListsWhenOpen)
+    }
+
     @Test func nothingIsReadUntilThePopoverOpens() async {
         let rig = Rig(candidates: [session(1), session(2)])
         rig.page.lists = [session(1).id: [entry("a.png")]]

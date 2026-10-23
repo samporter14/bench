@@ -28,7 +28,7 @@ struct CompanionSnapshotTests {
         .environment(\.stillSpecimens, true)
         .environment(\.colorScheme, dark ? .dark : .light)
         // The tallest picture is the busy one.
-        let height: CGFloat = step == .busy ? 1000 : step == .empty ? 440 : 820
+        let height: CGFloat = step == .busy ? 1000 : step == .empty ? 440 : step == .unread ? 700 : 820
         return try await PanelSnapshotTests.capture(view, size: NSSize(width: 456, height: height), dark: dark, settle: 6)
     }
 
@@ -99,5 +99,9 @@ struct CompanionSnapshotTests {
         busy.model.open()
         #expect(busy.model.sections.needsHidden > 0 && busy.model.sections.workingHidden > 0)
         busy.model.close()
+        let unread = CompanionDemo.made(.unread)
+        unread.model.open()
+        #expect(unread.model.sections.results?.title == "Results today" && unread.model.sections.results?.tiles.isEmpty == true)
+        unread.model.close()
     }
 }

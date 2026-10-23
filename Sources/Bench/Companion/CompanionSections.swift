@@ -15,6 +15,7 @@ enum CompanionText {
     static let quickStartPlaceholder = "Start a session…"
     static let nothingToDo = "Nothing needs you and nothing is working."
     static let showAll = "Show all"
+    static let resultsTitle = "Results today"
     static let usageLabel = "5-hour limit"
     static let quietHelp = "Quiet while presenting"
     static let settingsHelp = "Settings"
@@ -180,15 +181,20 @@ struct CompanionResultsSection: Equatable {
     let count: Int
     let partial: Bool
     let tiles: [CompanionTile]
-    var title: String { CompanionText.results(count, partial: partial) }
+    /// "Results today · 7"; just "Results today" when sessions made today are not in memory and none of their
+    /// files are known.
+    var title: String { count == 0 ? CompanionText.resultsTitle : CompanionText.results(count, partial: partial) }
 
     /// Tiles on the board's row.
     static let tileLimit = 4
 
-    /// The newest pictures first, then the other files, four in all.
+    /// The newest pictures first, then the other files, four in all. With no file known the section is only
+    /// its title and "Show all" when sessions made today haven't been looked at, and nothing when none were.
     @MainActor
     static func make(entries: [ArtifactEntry], partial: Bool) -> CompanionResultsSection? {
-        guard !entries.isEmpty else { return nil }
+        guard !entries.isEmpty else {
+            return partial ? CompanionResultsSection(count: 0, partial: true, tiles: []) : nil
+        }
         let pictures = entries.filter { ArtifactGate.thumb(kind: $0.kind) == nil }
         let others = entries.filter { ArtifactGate.thumb(kind: $0.kind) != nil }
         let tiles = (pictures + others).prefix(tileLimit).map {
