@@ -335,7 +335,8 @@ yet checked live: a real failed session, and a real notification close.
   - the phone's "Still waiting for your Mac…";
   - the Since You Left loader's handle.
 - ✅ **Sign-in against the real daemon after install** (browser tab, launchd, `require_token: yes`): Diagnostics says
-  "Signing in: with a code from claude-science url", and the log shows only the launch-time 401, then normal reads.
+  "Signing in: with a code from claude-science url", and the log shows only the launch-time 401; at 02:53 the
+  five-minute usage read answered with its data ("Plan usage keys: data,ok"), so the page was signed in.
   `ScienceSwitchWiringTests.theTabDaemonsSignInIsUntouchedByTheTokenAndTheSecondAsk` pins that `require_token`
   can't reach the plan.
 - ✅ **"Attempted to read an unowned reference" crashes.** Three crash reports tonight named test fakes (one was
