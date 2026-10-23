@@ -323,6 +323,16 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23, Capsid 1.0.1 released and installed
+
+- ✅ Released as v1.0.1 (tag on 9229072, "Capsid 1.0.1", by Sam with `gh release create`), marked Latest:
+  `Bench.zip` with Capsid.app 1.0.1 (47) inside, 17,823,654 bytes, sha256 fd2069ba67c9e1a8…. GitHub's asset
+  digest matches the file built from that commit.
+- ✅ Installed from that same build before the release (CDHash a5e63468; the unzipped copy's signature checks and
+  its CDHash is the same). "Signing in: with a code from claude-science url", and the usage read answered 4 s
+  after launch.
+- The whole suite before the push: 3,749 tests in 488 suites pass.
+
 ## 2026-10-23, Keep waits for its provenance; the figure menu and Keep explain themselves in the log
 
 - ✅ **Walkthrough 7, Keep with Data and Code, works**: "Kept 1 of 1 files" at 12:34. The first ✗ was the figure menu's:
