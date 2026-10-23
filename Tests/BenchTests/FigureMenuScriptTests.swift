@@ -196,6 +196,113 @@ struct FigureMenuScriptTests {
         #expect(high.evaluate("__menu.style.left") == "40px")
     }
 
+    // MARK: A short window, or a page zoomed
+
+    /// The page's menu for a figure with every item it has, a red Delete last: 7 buttons and 2 rules of its own,
+    /// which with Capsid's rule and four items make a box 391 CSS pixels tall in the fake (the review's number).
+    static let full = "['Copy image', 'Open in Artifact Viewer', '-', 'Open in split view', 'Provenance', 'Copy link', 'Download', '-', '!Delete']"
+    static let fullGrouped = ["page:Copy image", "page:Open in Artifact Viewer", "page-rule", "page:Open in split view", "page:Provenance",
+                              "page:Copy link", "page:Download", "rule"] + words.map { "ours:" + $0 } + ["page-rule", "page:Delete"]
+
+    /// A page whose window is `height` CSS pixels tall (a short window, or one at 200 to 300% page zoom, which is the
+    /// same thing in CSS pixels) with a figure right-clicked and the full menu open at `top`; `own` is what the page
+    /// itself put on the menu's style, if anything (`maxHeight: "500px"`).
+    private func menuInWindow(height: Int, top: Int = 60, own: String = "") -> PageScript {
+        let script = page()
+        script.evaluate("window.innerHeight = \(height)")
+        script.evaluate("__rightClick(__tileImg)")
+        script.evaluate("__openMenu(\(Self.full), { top: \(top)\(own.isEmpty ? "" : ", " + own) })")
+        #expect(script.exception == nil, "\(script.exception ?? "")")
+        return script
+    }
+
+    private struct Box { var top = -1.0, bottom = -1.0, maxHeight = "?", overflowY = "?" }
+
+    private func box(_ script: PageScript, _ menu: String = "__menu") -> Box {
+        let found = json(script, """
+            (function () { var r = \(menu).getBoundingClientRect();
+              return { top: r.top, bottom: r.bottom, maxHeight: \(menu).style.maxHeight || "", overflowY: \(menu).style.overflowY || "" }; })()
+            """) as? [String: Any]
+        return Box(top: found?["top"] as? Double ?? -1, bottom: found?["bottom"] as? Double ?? -1,
+                   maxHeight: found?["maxHeight"] as? String ?? "?", overflowY: found?["overflowY"] as? String ?? "?")
+    }
+
+    @Test func aShortWindowGivesTheMenuAMaximumHeightAndScrolling() {
+        // The review's case: a window 280 tall, where the menu came out at top 8, height 391, bottom 399.
+        let script = menuInWindow(height: 280)
+        let found = box(script)
+        #expect(found.maxHeight == "264px", "the window's height less 8 above and 8 below")
+        #expect(found.overflowY == "auto")
+        #expect(found.top == 8)
+        #expect(found.bottom <= 272, "all of it is in the window: \(found)")
+        // Every item is still there, in order, the red one last.
+        #expect(shape(script) == Self.fullGrouped)
+        #expect(script.exception == nil, "\(script.exception ?? "")")
+    }
+
+    @Test func aTallWindowLeavesTheMenusHeightAlone() {
+        let script = menuInWindow(height: 700)
+        let found = box(script)
+        #expect(found.maxHeight == "" && found.overflowY == "", "nothing is set when the menu fits: \(found)")
+        #expect(found.top == 60)
+        #expect(shape(script) == Self.fullGrouped)
+    }
+
+    @Test func theLimitFollowsTheWindowToTheLastPixel() {
+        for height in [200, 300, 390] {
+            let found = box(menuInWindow(height: height))
+            #expect(found.maxHeight == "\(height - 16)px", "\(height)")
+            #expect(found.top >= 8 && found.bottom <= Double(height - 8), "\(height): \(found)")
+        }
+        // 391 tall with 8 above and 8 below fits a window of 407 and no less.
+        #expect(box(menuInWindow(height: 407)).maxHeight == "")
+        #expect(box(menuInWindow(height: 406)).maxHeight == "390px")
+    }
+
+    @Test func theLimitIsGivenUpWhenTheMenuGoesAndTheNewMenuGetsItsOwn() {
+        let script = menuInWindow(height: 280)
+        script.evaluate("var __old = __menu")
+        // The page draws the menu again, as a new element, in the same turn as the old one goes.
+        script.evaluate("__wrapper.remove(); __openMenu(\(Self.full), { top: 60 });")
+        #expect(script.evaluate("String(__old.isConnected)") == "false")
+        #expect(box(script, "__old").maxHeight == "" && box(script, "__old").overflowY == "", "the old element keeps nothing of Capsid's")
+        #expect(box(script).maxHeight == "264px" && box(script).overflowY == "auto" && box(script).top == 8)
+        // It closes: nothing is left on it either.
+        script.evaluate("var __second = __menu; __closeMenu(); __flush();")
+        #expect(box(script, "__second").maxHeight == "" && box(script, "__second").overflowY == "")
+        #expect(watching(script) == 0)
+    }
+
+    @Test func aMenuThePageDrawsAgainWithoutTheItemsGetsThemBackAndStillScrolls() {
+        let script = menuInWindow(height: 280)
+        script.evaluate("__ours().forEach(function (b) { b.remove(); }); __flush();")
+        #expect(shape(script) == Self.fullGrouped)
+        let found = box(script)
+        #expect(found.maxHeight == "264px" && found.overflowY == "auto")
+        #expect(found.top == 8 && found.bottom <= 272)
+    }
+
+    @Test func aHeightTheMenuHadIsGivenBackAndOneThatAlreadyFitsIsLeft() {
+        // A limit the page put on the menu itself, larger than the window: ours replaces it, and it comes back.
+        let script = menuInWindow(height: 280, own: "maxHeight: '500px'")
+        #expect(box(script).maxHeight == "264px")
+        script.evaluate("var __kept = __menu; __closeMenu(); __flush();")
+        #expect(box(script, "__kept").maxHeight == "500px", "what the page had is what is left")
+        // One smaller than the window already keeps the menu inside it: not touched.
+        let small = menuInWindow(height: 280, own: "maxHeight: '200px', overflowY: 'scroll'")
+        let found = box(small)
+        #expect(found.maxHeight == "200px" && found.overflowY == "scroll", "\(found)")
+        #expect(found.bottom <= 272)
+    }
+
+    @Test func theLimitStaysWhileTheItemsAreInTheMenuEvenAfterTheWatchEnds() {
+        let script = menuInWindow(height: 280)
+        // The longest the items are looked after (two minutes): the menu is still open with them in it.
+        script.evaluate("__advance(120001)")
+        #expect(watching(script) == 0)
+        #expect(box(script).maxHeight == "264px", "let go now, the menu would spill over the window again")
+    }
+
     @Test func theKeyboardReachesTheItemsThroughThePagesOwnArrowKeys() {
         // The page's arrow keys stop at every `[role='menuitem']` in the menu
         // (and every enabled button), looked up at each key press; Enter on a

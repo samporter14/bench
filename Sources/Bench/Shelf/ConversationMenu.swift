@@ -377,6 +377,9 @@ final class ConversationMenu {
         const view = watch;
         watch = null;
         if (!view) return;
+        // The menu stays as tall as it is while the items are in it, however long it is open; with them gone
+        // (or the menu) the height Capsid gave it goes too.
+        if (!holds(view)) release(view);
         if (view.observer) view.observer.disconnect();
         if (view.timer) clearTimeout(view.timer);
         if (view.hold) clearTimeout(view.hold);
@@ -384,7 +387,7 @@ final class ConversationMenu {
 
       function startWatch(figure) {
         if (typeof MutationObserver !== "function") return;
-        const view = { figure: figure, menu: null, nodes: [], observer: null, timer: null, hold: null };
+        const view = { figure: figure, menu: null, nodes: [], observer: null, timer: null, hold: null, held: null };
         view.observer = new MutationObserver((records) => changed(view, records));
         view.observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
         view.timer = setTimeout(() => { if (watch === view && !view.menu) stopWatch(); }, WAIT_MS);
@@ -413,6 +416,7 @@ final class ConversationMenu {
         }
         if (view.menu.isConnected) { restore(view); return; }
         // The menu closed, or the page drew it again as a new one.
+        release(view);
         view.menu = null;
         view.nodes = [];
         const next = menuIn(records);
@@ -481,7 +485,7 @@ final class ConversationMenu {
         if (view.timer) { clearTimeout(view.timer); view.timer = null; }
         view.hold = setTimeout(() => { if (watch === view) stopWatch(); }, HOLD_MS);
         nodes.forEach((node) => menu.insertBefore(node, anchorIn(menu, nodes)));
-        fit(menu);
+        fit(view);
         // From here the page's whole body is not watched: only the menu, what
         // it sits in and what that sits in, one level each (the menu's items
         // dropped, the menu drawn again or taken away).
@@ -527,19 +531,52 @@ final class ConversationMenu {
         const menu = view.menu;
         if (inPlace(view)) return;
         view.nodes.forEach((node) => menu.insertBefore(node, anchorIn(menu, view.nodes)));
-        fit(menu);
+        fit(view);
         view.observer.takeRecords();
       }
 
-      // The page placed its menu to fit without the new items: keep it on screen.
-      function fit(menu) {
-        const view = (menu.ownerDocument && menu.ownerDocument.defaultView) || window;
+      // Whether the group is in the menu, all of it, as the menu holds it now.
+      function holds(view) {
+        const menu = view.menu;
+        if (!menu || !menu.isConnected || view.nodes.length === 0) return false;
+        for (let index = 0; index < view.nodes.length; index++) {
+          if (view.nodes[index].parentNode !== menu) return false;
+        }
+        return true;
+      }
+
+      // The page placed its menu to fit without the new items: keep it on screen. A window too short for the menu
+      // with them in it (a small window, or a page zoomed to 200 or 300%, which makes the window that much shorter
+      // in CSS pixels) gets the menu as tall as the window less the margin, scrolling: the page's own menu element
+      // takes `max-height` and `overflow-y` for as long as the items are in it, and gives back what it had when they
+      // are not (`release`). Then it is moved, as before, so that what it has of height is inside the window.
+      function fit(view) {
+        const menu = view.menu;
+        const win = (menu.ownerDocument && menu.ownerDocument.defaultView) || window;
         const margin = 8;
-        const box = menu.getBoundingClientRect();
-        const below = box.bottom - (view.innerHeight - margin);
+        // Measured as the page sized it, with the items in.
+        release(view);
+        let box = menu.getBoundingClientRect();
+        const room = win.innerHeight - 2 * margin;
+        if (room > 0 && box.height > room) {
+          view.held = { maxHeight: menu.style.maxHeight, overflowY: menu.style.overflowY };
+          menu.style.maxHeight = room + "px";
+          menu.style.overflowY = "auto";
+          box = menu.getBoundingClientRect();
+        }
+        const below = box.bottom - (win.innerHeight - margin);
         if (below > 0) menu.style.top = Math.max(margin, box.top - below) + "px";
-        const beyond = box.right - (view.innerWidth - margin);
+        const beyond = box.right - (win.innerWidth - margin);
         if (beyond > 0) menu.style.left = Math.max(margin, box.left - beyond) + "px";
+      }
+
+      // What `fit` put on the menu goes, and the menu's own settings come back.
+      function release(view) {
+        const held = view.held;
+        view.held = null;
+        if (!held || !view.menu) return;
+        view.menu.style.maxHeight = held.maxHeight;
+        view.menu.style.overflowY = held.overflowY;
       }
 
       function choose(view, entry, event) {
