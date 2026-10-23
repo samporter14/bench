@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "82b5283f113b",
+        "/app.js": "535d29b1fa0c",
         "/app.css": "b948887bc2c7",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=82b5283f113b"></script>
+<script type="module" src="/app.js?v=535d29b1fa0c"></script>
 </body>
 </html>
 """#
@@ -1852,7 +1852,7 @@ const u = ui(id);
 if (u.busy[kind]) return null;
 u.busy[kind] = true;
 redrawSession(id);
-const slow = setTimeout(() => setNote(id, { text: 'Not sure that went through. Checking…' }, 120000), slowMs);
+const slow = setTimeout(() => setNote(id, { text: 'Still waiting for your Mac…' }, 120000), slowMs);
 let result;
 try {
 result = describe(await send(path, body));

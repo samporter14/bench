@@ -541,19 +541,19 @@ struct PhoneUnknownTests {
     private static let id = "00000000-0000-4000-8000-00000000bb01"
     private static let session = #"{"can":{"answer":false,"approve":false,"message":"send","why":null},"id":"\#(id)","messages":[],"permission":null,"plan":null,"project":"Example project","question":null,"queued":null,"readable":true,"reason":null,"reply":null,"sentence":"Finished","startedAt":"2026-10-14T13:50:00Z","state":"finished","statusLine":null,"title":"Made-up screen","toYou":null,"turns":[],"updatedAt":"2026-10-14T13:59:00Z","version":2}"#
 
-    private func page() throws -> PhoneAppHarness {
+    private func page(also extra: [String: String] = [:]) throws -> PhoneAppHarness {
         try PhoneAppHarness(hash: "#/session/\(Self.id)", now: Date(timeIntervalSince1970: 1_791_986_400), answers: [
             "/api/me": #"{"paired":true,"browse":false,"act":true}"#,
             "/api/state": #"{"version":1,"bench":"1.0","updatedAt":"2026-10-14T14:00:00Z","problem":null,"needsYou":[],"failed":[],"working":[],"recent":[],"usage":null,"pause":null}"#,
             "/api/sessions/\(Self.id)": Self.session,
-        ])
+        ].merging(extra) { _, new in new })
     }
 
     private func note(_ app: PhoneAppHarness) -> String? {
         app.string("ui(\(PhoneAppHarness.quoted(Self.id))).note ? ui(\(PhoneAppHarness.quoted(Self.id))).note.text : null")
     }
 
-    @Test func aWriteThatNothingHasAnsweredYetSaysTheMacIsChecking() throws {
+    @Test func aWriteThatNothingHasAnsweredYetSaysItIsStillWaitingNotThatItIsChecking() throws {
         let app = try page()
         #expect(app.exceptions == [])
         // The Mac never answers this message.
@@ -561,7 +561,18 @@ struct PhoneUnknownTests {
         app.advance(21_000)
         #expect(note(app) == nil, "not before the Mac's own twenty seconds are up")
         app.advance(2_000)
-        #expect(note(app) == "Not sure that went through. Checking…")
+        // The phone doesn't know whether the Mac is looking for the write or only waiting its turn behind another.
+        #expect(note(app) == "Still waiting for your Mac…")
+        #expect(note(app)?.contains("Not sure") == false)
+    }
+
+    /// The Mac's own "not sure" is its answer: it replaces the waiting line, with the way to look at it.
+    @Test func whenTheMacAnswersNotSureTheWaitingLineGivesWayToItsSentence() throws {
+        let app = try page(also: ["/api/sessions/\(Self.id)/message": #"{"result":"unknown","sentence":"\#(RemoteDecide.Sentence.unsure)"}"#])
+        app.evaluate("doAction(\(PhoneAppHarness.quoted(Self.id)), 'message', '/api/sessions/\(Self.id)/message', { text: 'x', id: 'i' })")
+        app.advance(500)
+        #expect(note(app) == RemoteDecide.Sentence.unsure)
+        #expect(note(app)?.contains("Still waiting") == false)
     }
 
     @Test func aPhotoGetsLongerBecauseItsUploadAloneTakesAMinute() throws {
@@ -570,7 +581,7 @@ struct PhoneUnknownTests {
         app.advance(60_000)
         #expect(note(app) == nil)
         app.advance(26_000)
-        #expect(note(app) == "Not sure that went through. Checking…")
+        #expect(note(app) == "Still waiting for your Mac…")
     }
 
     @Test func theMacsDeadlineIsTheNumberThePhoneWaitsFor() {
