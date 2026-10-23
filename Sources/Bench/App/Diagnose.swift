@@ -190,15 +190,11 @@ enum Diagnose {
         out.append("  requires a token to sign in: \(token)")
         out.append(startLine(status: status, install: install))
         let owned = SignInPlan.appOwned(daemon: status, install: install, handoverSeen: false)
-        // As `SignInPlan.decide`: a token matters only beside the app, with no code.
-        let signIn: String
-        if owned {
-            signIn = status.requireToken == true
-                ? "• Signing in: through the daemon's own page with a code from claude-science url; with none (it requires a token), Capsid only reads the database"
-                : "• Signing in: through the daemon's own page with a code from claude-science url; with none, Capsid only reads the database"
-        } else {
-            signIn = "• Signing in: with a code from claude-science url"
-        }
+        // As `SignInPlan`: `require_token` is shown above and decides nothing. Beside the app, no code (asked twice)
+        // loads the page on last time's cookie, and Capsid only reads once that is refused.
+        let signIn = owned
+            ? "• Signing in: through the daemon's own page with a code from claude-science url (asked again after 1.5 s); with none, the page loads on last time's sign-in, and Capsid only reads the database if that is refused"
+            : "• Signing in: with a code from claude-science url"
         out.append(signIn)
         return out
     }
