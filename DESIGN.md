@@ -1366,13 +1366,15 @@ ivory tint (slate in the dark), 400 points wide, 18-point corners, a hairline
 edge. It doesn't activate Capsid and takes the keyboard for its Quick Start
 field. Esc, a click anywhere else, another app coming forward, another window
 taking the keyboard, or the item's own click puts it away. From the top:
-"Capsid", Quiet While Presenting and Settings; the Quick Start field (Return
-opens Quick Start with the text, and Quick Start's key is shown); **Needs you
+"Capsid", Quiet While Presenting and Settings; the "Start a session…" field
+and its project pill (Return starts the session there; ⌘Return opens Quick
+Start); **Needs you
 · N**, each row with the cards' own buttons through `CardActions` (a question:
 Reply, Open, Later; a plan: Approve, Request changes…; a request: its lead,
 Deny, Later; a stop: Open), a spinner while a send goes and "Approved ✓"
 after; **Working · N**, each with its specimen and the turn's clock, "Paused"
-when a used-up limit holds them; **Results today · N**, four tiles, pictures
+when a used-up limit holds them; **Recent**, the latest sessions neither list
+shows; **Results today · N**, four tiles, pictures
 first, and Show all; **Since you left** when a return is waiting (a press
 opens the sheet); the 5-hour limit and its bar; Open Capsid. Past three rows a
 list says "N more". Left out: the board's Lab Board (after 1.0) and the status
@@ -1388,7 +1390,28 @@ today's results' missing lists and pictures (`CompanionResults`,
 `readsListsWhenOpen`: at most 8 sessions, one at a time through the typing
 gate, only while open, cancelled on close; on by the lead's call, since board
 1 draws pictures and kind labels alone read as broken). `--demo menubar`
-(`--step board|since|empty|busy|unread|panel`).
+(`--step board|since|empty|busy|unread|panel|recent|typing|started|failed`;
+no demo step opens a menu, since a menu makes the quiet panel key and it once
+took four of Sam's keystrokes).
+
+The field starts a session without leaving the menu bar (since 1.0.1, Sam: "it
+should give me an option to select with project"). Inside it a quiet pill names
+the project, the one worked in last (Quick Start's first chip); its menu lists
+Quick Start's three most recent projects, then Other Projects. Return starts the
+session there through Quick Start's own flow (its checks, bounded writes, one
+intent id across a retry of the same request), with a plan first when Quick
+Start's box last asked for one. A line under the field says what Return does and
+that ⌘Return is Quick Start; then "Starting…", then "Started in Assay
+development." with Open, or the flow's own sentence with the words kept. ⌘Return,
+and Return on an empty field, open Quick Start with the words, the project and
+the plan setting. A send that ends while the popover is closed shows its outcome
+once, at the next opening. **Recent**, after Working and before Results today,
+holds the five sessions active latest that are in neither list (one put off with
+Later among them, its dot clay): a dot, the title, and "project · when" in the
+Shelf's words. A click opens it, ⌥-click opens it as a reference, and its menu
+has Open, Open as Reference and Copy Link. Three rows show, all five when
+nothing needs you or works, never under two; "N more" opens Quick Open. It reads
+the sessions in memory and the project list once per opening.
 
 ### Mac notifications (since 0.3.3)
 
