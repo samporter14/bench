@@ -24,7 +24,8 @@ final class FindSearch: ObservableObject {
 
         static func live() -> Dependencies {
             Dependencies(lookup: { query in
-                guard Demo.mode == nil else { return nil }
+                // A demo reads nothing: its windows find nothing, rather than say the database is down.
+                guard Demo.mode == nil else { return [] }
                 return await FindSearch.databaseFiles(query)
             })
         }

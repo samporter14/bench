@@ -68,6 +68,8 @@ struct ShelfFindSection: View {
             }
             Spacer(minLength: 0)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 
     @ViewBuilder
