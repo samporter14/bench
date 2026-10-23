@@ -323,6 +323,40 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23 (overnight), the safety batch, three features and a review pass
+
+Sonnet agents in worktrees, merged on `g/reference` by the lead; each wave's full suite green before it was installed
+(3,218 tests after the safety batch, 3,412 after the menu-bar home, PDF and review A's fixes, 3,482 after Find).
+
+- ✅ **Safety batch.**
+  - Bounded writes (`BoundedWriteTests`, `UnknownWriteTests`, `ManualClock` for the stall tests): a refresh, a
+    POST and a Swift await that never answer; unknown settled each way for every write; no automatic retry; the
+    queue moving on.
+  - Quick Start's Cancel with an upload, a project read, a queued send and a session read held, and after the
+    request is out.
+  - Keep's clicked version, and the figure that can't be copied (`KeepPickedVersion*`, `KeepFigureFirst*`).
+  - The compatibility watch and the 0.1.70 walk (`CompatWatchTests`, 44).
+  - The handover dialog told from every other restart (`HandoverScriptTests.anyOtherRestartsDialogIsNotTheHandover`).
+  - Web Inspector debug-only (`WebInspectorTests`), and the phone's content flag (`PhoneSinceTests`).
+- ✅ **Menu-bar home** (`Companion*Tests`). Real-window captures of `--demo menubar` against board 1, light and
+  dark. System Events lists the item "Capsid, 2 need you".
+- ✅ **Lab-meeting PDF** (`ShelfPDF*Tests`, `ShelfPickingTests`): real PDFs read back with PDFKit; a page each
+  for ten kinds of file; the Shelf window with two picked, captured.
+- ✅ **Find any figure** (`Find*Tests`, `QuickOpenFilesTests`), on a fake database built from the 0.1.70
+  migrations. On Sam's Mac after install, Diagnostics said "2,938 listed; a search for today's files returned 1
+  in 50 ms".
+- ✅ **Review A** (Keep, Shelf, Reference): 12 findings, and the agent fixed them all, each with a test and
+  mutation-checked.
+- ❌→✅ **The flaky Nidus test** (`aPreparedWriteSupersededByClearNeverCommits`) failed whenever agents built
+  beside it: its 5 s hold was shorter than a busy Mac's turn. Now 120 s, as a backstop.
+- ⏳ **Live**:
+  - a real unknown write, and the line on the card;
+  - the menu-bar item on a real menu bar (both appearances), Approve and Reply from it;
+  - Make PDF… on real figures (Retina, rotated JPEG, SVG) and ⌘P/⌘A in the real window;
+  - Find's Show Where It Came From on an old session;
+  - the reference window's refresh on a real finish;
+  - the compatibility card after a real Claude Science update.
+
 ## 2026-10-22, Capsid 1.0 M5: Since You Left (board 2)
 
 Built by a Sonnet agent on `g/m-m5`, merged on `g/reference` (d0684c7);

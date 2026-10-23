@@ -153,6 +153,13 @@ answer it came from, with the figure marked. Shelved files live in folders you
 own, `~/Documents/Kept/<project>/`, each with a README that says where it came
 from; Remove puts one in the Trash.
 
+**Search finds figures and files in every session**, not only the ones on the
+shelf: type in the Shelf's search (or Open Session…) and what Claude made
+anywhere shows under your shelf's own matches, with Add to Shelf and Show
+Where It Came From. For lab meeting, pick several figures (⌘-click) and
+choose **Make PDF…** (⌘P): one 16:9 page each, with its title, legend and
+where it came from.
+
 When a figure is going into a paper, **Keep with Data and Code…** (⌥⌘K) keeps
 the real version with the data it was drawn from and the script that drew it,
 and the Shelf lets you write the legend you'll use beside it.
@@ -183,6 +190,11 @@ starts a session with the files or text you've selected, and Shortcuts has
 actions to start a session, run a recipe, send a message or list the sessions
 that need you; they ask before they start or send anything unless you allow it
 in Settings.
+
+Capsid also lives in the **menu bar**: a quiet glyph with a count of what
+needs you. A click opens a glass home with a Quick Start field, what needs you
+(answer from the row), what's working, today's results and your 5-hour limit.
+Turn it off in Settings → General.
 
 ## The panel, while it works
 

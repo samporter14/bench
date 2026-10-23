@@ -1067,6 +1067,10 @@ if it is closed or hidden. It is off in a demo, which has no main window.
     Return opens what was on screen; once you move it with ↑ ↓ it follows its
     session as before.
 
+**Figures and files** (since 1.0, Find any figure): a group under the
+sessions when the words match files; ↑ ↓ move through both groups, Return on
+a file shows where it came from, ⌥↩ adds it to the shelf.
+
 ### Notices (Lab/LabNotice.swift, Lab/NoticeWatchers.swift, since 0.3.0)
 
 Cards that tell rather than ask. They queue after every session card, never
@@ -1270,7 +1274,7 @@ projector) Capsid stays out of sight, then catches up.
 - **The phone is not the Mac's screen.** Pushes to a paired phone
   (Capsid on your phone) are unchanged, except that a finish is held with the
   rest and its one push is worded "Finished while you presented". The
-  menu bar specimen (Lab/MenuBarSpecimen.swift) keeps its glyph and its count,
+  menu bar item (Companion/MenuBarHome.swift) keeps its glyph and its count,
   which name nothing; the list behind a click on it, the Dock menu and the
   main window are the user's own doing and are not hidden.
 
@@ -1334,15 +1338,51 @@ and 23 MB (Efficiency).
   checked); the rules are tested with an injected idle reader, clock, power
   state and wait (`SpecimenHoldTests`), never the real Mac or a real sleep.
 
-### Menu bar specimen (Lab/MenuBarSpecimen.swift, since 0.3.0)
+### Menu bar home (Companion/, since 1.0; the menu bar specimen since 0.3.0)
 
-Off by default. While a session works, the specimen plays in the menu bar;
-while any waits, the waiting glyph and a count. Clicking it opens the
-activity list in a popover. Its ink follows the menu bar's appearance (the
-wallpaper's), not Capsid's Ivory or Slate. Hidden, not removed, while nothing
-works, so it keeps its place. Measured at about 0–2% CPU while playing. It
-shows the glyph and a count and no names, so Quiet while presenting leaves it.
-It holds still with the rest (Holding still).
+Board 1 of the 1.0 mock-ups. Capsid keeps one item in the menu bar, and a
+click on it opens the home, a glass popover. Settings → General → Menu bar →
+"Show Capsid in the menu bar" (`showCapsidInMenuBar`, on by default) decides
+whether the item is there at all; off, there is none, whatever the older
+switch says. The item is a small Capsid glyph (five nodes, the nodes in clay,
+the lines in the menu bar's own ink) and, beside it, the count of what needs
+you: sessions that wait for you now and sessions that stopped with an error,
+not those put off with Later. While a session works it plays the specimen
+instead, only with the older switch on (Settings → Panel → "Play it in the
+menu bar too", `showMenuBarSpecimen`, off by default; turning it on turns the
+item on too). The item names nothing, so Quiet while presenting leaves it. Its
+place is kept under `capsid-home` (the specimen's `bench-specimen` was
+dropped, so a person who had the specimen on loses its saved place once).
+
+The popover is a panel in the manner of Quick Start's (CompanionPanel.swift),
+not an NSPopover, because board 1's sheet has no arrow: a blur under a 90%
+ivory tint (slate in the dark), 400 points wide, 18-point corners, a hairline
+edge. It doesn't activate Capsid and takes the keyboard for its Quick Start
+field. Esc, a click anywhere else, another app coming forward, another window
+taking the keyboard, or the item's own click puts it away. From the top:
+"Capsid", Quiet While Presenting and Settings; the Quick Start field (Return
+opens Quick Start with the text, and Quick Start's key is shown); **Needs you
+· N**, each row with the cards' own buttons through `CardActions` (a question:
+Reply, Open, Later; a plan: Approve, Request changes…; a request: its lead,
+Deny, Later; a stop: Open), a spinner while a send goes and "Approved ✓"
+after; **Working · N**, each with its specimen and the turn's clock, "Paused"
+when a used-up limit holds them; **Results today · N**, four tiles, pictures
+first, and Show all; **Since you left** when a return is waiting (a press
+opens the sheet); the 5-hour limit and its bar; Open Capsid. Past three rows a
+list says "N more". Left out: the board's Lab Board (after 1.0) and the status
+words on its working rows, which aren't in memory.
+
+It reads what Capsid already holds (LabModel, the cards' states, the session
+limit as the toolbar last read it, Since You Left, the plan progress the panel
+read, and today's files from the lists Results, the Finished card and Since
+You Left hold) and adds no timer and no refresh. Opening it takes one look and
+watches; closing it stops and lets go. Two reads, both bounded: the cards'
+own for the rows shown (`CardActions.prepare`, as the activity list does), and
+today's results' missing lists and pictures (`CompanionResults`,
+`readsListsWhenOpen`: at most 8 sessions, one at a time through the typing
+gate, only while open, cancelled on close; on by the lead's call, since board
+1 draws pictures and kind labels alone read as broken). `--demo menubar`
+(`--step board|since|empty|busy|unread|panel`).
 
 ### Mac notifications (since 0.3.3)
 
@@ -1646,6 +1686,37 @@ or request is in its ⓘ, with a paragraph on the failure card's reason.
 ready ("Screen 24 buffer conditions", "10 steps · feasibility: high", with
 10 made-up step titles, so the list shows "and 2 more…", one of them long
 enough to be cut). Its Approve shows the Approved state and calls nothing.
+
+### Bounded writes (Remote/WriteDeadline.swift, Remote/WriteSettle.swift, since 1.0)
+
+Every write Capsid makes to Claude Science ends. The page script that makes
+it keeps one deadline over the whole write (the CSRF refresh, the POST and
+its answer): 20 seconds for an approval, an answer, a permission answer, a
+message or a new session, and from a minute up to three for an upload, sized
+by the file. Swift waits a few seconds longer than the page, so the page
+normally says first.
+
+A write that gets no answer is **unknown**: it may have been made, and it is
+neither done nor failed. The card, the reply window and Quick Start say "Not
+sure that went through. Checking…", and the session is read once more:
+approve checks that the plan still waits at that version, an answer that the
+question is still pending, a message for a dated turn of yours with the same
+words (or a larger queued count), a permission that the request is still at
+the head, a new session by its intent id. Then the answer is shown as it is:
+done; "That didn't go through. Try again." when the read shows it didn't
+land; or "Not sure that went through…" when even that read can't tell. The
+same words sent again are the daemon's own repeat (a plan already approved, a
+question already resolved, a message with the same intent id), so a second
+try is safe, and it is the person's to make: Capsid never sends a write twice
+on its own. A refresh that runs out of time after a 403 is not unknown, since
+the 403 said nothing was accepted. An upload with no answer can't be settled
+(nothing can be asked): "Not sure 'x' reached <project>… sending it again may
+add a second copy."
+
+A session's actions go one at a time. A turn that runs out of time ends and
+the next begins; what it was doing is cancelled and sends nothing more. It
+says "Not sure that went through" only if its write had left, otherwise that
+nothing was sent.
 
 ### Answering from the card (Lab/QuestionReply.swift, Lab/ReplyWindow.swift, since 0.7.0)
 
@@ -3682,6 +3753,14 @@ were read before it last wrote, and the window selects it and scrolls to
 it. The card shows no count of the files: nothing is read when a session
 finishes, so it can't know one.
 
+**On your shelf** (Results/ResultsOnShelf.swift, since 1.0's review). The
+section lists the Shelf's items (`ShelfRules.items`), not raw folders: a
+figure kept twice is one row, and "N items on your shelf" is the number the
+toolbar pill and the Shelf say. Open Conversation on a row builds the session
+from the ids its README kept and opens it through `Router.open`, so a result
+older than the last 30 sessions opens too; a session Capsid has in memory
+still opens through `LabModel.open(sessionID:)`, which also clears its cards.
+
 ## Capsid on your phone (Remote, since 0.4.0)
 
 A private mobile web app that Capsid serves to the user's own devices over
@@ -4123,6 +4202,13 @@ unexpected status, 404/405, unknown 4xx `code` or non-JSON reply is
   the phone's `.permission` requests, under the same table; what to change
   in a plan is `.planFeedback`, which `parse` never makes, so no phone route
   can send it.
+
+A write that gets no answer is looked for on the Mac before the phone hears
+(Bounded writes): the phone gets `retry` (it didn't go through; send again)
+or `unknown` (not sure; look on your Mac), shows the Mac's sentence, reads the
+session afresh and keeps your words, so a second try is the same message.
+While it waits, 22 seconds without an answer (85 for a photo) it says "Not
+sure that went through. Checking…".
 
 #### How the server does it (Phase 2 actions)
 
@@ -5350,6 +5436,21 @@ collision, abandon, scan, the outside-change refusal, the disk-calls scan),
 the reader tests for the three shapes and the showing op against a fake
 `fetch` (`RemoteArtifactsTests`, `HistoryReaderTests`), and the inventory's.
 
+**After the review (1.0).** An input the lineage lists twice is kept once
+(`copyableInputs` takes each version once, a listed copy ahead of an
+inferred one). A version can be chosen while the sheet reads, when it is
+ready, and after a failure another version answers (`canChoose`); once a keep
+has begun or landed in part, the tiles and arrow keys are dead, and Try Again
+goes by the plan the keep was made with (`keptPlan`), so another version's
+files are never written into that folder. The provenance is read 400 ms after
+the choice stops moving (`KeepDependencies.settle`; the sheet's own first
+choice at once): stepping through the tiles asks the daemon once, for the
+version stopped on. An untick of What Claude said made while the provenance
+is read stays the user's. A second Keep… while a sheet is up is refused
+(`ShelfSheetHost.present`). Words that are still cut when a figure is kept
+say so in the README's attribution: "The text is cut off: the rest couldn't
+be read."
+
 ## Shelf (Kept/Shelf*.swift, Shelf/, since 1.0)
 
 Sam's priority, in his words: Claude Science makes so many figures, documents
@@ -5445,6 +5546,90 @@ a conversation and choose Add to Shelf." Settings → General → "Shelf folder"
 `--demo kept --step window` shows the Shelf with ten made-up items of every
 kind; `--demo reference --step shelved` the reference window with a shelved
 figure.
+
+**Lab-meeting PDF** (Kept/ShelfPDF.swift, ShelfPDFRules.swift,
+ShelfPDFCommand.swift, ShelfPicking.swift; since 1.0). Pick figures on the
+Shelf and make one page for each, for lab meeting or a quick send. ⌘-click
+adds a card or takes it away, ⇧-click picks the run from the last card
+clicked, ⌘A takes everything shown; a plain click, an arrow key or Esc goes
+back to one. While several are picked the cards wear their page number, and
+a card in place of the detail says how many, shows the pages small, and holds
+the one clay action, **Make PDF…**. The same command is a quiet pill in the
+title bar (⌘P) and in a card's menu. It opens a save panel on the Shelf
+window, in Downloads, named "Lab meeting 2026-10-23.pdf" with today's date,
+and then shows the file in Finder; nothing is opened. A page is 960 × 540
+points, 16:9, white, in Solanum's ink: the title (the keep's name, else the
+heading that opens the person's legend, else the file's name), the legend
+(the person's own, up to three lines, else Claude's first sentences, 220
+characters at most, and none when those words are only the session's last
+answer, which says nothing about this figure), the picture as large as the
+room allows and never past one point to a pixel (its own pixels, never
+resampled; a PDF's first page as vector; Markdown as plain text; the rest a
+tile with extension, kind and size), and a small source line, "Session title
+· Project · 22 Oct 2026", with "2 / 7" at the right when there is more than
+one page. Drawn straight into a PDF context with Core Text and ImageIO, off
+the main actor; the words stay text; written to a temporary file and moved
+over an old one only when whole. A file that can't be read stops it with one
+sentence; nothing goes missing quietly. `--demo shelf-pdf`.
+
+**After the review (1.0).** Thumbnails look at the file each time a card asks
+(date, size, whether iCloud has put it away, through `KeptDisk.fileFacts` on
+the disk's queue), so a same-named file shelved after one was removed shows
+its own picture. A file iCloud has put away is never asked of Quick Look
+(`KeptDiskWork.isPutAway`, shared with `peek`): its kind's symbol shows. A
+failed Add to Shelf toast is two lines, cut at the end; a toast dismissed
+under the pointer forgets the pointer.
+
+## Find any figure (Find/, since 1.0)
+
+Sam's first problem, in his words: Claude Science makes so many figures,
+documents and tables that he loses the one he wants. The Shelf holds what he
+put on it; Find looks at everything else. Typing in the Shelf window's search
+shows the shelf's own matches first, and under them a quiet section, **In
+your sessions · N**: the figures and files Claude made in any session,
+leaving out what is on the shelf already (by version). Open Session… gains a
+**Figures and files** group (six rows at most). Each match offers Add to
+Shelf, Show Where It Came From and Open in Results.
+
+**Words** (`FindQuery`). Up to six, each cut to 64 characters; every word must
+match, and a word matches a file when its name, its session's title or its
+project's name contains it, when it names the file's kind (figure, image,
+picture, photo, plot, chart, graph; table, spreadsheet; document, doc, note,
+report, markdown), or when it names a day (today, yesterday, a weekday) and
+the file's latest version was made that local day. Names match by SQLite's
+`LIKE` (ASCII case ignored; `\`, `%` and `_` match only themselves). In the
+Shelf window the kind chip and the project pill narrow the section too.
+
+**Rows** (`ShelfFindSection`). A heading ("In your sessions · 14", "100+" when
+cut at the limit), then board 11's card made small: the Results shelf's small
+picture (asked for only on screen, after typing pauses, through
+`ReadingGate`) or the kind's glyph; the name; "Session title · Project · when";
+Add to Shelf as the small pill (then "On Shelf ✓"); a ⋯ menu with the three
+actions, also in the right-click menu; a double-click shows where. A file
+added from the search stays as "On Shelf ✓" until the words change. Nothing
+in the section is clay. Ranked here: an exact name, then names whose words
+start with the words, then the rest of the name, kind and day matches, then
+session or project only; newest first within each.
+
+**Where they come from** (`fetchFiles`, SQLiteSource.swift; `FindSQL`).
+Claude Science's database, which Capsid already reads read-only: `artifacts`
+and `artifact_versions`, with `frames` and `projects` for the titles.
+Metadata only (names, kinds, sizes, times, ids; never `storage_path`, a
+checksum, code or lineage, or any text of a frame but its name). One
+statement at a time, interrupted at 3 seconds or on cancel, newest 100 (200
+at most); what Claude Science's own list shows (not ephemeral, not an upload,
+not `user_hidden`, latest version not intermediate; `plan*.json` and
+`goal_*.html` dropped). A session is the artifact's `root_frame_id`, the one
+Results groups it by. Two optional indexes are used when present. Measured on
+a made-up database from the 0.1.70 migrations (79,688 artifacts): 60–140 ms
+warm; on Sam's Mac, Diagnostics' line said 2,938 files listed and a search
+for today's in 50 ms. Show Where It Came From opens the reference window at
+the newest reply that shows the version (no history row is known, so it reads
+back up to 80 pages, as the Shelf does for an item with no row). Nothing is
+written to disk and nothing typed or found is kept. `CompatFeature.find`: the
+inventory checks the two tables' columns, the exclusions and the indexes, and
+Diagnostics says "Files across sessions read: N listed; a search for today's
+files returned M in X ms". `--demo find`.
 
 ## Reference (Reference/, since 1.0)
 
@@ -5607,6 +5792,19 @@ trim's identity with the old rule, the rows argument, the nonce and abort, the
 cap, the yields, the timing, the phone's 503), and `ReferenceSnapshotTests`
 (draws the content to PNGs, light and dark, when `CAPSID_SNAPSHOT_DIR` is set).
 
+**After the review (1.0).** The newest rows are read again when the window is
+shown again, becomes key, or the session stops running (`LabModel`'s reads, no
+polling): one read at a time, none within 5 s of the last (a finish is not held
+to that), quiet when it fails. A reply that landed meanwhile is reached with
+Later; a window on the newest reply follows it, and one on an older reply stays
+where it is; a reply grown by a row keeps its place. Earlier pressed at the edge
+during a read waits for it, one step. A card drawn without its picture asks
+again, twice at most, then says it can't be shown. A message the agent sent the
+user mid-run over 2,000 characters is marked cut by the page and read whole by
+the whole-turn read (`notes`, up to 20,000 characters each), and the reader
+holds every item the page gave for a row, so the words before a tool call count
+too. Add to Shelf and Keep… wait up to 2 s for reads under way.
+
 ## Quick Start (QuickStart/, since 1.0)
 
 Board 4 of the 1.0 mock-ups. A small floating panel for a request in one
@@ -5665,6 +5863,16 @@ Shortcuts lists them for a self-signed build is unverified.
 
 `--demo quick-start`: made-up projects, recipes and a file; Start shows its
 sent state and sends nothing; no key is registered.
+
+**Cancel** (since the safety batch). Cancel stops what is unsent: every step
+checks for it, and the steps that wait (the project list, a file read, an
+upload, the session's turn in its queue) give way at once. The panel then
+waits for the flow to say how far it got. Nothing sent: it goes, with your
+words kept. Files went up: it stays and says "Cancelled. 1 file was already in
+Assay development. Nothing was started." Once the request itself is out,
+Cancel can't take it back: "Already sent. Waiting for Claude Science…", then
+what happened, never "cancelled". (Switching apps doesn't close the panel
+during a send.)
 
 ## The panel's moments and what it knows (Lab/, since 1.0)
 
