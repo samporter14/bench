@@ -337,7 +337,8 @@ enum ShelfActions {
                                   size: record.figure.bytes, at: nil)
         let pinned = item.text.claudeSaid.isEmpty || ShelfRules.isLastAnswer(item.text)
             ? nil : KeepPinnedAnswer(text: item.text.claudeSaid, at: record.answerAt)
-        return KeepSubject(session: session, entry: entry, pinned: pinned)
+        // The shelf's own version stays the pick, even with no answer to pin it by.
+        return KeepSubject(session: session, entry: entry, pinned: pinned, selectsItsVersion: true)
     }
 }
 

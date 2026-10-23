@@ -184,6 +184,11 @@ struct ShelfFilterTests {
 struct ShelfWordsTests {
     private func item(_ result: KeptResult) -> ShelfItem { ShelfRules.items(from: [result])[0] }
 
+    @MainActor @Test func keepFromTheShelfPicksTheItemsOwnVersion() throws {
+        let subject = try #require(ShelfActions.keepSubject(item(result(at: ago(minutes: 25)))))
+        #expect(subject.selectsItsVersion)
+    }
+
     @Test func aCardNamesTheSessionAndWhenItWasShelved() {
         func caption(_ added: Date) -> String {
             ShelfRules.caption(for: item(result(at: added)), now: now, calendar: calendar, locale: english).replacingOccurrences(of: "\u{202F}", with: " ")

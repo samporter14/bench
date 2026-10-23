@@ -367,5 +367,7 @@ struct ReferenceModelTests {
         #expect(subject.session.id == Self.session.id)
         // The answer the figure sat in goes with it.
         #expect(subject.pinned == KeepPinnedAnswer(text: "Newest", at: model.current?.at))
+        // The figure pressed is the pick, whatever answer Keep finds.
+        #expect(subject.selectsItsVersion)
     }
 }

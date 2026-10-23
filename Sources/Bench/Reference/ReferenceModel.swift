@@ -763,7 +763,8 @@ final class ReferenceModel: ObservableObject {
         return KeepSubject(session: session,
                            entry: ArtifactEntry(version: file.v, artifact: file.a, name: file.name, mime: nil,
                                                 size: file.size ?? 0, at: reply?.at),
-                           pinned: reply.map { KeepPinnedAnswer(text: $0.text, at: $0.at) })
+                           pinned: reply.map { KeepPinnedAnswer(text: $0.text, at: $0.at) },
+                           selectsItsVersion: true)
     }
 
     // MARK: The shelf

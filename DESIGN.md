@@ -5178,8 +5178,17 @@ place. "Keeping 2 of 4 files…" meanwhile; Cancel stops the reads and deletes
 the hidden folder. A figure that vanished mid-way: nothing is kept, the tile
 reads "Gone", and the sheet says "Version 3 isn't in Claude Science any more,
 so nothing was kept. Choose another version, or Cancel."; never another
-version in its place. A file that couldn't be copied is listed under
-`missing:` and the sheet stays: "Kept 3 of 4 files. The data it was drawn
+version in its place. A folder is its figure (since the safety batch, Codex's
+review): if the figure itself can't be copied, nothing is made, the hidden
+folder goes, and Keep stays on for another version or another go. A version
+known to be over 8 MB says so under the tiles ("At 12 MB it's over the 8 MB
+Capsid can copy here, so this version can't be kept.") and Keep is dimmed for
+it; if Claude Science only says so when asked, or the disk refuses the figure,
+the sheet says "z_prime.tif is over 8 MB, which is more than Capsid can copy
+here, so nothing was kept. Choose another version, or Cancel." or
+"z_prime.png wasn't copied, so nothing was kept. There isn't room on this
+disk." Any other file that couldn't be copied is listed under `missing:` and
+the sheet stays: "Kept 3 of 4 files. The data it was drawn
 from wasn't copied.", the row saying why in clay-text, with **Try Again**
 (copies only what is missing, into the folder, and rewrites the README),
 **Show in Finder** and **Done**. Everything copied: the sheet closes and the
@@ -5208,6 +5217,14 @@ version 4, not this one.") and is off by default; ticked anyway, the README's
 front matter gets `answer_shows_version: 4` and its attribution ends "That
 answer shows version 4, not this one."
 
+A version picked without its answer goes with itself too
+(`KeepSubject.selectsItsVersion`): the conversation's menu knows the version
+the address names and nothing of the answer; the Shelf's Keep with Data and
+Code… and the reference window's pass it as well. That version is the
+selection whatever Keep finds. Keep looks only for the answer that shows it,
+as the Shelf's add does, and else offers the session's last answer, labelled,
+or none; a newer answer about another version never moves the pick.
+
 **Checksums.** Each file's sha256 is compared with Claude Science's checksum
 when it has one. A stored version's bytes never change, but a reference file's
 checksum can be stale, and Capsid can't tell one from the other, so bytes that
@@ -5224,6 +5241,9 @@ file's figure impossible to keep; the review allowed either, so it's the
 warning.)
 
 **On disk** (Kept/KeptFolder.swift, Kept/KeptReadme.swift, Kept/KeptDisk.swift).
+Files are named the way the folder names them: one called README.md, in any
+case, is kept as "README 2.md" (README.md is Capsid's), and a figure called
+data, code or input is numbered too, so it never stands where that folder goes.
 The root is `~/Documents/Kept` (`keptRoot`, a path; Sam's call between it and
 `~/Lab/Kept`: Documents is where a Mac keeps what a person owns, in Finder's
 sidebar and Spotlight's scope, at the price of macOS's one-time Documents
