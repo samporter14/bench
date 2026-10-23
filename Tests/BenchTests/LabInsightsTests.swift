@@ -42,6 +42,8 @@ private final class Fake {
 
     /// When true, a wait ends at once with the clock moved on by it: time passing by itself.
     var sleepAdvances = false
+    /// The page comes up while the first wait goes by.
+    var pageComesUpDuringTheFirstWait = false
     private(set) var sleeps = 0
     /// The clock at each read, by kind and session ("progress:<id>").
     private(set) var times: [String: [Date]] = [:]
@@ -71,13 +73,14 @@ private final class Fake {
 
     func dependencies() -> LabInsights.Dependencies {
         LabInsights.Dependencies(
-            isEnabled: { [unowned self] in self.enabled },
-            isReady: { [unowned self] in self.ready },
-            isDemo: { [unowned self] in self.demo },
-            now: { [unowned self] in self.date },
+            isEnabled: { [self] in self.enabled },
+            isReady: { [self] in self.ready },
+            isDemo: { [self] in self.demo },
+            now: { [self] in self.date },
             // The wake-up never comes by itself unless asked: a test moves the clock and says so.
-            sleep: { [unowned self] duration in
+            sleep: { [self] duration in
                 self.sleeps += 1
+                if self.pageComesUpDuringTheFirstWait { self.ready = true; self.pageComesUpDuringTheFirstWait = false }
                 if self.sleepAdvances {
                     let parts = duration.components
                     self.date = self.date.addingTimeInterval(Double(parts.seconds) + Double(parts.attoseconds) / 1e18)
@@ -85,16 +88,16 @@ private final class Fake {
                 }
                 try? await Task.sleep(for: .seconds(3600))
             },
-            readProgress: { [unowned self] id, nonce in
+            readProgress: { [self] id, nonce in
                 await self.around("progress:\(id)", nonce: nonce)
                 if let error = self.progressError { throw error }
                 return self.progressFor[id] ?? self.progress
             },
-            readReviewers: { [unowned self] id, nonce in
+            readReviewers: { [self] id, nonce in
                 await self.around("reviewers:\(id)", nonce: nonce)
                 return self.reviewer
             },
-            readHistory: { [unowned self] id, total, nonce in
+            readHistory: { [self] id, total, nonce in
                 self.known.append((id, total))
                 await self.around("notes:\(id)", nonce: nonce)
                 let list = self.pages[id] ?? []
@@ -597,6 +600,37 @@ struct LabInsightsReviewerTests {
         let insights = makeInsights(fake)
         fake.ready = false
         insights.wantReviewers(for: session(a, .finished))
+        fake.ready = true
+        insights.wantReviewers(for: session(a, .finished))
+        await insights.settled()
+        #expect(fake.asked("reviewers") == [a])
+    }
+
+    /// The finished card asks once, when it comes up. If the page isn't up then, the question waits and is
+    /// asked when it is: the Reviewer line used to never come.
+    @Test func aCardThatAskedBeforeThePageWasUpIsAnsweredOnceItIs() async {
+        let insights = makeInsights(fake)
+        fake.ready = false
+        fake.sleepAdvances = true
+        fake.pageComesUpDuringTheFirstWait = true
+        insights.wantReviewers(for: session(a, .finished))
+        #expect(fake.log.isEmpty, "nothing is read while the page is down")
+        // The card does not ask again. The wait ends, the page is up, and the read is made.
+        for _ in 0..<200 where fake.asked("reviewers").isEmpty { await Task.yield() }
+        await insights.settled()
+        #expect(fake.asked("reviewers") == [a])
+        #expect(insights.reviewers[a]?.line == "Reviewer: 2 findings")
+        #expect(fake.sleeps >= 1)
+        // And only once for that finish.
+        insights.wantReviewers(for: session(a, .finished))
+        await insights.settled()
+        #expect(fake.asked("reviewers").count == 1)
+    }
+
+    @Test func aCardThatAskedWhileThePageWasDownAndWentAwayIsStillNotReadTwice() async {
+        let insights = makeInsights(fake)
+        fake.ready = false
+        for _ in 0..<5 { insights.wantReviewers(for: session(a, .finished)) }
         fake.ready = true
         insights.wantReviewers(for: session(a, .finished))
         await insights.settled()

@@ -85,6 +85,24 @@ struct CardOfferTests {
         #expect(question(.ready(ask), reply: .sent("Sent.")).lead == .done("Sent"))
     }
 
+    /// A send that didn't go says why, wherever the offer is drawn (card, row, menu-bar home, Since You Left
+    /// sheet): the same `problem` a permission request's failed send already had.
+    @Test func aQuestionThatDidntSendSaysWhyAndTheDraftCanBeSentAgain() {
+        for phase in [ReplyPhase.failed("Couldn't send it."), .changed("The question changed.")] {
+            let offer = question(.ready(ask), reply: phase)
+            let sentence = phase == .failed("Couldn't send it.") ? "Couldn't send it." : "The question changed."
+            #expect(offer.problem == sentence, "\(phase)")
+            #expect(offer.lead == .button(.reply) && offer.hasOpen && offer.rowActions == [.reply], "Reply is the retry")
+        }
+        let closed = question(.ready(ask), reply: .closed("Already answered."))
+        #expect(closed.problem == "Already answered.")
+        #expect(closed.lead == .button(.open) && closed.rowActions.isEmpty, "nothing left to answer: Open")
+        // The ones that are not a failure say nothing.
+        for phase in [ReplyPhase.editing, .sending, .sent("Sent.")] {
+            #expect(question(.ready(ask), reply: phase).problem == nil, "\(phase)")
+        }
+    }
+
     @Test func aWaitThatCantBeAnsweredHereOffersOpenOnly() {
         #expect(question(.unsupported).lead == .button(.openInCapsid) && question(.unsupported).rowActions.isEmpty)
         for state in [nil, .loading, .unavailable] as [QuestionCardState?] {

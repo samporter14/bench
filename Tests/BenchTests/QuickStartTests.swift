@@ -320,15 +320,15 @@ private final class ModelRig {
     private(set) var lingered: [Duration] = []
 
     lazy var model = QuickStartModel(dependencies: QuickStartModel.Dependencies(
-        recipes: { [unowned self] in self.recipes },
-        recentProjects: { [unowned self] in self.recents },
-        allProjects: { [unowned self] in self.everything },
-        viewed: { [unowned self] in self.viewed },
+        recipes: { [self] in self.recipes },
+        recentProjects: { [self] in self.recents },
+        allProjects: { [self] in self.everything },
+        viewed: { [self] in self.viewed },
         sender: sender,
         makeFile: { url in QuickStartFile.make(url: url, size: url.lastPathComponent.hasPrefix("big") ? 30_000_000 : 1_000, isFolder: false) },
-        close: { [unowned self] in self.closed += 1 },
+        close: { [self] in self.closed += 1 },
         linger: .milliseconds(1600),
-        sleep: { [unowned self] in self.lingered.append($0) }))
+        sleep: { [self] in self.lingered.append($0) }))
 
     /// Lets the lookups the panel starts when it opens land.
     func settle() async {
@@ -593,6 +593,48 @@ struct QuickStartModelTests {
         #expect(model.phase == .sent("Started in Assay development."))
     }
 
+    /// A recipe, ⌘1 to ⌘9, a dropped file or a ×, pressed while a send is in flight, used to put the phase back
+    /// to editing: Start came back on and a second ↩ made a second session.
+    @Test func nothingPressedWhileASendIsInFlightEnablesStartOrChangesTheRequest() async {
+        rig.sender.hold = true
+        model.open()
+        await rig.settle()
+        model.text = "QC this"
+        model.addFiles([rig.file("a.csv")])
+        model.submit()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(model.phase == .sending)
+        let sent = rig.sender.requests.first
+        // A recipe by click, by ⌘number; a dropped file; a ×; a chip.
+        model.apply(rig.recipes[1])
+        model.applyRecipe(number: 1)
+        model.addFiles([rig.file("b.pdf"), rig.file("setup.dmg")])
+        model.remove(model.files[0])
+        model.choose(rig.recents[1])
+        #expect(model.phase == .sending, "still sending, and Start stays off")
+        #expect(!model.canSubmitNow && model.buttonTitle == "Starting…")
+        #expect(model.text == "QC this" && model.files.map(\.name) == ["a.csv"] && model.projectID == "proj_assay")
+        #expect(model.appliedRecipe == nil)
+        // Opened again with something new (a Service's selection): the request in flight is kept.
+        model.open(files: [rig.file("c.csv")], text: "Something else", keeping: true)
+        #expect(model.text == "QC this" && model.files.map(\.name) == ["a.csv"])
+        // A second ↩ (either kind) makes no second session.
+        model.submit()
+        model.submit(toViewed: true)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(rig.sender.requests.count == 1 && rig.sender.requests.first == sent)
+        rig.sender.hold = false
+        rig.sender.release()
+        await rig.waitForSend()
+        #expect(rig.sender.requests.count == 1)
+        #expect(model.phase == .sent("Started in Assay development."))
+        // Once it ended the same calls work again: a failed send's request is editable.
+        model.open()
+        await rig.settle()
+        model.applyRecipe(number: 2)
+        #expect(model.text.hasPrefix("Summarize this paper") && model.phase == .editing)
+    }
+
     @Test func cancelPutsThePanelAwayAndSendsNothing() async {
         model.open()
         await rig.settle()
@@ -724,6 +766,61 @@ struct QuickStartModelTests {
         #expect(rig.model.phase == .sent("Started in Assay development."))
         await rig.settle()
         #expect(rig.closed == 1)
+    }
+
+    /// The global key: puts the panel away when it is up, and mid-send brings it forward instead.
+    @Test func theGlobalKeyNeverHidesThePanelMidSend() {
+        typealias Controller = QuickStartController
+        #expect(Controller.keyAction(isShowing: false, phase: nil) == .show)
+        #expect(Controller.keyAction(isShowing: false, phase: .sending) == .show, "hidden mid-send: brought back")
+        #expect(Controller.keyAction(isShowing: true, phase: .sending) == .show, "up mid-send: kept, brought forward")
+        for phase in [QuickStartModel.Phase.editing, .sent("Started."), .failed("Couldn't start it."), nil] {
+            #expect(Controller.keyAction(isShowing: true, phase: phase) == .close, "\(String(describing: phase))")
+        }
+    }
+
+    /// A send that ends while the panel is hidden: its sentence is there when the panel next opens.
+    @Test func aFailureThatLandedWhileThePanelWasHiddenIsShownWhenItNextOpensAndTheRequestIsKept() async {
+        await submitHeld(rig)
+        rig.sender.outcomes = [.failed(sentence: "Couldn't start the session. Your request is still here.")]
+        rig.model.isHidden = true
+        rig.sender.release()
+        await rig.waitForSend()
+        #expect(rig.model.phase == .failed("Couldn't start the session. Your request is still here."))
+        rig.model.open()
+        await rig.settle()
+        #expect(rig.model.phase == .failed("Couldn't start the session. Your request is still here."), "not cleared")
+        #expect(rig.model.text == "QC this" && !rig.model.isHidden)
+        // Seen once: the opening after that is clean, as it always was.
+        rig.model.open()
+        await rig.settle()
+        #expect(rig.model.phase == .editing && rig.model.text.isEmpty)
+    }
+
+    @Test func aSendThatWentWhileThePanelWasHiddenIsShownThenTheFreshPanelFollows() async {
+        await submitHeld(rig)
+        rig.model.isHidden = true
+        rig.sender.release()
+        await rig.waitForSend()
+        #expect(rig.model.phase == .sent("Started in Assay development."))
+        let lingered = rig.lingered.count
+        rig.model.open()
+        await rig.settle()
+        #expect(rig.model.phase == .sent("Started in Assay development."), "the sentence is read, not cleared")
+        #expect(rig.lingered.count == lingered + 1, "and the panel goes again after a moment")
+        rig.model.open()
+        await rig.settle()
+        #expect(rig.model.phase == .editing)
+    }
+
+    @Test func anOutcomeThatLandedWhileThePanelWasUpIsNotHeldBack() async {
+        await submitHeld(rig)
+        rig.sender.outcomes = [.failed(sentence: "Couldn't start the session. Your request is still here.")]
+        rig.sender.release()
+        await rig.waitForSend()
+        rig.model.open()
+        await rig.settle()
+        #expect(rig.model.phase == .editing && rig.model.text.isEmpty, "seen on screen already: the next opening is clean")
     }
 
     @Test func aSendThatIsLetGoOfNoLongerReportsToThePanel() async {

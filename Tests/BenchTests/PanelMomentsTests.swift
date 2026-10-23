@@ -383,6 +383,23 @@ struct FinishedCardTests {
         #expect(panel.contains("KeepSubject(session: session, entry: entry)"))
         #expect(panel.contains("ResultsWindowController.shared.show(focusing: session)"))
     }
+
+    /// One Finished card replacing another keeps its SwiftUI view unless each card is its own: then the first
+    /// card's `onDisappear { finished.forget }` never runs and the plate (`settled`) is already full for the next.
+    @Test func eachCardIsItsOwnViewSoOneFinishedCardReplacingAnotherStartsFresh() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let panel = try String(contentsOf: root.appendingPathComponent("Sources/Bench/Lab/LabPanelView.swift"), encoding: .utf8)
+        let call = try #require(panel.range(of: "cardContent(card, count: count)"))
+        let after = String(panel[call.upperBound...].prefix(40))
+        #expect(after.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(".id(card.id)"), "\(after)")
+        // The card's id is the session's and the kind's, so the same card keeps its view as its words change.
+        let model = try String(contentsOf: root.appendingPathComponent("Sources/Bench/Lab/LabModel.swift"), encoding: .utf8)
+        #expect(model.contains("case .finished(let s): SessionKind.finished.cardID(s.id)"))
+        // The two things that depend on it.
+        #expect(panel.contains(".onDisappear { finished.forget(session.id) }"))
+        #expect(try String(contentsOf: root.appendingPathComponent("Sources/Bench/Lab/PanelScenes.swift"), encoding: .utf8)
+            .contains("@State private var settled = false"))
+    }
 }
 
 // MARK: Sounds

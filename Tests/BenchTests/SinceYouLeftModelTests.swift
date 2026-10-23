@@ -9,6 +9,26 @@ import Foundation
 import Testing
 @testable import Bench
 
+/// Holds whoever waits on it until it is opened, and stays open.
+@MainActor
+private final class Latch {
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var isOpen = false
+    var holding: Int { waiting.count }
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        let held = waiting
+        waiting = []
+        held.forEach { $0.resume() }
+    }
+}
+
 /// One return's whole scene, with the clock and the switches in hand.
 @MainActor
 private final class Rig {
@@ -21,6 +41,8 @@ private final class Rig {
     var usage: PlanLimit?
     var opened = 0, closed = 0
     var answered: [String] = [], reasoned: [String] = []
+    /// While set, an answer's read waits on it (a page that is slow to answer).
+    var holdAnswers: Latch?
     var knownReasons: [String: String] = [:]
     let lab = LabModel()
     let finished = FinishedResults(dependencies: .init(read: { _ in .unreadable }, isReady: { false }))
@@ -51,7 +73,11 @@ private final class Rig {
         // The shared typing gate is other tests' too: a key one of them noted would make a read here wait.
         deps.loadFiles = { finished, session in await finished.load(session) }
         deps.fullReason = { holder.rig.knownReasons[$0].map { "Full: \($0)" } }
-        deps.readAnswer = { id in holder.rig.answered.append(id); return "Answer for \(id)." }
+        deps.readAnswer = { id in
+            holder.rig.answered.append(id)
+            if let latch = holder.rig.holdAnswers { await latch.wait() }
+            return "Answer for \(id)."
+        }
         deps.readReason = { id in holder.rig.reasoned.append(id); return "Reason for \(id)." }
         deps.knownReason = { holder.rig.knownReasons[$0] }
         rebuilt = SinceYouLeftModel(lab: lab, finished: finished, dependencies: deps)
@@ -62,7 +88,8 @@ private final class Rig {
 
     /// The model built with this rig's closures.
     private(set) var rebuilt: SinceYouLeftModel!
-    private final class Holder { unowned let rig: Rig; init(_ rig: Rig) { self.rig = rig } }
+    /// Strong: a read the model started can still be under way when the test ends, and must find the rig there.
+    private final class Holder { let rig: Rig; init(_ rig: Rig) { self.rig = rig } }
 
     var m: SinceYouLeftModel { rebuilt }
 
@@ -395,6 +422,41 @@ struct SinceYouLeftModelTests {
         await rig.m.settled()
         #expect(rig.answered.count + rig.reasoned.count == 6)
         #expect(Set(rig.answered).count == rig.answered.count)
+    }
+
+    /// A loader that was cancelled (Done) and has not yet noticed must not clear the handle of the one that
+    /// replaced it: that left the new loader unguarded, so a second look started a second loader beside it.
+    @Test func aLoaderThatWasCancelledDoesNotClearTheHandleOfTheOneThatReplacedIt() async {
+        let rig = Rig()
+        let first = Latch(), second = Latch()
+        rig.holdAnswers = first
+        rig.leave()
+        manyFinished(rig, count: 2)
+        rig.advance(minutes: 70, idle: 2)
+        rig.m.loadDetails(cardActions: rig.actions)
+        for _ in 0..<2_000 where first.holding == 0 { await Task.yield() }
+        #expect(first.holding == 1 && rig.answered.count == 1, "the first loader is in its first read")
+        // Done: the first loader is cancelled, but is still waiting in its read.
+        rig.m.done()
+        // A new return, and the sheet shows its rows: a second loader, held in its first read too.
+        rig.holdAnswers = second
+        rig.leave()
+        manyFinished(rig, count: 2)
+        rig.advance(minutes: 70, idle: 2)
+        rig.answered = []
+        rig.m.loadDetails(cardActions: rig.actions)
+        for _ in 0..<2_000 where second.holding == 0 { await Task.yield() }
+        #expect(second.holding == 1 && rig.answered.count == 1, "the second loader is in its first read")
+        // The first one's read comes back; it sees it was cancelled and ends.
+        first.open()
+        for _ in 0..<200 { await Task.yield() }
+        // The sheet looks again (it does, as it appears and as rows change): nothing starts beside the second loader.
+        rig.m.loadDetails(cardActions: rig.actions)
+        for _ in 0..<200 { await Task.yield() }
+        #expect(rig.answered.count == 1, "one loader at a time: the second is still the one reading")
+        second.open()
+        await rig.m.settled()
+        #expect(rig.answered.count == 2 && Set(rig.answered).count == 2, "and it reads each row once")
     }
 
     @Test func nothingIsReadWhileAway() async {

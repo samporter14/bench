@@ -319,11 +319,21 @@ final class LabInsights: ObservableObject {
 
     /// A finished card is up for this session: one projected reviewer read
     /// (gated the same way), and no second for the same finish. A session
-    /// that ran again since (its `updatedAt` moved) is read again.
+    /// that ran again since (its `updatedAt` moved) is read again. Asked while
+    /// the page isn't up, it waits in the queue and is read when the page is
+    /// (looked at every `notReadyRetry`): the card asks once, when it comes up,
+    /// and would otherwise never hear.
     func wantReviewers(for session: SessionStatus) {
         guard !dependencies.isDemo(), dependencies.isEnabled(), session.state == .finished else { return }
         guard reviewerAsked[session.id] != session.updatedAt else { return }
-        guard dependencies.isReady() else { return }
+        reviewerQueue.removeAll { $0.id == session.id }
+        reviewerQueue.append(session)
+        pump()
+    }
+
+    /// The read for this finished session begins: it counts as made, and the
+    /// oldest finishes beyond the bound are forgotten.
+    private func markReviewerAsked(_ session: SessionStatus) {
         reviewerAsked[session.id] = session.updatedAt
         reviewerOrder.removeAll { $0 == session.id }
         reviewerOrder.append(session.id)
@@ -332,9 +342,6 @@ final class LabInsights: ObservableObject {
             reviewerAsked[oldest] = nil
             reviewers[oldest] = nil
         }
-        reviewerQueue.removeAll { $0.id == session.id }
-        reviewerQueue.append(session)
-        pump()
     }
 
     /// A note card was shown or dismissed: it isn't offered again.
@@ -416,7 +423,7 @@ final class LabInsights: ObservableObject {
             lastProgress[session.id] = now
             comeBack.remove(session.id)
         case .notes(let session): lastNotes[session.id] = now
-        case .reviewers: break
+        case .reviewers(let session): markReviewerAsked(session)
         }
         inFlight = Task { [weak self] in
             guard let self else { return }

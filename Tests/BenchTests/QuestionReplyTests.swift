@@ -182,20 +182,20 @@ private final class FakeCore {
 
     func dependencies() -> QuestionReplier.Dependencies {
         QuestionReplier.Dependencies(
-            isEnabled: { [unowned self] in self.enabled },
-            isReady: { [unowned self] in self.ready },
-            read: { [unowned self] _ in
+            isEnabled: { [self] in self.enabled },
+            isReady: { [self] in self.ready },
+            read: { [self] _ in
                 self.reads += 1
                 await Task.yield()
                 return self.read
             },
-            respond: { [unowned self] request, _, checking in
+            respond: { [self] request, _, checking in
                 self.requests.append(request)
                 if self.callChecking { checking() }
                 if self.holdSends { await withCheckedContinuation { self.gates.append($0) } }
                 return self.results.isEmpty ? Self.sent : self.results.removeFirst()
             },
-            now: { [unowned self] in self.now })
+            now: { [self] in self.now })
     }
 
     var heldSends: Int { gates.count }
@@ -309,8 +309,8 @@ struct QuestionReplierTests {
         replier.submit(session)
         replier.submit(session)
         replier.submit(session, .chooseForMe)
-        // Let the first send reach the core.
-        for _ in 0..<5 { await Task.yield() }
+        // Let the first send reach the core (held there), however long that takes.
+        for _ in 0..<2_000 where core.heldSends == 0 { await Task.yield() }
         #expect(core.requests == [.answer(toolID: "toolu_made_up_1", answers: [buffer.question: "HEPES"])])
         #expect(replier.replies[session]?.phase == .sending)
         #expect(!replier.canSend(session))
@@ -429,16 +429,16 @@ private final class FakePage {
 
     func sessions() -> RemoteSessions {
         RemoteSessions(dependencies: RemoteSessions.Dependencies(
-            actionsOn: { [unowned self] in self.actionsOn },
+            actionsOn: { [self] in self.actionsOn },
             known: { [Fixture.session(session, .needsInput, reason: .question)] },
             cardPlan: { _ in nil },
-            read: { [unowned self] _, turns in
+            read: { [self] _, turns in
                 self.frameReads += 1
                 await Task.yield()
                 return turns ? self.read : self.read?.withoutTurns
             },
             readPlan: { _ in nil },
-            write: { [unowned self] write in
+            write: { [self] write in
                 self.writes.append(write)
                 if self.resolvesOnWrite { self.read = waitingRead(status: "processing") }
                 return RemoteWriteResult(status: 200, bodyStatus: "accepted", remaining: 0)
@@ -572,6 +572,25 @@ struct QuestionReplierUnknownTests {
         core.results = []
         #expect(await replier.submit(session)?.value == .sent(RemoteDecide.Sentence.answered))
         #expect(core.requests.count == 2)
+    }
+
+    /// What the card, the rows and the Since You Left sheet draw is `CardOffer.problem`: a send that didn't go
+    /// has to reach it, not just the reply window.
+    @Test func aSendThatDidNotGoThroughSaysSoOnTheCardsOfferToo() async {
+        core.results = [.notThere]
+        let replier = await replying()
+        _ = await replier.submit(session)?.value
+        let shown = offer(replier)
+        #expect(shown.problem == QuestionReplier.Sentence.answerNotThere)
+        #expect(shown.lead == .button(.reply), "and Reply is the retry")
+        core.results = [.unsure]
+        _ = await replier.submit(session)?.value
+        #expect(offer(replier).problem == QuestionReplier.Sentence.answerUnsure)
+        // Sent at last: the earlier sentence is gone with the failure (the pure offer's `.sent` is covered in RowActionsTests).
+        core.results = []
+        _ = await replier.submit(session)?.value
+        #expect(replier.replies[session]?.phase == .sent(RemoteDecide.Sentence.answered))
+        #expect(offer(replier).problem == nil)
     }
 
     @Test func aReplyThatCantBeToldKeepsItsDraftToo() async {
