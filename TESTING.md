@@ -323,6 +323,20 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23, test settings stay out of ~/Library/Preferences
+
+A suite named "x" is `~/Library/Preferences/x.plist`, and `removePersistentDomain` doesn't remove it: cfprefsd writes
+the domain back out empty (42 bytes), and again about five seconds later or at exit, even after the file is deleted
+by hand following a synchronize (measured). Every test that "cleaned" a suite left one, and about 6,000 piled up
+(moved to the Trash, `capsid-test-preferences-2026-10-23`). Every suite now comes from
+`ScratchDefaults.make(prefix:)`: a suite named by a path in `$TMPDIR/capsid-test-defaults-<pid>`, so cfprefsd writes it
+there. `discard()` empties it and deletes its file; the folder goes at exit, and is swept next run if a run was
+killed. `ScratchDefaultsTests` holds that nothing reaches Preferences, including seven seconds after a discard, and
+scans the test target for any other way of making a suite. A full run used to leave 148 plists; now it leaves 0
+(checked twice). The Kept demo's own suite is named the same way. Also in this round: Remove pressed twice, the
+legend saved on leaving and off for an unreadable README, and Copy's picture off the main actor
+(`ShelfLegendTests`, `ShelfFigureCopyTests`), all mutation-checked.
+
 ## 2026-10-23 (overnight), the safety batch, three features and a review pass
 
 Sonnet agents in worktrees, merged on `g/reference` by the lead; each wave's full suite green before it was installed

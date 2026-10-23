@@ -5580,6 +5580,21 @@ its own picture. A file iCloud has put away is never asked of Quick Look
 failed Add to Shelf toast is two lines, cut at the end; a toast dismissed
 under the pointer forgets the pointer.
 
+**Remove, Copy and the legend** (after review A). Remove takes one item off
+once: pressing it again while the first removal is out asks for nothing more,
+so the line stays "Moved … to the Trash." with its Undo (`ShelfModel.removing`).
+Copy puts the file on the pasteboard at once and, for a figure, the picture in
+the same item as soon as the disk has read it (`KeptDisk.pictureBytes`, under
+the Kept folder, up to 8 MB, never a file iCloud has put away), made a PNG or
+kept as SVG on a thread of its own, and left off if something else was copied
+meanwhile; nothing about a picture is read or decoded on the main actor. The
+legend field (`ShelfLegendEditor`) saves a second after the last keystroke and
+at once when the card goes, so a legend typed just before moving on is kept;
+saves go one at a time, each from the README the last one wrote, and a README
+changed in another app is never written over. A README that can't be read
+turns the field off: "Couldn't read the README, so the legend can't be edited
+here." and the disk's own sentence.
+
 ## Find any figure (Find/, since 1.0)
 
 Sam's first problem, in his words: Claude Science makes so many figures,
