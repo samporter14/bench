@@ -4,6 +4,9 @@
 // line, the last reply, a few short turns, the agent's messages to the user,
 // the root's own question and the plan fields Approve uses. Never thinking,
 // tool calls or results, images, paths, attachments, sub-agents or artifacts.
+// A turn of yours also carries its intent id and its attachment lines' file
+// ids, which tell a message just sent from another (WriteSettle.swift) and go
+// no further than that.
 // Phase 4 adds one thing to a full read: the head of the queue of permission
 // requests, the root's and its helpers' (Remote/RemotePermissions.swift), as
 // its plain fields only.
@@ -37,6 +40,10 @@ enum SessionReaderScript {
         const PLAN_ID = /^[A-Za-z0-9_-]{1,128}$/;
         // 2000 to 2100, in milliseconds: a time outside it is no time.
         const EARLIEST = 946684800000, LATEST = 4102444800000;
+        // A user row's `_intent_id` (uuid v4, as a phone or Capsid makes one), and an attachment line's file id:
+        // only to tell one message of yours from another (WriteSettle.swift), never shown.
+        const INTENT = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+        const FILE_ID = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 
         const isObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
         const isAbsent = v => v === undefined || v === null;
@@ -134,8 +141,9 @@ enum SessionReaderScript {
                 }
                 // Too big for the daemon to send: a placeholder.
                 if (!isAbsent(m._oversized_bytes)) { continue; }
-                // Attachment lines (Claude Science's upload format) read as their file names.
+                // Attachment lines (Claude Science's upload format) read as their file names, and their ids are kept apart.
                 let text = texts.join("\n\n").trim();
+                const files = [];
                 if (text.indexOf('{"type":"attachment"') >= 0) {
                     const names = [];
                     text = text.split("\n").filter(line => {
@@ -145,6 +153,7 @@ enum SessionReaderScript {
                         try { o = JSON.parse(t); } catch (e) { return true; }
                         if (!isObject(o) || o.type !== "attachment") { return true; }
                         if (typeof o.filename === "string" && o.filename.length <= 255) { names.push(o.filename); }
+                        if (typeof o.id === "string" && FILE_ID.test(o.id) && files.length < 20) { files.push(o.id.toLowerCase()); }
                         return false;
                     }).join("\n").trim();
                     if (names.length > 0) { text = (text === "" ? "" : text + "\n\n") + "Attached: " + names.join(", "); }
@@ -160,7 +169,8 @@ enum SessionReaderScript {
                 // Rows may carry no `_ts` (seen on the daemon in October):
                 // the turn shows without a time.
                 const at = typeof m._ts === "number" ? time(m._ts) : null;
-                turns.push({ role: m.role === "user" ? "you" : "claude", at: at, text: cut(text, 2000) });
+                const intent = m.role === "user" && typeof m._intent_id === "string" && INTENT.test(m._intent_id) ? m._intent_id : null;
+                turns.push({ role: m.role === "user" ? "you" : "claude", at: at, text: cut(text, 2000), intent: intent, files: files });
             }
             return turns.slice(-12);
         };
@@ -318,6 +328,8 @@ struct SessionProjection: Equatable, Sendable {
         static let toolID = 200
         static let asks = 4
         static let name = 200
+        /// A turn's attachment ids.
+        static let files = 20
     }
 
     /// A message the agent sent the user mid-run ("Message to you").
@@ -331,6 +343,21 @@ struct SessionProjection: Equatable, Sendable {
         let role: Role
         let at: Date?
         let text: String
+        /// A turn of yours: the intent id it was sent with (the row's
+        /// `_intent_id`), when it has one. Only to tell one message from
+        /// another (`MessageSeen`); never sent to the phone.
+        let intent: String?
+        /// The ids of the files its attachment lines named, lowercased, in
+        /// order. The same use, and the same rule.
+        let files: [String]
+
+        init(role: Role, at: Date?, text: String, intent: String? = nil, files: [String] = []) {
+            self.role = role
+            self.at = at
+            self.text = text
+            self.intent = intent
+            self.files = files
+        }
     }
 
     struct Option: Equatable, Sendable {
@@ -436,8 +463,9 @@ struct SessionProjection: Equatable, Sendable {
                 guard let turn = raw as? [String: Any],
                       let role = Pick.string(turn["role"]).flatMap(Turn.Role.init(rawValue:)),
                       let at = Pick.optionalTime(turn["at"]),
-                      let text = Pick.text(turn["text"], limit: Limit.turn) else { return nil }
-                list.append(Turn(role: role, at: at, text: text))
+                      let text = Pick.text(turn["text"], limit: Limit.turn),
+                      let intent = Self.intent(turn["intent"]), let files = Self.files(turn["files"]) else { return nil }
+                list.append(Turn(role: role, at: at, text: text, intent: intent.value, files: files))
             }
             turns = list
         }
@@ -447,6 +475,27 @@ struct SessionProjection: Equatable, Sendable {
                   statusLine: statusLine.value, reply: reply.value, replyAt: replyAt, toYou: notes, queued: queued,
                   asks: asks, planVersion: planVersion.value, planArtifact: planArtifact.value, approval: approval,
                   turns: turns, permission: permission)
+    }
+
+    /// A turn's intent id: absent or null is none; anything but a uuid v4 is
+    /// a mismatch.
+    private static func intent(_ value: Any?) -> Pick.Maybe<String>? {
+        if Pick.isNull(value) { return Pick.Maybe(value: nil) }
+        guard let id = Pick.string(value), RemoteActionRequest.isUUIDv4(id) else { return nil }
+        return Pick.Maybe(value: id)
+    }
+
+    /// A turn's attachment ids: absent or null is none; each a lowercase
+    /// uuid, at most `Limit.files`.
+    private static func files(_ value: Any?) -> [String]? {
+        if Pick.isNull(value) { return [] }
+        guard let raw = value as? [Any], raw.count <= Limit.files else { return nil }
+        var ids: [String] = []
+        for item in raw {
+            guard let id = Pick.string(item), PhotoAttachment.isUUID(id), id == id.lowercased() else { return nil }
+            ids.append(id)
+        }
+        return ids
     }
 
     private static func approval(_ word: String) -> PlanFrame.Approval? {

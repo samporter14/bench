@@ -718,8 +718,9 @@ struct RemotePhotosSessionTests {
 
     // MARK: A write that gets no answer
 
-    private func turns(_ text: String, dated offset: TimeInterval = 1) -> [SessionProjection.Turn] {
-        [.init(role: .you, at: rig.now.addingTimeInterval(offset), text: text)]
+    private func turns(_ text: String, dated offset: TimeInterval = 1, intent: String? = nil,
+                       files: [String] = []) -> [SessionProjection.Turn] {
+        [.init(role: .you, at: rig.now.addingTimeInterval(offset), text: text, intent: intent, files: files)]
     }
 
     private func sessionWithTurns(_ turns: [SessionProjection.Turn]?, status: String = "completed", queued: Int = 0) -> SessionProjection {
@@ -787,12 +788,35 @@ struct RemotePhotosSessionTests {
 
     @Test func aMessageWithNoAnswerThatTheSessionShowsIsSent() async {
         rig.writeReply = .unknown
-        // The read before, the one after the upload, then the one that looks.
-        rig.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"), sessionWithTurns(turns("Look at this gel."))]
+        // The read before, the one after the upload, then the one that looks: a turn with the phone's intent id.
+        rig.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"),
+                     sessionWithTurns(turns("Look at this gel.\n\nAttached: phone-photo.jpg", intent: intent, files: [attachmentID]))]
         let reply = await rig.session(PhotoFixture.body(text: "Look at this gel."))
         #expect(decode(reply.body).string("result") == "sent")
         #expect(rig.log == ["read", "upload", "read", "write", "turns"])
         #expect(rig.writes.count == 1)
+    }
+
+    @Test func withoutAnIntentIDTheTurnMustHaveTheseWordsAndThisPhoto() async {
+        // The same caption and this very upload, dated after the send: this message.
+        rig.writeReply = .unknown
+        rig.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"),
+                     sessionWithTurns(turns("Look at this gel.\n\nAttached: phone-photo.jpg", files: [attachmentID]))]
+        #expect(decode(await rig.session(PhotoFixture.body(text: "Look at this gel.")).body).string("result") == "sent")
+        // The same caption with another photo: another message, so this one didn't go through.
+        let other = PhotoRig()
+        other.writeReply = .unknown
+        other.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"),
+                       sessionWithTurns(turns("Look at this gel.\n\nAttached: phone-photo.jpg",
+                                              files: ["99999999-8888-4777-8666-555555555555"]))]
+        let said = decode(await other.session(PhotoFixture.body(text: "Look at this gel.")).body)
+        #expect(said.string("result") == "retry")
+        #expect(said.string("sentence") == RemotePhotos.Sentence.savedNotThere)
+        // The caption alone, with no photo to be seen: it can't be told.
+        let bare = PhotoRig()
+        bare.writeReply = .unknown
+        bare.reads = [PhotoRig.session("completed"), PhotoRig.session("completed"), sessionWithTurns(turns("Look at this gel."))]
+        #expect(decode(await bare.session(PhotoFixture.body(text: "Look at this gel.")).body).string("result") == "unknown")
     }
 
     @Test func aMessageWithNoAnswerThatTheSessionDoesntShowCanBeTriedAgain() async {

@@ -822,11 +822,12 @@ final class RemoteSessions {
             switch RemoteDecide.planFeedback(request, session: id, fresh: fresh) {
             case .answer(let result): return result
             case .write(let write):
-                guard case .planFeedback(_, _, _, let text, _) = write else { return .unavailable }
+                guard case .planFeedback(_, _, _, let text, let intent) = write else { return .unavailable }
                 let since = dependencies.now()
                 return await settling(write, session: id, full: true, checking: checking, leaving: leaving,
                                       map: { RemoteDecide.planFeedbackSent($0) },
-                                      settle: { RemoteDecide.settledPlanFeedback(version: version, text: text, since: since, fresh: $0) })
+                                      settle: { RemoteDecide.settledPlanFeedback(version: version, text: text, intent: intent,
+                                                                                 since: since, fresh: $0) })
             }
         }
     }
@@ -859,10 +860,11 @@ final class RemoteSessions {
     }
 
     /// A message write and what it came to: the daemon's answer, as `messaged`
-    /// reads it, or the session as it reads now when there was none. `text` is
-    /// the request's words (attachment lines and all); `before` is the read
-    /// the write was decided by. The reply comes back too, for a caller that
-    /// reads a 409 as a repeat.
+    /// reads it, or the session as it reads now when there was none, looked
+    /// at for this very message (its intent id, else its whole words and its
+    /// files: `MessageSeen`). `text` is the request's words (attachment lines
+    /// and all); `before` is the read the write was decided by. The reply
+    /// comes back too, for a caller that reads a 409 as a repeat.
     func deliver(_ write: RemoteWrite, text: String, session id: String, before: SessionProjection?,
                  checking: (@MainActor () -> Void)? = nil,
                  leaving: (@MainActor () -> Void)? = nil) async -> (reply: RemoteWriteResult?, result: RemoteActionResult) {
@@ -872,7 +874,7 @@ final class RemoteSessions {
         guard !Task.isCancelled else { return (reply, .unsure) }
         checking?()
         let fresh = await settledRead(id, full: true)
-        return (reply, RemoteDecide.settledMessage(text: text, before: before, since: since, fresh: fresh))
+        return (reply, RemoteDecide.settledMessage(text: text, intent: write.intentID, before: before, since: since, fresh: fresh))
     }
 
     /// The session read once more, for at most `settleLimit`; nil when it

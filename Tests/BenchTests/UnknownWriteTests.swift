@@ -224,9 +224,12 @@ struct UnknownMessageTests {
     private let rig = Rig()
     private let message = RemoteActionRequest.message(text: "Try one panel per condition.", intentID: intent)
 
-    private func you(_ text: String, after seconds: TimeInterval? = 1) -> SessionProjection.Turn {
-        .init(role: .you, at: seconds.map { rig.now.addingTimeInterval($0) }, text: text)
+    private func you(_ text: String, after seconds: TimeInterval? = 1, intent: String? = nil,
+                     files: [String] = []) -> SessionProjection.Turn {
+        .init(role: .you, at: seconds.map { rig.now.addingTimeInterval($0) }, text: text, intent: intent, files: files)
     }
+
+    private let other = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
 
     @Test func aMessageTheSessionShowsAsYoursWasSent() async {
         rig.after = projection("processing", turns: [you("Try one panel per condition.")])
@@ -259,11 +262,96 @@ struct UnknownMessageTests {
         #expect(await run(rig, message).result == .notThere)
     }
 
-    @Test func aMessageWaitingInTheQueueIsQueued() async {
+    @Test func aLargerQueueAloneIsNotThisMessageQueued() async {
+        // Another device's message, or this one: the count can't say which, so it is neither queued nor sent.
         rig.before = projection("processing", queued: 1)
         rig.after = projection("processing", queued: 2, turns: [])
         let (result, _) = await run(rig, message)
-        #expect(result == RemoteActionResult(result: .queued, sentence: RemoteDecide.Sentence.queued))
+        #expect(result == .unsure)
+        #expect(result.result != .queued && result.result != .sent)
+    }
+
+    @Test func anotherDeviceRaisingTheQueueWhileItsOwnTurnShowsIsNotThisMessage() async {
+        rig.before = projection("processing", queued: 0)
+        rig.after = projection("processing", queued: 1, turns: [you("Plot the controls first.", intent: other)])
+        let (result, _) = await run(rig, message)
+        #expect(result == .unsure)
+        #expect(rig.writes.count == 1)
+    }
+
+    @Test func aTurnWithThisMessagesIntentIsThisMessage() async {
+        // Its words as the reader shows them may differ (cut, rewritten): the intent id is what ties it.
+        rig.after = projection("processing", turns: [you("Try one panel per…", intent: intent)])
+        #expect(await run(rig, message).result == RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.sent))
+    }
+
+    @Test func theSameWordsUnderAnotherIntentAreNeverThisMessage() async {
+        // Another device's message of the same words: not this one, and not proof that this one is missing either.
+        rig.after = projection("completed", turns: [you("Try one panel per condition.", intent: other)])
+        #expect(await run(rig, message).result == .unsure)
+        // From before the send, it says nothing of this one.
+        let earlier = Rig()
+        earlier.after = projection("completed", turns: [.init(role: .you, at: earlier.now.addingTimeInterval(-60),
+                                                              text: "Try one panel per condition.", intent: other)])
+        #expect(await run(earlier, message).result == .notThere)
+        // Other words under another intent: another message.
+        let elsewhere = Rig()
+        elsewhere.after = projection("completed", turns: [.init(role: .you, at: elsewhere.now.addingTimeInterval(1),
+                                                                text: "Plot the controls first.", intent: other)])
+        #expect(await run(elsewhere, message).result == .notThere)
+    }
+
+    @Test func theSameWordsSentAMomentBeforeAreNotThisMessage() async {
+        // Three seconds before the send began: an earlier message of the same words, not this one.
+        rig.after = projection("completed", turns: [you("Try one panel per condition.", after: -3)])
+        #expect(await run(rig, message).result == .notThere)
+        let earlier = Rig()
+        earlier.after = projection("completed", turns: [.init(role: .you, at: earlier.now.addingTimeInterval(-0.002),
+                                                              text: "Try one panel per condition.")])
+        #expect(await run(earlier, message).result == .notThere)
+    }
+
+    @Test func wordsThatOnlyShareAnOpeningAreAnotherMessage() async {
+        rig.after = projection("completed", turns: [you("Try one panel per condition. Then plot the means.")])
+        #expect(await run(rig, message).result == .notThere)
+        // The other way round: this message says more than the turn.
+        let longer = Rig()
+        longer.after = projection("completed", turns: [you("Try one panel")])
+        #expect(await run(longer, message).result == .notThere)
+        // Two long messages that differ only after their first 200 characters.
+        let opening = String(repeating: "Use the made-up buffer series again. ", count: 7)
+        let long = Rig()
+        long.after = projection("completed", turns: [.init(role: .you, at: long.now.addingTimeInterval(1), text: opening + "Then stop.")])
+        #expect(await run(long, .message(text: opening + "Then plot.", intentID: intent)).result == .notThere)
+    }
+
+    @Test func aTurnCutShortThatCouldBeThisOneIsUnknown() async {
+        let words = String(repeating: "word ", count: 600) + "end."
+        let shown = String(words.prefix(SessionProjection.Limit.turn - 1)) + "…"
+        rig.after = projection("completed", turns: [you(shown)])
+        #expect(await run(rig, .message(text: words, intentID: intent)).result == .unsure)
+    }
+
+    @Test func aMessagesFilesAreToldApartByTheirIDsNotTheirNames() async {
+        let mine = "11111111-1111-4111-8111-111111111111", theirs = "33333333-3333-4333-8333-333333333333"
+        let line = #"{"type":"attachment","id":"\#(mine)","version_id":"22222222-2222-4222-8222-222222222222","filename":"plate.csv","artifact_ref":"{{artifact:22222222-2222-4222-8222-222222222222}}","content_type":"text/csv","size_bytes":10}"#
+        let request = RemoteActionRequest.message(text: "Look at this.\n\n" + line, intentID: intent)
+        // The same words and the same file name, but another file: another message.
+        let another = Rig()
+        another.after = projection("completed", turns: [you("Look at this.\n\nAttached: plate.csv", files: [theirs])])
+        #expect(await run(another, request).result == .notThere)
+        // The same words and this very file: this message.
+        let same = Rig()
+        same.after = projection("completed", turns: [you("Look at this.\n\nAttached: plate.csv", files: [mine])])
+        #expect(await run(same, request).result.result == .sent)
+        // The same words, but no files the reader could see: it could be this one.
+        let unseen = Rig()
+        unseen.after = projection("completed", turns: [you("Look at this.")])
+        #expect(await run(unseen, request).result == .unsure)
+        // A turn with a file, for a message without one: another message.
+        let plain = Rig()
+        plain.after = projection("completed", turns: [you("Look at this.\n\nAttached: plate.csv", files: [mine])])
+        #expect(await run(plain, .message(text: "Look at this.", intentID: intent)).result == .notThere)
     }
 
     @Test func nothingShowingMeansItDidNotGoThrough() async {
@@ -282,16 +370,22 @@ struct UnknownMessageTests {
         #expect(await run(bare, message).result == .unsure)
     }
 
-    @Test func theWordsAreComparedByTheirFirstHundredsAndAttachmentLinesAreNotWords() {
+    @Test func theWordsAreComparedWholeAndAttachmentLinesAreFilesNotWords() {
         let line = #"{"type":"attachment","id":"11111111-1111-4111-8111-111111111111","version_id":"22222222-2222-4222-8222-222222222222","filename":"plate.csv","artifact_ref":"{{artifact:11111111-1111-4111-8111-111111111111}}","content_type":"text/csv","size_bytes":10}"#
-        #expect(MessageSeen.key(of: "Look at this.\n\n" + line) == "Look at this.")
-        #expect(MessageSeen.key(of: line) == "")
-        #expect(MessageSeen.key(of: String(repeating: "word ", count: 100)).count == MessageSeen.compared)
-        #expect(MessageSeen.matches("Look at this.\n\nAttached: plate.csv", "Look at this."))
-        #expect(MessageSeen.matches("Attached: plate.csv", ""))
-        #expect(!MessageSeen.matches("Look at that.", "Look at this."))
+        let request = MessageSeen.Request("Look at this.\n\n" + line)
+        #expect(request.words == "Look at this.")
+        #expect(request.files == ["11111111-1111-4111-8111-111111111111"])
+        #expect(MessageSeen.Request(line).words == "")
+        let long = String(repeating: "word ", count: 100)
+        #expect(MessageSeen.Request(long).words.count == long.count - 1, "all of them, not an opening")
+        let photo = SessionProjection.Turn(role: .you, at: nil, text: "Look at this.\n\nAttached: plate.csv",
+                                           files: ["11111111-1111-4111-8111-111111111111"])
+        #expect(MessageSeen.Request("Look at this.\n\n" + line).compare(photo) == .same)
+        #expect(MessageSeen.Request(line).compare(.init(role: .you, at: nil, text: "Attached: plate.csv",
+                                                         files: ["11111111-1111-4111-8111-111111111111"])) == .same)
+        #expect(MessageSeen.Request("Look at that.").compare(.init(role: .you, at: nil, text: "Look at this.")) == .different)
         // White space is one space.
-        #expect(MessageSeen.matches("Look   at\nthis.", MessageSeen.key(of: "Look at this.")))
+        #expect(MessageSeen.Request("Look at this.").compare(.init(role: .you, at: nil, text: "Look   at\nthis.")) == .same)
     }
 }
 
@@ -338,8 +432,21 @@ struct UnknownPlanFeedbackTests {
     private let rig = Rig()
     private let feedback = RemoteActionRequest.planFeedback(version: "ver-1", text: "Use two replicates.", intentID: intent)
 
-    private func you(_ text: String) -> SessionProjection.Turn {
-        .init(role: .you, at: rig.now.addingTimeInterval(1), text: text)
+    private func you(_ text: String, intent: String? = nil) -> SessionProjection.Turn {
+        .init(role: .you, at: rig.now.addingTimeInterval(1), text: text, intent: intent)
+    }
+
+    @Test func theSameWordsUnderAnotherIntentAreNotThemButOnlyTheIntentIsProof() async {
+        // Another device sent the same words: never "sent" for these, and not "didn't go through" either.
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("processing", version: "ver-1",
+                               turns: [you("Use two replicates.", intent: "7c9e6679-7425-40de-944b-e07fc1f90ae7")])
+        #expect(await run(rig, feedback).result == .unsure)
+        let mine = Rig()
+        mine.before = projection("awaiting_plan_approval", version: "ver-1")
+        mine.after = projection("processing", version: "ver-1",
+                                turns: [.init(role: .you, at: mine.now.addingTimeInterval(1), text: "Use two…", intent: intent)])
+        #expect(await run(mine, feedback).result == RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.revising))
     }
 
     @Test func wordsTheSessionShowsAsYoursWereSent() async {
