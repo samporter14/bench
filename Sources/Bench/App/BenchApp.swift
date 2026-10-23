@@ -85,7 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UpdateChecker.shared.start()
         // Capsid on your phone, if it was on (Remote/RemoteController.swift).
         RemoteController.shared.start()
-        MenuBarSpecimen.shared.start()
+        // Capsid's item in the menu bar, and the home popover behind a click on it (Companion/).
+        MenuBarHome.shared.start()
         // Quick Start's and Reply's keys from any app, and Finder's Services
         // (QuickStart/). A demo returned above and registers none of it.
         GlobalKeys.shared.actions = [

@@ -43,6 +43,7 @@ struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.appearance) private var appearance = BenchAppearance.system.rawValue
     @AppStorage(SettingsKey.appIcon) private var appIcon = AppIconChoice.standard.rawValue
     @AppStorage(SettingsKey.shareTaskWithNidus) private var shareTaskWithNidus = false
+    @AppStorage(SettingsKey.showMenuBarHome) private var menuBarHome = true
     @ObservedObject private var lab = LabModel.shared
 
     private var version: String {
@@ -103,6 +104,13 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            Section("Menu bar") {
+                Toggle(isOn: $menuBarHome) {
+                    Text("Show Capsid in the menu bar")
+                    Text("A quiet glyph, with a count when something needs you. Click it to answer, see what works and today's results, and start a session.")
+                }
+            }
+
             UpdatesSection()
 
             KeptFolderSection()
@@ -129,7 +137,7 @@ struct GeneralSettingsView: View {
                 }
             }
         }
-        .settingsPage(height: 1010)
+        .settingsPage(height: 1100)
         .onChange(of: appearance) { BenchAppearance.apply() }
         .onChange(of: appIcon) { AppIconDock.shared.apply() }
     }
@@ -161,8 +169,8 @@ struct PanelSettingsView: View {
                 }
                 .disabled(!showPanel)
                 Toggle(isOn: $menuBarSpecimen) {
-                    Text("Show it in the menu bar too")
-                    Text("While a session works, or a count while any wait. Click it for every session.")
+                    Text("Play it in the menu bar too")
+                    Text("The specimen takes the place of Capsid's glyph in the menu bar while a session works. Turning it on shows Capsid there (Settings \u{2192} General).")
                 }
             }
 

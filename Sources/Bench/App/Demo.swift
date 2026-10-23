@@ -114,6 +114,9 @@ enum Demo {
         /// card instead. Nothing is read from Claude Science, and answering
         /// sends nothing anywhere.
         case sinceYouLeft = "since-you-left"
+        /// The menu bar home (Companion/CompanionDemo.swift): its popover's content in a plain window,
+        /// on made-up sessions, files and a limit; `--step since`, `empty` or `busy` for the other states.
+        case menuBar = "menubar"
     }
 
     /// `--step` with `--demo since-you-left`; `sheet` when missing.
@@ -321,6 +324,8 @@ enum Demo {
             } else {
                 SinceYouLeftDemo.show(quiet: isQuiet)
             }
+        case .menuBar?:
+            CompanionDemo.show(quiet: isQuiet)
         case nil:
             break
         }
@@ -406,7 +411,7 @@ enum Demo {
         showBackdrop()
         LabPanelController.shared.start()
         // `-showMenuBarSpecimen YES` shows it too, for a look and a CPU check.
-        MenuBarSpecimen.shared.start()
+        MenuBarHome.shared.start()
     }
 
     /// The panel's glass samples whatever is behind it, which could be
