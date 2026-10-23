@@ -77,9 +77,6 @@ final class CompanionPanelController: NSObject {
 
     var isShowing: Bool { window?.isVisible == true }
 
-    /// The popover's content while it is up: a demo presses its project pill through accessibility.
-    var content: NSView? { hosting }
-
     // MARK: Showing
 
     /// The item was clicked: opens the popover under it, or puts it away if it is up.
@@ -128,7 +125,9 @@ final class CompanionPanelController: NSObject {
         let frame = CompanionPlacement.frame(size: size, anchor: anchor, visible: area)
         top = frame.maxY
         window.setFrame(frame, display: true)
-        installWatchers(window)
+        // A quiet demo's panel is there to be looked at while the Mac is in use: a click or a switch elsewhere
+        // doesn't put it away.
+        if !(Demo.isQuiet && stage != nil) { installWatchers(window) }
         window.orderFrontRegardless()
         if takesKeyboard { window.makeKey() }
     }

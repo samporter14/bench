@@ -70,8 +70,7 @@ struct CompanionSnapshotTests {
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for dark in [false, true] {
-            // `panel` and `projects` are the real window's, for a capture.
-            for step in CompanionDemo.Step.allCases where step != .panel && step != .projects {
+            for step in CompanionDemo.Step.allCases where step != .panel {
                 let rep = try await image(of: step, dark: dark)
                 let png = try #require(rep.representation(using: .png, properties: [:]))
                 try png.write(to: directory.appendingPathComponent("menubar-\(step.rawValue)-\(dark ? "dark" : "light").png"))

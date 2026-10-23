@@ -14,9 +14,11 @@
 // backdrop of our own, with no menu bar item and without taking the keyboard),
 // then `recent` (nothing needs you or works: Recent's five), `typing` (words in
 // the field and the line under it), `started` ("Started in …" and Open),
-// `failed` (a start Capsid can't confirm), and `projects` (the real panel with
-// the project pill's menu open). The field's ↩ goes to a sender of its own that
-// waits a moment and says it started: nothing is sent anywhere.
+// and `failed` (a start Capsid can't confirm). The field's ↩ goes to a sender of
+// its own that waits a moment and says it started: nothing is sent anywhere.
+// (No step opens the project pill's menu: a menu opened in a background demo
+// makes its panel key, and the panel would take the typing of whoever is at
+// the Mac.)
 import AppKit
 import Combine
 import SwiftUI
@@ -33,8 +35,6 @@ enum CompanionDemo {
         case started
         /// A start Capsid can't confirm, in the flow's words.
         case failed
-        /// The real panel with the project pill's menu open.
-        case projects
     }
 
     /// What the popover sits on in a plain window or a picture: a stand-in for the blurred wallpaper the
@@ -177,7 +177,7 @@ enum CompanionDemo {
         var asking = [made.question, made.plan]
         var quiet = made.quiet
         switch step {
-        case .board, .since, .unread, .panel, .typing, .started, .failed, .projects: break
+        case .board, .since, .unread, .panel, .typing, .started, .failed: break
         case .empty:
             working = []
             asking = []
@@ -270,11 +270,12 @@ enum CompanionDemo {
     /// `--demo menubar`: the popover on the board's neutral ground, in a plain window.
     static func show(quiet: Bool) {
         let made = made(step)
-        if step == .panel || step == .projects {
+        if step == .panel {
             showPanel(made, quiet: quiet)
-            if step == .projects { openProjectMenu() }
             return
         }
+        // The room a 900-point space under the menu bar leaves, as the panel works it out.
+        made.model.room = 900 - CompanionHomeView.pinnedHeight
         made.model.open()
         fill(made, step: step)
         let view = CompanionDemoWindow(model: made.model, presenting: made.presenting, actions: actions(made))
@@ -315,30 +316,6 @@ enum CompanionDemo {
         CompanionPanelController.shared.stage = CompanionPanelController.Stage(model: made.model, actions: actions)
         let anchor = CGRect(x: area.maxX - 150, y: area.maxY, width: 36, height: 24)
         CompanionPanelController.shared.show(below: anchor, itemWindow: nil, takesKeyboard: !quiet)
-    }
-
-    /// `--step projects`: once the panel is up, its project pill is pressed through accessibility (the button's
-    /// own press, no event posted), so the real menu opens for a capture.
-    private static func openProjectMenu() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            MainActor.assumeIsolated {
-                guard let root = CompanionPanelController.shared.content,
-                      let pill = accessible(in: root, labelled: "Project, ") else { return }
-                if !pill.accessibilityPerformShowMenu() { _ = pill.accessibilityPerformPress() }
-            }
-        }
-    }
-
-    /// The first accessibility element under `element` whose label starts with `prefix`.
-    private static func accessible(in element: NSAccessibilityProtocol, labelled prefix: String, depth: Int = 0) -> NSAccessibilityProtocol? {
-        guard depth < 60 else { return nil }
-        if element.accessibilityLabel()?.hasPrefix(prefix) == true { return element }
-        for child in element.accessibilityChildren() ?? [] {
-            if let child = child as? NSAccessibilityProtocol, let found = accessible(in: child, labelled: prefix, depth: depth + 1) {
-                return found
-            }
-        }
-        return nil
     }
 
     // MARK: The pictures

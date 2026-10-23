@@ -347,6 +347,14 @@ struct CompanionStartTests {
         #expect(unplanned.start.line == .hint("↩ starts it without a plan first"))
     }
 
+    @Test func thePlanSettingIsQuickStartsBoxAsItLastWasAndOnBeforeItHasOpened() {
+        #expect(CompanionStart.planFirst(of: nil), "Quick Start hasn't opened: its box's own default, on")
+        let model = QuickStartModel(dependencies: QuickStartModel.Dependencies(
+            recipes: { [] }, recentProjects: { [] }, allProjects: { nil }, viewed: { nil }, sender: FakeSender(), close: {}))
+        model.planFirst = false
+        #expect(CompanionStart.planFirst(of: model) == false)
+    }
+
     @Test func commandReturnHandsTheWordsTheProjectAndThePlanToQuickStart() async {
         #expect(CompanionStart.onReturn(command: true, hasText: true) == .quickStart)
         #expect(CompanionStart.onReturn(command: false, hasText: true) == .start)

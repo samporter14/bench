@@ -66,10 +66,14 @@ final class CompanionStart: ObservableObject {
         static func live() -> Dependencies {
             Dependencies(recentProjects: { QuickStartProjects.recent(from: LabModel.shared.sessions) },
                          allProjects: { await QuickStartProjects.fromDatabase() },
-                         planFirst: { QuickStartController.shared.model?.planFirst ?? true },
+                         planFirst: { CompanionStart.planFirst(of: QuickStartController.shared.model) },
                          sender: QuickStartFlow.shared)
         }
     }
+
+    /// "Ask for a plan first" as Quick Start last had it: its panel's box, or on (the box's own default) when
+    /// the panel hasn't opened since Capsid started.
+    static func planFirst(of quickStart: QuickStartModel?) -> Bool { quickStart?.planFirst ?? true }
 
     /// How many projects the menu lists before "Other Projects", as Quick Start shows that many chips.
     static let menuCount = QuickStartModel.chipCount
@@ -94,8 +98,6 @@ final class CompanionStart: ObservableObject {
 
     private let dependencies: Dependencies
     private var ledger = IntentLedger()
-    /// The pill was used since the popover opened.
-    private var projectChosen = false
     private var loading: Task<Void, Never>?
     private var sending: Task<Void, Never>?
     /// A send that ended while the popover was closed: its outcome hasn't been seen.
@@ -116,7 +118,6 @@ final class CompanionStart: ObservableObject {
             text = ""
             phase = .editing
             progress = nil
-            projectChosen = false
             projectID = nil
             ledger.sent()
         }
@@ -168,9 +169,7 @@ final class CompanionStart: ObservableObject {
     var pillTitle: String { project?.name ?? CompanionText.chooseProject }
 
     func choose(_ project: QuickStartProject) {
-        guard !inFlight else { return }
-        projectChosen = true
-        guard projectID != project.id else { return }
+        guard !inFlight, projectID != project.id else { return }
         projectID = project.id
         if case .failed = phase { phase = .editing }
     }
@@ -217,7 +216,7 @@ final class CompanionStart: ObservableObject {
         sending = nil
         progress = nil
         outcomeUnseen = !isOpen
-        guard case .newSession(let projectID) = request.target else { return }
+        let projectID = if case .newSession(let id) = request.target { id } else { "" }
         switch outcome {
         case .started(let id, let sentence):
             ledger.sent()
