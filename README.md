@@ -164,6 +164,8 @@ When a figure is going into a paper, **Keep with Data and Code…** (⌥⌘K) ke
 the real version with the data it was drawn from and the script that drew it,
 and the Shelf lets you write the legend you'll use beside it.
 
+<img src="docs/shelf.png" width="600" alt="The Shelf window with heatmap typed in its search: two shelved heatmaps as cards, then In your sessions with five more files from other sessions, each with Add to Shelf, and the selected figure's detail with where it came from">
+
 ## An answer beside the work
 
 When you're writing from what Claude found, you want the answer next to the
@@ -178,6 +180,8 @@ came from and when, and a link that opens the session in Capsid. **Window →
 Keep on Top** floats the window over your document; Open Conversation takes
 you to the session itself. The window reads the conversation the way the
 phone does, a page at a time, waits while you type, and writes nothing.
+
+<img src="docs/reference.png" width="300" alt="A reference window titled Plate reader QC, read only: the question, then Claude's figure full width with Add to Shelf under it, and Copy with Source and Open Conversation at the foot">
 
 ## Start from anywhere
 
@@ -195,6 +199,8 @@ Capsid also lives in the **menu bar**: a quiet glyph with a count of what
 needs you. A click opens a glass home with a Quick Start field, what needs you
 (answer from the row), what's working, today's results and your 5-hour limit.
 Turn it off in Settings → General.
+
+<img src="docs/quick-start.png" width="420" alt="Quick Start over the desktop: a request, an attached spreadsheet, project chips, Ask for a plan first, three recipes with their keys, and Start"> <img src="docs/menu-bar.png" width="250" alt="The menu-bar home: a Quick Start field, Needs you with Reply and Approve, two working sessions with their clocks, today's results as tiles, and the 5-hour limit">
 
 ## The panel, while it works
 
@@ -218,6 +224,8 @@ window when that's the window you're using; otherwise the panel shows a card,
 and the activity list keeps a section at the top until you press Done. Your
 phone shows the same. Turn the sheet off in its own foot, or in Settings →
 Alerts.
+
+<img src="docs/since-you-left.png" width="520" alt="The Since you left sheet after 2 hours 14 minutes: 3 finished, 1 stopped, 1 needs you; a question to answer with its choices, finished sessions with Claude's last words and their files, a stopped session with why, and the 5-hour limit used while away">
 
 ## Capsid on your phone
 
