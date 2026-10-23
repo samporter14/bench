@@ -575,6 +575,7 @@ struct SessionQueueDeadlineTests {
         // A is sending: its write is out and hasn't answered.
         let a = Task { @MainActor in await sessions.respond(approve, session: root) }
         await waitUntil { rig.isParked }
+        await rig.clock.until(waiting: 1)
         #expect(rig.clock.waiting() == 1, "A's turn deadline")
         // B queues behind A and is cancelled while it waits: its caller hears at once.
         let b = Task { @MainActor in await sessions.respond(approve, session: root) }
