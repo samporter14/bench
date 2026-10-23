@@ -203,23 +203,26 @@ struct ShelfWordsTests {
         #expect(caption(ago(days: 400)) == "Plate reader QC \u{00B7} Sep 17, 2025")
     }
 
+    /// Board 12's line: "Session · Project · version N · time", the time Claude answered as a card says it.
     @Test func theDetailSaysWhereItCameFrom() {
         func line(_ result: KeptResult) -> String {
             ShelfRules.sourceLine(for: item(result), now: now, calendar: calendar, locale: english).replacingOccurrences(of: "\u{202F}", with: " ")
         }
-        #expect(line(result(answerAt: ago(minutes: 25))) == "From Claude\u{2019}s answer at 8:47 AM in \u{201C}Plate reader QC\u{201D} \u{00B7} Assay development \u{00B7} version 3")
+        #expect(line(result(answerAt: ago(minutes: 25))) == "Plate reader QC \u{00B7} Assay development \u{00B7} version 3 \u{00B7} 8:47 AM")
         // Another day: the day, not the time of an hour that wasn't today.
-        #expect(line(result(answerAt: ago(days: 3))) == "From Claude\u{2019}s answer on Mon in \u{201C}Plate reader QC\u{201D} \u{00B7} Assay development \u{00B7} version 3")
-        #expect(line(result(answerAt: ago(days: 1))) == "From Claude\u{2019}s answer yesterday in \u{201C}Plate reader QC\u{201D} \u{00B7} Assay development \u{00B7} version 3")
-        #expect(line(result(answerAt: ago(days: 12))).hasPrefix("From Claude\u{2019}s answer on Oct 10 in "))
+        #expect(line(result(answerAt: ago(days: 3))) == "Plate reader QC \u{00B7} Assay development \u{00B7} version 3 \u{00B7} Mon")
+        #expect(line(result(answerAt: ago(days: 1))) == "Plate reader QC \u{00B7} Assay development \u{00B7} version 3 \u{00B7} Yesterday")
+        #expect(line(result(answerAt: ago(days: 12))) == "Plate reader QC \u{00B7} Assay development \u{00B7} version 3 \u{00B7} Oct 10")
         // No time known (kept before the shelf), "version 3 of 4".
-        #expect(line(result(index: 3, of: 4)) == "From Claude\u{2019}s answer in \u{201C}Plate reader QC\u{201D} \u{00B7} Assay development \u{00B7} version 3 of 4")
-        // No words kept.
-        #expect(line(result(said: "")) == "From \u{201C}Plate reader QC\u{201D} \u{00B7} Assay development \u{00B7} version 3")
-        // No version number to give.
-        #expect(line(result(index: nil)) == "From Claude\u{2019}s answer in \u{201C}Plate reader QC\u{201D} \u{00B7} Assay development")
+        #expect(line(result(index: 3, of: 4)) == "Plate reader QC \u{00B7} Assay development \u{00B7} version 3 of 4")
+        // No words kept: no answer to give the time of.
+        #expect(line(result(said: "", answerAt: ago(minutes: 25))) == "Plate reader QC \u{00B7} Assay development \u{00B7} version 3")
+        // No version number to give, no project.
+        #expect(line(result(index: nil)) == "Plate reader QC \u{00B7} Assay development")
+        #expect(line(result(project: "", answerAt: ago(minutes: 25))) == "Plate reader QC \u{00B7} version 3 \u{00B7} 8:47 AM")
     }
 
+    /// The line has no room for it, so a note under Claude's words says these are the session's last.
     @Test func theLastAnswerIsSaidToBeTheLast() {
         var last = result(answerAt: ago(minutes: 25))
         last = KeptResult(folder: last.folder, collection: last.collection, record: last.record,
@@ -228,15 +231,18 @@ struct ShelfWordsTests {
                                          origin: ""))
         #expect(ShelfRules.isLastAnswer(last.text))
         #expect(ShelfRules.sourceLine(for: item(last), now: now, calendar: calendar, locale: english).replacingOccurrences(of: "\u{202F}", with: " ")
-            == "From Claude\u{2019}s last answer at 8:47 AM in \u{201C}Plate reader QC\u{201D} \u{00B7} Assay development \u{00B7} version 3")
+            == "Plate reader QC \u{00B7} Assay development \u{00B7} version 3 \u{00B7} 8:47 AM")
+        #expect(ShelfRules.lastAnswerNote(for: item(last)) == "Claude\u{2019}s last answer in the session; the one that showed this wasn\u{2019}t found.")
         #expect(!ShelfRules.isLastAnswer(result().text))
+        #expect(ShelfRules.lastAnswerNote(for: item(result())) == nil)
     }
 
+    /// Board 12 shows the question in quotes, muted, without "You asked:".
     @Test func whatYouAskedIsOneLineAndOnlyWhenKnown() {
         #expect(ShelfRules.askedLine(for: item(result())) == nil)
         #expect(ShelfRules.askedLine(for: item(result(question: "  \n "))) == nil)
         #expect(ShelfRules.askedLine(for: item(result(question: "Plot Z\u{2032} by plate,\nand show me\n\n where plate 7 goes wrong.")))
-            == "You asked: \u{201C}Plot Z\u{2032} by plate, and show me where plate 7 goes wrong.\u{201D}")
+            == "\u{201C}Plot Z\u{2032} by plate, and show me where plate 7 goes wrong.\u{201D}")
     }
 
     @Test func theEmptyStatesSayWhatToDo() {

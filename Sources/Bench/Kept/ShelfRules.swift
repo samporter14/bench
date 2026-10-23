@@ -3,9 +3,11 @@
 // Tables), how the kept folders found on disk become the items the window
 // shows (one item for each figure version, the folder kept with data and code
 // beating a lighter one), which of them a project, a kind and a search leave,
-// what each card and the detail say about where it came from, and the words
-// of the README an add writes. Nothing here touches the disk or the page, so
-// the tests run it on made-up folders.
+// the days they are shown under (board 12: Today, Yesterday, This week…) and
+// how many cards a row holds, a name with its extension set apart, what each
+// card and the detail say about where it came from, what the detail's ⋯ menu
+// holds, and the words of the README an add writes. Nothing here touches the
+// disk or the page, so the tests run it on made-up folders.
 import Foundation
 
 /// The three chips above the grid.
@@ -69,6 +71,11 @@ struct ShelfItem: Identifiable, Equatable, Sendable {
     var addedAt: Date { ([result] + others).map(\.record.keptAt).max() ?? record.keptAt }
     /// Kept with data or code, or with a legend written: the detail shows them too.
     var hasMore: Bool { !record.files.isEmpty || !result.text.legend.isEmpty }
+    /// The name as a card and the detail draw it: the file's name and its extension apart, the extension in grey;
+    /// a keep's own name whole.
+    var nameParts: ShelfRules.NameParts { ShelfRules.nameParts(title: title, fileName: fileName) }
+    /// Keep with Data and Code… can be asked for: a version to keep, and not kept with its data and code already.
+    var canKeepWithDataAndCode: Bool { record.files.isEmpty && version != nil }
     /// Whether any of the folders is `folder`.
     func contains(folder url: URL) -> Bool { folders.contains { $0.path == url.path } }
 }
@@ -114,6 +121,123 @@ enum ShelfRules {
         }
         if KeptName.isDated(name) { name = String(name.dropLast(16)) }
         return name == stem ? file : record.name
+    }
+
+    /// A name and the extension drawn after it in grey: "z_prime_by_plate" and ".png".
+    struct NameParts: Equatable, Sendable {
+        let name: String
+        /// With its dot; empty when there is none to set apart.
+        let ext: String
+        var whole: String { name + ext }
+    }
+
+    /// The title split for drawing: a file's own name loses its extension to the grey part (the last dot's,
+    /// one to eight letters and digits with a letter among them, so "results_v1.0" and "notes." stay whole), and a
+    /// keep's own name (a title that isn't the file's name) is never split.
+    static func nameParts(title: String, fileName: String) -> NameParts {
+        guard title == fileName, let dot = title.lastIndex(of: "."), dot > title.startIndex else { return NameParts(name: title, ext: "") }
+        let ext = title[title.index(after: dot)...]
+        guard (1...8).contains(ext.count), ext.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }),
+              ext.contains(where: \.isLetter) else { return NameParts(name: title, ext: "") }
+        return NameParts(name: String(title[..<dot]), ext: String(title[dot...]))
+    }
+
+    // MARK: Days
+
+    /// A heading over the cards: when they were put on the shelf, in the user's calendar.
+    enum Day: Hashable, Sendable {
+        case today
+        case yesterday
+        /// The five days before yesterday: the cards that say a weekday ("Mon").
+        case thisWeek
+        /// Before that, in this month.
+        case earlierThisMonth
+        /// An older month.
+        case month(year: Int, month: Int)
+
+        /// "Today", "Yesterday", "This week", "Earlier this month", then the month: "September", or "September 2025"
+        /// in another year.
+        func title(now: Date, calendar: Calendar = .current, locale: Locale = .current) -> String {
+            switch self {
+            case .today: return "Today"
+            case .yesterday: return "Yesterday"
+            case .thisWeek: return "This week"
+            case .earlierThisMonth: return "Earlier this month"
+            case .month(let year, let month):
+                var parts = DateComponents()
+                parts.year = year
+                parts.month = month
+                parts.day = 15
+                guard let date = calendar.date(from: parts) else { return "\(year)" }
+                let style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+                let sameYear = calendar.component(.year, from: now) == year
+                return date.formatted(sameYear ? style.month(.wide) : style.month(.wide).year())
+            }
+        }
+    }
+
+    /// The heading a card shelved at `date` goes under. The same days as a card's caption (`when`): today, yesterday,
+    /// the five days before (the weekday on the card), then earlier this month, then the month. A date after `now`
+    /// (a clock set wrong somewhere) is today's.
+    static func day(of date: Date, now: Date, calendar: Calendar = .current) -> Day {
+        let today = calendar.startOfDay(for: now)
+        if date >= today { return .today }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: today), date >= yesterday { return .yesterday }
+        if let week = calendar.date(byAdding: .day, value: -6, to: today), date >= week { return .thisWeek }
+        let parts = calendar.dateComponents([.year, .month], from: date)
+        let year = parts.year ?? 0, month = parts.month ?? 0
+        let current = calendar.dateComponents([.year, .month], from: now)
+        if year == current.year, month == current.month { return .earlierThisMonth }
+        return .month(year: year, month: month)
+    }
+
+    /// One heading and its cards.
+    struct DayGroup: Identifiable, Equatable, Sendable {
+        let day: Day
+        let items: [ShelfItem]
+        var id: Day { day }
+    }
+
+    /// The items under their headings, in the order given (newest first, so each day's cards are together and the
+    /// newest is at the top); a day with nothing on it has no heading.
+    static func days(_ items: [ShelfItem], now: Date, calendar: Calendar = .current) -> [DayGroup] {
+        var order: [Day] = []
+        var grouped: [Day: [ShelfItem]] = [:]
+        for item in items {
+            let day = day(of: item.addedAt, now: now, calendar: calendar)
+            if grouped[day] == nil { order.append(day) }
+            grouped[day, default: []].append(item)
+        }
+        return order.map { DayGroup(day: $0, items: grouped[$0] ?? []) }
+    }
+
+    /// The rows the cards make, as positions in the whole list: each day's cards `columns` to a row, a day starting a
+    /// row of its own. ↑ and ↓ move by these.
+    static func rows(groupSizes: [Int], columns: Int) -> [[Int]] {
+        let columns = max(1, columns)
+        var rows: [[Int]] = []
+        var start = 0
+        for size in groupSizes where size > 0 {
+            var at = start
+            while at < start + size {
+                rows.append(Array(at..<min(at + columns, start + size)))
+                at += columns
+            }
+            start += size
+        }
+        return rows
+    }
+
+    // MARK: The grid's width
+
+    /// Room around the page's edges, between cards, and the least a card is drawn at.
+    static let gutter: CGFloat = 24, gap: CGFloat = 18, leastCard: CGFloat = 240
+
+    /// How many cards a row holds in a window `width` points wide: three at the window's first size, two at its
+    /// narrowest, more when it is made wide.
+    static func columns(forWidth width: CGFloat) -> Int {
+        let room = width - 2 * gutter
+        return max(1, Int(((room + gap) / (leastCard + gap)).rounded(.down)))
     }
 
     // MARK: Showing them
@@ -197,38 +321,67 @@ enum ShelfRules {
         text.attribution.hasPrefix("From Claude\u{2019}s last answer")
     }
 
-    /// "From Claude’s answer at 8:47 AM in “Plate reader QC” · Assay development · version 3".
+    /// "Plate reader QC · Assay development · version 3 · 8:47 AM": the session, the project, the version and when
+    /// Claude answered (the time today, "Yesterday", the weekday this week, else the day), each only when known.
     static func sourceLine(for item: ShelfItem, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         let record = item.record
-        var head: String
-        if item.text.claudeSaid.isEmpty {
-            head = "From"
-        } else {
-            head = isLastAnswer(item.text) ? "From Claude\u{2019}s last answer" : "From Claude\u{2019}s answer"
-            if let at = record.answerAt {
-                let phrase = when(at, now: now, calendar: calendar, locale: locale)
-                if calendar.isDate(at, inSameDayAs: now) {
-                    head += " at \(phrase)"
-                } else {
-                    head += phrase == "Yesterday" ? " yesterday" : " on \(phrase)"
-                }
-            }
-            head += " in"
-        }
-        var parts = ["\(head) \u{201C}\(record.sessionTitle)\u{201D}"]
+        var parts = [record.sessionTitle]
         if !record.projectName.isEmpty { parts.append(record.projectName) }
         if let index = record.figure.index {
             parts.append(record.figure.of.map { "version \(index) of \($0)" } ?? "version \(index)")
         }
-        return parts.joined(separator: " \u{00B7} ")
+        if !item.text.claudeSaid.isEmpty, let at = record.answerAt {
+            parts.append(when(at, now: now, calendar: calendar, locale: locale))
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
     }
 
-    /// "You asked: “…”", from what the user asked, flattened to one line;
-    /// nil when it isn't known.
+    /// What the user asked, in quotes and flattened to one line; nil when it isn't known.
     static func askedLine(for item: ShelfItem) -> String? {
         guard let question = item.record.question else { return nil }
         let flat = flatten(question)
-        return flat.isEmpty ? nil : "You asked: \u{201C}\(flat)\u{201D}"
+        return flat.isEmpty ? nil : "\u{201C}\(flat)\u{201D}"
+    }
+
+    /// Under Claude's words when they are the session's last answer, standing in for the one that showed the file:
+    /// said, so they aren't read as being about it. Nil otherwise.
+    static func lastAnswerNote(for item: ShelfItem) -> String? {
+        guard !item.text.claudeSaid.isEmpty, isLastAnswer(item.text) else { return nil }
+        return "Claude\u{2019}s last answer in the session; the one that showed this wasn\u{2019}t found."
+    }
+
+    // MARK: The detail's ⋯ menu
+
+    /// One line of the ⋯ menu beside Show Where It Came From and Copy.
+    enum MoreItem: Hashable, Sendable {
+        case keepWithDataAndCode
+        case exportPDF
+        case divider
+        case remove
+
+        /// The menu's words; the divider has none.
+        var title: String {
+            switch self {
+            case .keepWithDataAndCode: "Keep with Data and Code\u{2026}"
+            case .exportPDF: ShelfPDFRules.exportName(count: 1)
+            case .divider: ""
+            case .remove: "Remove"
+            }
+        }
+
+        /// The same as VoiceOver offers it, as an action on the detail card: no ellipsis.
+        var spoken: String {
+            switch self {
+            case .exportPDF: ShelfPDFRules.exportSpoken(count: 1)
+            default: title.replacingOccurrences(of: "\u{2026}", with: "")
+            }
+        }
+    }
+
+    /// What the ⋯ menu holds, in order: Keep with Data and Code… when it can be asked for, Export Figure as PDF…, and
+    /// Remove last, after a divider.
+    static func moreMenu(canKeep: Bool) -> [MoreItem] {
+        (canKeep ? [.keepWithDataAndCode] : []) + [.exportPDF, .divider, .remove]
     }
 
     static func flatten(_ text: String) -> String {

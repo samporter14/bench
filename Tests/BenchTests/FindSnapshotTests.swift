@@ -72,7 +72,7 @@ struct FindSnapshotTests {
         index.refresh()
         for _ in 0..<100 where index.results.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
         let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
-        let size = NSSize(width: 880, height: 820)
+        let size = KeptWindowController.size
 
         func shelfWindow(_ text: String, finder: ShelfFinder? = nil, on other: Shelf? = nil) -> ShelfView {
             let target = other ?? shelf
@@ -155,7 +155,7 @@ struct FindSnapshotTests {
         let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
         let model = ShelfModel(shelf: shelf)
         model.finder = FindDemo.finder(shelf: shelf, root: root)
-        let size = NSSize(width: 880, height: 820)
+        let size = KeptWindowController.size
         let host = NSHostingView(rootView: Window(model: model, content: ShelfView(model: model, thumbnails: thumbnails, quickLook: KeptQuickLook())))
         host.appearance = NSAppearance(named: .aqua)
         host.frame = CGRect(origin: .zero, size: size)

@@ -753,6 +753,8 @@ struct ShelfWindowRulesTests {
         await rig.shelve(9)
         await rig.index.refreshAndWait()
         let model = ShelfModel(shelf: rig.shelf)
+        // Four to a row, as a wide window has them (the window says how many; three at its first width).
+        model.columns = 4
         #expect(model.shown.map(\.fileName) == (1...9).reversed().map { "item_\($0).png" })
         func at() -> Int { model.shown.firstIndex { $0.id == model.selection } ?? -1 }
         #expect(at() == 0)
