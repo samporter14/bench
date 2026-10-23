@@ -19,8 +19,8 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "775a29a500b5",
-        "/app.css": "16831b9bd96a",
+        "/app.js": "006c8d22076f",
+        "/app.css": "b948887bc2c7",
     ]
 
     /// Ready-made PNG icons. nil: the server draws them from `iconGlyph` (RemoteIcon).
@@ -49,14 +49,14 @@ enum RemoteWebApp {
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
 <link rel="icon" type="image/png" href="/icon-180.png">
-<link rel="stylesheet" href="/app.css?v=16831b9bd96a">
+<link rel="stylesheet" href="/app.css?v=b948887bc2c7">
 </head>
 <body>
 <div id="root"></div>
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=775a29a500b5"></script>
+<script type="module" src="/app.js?v=006c8d22076f"></script>
 </body>
 </html>
 """#
@@ -105,6 +105,9 @@ ftext: dict(),       // version id -> the text, markdown or table of a file
 seen: dict(),        // 's:<id>' / 'f:<version>' -> when it was last on screen, as a count (trimCaches)
 clock: 0,
 wrap: false,
+sinceKey: '',        // the stretch away (`since.awayAt`) the next three belong to
+sinceAsked: dict(),  // what the Since you left section has asked for, once each
+sinceNote: dict(),   // session id -> what happened to the answer chosen in the section
 };
 const splitQuery = matchMedia('(min-width: 768px) and (min-height: 500px)');
 S.split = splitQuery.matches;
@@ -504,6 +507,7 @@ const t = +el.dataset.t;
 el.textContent = Number.isFinite(t) ? mmss(now - t) : '–:––';
 }
 if (S.n % 20 === 0) for (const el of root.querySelectorAll('time.rel')) el.textContent = ago(el._ms);
+if (S.n % 20 === 0) for (const el of root.querySelectorAll('[data-pre]')) el.textContent = el.dataset.pre + spanText(+el.dataset.from, el.dataset.to ? +el.dataset.to : NaN);
 if (S.view === 'app') {
 if (now - S.lastOk > 30000 && !S.refreshing && now - S.lastTry > 25000) refresh(false);
 pill();
@@ -883,18 +887,159 @@ h('progress', { max: '100', value: String(pct), class: pct >= 90 ? 'hot' : null,
 pace ? h('div', { class: 'u-pace', text: pace }) : null);
 })));
 }
+/* ---------- Since you left ----------
+The state's `since` (version 1) says what changed while the person was away from the Mac: the counts, the sessions that
+ask, finished and stopped (at most six rows), and how long. An older Capsid sends none and an older page ignores it.
+The question, its choices and the last words of a finished session are read from the session's own screen data
+(`/api/sessions/<id>`), a few at a time and once each; a finished row's picture is its artifacts' first image. */
+function awaySpan(minutes) {
+const m = Math.max(1, Math.round(minutes));
+const d = Math.floor(m / 1440);
+const hh = Math.floor((m % 1440) / 60);
+const mm = m % 60;
+if (d) return hh ? `${d} d ${hh} h` : `${d} d`;
+if (hh) return mm ? `${hh} h ${mm} min` : `${hh} h`;
+return `${mm} min`;
+}
+function sinceHeadline(c) {
+const n = (k) => Math.max(0, Math.floor(Number(c && c[k]) || 0));
+const parts = [];
+if (n('finished')) parts.push(n('finished') + ' finished');
+if (n('stopped')) parts.push(n('stopped') + ' stopped');
+if (n('needs')) parts.push(n('needs') === 1 ? '1 needs you' : n('needs') + ' need you');
+return parts.join(', ');
+}
+function sinceOf(st) {
+const sn = st && st.since;
+if (!sn || typeof sn !== 'object' || sn.v !== 1 || !Number.isFinite(Date.parse(sn.awayAt))) return null;
+const list = (k) => (Array.isArray(sn[k]) ? sn[k].filter((x) => x && RE.sid.test(String(x.id))) : []);
+const out = { sn, asks: list('asks'), finished: list('finished'), stopped: list('stopped') };
+return sinceHeadline(sn.counts) && (out.asks.length || out.finished.length || out.stopped.length) ? out : null;
+}
+const spanText = (from, to) => awaySpan(((Number.isFinite(to) ? to : Date.now()) - from) / 60000);
+const liveSpan = (cls, prefix, from, to) => {
+const el = h('span', { class: cls });
+el.dataset.from = String(from);
+el.dataset.to = Number.isFinite(to) ? String(to) : '';
+el.dataset.pre = prefix;
+el.textContent = prefix + spanText(from, to);
+return el;
+};
+const SINCE_ASKS = 2;
+const SINCE_ROWS = 4;
+function wantSince(v) {
+const key = v.sn.awayAt;
+if (S.sinceKey !== key) { S.sinceKey = key; S.sinceAsked = dict(); S.sinceNote = dict(); }
+const again = () => { if (S.view === 'app' && (S.split ? S.side.tab === 'now' : route().name === 'now')) render(false, true); };
+const ask = (id, what, run) => {
+if (S.sinceAsked[what + id]) return;
+S.sinceAsked[what + id] = true;
+Promise.resolve(run()).then(again, again);
+};
+v.asks.slice(0, SINCE_ASKS).forEach((a) => { if (!S.sess[a.id]) ask(a.id, 's', () => loadSession(a.id)); });
+v.finished.slice(0, SINCE_ROWS).forEach((f) => {
+if (!f.line && !S.sess[f.id]) ask(f.id, 's', () => loadSession(f.id));
+if (browseOn() && !art(f.id).loaded) ask(f.id, 'a', () => loadArtifacts(f.id));
+});
+}
+function singleChoice(q) {
+if (!q || !Array.isArray(q.items) || q.items.length !== 1) return null;
+const item = q.items[0];
+return item && !item.multi && Array.isArray(item.options) && item.options.length ? { toolId: q.toolId, question: item.question, header: item.header, options: item.options } : null;
+}
+async function sinceAnswer(id, q, label) {
+const u = ui(id);
+if (u.busy.question) return;
+u.busy.question = true;
+S.sinceNote[id] = '';
+render(false, true);
+let result;
+try {
+result = describe(await send('/api/sessions/' + id + '/answer', { toolId: q.toolId, answers: { [q.question]: label } }));
+} catch (e) {
+if (e instanceof Unauth) { u.busy.question = false; return showPair(); }
+result = { ok: false, refetch: false, text: 'Couldn’t reach your Mac. Try again.' };
+}
+u.busy.question = false;
+S.sinceNote[id] = result.text;
+if (result.refetch) { await loadSession(id, true); refresh(false); }
+if (S.view === 'app') render(false, true);
+}
+function sinceAskCard(a) {
+const d = S.sess[a.id] && S.sess[a.id].data;
+const q = d && d.can && d.can.answer ? singleChoice(d.question) : null;
+const busy = !!ui(a.id).busy.question;
+const note = S.sinceNote && S.sinceNote[a.id];
+const waiting = Date.parse(a.since);
+return h('div', { class: 'since-card', 'data-key': 'sa:' + a.id },
+h('span', { class: 'since-reason' }, a.sentence || 'Needs you', Number.isFinite(waiting) ? liveSpan('since-live', ' · ', waiting) : null),
+h('a', { class: 'since-title', href: sessionHref(a.id), text: a.title }),
+q ? h('p', { class: 'since-q', text: q.question }) : null,
+...(q ? q.options.map((o, k) => h('button', {
+class: 'since-choice', type: 'button', text: o.label, disabled: busy, 'data-key': 'sc:' + a.id + ':' + k,
+onclick: () => sinceAnswer(a.id, q, o.label),
+})) : [h('a', { class: 'since-choice since-go', href: sessionHref(a.id), text: d && d.question ? 'Answer…' : 'Open' })]),
+note ? h('p', { class: 'since-note', role: 'status', text: note }) : null);
+}
+function sinceTile(f) {
+const A = browseOn() ? art(f.id) : null;
+const img = A && A.loaded ? A.items.find((x) => x.kind === 'image') : null;
+if (img) {
+return h('span', { class: 'since-pic', 'aria-hidden': 'true' }, fileImg({ alt: '', width: '104', height: '104' }, '/api/files/' + img.v + '/thumb?w=120', (el) => el.replaceWith(icon('image', 'sm'))));
+}
+const other = A && A.loaded ? A.items[0] : null;
+const ext = other ? (String(other.name || '').split('.').pop() || '').toUpperCase() : '';
+return h('span', { class: 'since-pic kind', 'aria-hidden': 'true' }, ext && ext.length <= 5 && ext !== String(other.name || '').toUpperCase() ? ext : icon('doc', 'sm'));
+}
+function sinceFinishedRow(f) {
+const d = S.sess[f.id] && S.sess[f.id].data;
+const line = f.line || (d && d.reply && typeof d.reply.text === 'string' ? d.reply.text : '');
+return h('a', { class: 'since-row', href: sessionHref(f.id), 'data-key': 'sf:' + f.id },
+sinceTile(f),
+h('span', { class: 'since-main' }, h('span', { class: 'since-title', text: f.title }), line ? h('span', { class: 'since-line', text: sinceLine(line) }) : null));
+}
+function sinceLine(text) {
+const plain = String(text).replace(/```[\s\S]*?```/g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/^[#>\-*+\s]+/gm, '').replace(/[*`]/g, '').replace(/\s+/g, ' ').trim();
+return plain.length > 140 ? plain.slice(0, 139).replace(/\s+\S*$/, '') + '…' : plain;
+}
+function sinceStoppedRow(x) {
+return h('a', { class: 'since-row', href: sessionHref(x.id), 'data-key': 'ss:' + x.id },
+h('span', { class: 'since-main' }, h('span', { class: 'since-title', text: x.title }),
+h('span', { class: 'since-line err', text: x.reason ? sinceLine(x.reason) : 'Stopped with an error' })));
+}
+function sinceHead(v) {
+const from = Date.parse(v.sn.awayAt);
+const to = v.sn.back ? Date.parse(v.sn.back) : NaN;
+return h('header', { class: 'since-head' },
+liveSpan('since-over', 'Since you left · ', from, to),
+h('h1', { class: 'since-h', tabindex: '-1', text: sinceHeadline(v.sn.counts) }));
+}
+function sinceBody(v) {
+wantSince(v);
+const more = Math.max(0, Math.floor(Number(v.sn.more) || 0));
+return h('section', { class: 'since', 'aria-label': 'Since you left' },
+...v.asks.map(sinceAskCard),
+v.finished.length ? h('h2', { class: 'since-label', text: 'Finished' }) : null,
+...v.finished.map(sinceFinishedRow),
+v.stopped.length ? h('h2', { class: 'since-label', text: 'Stopped' }) : null,
+...v.stopped.map(sinceStoppedRow),
+more ? h('p', { class: 'since-more', text: 'and ' + more + ' more, under Recent' }) : null);
+}
 function nowContent() {
 const st = S.state;
-const needs = st.needsYou || [];
-const failed = st.failed || [];
+const since = sinceOf(st);
+const shown = new Set(since ? [...since.asks, ...since.stopped].map((x) => x.id) : []);
+const needs = (st.needsYou || []).filter((n) => !shown.has(n.id));
+const failed = (st.failed || []).filter((f) => !shown.has(f.id));
 const working = st.working || [];
 const recent = st.recent || [];
 return [
-h('h1', { class: 'large', tabindex: '-1', text: 'Now' }),
+since ? sinceHead(since) : h('h1', { class: 'large', tabindex: '-1', text: 'Now' }),
+since ? sinceBody(since) : null,
 st.problem ? h('div', { class: 'banner', role: 'status' }, icon('alert'), h('span', { text: st.problem })) : null,
 st.pause ? h('div', { class: 'banner', role: 'status' }, icon('pause'),
 h('span', { text: 'Your usage limit is used up, so sending is paused. ' + resumeSentence(st.pause) })) : null,
-section('Needs you', needs.length, needs.length ? list(needs.map(needsRow)) : emptyCard('Nothing needs you')),
+since && !needs.length && since.asks.length ? null : section('Needs you', needs.length, needs.length ? list(needs.map(needsRow)) : emptyCard('Nothing needs you')),
 failed.length ? section('Stopped with an error', failed.length, list(failed.map(failedRow))) : null,
 section('Working', 0, working.length ? list(working.map(workingRow)) : emptyCard('Nothing working right now')),
 recent.length ? section('Recent', 0, list(recent.map(recentRow))) : null,
@@ -2940,6 +3085,7 @@ color-scheme: light dark;
 --muted: #5e5d59;
 --faint: #73726c;
 --line: rgba(31, 30, 29, .15);
+--strong: rgba(31, 30, 29, .3);
 --soft: rgba(31, 30, 29, .1);
 --fill: rgba(31, 30, 29, .06);
 --clay: #d97757;
@@ -2964,6 +3110,7 @@ color-scheme: light dark;
 --muted: #adaba2;
 --faint: #8f8d84;
 --line: rgba(250, 249, 245, .1);
+--strong: rgba(250, 249, 245, .32);
 --soft: rgba(250, 249, 245, .07);
 --fill: rgba(250, 249, 245, .06);
 --clay-ink: #eb9a7c;
@@ -3788,6 +3935,89 @@ a.row:hover, button.row:hover { background: var(--fill); }
 .spin .ico { animation: none; }
 .bar, .bar-t, .sw .switch, .sw .switch::after { transition: none; }
 }
+/* Since you left: the header in place of the large "Now", and what changed while the person was away (board: Phone, Since you left).
+System type at the board's sizes (px / 17 in rem, so Dynamic Type still scales it); hairline cards; clay words only as --clay-ink. */
+.since-head {
+display: flex;
+flex-direction: column;
+gap: 4px;
+margin: 4px 0 14px;
+padding: 0 4px 14px;
+border-bottom: 1px solid var(--line);
+}
+.since-over { font-size: .765rem; font-weight: 600; color: var(--muted); }
+h1.since-h {
+margin: 0;
+font: 700 1.53rem/1.15 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+letter-spacing: 0;
+color: var(--ink);
+overflow-wrap: anywhere;
+}
+.since { display: flex; flex-direction: column; gap: 12px; margin: 0 0 26px; }
+.since-card {
+display: flex;
+flex-direction: column;
+gap: 8px;
+padding: 14px;
+border: 1px solid var(--strong);
+border-radius: 14px;
+background: var(--card);
+}
+.since-reason { font-size: .71rem; font-weight: 600; color: var(--clay-ink); }
+.since-title { font-size: .885rem; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; text-decoration: none; }
+.since-card .since-title { font-size: .94rem; }
+.since-q { margin: 0; font-size: .82rem; line-height: 20px; color: var(--ink); overflow-wrap: anywhere; }
+.since-choice {
+display: flex;
+align-items: center;
+width: 100%;
+min-height: 44px;
+padding: 0 12px;
+border: 1px solid var(--strong);
+border-radius: 10px;
+background: var(--card);
+color: var(--ink);
+font-size: .885rem;
+text-align: left;
+text-decoration: none;
+cursor: pointer;
+}
+.since-choice:active { background: var(--fill); }
+.since-choice[disabled] { opacity: .5; cursor: default; }
+.since-go { color: var(--clay-ink); font-weight: 600; }
+.since-note { margin: 0; font-size: .765rem; line-height: 18px; color: var(--muted); }
+h2.since-label { margin: 6px 0 -2px; font: 600 .765rem/1.2 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; letter-spacing: 0; color: var(--muted); }
+.since-row { display: flex; align-items: center; gap: 12px; min-height: 52px; color: inherit; text-decoration: none; }
+.since-row:active .since-main { opacity: .6; }
+.since-pic {
+flex: none;
+display: flex;
+align-items: center;
+justify-content: center;
+width: 52px;
+height: 52px;
+overflow: hidden;
+border: 1px solid var(--line);
+border-radius: 8px;
+background: var(--card);
+font-size: .6rem;
+font-weight: 600;
+color: var(--muted);
+}
+.since-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.since-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.since-line {
+font-size: .765rem;
+line-height: 18px;
+color: var(--muted);
+display: -webkit-box;
+-webkit-box-orient: vertical;
+-webkit-line-clamp: 2;
+overflow: hidden;
+overflow-wrap: anywhere;
+}
+.since-line.err { color: var(--clay-ink); }
+.since-more { margin: 0 4px; font-size: .765rem; color: var(--muted); }
 """#
 
     // manifest.webmanifest

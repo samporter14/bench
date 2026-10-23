@@ -31,6 +31,10 @@ enum RemoteAPI {
         var forecasts: [PlanLimit.Kind: Forecast]
         /// The running sessions a used-up limit holds, by id (Lab/UsagePause.swift).
         var held: [String: UsagePause] = [:]
+        /// What changed while someone was away, when it is worth telling (SinceYouLeft/), and
+        /// what is known of its rows: the last words of a finished session, why one stopped.
+        var since: SinceYouLeftSummary?
+        var sinceDetails: [String: SinceYouLeftDetail] = [:]
     }
 
     /// `pause` in `/api/state`: some of the running sessions (those marked
@@ -63,9 +67,12 @@ enum RemoteAPI {
         let recent: [Recent]
         let usage: Usage?
         var pause: Pause? = nil
+        /// Since You Left, version 1 of its own (`Since.v`). Left out of the JSON while there is
+        /// none, so a state without it is the one every older phone page was written for.
+        var since: Since? = nil
 
         private enum CodingKeys: String, CodingKey {
-            case version, bench, updatedAt, problem, needsYou, failed, working, recent, usage, pause
+            case version, bench, updatedAt, problem, needsYou, failed, working, recent, usage, pause, since
         }
 
         // Written out so a missing value is `null`, as the spec shows,
@@ -82,6 +89,7 @@ enum RemoteAPI {
             try c.encode(recent, forKey: .recent)
             try c.encode(usage, forKey: .usage)
             try c.encode(pause, forKey: .pause)
+            try c.encodeIfPresent(since, forKey: .since)
         }
 
         /// The count on the phone's Home Screen icon: what needs you plus what
@@ -92,7 +100,119 @@ enum RemoteAPI {
         /// a tick.
         func at(_ date: Date) -> State {
             State(version: version, bench: bench, updatedAt: date, problem: problem, needsYou: needsYou,
-                  failed: failed, working: working, recent: recent, usage: usage, pause: pause)
+                  failed: failed, working: working, recent: recent, usage: usage, pause: pause, since: since)
+        }
+    }
+
+    /// `since` in `/api/state` (its own version 1): what changed while the person was away from the
+    /// Mac. At most six rows (needs you first, then stopped, then finished) with the whole counts, so the
+    /// headline is right; the rows' own detail is what Capsid knows without asking the page, and the
+    /// phone reads the rest from the session's screen data. Titles and projects are the user's own, for
+    /// paired devices only, as everywhere in the state.
+    struct Since: Encodable, Equatable {
+        struct Counts: Encodable, Equatable {
+            let finished: Int
+            let stopped: Int
+            let needs: Int
+        }
+
+        struct Ask: Encodable, Equatable {
+            let id: String
+            let title: String
+            let project: String
+            let reason: String
+            let sentence: String
+            /// When it began to wait.
+            let since: Date
+        }
+
+        struct Done: Encodable, Equatable {
+            let id: String
+            let title: String
+            let project: String
+            let at: Date
+            /// The first lines of Claude's last words, when Capsid has read them.
+            let line: String?
+
+            private enum CodingKeys: String, CodingKey { case id, title, project, at, line }
+
+            func encode(to encoder: any Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(id, forKey: .id)
+                try c.encode(title, forKey: .title)
+                try c.encode(project, forKey: .project)
+                try c.encode(at, forKey: .at)
+                try c.encode(line, forKey: .line)
+            }
+        }
+
+        struct Stop: Encodable, Equatable {
+            let id: String
+            let title: String
+            let project: String
+            let at: Date
+            /// Why it stopped, one line, when Capsid has read it.
+            let reason: String?
+
+            private enum CodingKeys: String, CodingKey { case id, title, project, at, reason }
+
+            func encode(to encoder: any Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(id, forKey: .id)
+                try c.encode(title, forKey: .title)
+                try c.encode(project, forKey: .project)
+                try c.encode(at, forKey: .at)
+                try c.encode(reason, forKey: .reason)
+            }
+        }
+
+        let v: Int
+        /// The last moment someone was at the Mac; the phone counts "how long" from it.
+        let awayAt: Date
+        /// When they were back, or null while they are still away.
+        let back: Date?
+        let counts: Counts
+        let asks: [Ask]
+        let finished: [Done]
+        let stopped: [Stop]
+        /// How many rows were left out of the three lists.
+        let more: Int
+
+        private enum CodingKeys: String, CodingKey { case v, awayAt, back, counts, asks, finished, stopped, more }
+
+        func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(v, forKey: .v)
+            try c.encode(awayAt, forKey: .awayAt)
+            try c.encode(back, forKey: .back)
+            try c.encode(counts, forKey: .counts)
+            try c.encode(asks, forKey: .asks)
+            try c.encode(finished, forKey: .finished)
+            try c.encode(stopped, forKey: .stopped)
+            try c.encode(more, forKey: .more)
+        }
+
+        /// Its own version, which grows only by adding fields.
+        static let version = 1
+
+        init(_ summary: SinceYouLeftSummary, details: [String: SinceYouLeftDetail]) {
+            let rows = summary.shown()
+            v = Self.version
+            awayAt = summary.since
+            back = summary.back
+            counts = Counts(finished: summary.finished.count, stopped: summary.stopped.count, needs: summary.needs.count)
+            asks = rows.needs.map {
+                let reason = $0.session.waitingReason ?? .other
+                return Ask(id: $0.id, title: $0.session.displayTitle, project: $0.session.projectName, reason: reason.rawValue,
+                           sentence: reason.sentence, since: $0.at)
+            }
+            finished = rows.finished.map {
+                Done(id: $0.id, title: $0.session.displayTitle, project: $0.session.projectName, at: $0.at, line: details[$0.id]?.answer)
+            }
+            stopped = rows.stopped.map {
+                Stop(id: $0.id, title: $0.session.displayTitle, project: $0.session.projectName, at: $0.at, reason: details[$0.id]?.reason)
+            }
+            more = rows.hidden
         }
     }
 
@@ -223,9 +343,10 @@ enum RemoteAPI {
         let pause = input.working.lazy.compactMap { input.held[$0.id] }.first.map {
             Pause(limit: name($0.limit), until: $0.until, sentence: $0.sentence(now: input.now))
         }
+        let since = input.since.flatMap { $0.isEmpty ? nil : Since($0, details: input.sinceDetails) }
         return State(version: version, bench: input.bench, updatedAt: input.now, problem: input.problem?.label,
                      needsYou: needsYou, failed: failed, working: working, recent: recent,
-                     usage: limits.isEmpty ? nil : Usage(limits: limits), pause: pause)
+                     usage: limits.isEmpty ? nil : Usage(limits: limits), pause: pause, since: since)
     }
 
     private static func kindName(_ kind: LabEvent.Kind) -> String? {
@@ -512,10 +633,21 @@ enum RemoteAPI {
 
     /// The input, from the models as they are now.
     static func input(lab: LabModel, usage: PlanUsageModel, bench: String, now: Date = Date()) -> Input {
-        Input(bench: bench, now: now, problem: lab.problem, waiting: lab.waiting, snoozed: lab.snoozed,
-              failed: failedSessions(lab: lab),
-              working: lab.working, recent: lab.recent, limits: usage.limits, forecasts: usage.forecasts,
-              held: UsagePauseModel.shared.held)
+        var input = Input(bench: bench, now: now, problem: lab.problem, waiting: lab.waiting, snoozed: lab.snoozed,
+                          failed: failedSessions(lab: lab),
+                          working: lab.working, recent: lab.recent, limits: usage.limits, forecasts: usage.forecasts,
+                          held: UsagePauseModel.shared.held)
+        // What changed while someone was away (SinceYouLeft/): while the stretch lasts, and after the return until Done.
+        if lab === LabModel.shared, let summary = SinceYouLeftModel.shared.forPhone(now: now) {
+            input.since = summary
+            var details = SinceYouLeftModel.shared.details
+            // A failure card's reason, when the card has read it, though the sheet has not.
+            for row in summary.stopped where details[row.id]?.reason == nil {
+                if let reason = FailureReasoner.shared.reason(for: row.id)?.line { details[row.id, default: .init()].reason = reason }
+            }
+            input.sinceDetails = details
+        }
+        return input
     }
 
     /// The sessions of the failure cards: `failed` in `/api/state`.
@@ -554,7 +686,9 @@ final class RemoteFeed {
 
     private var subscription: AnyCancellable?
 
-    func start(lab: LabModel, usage: PlanUsageModel, approver: PlanApprover, changed: @escaping @MainActor () -> Void) {
+    func start(lab: LabModel, usage: PlanUsageModel, approver: PlanApprover,
+               since: SinceYouLeftModel = .shared, reasons: FailureReasoner = .shared,
+               changed: @escaping @MainActor () -> Void) {
         let signals: [AnyPublisher<Void, Never>] = [
             lab.$working.map { _ in () }.eraseToAnyPublisher(),
             lab.$waiting.map { _ in () }.eraseToAnyPublisher(),
@@ -566,6 +700,11 @@ final class RemoteFeed {
             usage.$forecasts.map { _ in () }.eraseToAnyPublisher(),
             approver.$states.map { _ in () }.eraseToAnyPublisher(),
             UsagePauseModel.shared.$held.map { _ in () }.eraseToAnyPublisher(),
+            // Since You Left: a stretch begins or ends, what was read for its rows lands, a failure's reason is read.
+            since.$awaySince.map { _ in () }.eraseToAnyPublisher(),
+            since.$pending.map { _ in () }.eraseToAnyPublisher(),
+            since.$details.map { _ in () }.eraseToAnyPublisher(),
+            reasons.$states.map { _ in () }.eraseToAnyPublisher(),
         ]
         // @Published publishes before the value changes; after the wait the
         // models hold the new values.

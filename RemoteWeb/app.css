@@ -9,6 +9,7 @@
   --muted: #5e5d59;
   --faint: #73726c;
   --line: rgba(31, 30, 29, .15);
+  --strong: rgba(31, 30, 29, .3);
   --soft: rgba(31, 30, 29, .1);
   --fill: rgba(31, 30, 29, .06);
   --clay: #d97757;
@@ -33,6 +34,7 @@
     --muted: #adaba2;
     --faint: #8f8d84;
     --line: rgba(250, 249, 245, .1);
+    --strong: rgba(250, 249, 245, .32);
     --soft: rgba(250, 249, 245, .07);
     --fill: rgba(250, 249, 245, .06);
     --clay-ink: #eb9a7c;
@@ -911,3 +913,87 @@ body:has(.tabbar) .pill { bottom: calc(72px + env(safe-area-inset-bottom)); }
   .spin .ico { animation: none; }
   .bar, .bar-t, .sw .switch, .sw .switch::after { transition: none; }
 }
+
+/* Since you left: the header in place of the large "Now", and what changed while the person was away (board: Phone, Since you left).
+   System type at the board's sizes (px / 17 in rem, so Dynamic Type still scales it); hairline cards; clay words only as --clay-ink. */
+.since-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 14px;
+  padding: 0 4px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.since-over { font-size: .765rem; font-weight: 600; color: var(--muted); }
+h1.since-h {
+  margin: 0;
+  font: 700 1.53rem/1.15 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  letter-spacing: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.since { display: flex; flex-direction: column; gap: 12px; margin: 0 0 26px; }
+.since-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--strong);
+  border-radius: 14px;
+  background: var(--card);
+}
+.since-reason { font-size: .71rem; font-weight: 600; color: var(--clay-ink); }
+.since-title { font-size: .885rem; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; text-decoration: none; }
+.since-card .since-title { font-size: .94rem; }
+.since-q { margin: 0; font-size: .82rem; line-height: 20px; color: var(--ink); overflow-wrap: anywhere; }
+.since-choice {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--strong);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: .885rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.since-choice:active { background: var(--fill); }
+.since-choice[disabled] { opacity: .5; cursor: default; }
+.since-go { color: var(--clay-ink); font-weight: 600; }
+.since-note { margin: 0; font-size: .765rem; line-height: 18px; color: var(--muted); }
+h2.since-label { margin: 6px 0 -2px; font: 600 .765rem/1.2 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; letter-spacing: 0; color: var(--muted); }
+.since-row { display: flex; align-items: center; gap: 12px; min-height: 52px; color: inherit; text-decoration: none; }
+.since-row:active .since-main { opacity: .6; }
+.since-pic {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font-size: .6rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.since-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.since-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.since-line {
+  font-size: .765rem;
+  line-height: 18px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.since-line.err { color: var(--clay-ink); }
+.since-more { margin: 0 4px; font-size: .765rem; color: var(--muted); }

@@ -150,8 +150,6 @@ final class SinceYouLeftModel: ObservableObject {
         guard !started, Demo.mode == nil else { return }
         started = true
         SinceYouLeftSettings.register()
-        // The typing rule for the reads of the rows (Reference/ReadingGate.swift).
-        ReadingGate.shared.start()
         attach()
         let workspace = NSWorkspace.shared.notificationCenter
         func watch(_ name: Notification.Name, _ change: @escaping @MainActor (SinceYouLeftModel) -> Void) {
@@ -369,6 +367,8 @@ final class SinceYouLeftModel: ObservableObject {
     /// Reading a session twice is never needed: it is asked for once per return.
     func loadDetails(cardActions: CardActions? = nil) {
         guard loading == nil, pending != nil, !rule.isAway, dependencies.canRead(), let summary = display else { return }
+        // The typing rule for the reads of the rows (Reference/ReadingGate.swift): it listens for keys only from here on.
+        if Demo.mode == nil { ReadingGate.shared.start() }
         let rows = summary.readOrder().filter { !asked.contains($0.id) }
         guard !rows.isEmpty else { return }
         let actions = cardActions ?? CardActions(model: lab, plans: .shared, questions: .shared)
