@@ -57,8 +57,8 @@ private final class Bench {
     func dependencies() -> QuestionReplier.Dependencies {
         QuestionReplier.Dependencies(
             isEnabled: { true },
-            isReady: { [unowned self] in self.ready },
-            read: { [unowned self] id in
+            isReady: { [self] in self.ready },
+            read: { [self] id in
                 self.readsStarted.append(id)
                 if self.holdReads.contains(id) {
                     await withCheckedContinuation { self.readGates[id, default: []].append($0) }
@@ -68,13 +68,13 @@ private final class Bench {
                 if Task.isCancelled { self.cancelledReads += 1 }
                 return self.reads[id] ?? nil
             },
-            respond: { [unowned self] request, _, _ in
+            respond: { [self] request, _, _ in
                 self.requests.append(request)
                 if self.holdSends { await withCheckedContinuation { self.sendGates.append($0) } }
                 return self.results.isEmpty ? RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.answered)
                     : self.results.removeFirst()
             },
-            wait: { [unowned self] _ in
+            wait: { [self] _ in
                 self.timersStarted += 1
                 let key = UUID()
                 await withTaskCancellationHandler {

@@ -253,12 +253,16 @@ private final class SearchRig {
 
     func search() -> QuickOpenSearch {
         QuickOpenSearch(dependencies: .init(
-            lookup: { [unowned self] words in
+            // Weak, with nothing to do once the rig is gone: its `deinit` lets every waiter go, and what
+            // they do next must not reach back into a rig that is being destroyed.
+            lookup: { [weak self] words in
+                guard let self else { return nil }
                 lookups.append(words)
                 return await withCheckedContinuation { replies.append($0) }
             },
             pause: .milliseconds(250),
-            wait: { [unowned self] _ in
+            wait: { [weak self] _ in
+                guard let self else { return }
                 waits += 1
                 await withCheckedContinuation { pauses.append($0) }
             }))

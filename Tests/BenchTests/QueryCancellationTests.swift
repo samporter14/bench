@@ -7,7 +7,7 @@ import Testing
 private func waitForQuerySignal(_ signal: DispatchSemaphore) async {
     await withCheckedContinuation { continuation in
         DispatchQueue.global(qos: .utility).async {
-            let outcome = signal.wait(timeout: .now() + 5)
+            let outcome = signal.wait(timeout: .now() + 60)
             #expect(outcome == .success, "A query test gate did not receive its signal")
             continuation.resume()
         }
@@ -208,7 +208,9 @@ private final class SearchCancellationProbe: @unchecked Sendable {
     func read(_ token: SQLiteReadCancellation) -> [BrowseRow] {
         lock.withLock { cancellation = token }
         entered.signal()
-        _ = release.wait(timeout: .now() + 5)
+        // A ceiling for a broken run, not a deadline a working one races: on a loaded Mac the test body can be
+        // seconds late in cancelling, and a read that had already given up made `isCancelled` false.
+        _ = release.wait(timeout: .now() + 60)
         return []
     }
 

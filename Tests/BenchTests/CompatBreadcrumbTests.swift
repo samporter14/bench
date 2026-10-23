@@ -350,12 +350,12 @@ private final class CompatDaemon {
     func dependencies() -> PlanApprover.Dependencies {
         PlanApprover.Dependencies(
             isEnabled: { true }, isReady: { true },
-            get: { [unowned self] path in
+            get: { [self] path in
                 if path.hasPrefix("/frames/"), let frame = self.frame { return frame }
                 if path.hasPrefix("/artifacts/versions/"), let plan = self.plan { return plan }
                 throw WebAPIError.badResponse
             },
-            post: { [unowned self] _ in self.answer },
+            post: { [self] _ in self.answer },
             approvedPause: .milliseconds(10),
             breadcrumbs: breadcrumbs)
     }

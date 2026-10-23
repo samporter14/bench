@@ -288,7 +288,7 @@ struct FinishedCardTests {
         func results() -> FinishedResults {
             let image = CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
-            return FinishedResults(dependencies: .init(read: { [unowned self] in await self.read($0) }, isReady: { [unowned self] in self.ready }),
+            return FinishedResults(dependencies: .init(read: { [self] in await self.read($0) }, isReady: { [self] in self.ready }),
                                    thumbnails: ShelfThumbnails(decoder: { _ in .success(image) }))
         }
     }

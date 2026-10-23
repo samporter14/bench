@@ -1036,15 +1036,15 @@ struct HistoryTooBigPhoneTests {
         let now = Date(timeIntervalSince1970: 1_791_833_400)
 
         lazy var sessions = RemoteSessions(dependencies: RemoteSessions.Dependencies(
-            actionsOn: { true }, known: { [unowned self] in [self.known] }, cardPlan: { _ in nil }, read: { _, _ in nil },
-            readPlan: { _ in nil }, write: { _ in nil }, now: { [unowned self] in self.now }, browseOn: { true }, lookup: { _ in nil }))
+            actionsOn: { true }, known: { [self] in [self.known] }, cardPlan: { _ in nil }, read: { _, _ in nil },
+            readPlan: { _ in nil }, write: { _ in nil }, now: { [self] in self.now }, browseOn: { true }, lookup: { _ in nil }))
 
         lazy var browser = RemoteBrowser(sessions: sessions, dependencies: RemoteBrowser.Dependencies(
             browseOn: { true }, actionsOn: { true }, projects: { nil }, sessions: { _, _, _ in nil },
-            known: { [unowned self] in [self.known] },
-            history: { [unowned self] _, before, _ in self.asked.append(before); return self.history },
+            known: { [self] in [self.known] },
+            history: { [self] _, before, _ in self.asked.append(before); return self.history },
             turn: { _, _ in .unreadable }, create: { _ in nil }, findIntent: { _, _ in nil }, listed: { _, _ in },
-            now: { [unowned self] in self.now }, pause: {}))
+            now: { [self] in self.now }, pause: {}))
 
         var known: SessionStatus { Fixture.session(root, .running) }
 

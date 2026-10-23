@@ -320,9 +320,9 @@ private final class FakeDaemon {
 
     func dependencies(timeout: Duration = .seconds(5)) -> FailureReasoner.Dependencies {
         FailureReasoner.Dependencies(
-            isEnabled: { [unowned self] in self.enabled },
-            isReady: { [unowned self] in self.ready },
-            get: { [unowned self] path in
+            isEnabled: { [self] in self.enabled },
+            isReady: { [self] in self.ready },
+            get: { [self] path in
                 self.reads.append(path)
                 if self.throwing { throw WebAPIError.badResponse }
                 let frame = self.frame

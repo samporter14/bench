@@ -26,17 +26,17 @@ private final class NidusSharingHarness {
     }
 
     func make() -> NidusTaskContext {
-        NidusTaskContext(dependencies: .init(selection: { [unowned self] in
+        NidusTaskContext(dependencies: .init(selection: { [self] in
             selectionReads += 1
             return selection
-        }, lookup: { [unowned self] _ in
+        }, lookup: { [self] _ in
             lookups += 1
             if holdLookup { return await withCheckedContinuation { lookupGate = $0 } }
             return nil
-        }, observe: { [unowned self] callback in
+        }, observe: { [self] callback in
             changed = callback
             return []
-        }, scheduleHeartbeat: { [unowned self] callback in
+        }, scheduleHeartbeat: { [self] callback in
             scheduled += 1
             beat = callback
             return AnyCancellable { [weak self] in
@@ -45,8 +45,8 @@ private final class NidusSharingHarness {
                     self?.beat = nil
                 }
             }
-        }, publish: { [unowned self] in publications.append($0) },
-           flush: { [unowned self] in flushes += 1 }, now: { [unowned self] in time }))
+        }, publish: { [self] in publications.append($0) },
+           flush: { [self] in flushes += 1 }, now: { [self] in time }))
     }
 }
 

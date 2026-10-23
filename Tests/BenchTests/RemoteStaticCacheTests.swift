@@ -184,7 +184,8 @@ struct RemoteStaticCacheTests {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
         }
         guard connected == 0 else { return "" }
-        var wait = timeval(tv_sec: 5, tv_usec: 0)
+        // A ceiling for a broken run: a loaded Mac can keep the server a few seconds from answering.
+        var wait = timeval(tv_sec: 60, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
         let bytes = Array(text.utf8)
         _ = bytes.withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
