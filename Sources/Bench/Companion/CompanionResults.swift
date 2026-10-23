@@ -8,9 +8,10 @@
 // only some of them, and with nothing in memory at all the section is its title
 // and "Show all", which opens Results.
 //
-// A bounded read pass is built and tested, and off (`readsListsWhenOpen`), so
-// that the popover reads nothing from the page. Turned on, it reads the lists
-// that are missing, and only while the popover is open:
+// A bounded read pass fills in the rest (`readsListsWhenOpen`, on since the
+// lead's call on 2026-10-23: board 1 draws pictures, and kind labels alone
+// read as broken). It reads the lists that are missing, and only while the
+// popover is open:
 //   - at most `sessionLimit` sessions, newest first, one read at a time, each
 //     in the typing gate's turn (ReadingGate), through the page's own reader
 //     with the same checks as the Results shelf (`ArtifactGate`);
@@ -73,9 +74,9 @@ final class CompanionResults: ObservableObject {
         }
     }
 
-    /// Whether the app's popover reads the lists that are missing from memory while it is open. Off: the
-    /// popover reads only what the app already holds. One switch for the day that is not enough.
-    nonisolated static let readsListsWhenOpen = false
+    /// Whether the app's popover reads the lists that are missing from memory while it is open, bounded as
+    /// below. Off, the popover would read only what the app already holds.
+    nonisolated static let readsListsWhenOpen = true
     /// How many sessions' lists one opening reads, at the most (when it reads at all): what the Results window reads when it opens.
     static let sessionLimit = 8
     /// The pictures a pass may keep: four tiles' worth.

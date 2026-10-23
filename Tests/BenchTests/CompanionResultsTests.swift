@@ -112,8 +112,9 @@ private struct Rig {
 
 @MainActor
 struct CompanionResultsTests {
-    @Test func theAppsPopoverReadsNothingFromThePageByDefault() {
-        #expect(CompanionResults.readsListsWhenOpen == false, "the brief: only what the app already holds in memory")
+    @Test func theAppsPopoverReadsTheMissingListsBoundedWhileOpen() {
+        #expect(CompanionResults.readsListsWhenOpen, "board 1 draws pictures: the bounded pass fills them in")
+        #expect(CompanionResults.sessionLimit == 8)
         #expect(CompanionResults.Dependencies.live().readsLists == CompanionResults.readsListsWhenOpen)
     }
 
