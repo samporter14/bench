@@ -197,14 +197,19 @@ struct NidusTaskWriterTests {
         let queue = DispatchQueue(label: "capsid.nidus-test")
         let prepared = DispatchSemaphore(value: 0)
         let resume = DispatchSemaphore(value: 0)
+        // The hook holds the commit until the test says so. Its time limits are
+        // only a backstop for a broken test: under load (agents building beside
+        // the suite) the test body reached `publish(nil)` after a 5 s limit, the
+        // hook had let the commit through, and the test failed though the writer
+        // was right. Every path below signals `resume`.
         let writer = NidusTaskWriter(file: file, queue: queue, beforeCommit: {
             prepared.signal()
-            _ = resume.wait(timeout: .now() + 5)
+            _ = resume.wait(timeout: .now() + 120)
         })
         writer.publish(context())
         let ready = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
-                continuation.resume(returning: prepared.wait(timeout: .now() + 3) == .success)
+                continuation.resume(returning: prepared.wait(timeout: .now() + 60) == .success)
             }
         }
         #expect(ready)
