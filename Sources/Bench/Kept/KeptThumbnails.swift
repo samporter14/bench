@@ -1,11 +1,16 @@
 // KeptThumbnails.swift — pictures of kept files, which are on this Mac
 // (DESIGN.md, Keep). Quick Look draws them at the size asked for, times the
 // screen's scale, off the main actor; they are kept by path within a byte
-// budget and let go when the window closes. A file iCloud has put away is
-// never fetched for a picture: its kind's symbol shows instead. The Shelf's
-// text files (Markdown, tables, scripts) are drawn from their first bytes
-// instead (`ShelfPeek`), read through the disk layer off the main actor,
-// because Quick Look's page of them is too small to read at a card's size.
+// budget and let go when the window closes. A picture is only as good as the
+// file it was drawn from: each time a card asks, the file is looked at (its
+// modification date and size, off the main actor), and a file that is not the
+// one the picture was drawn from, as when an item is taken off the shelf and
+// a file of the same name is put on, has its pictures dropped and drawn again.
+// A file iCloud has put away is never fetched for a picture (the same check as
+// `KeptDisk.peek`'s): its kind's symbol shows instead. The Shelf's text files
+// (Markdown, tables, scripts) are drawn from their first bytes instead
+// (`ShelfPeek`), read through the disk layer off the main actor, because Quick
+// Look's page of them is too small to read at a card's size.
 import AppKit
 import QuickLookThumbnailing
 import SwiftUI
@@ -15,26 +20,62 @@ final class KeptThumbnails: ObservableObject {
     /// About what the Results shelf allows itself.
     static let budget = 24 * 1024 * 1024
 
-    private var images: [String: CGImage] = [:]
-    private var order: [String] = []
+    typealias FileFacts = KeptFileFacts
+    typealias Stamp = KeptFileStamp
+
+    /// A picture of a file at a side.
+    private struct Key: Hashable {
+        let side: Int
+        let path: String
+    }
+
+    typealias Inspect = @Sendable (URL) async -> FileFacts?
+    typealias Generate = @Sendable (URL, CGFloat, CGFloat) async -> CGImage?
+
+    private var images: [Key: CGImage] = [:]
+    private var order: [Key] = []
     private var cost = 0
-    private var pending: Set<String> = []
-    private var failed: Set<String> = []
+    private var pending: Set<Key> = []
+    private var failed: Set<Key> = []
     private var peeks: [String: ShelfPeek] = [:]
     private var peeking: Set<String> = []
     private var unreadable: Set<String> = []
+    /// What each path was when its pictures (or its text) were drawn.
+    private var stamps: [String: Stamp] = [:]
     /// The first bytes of a kept text file; nil leaves the Shelf's text cards to Quick Look.
     private let peeker: (@MainActor (URL) async -> String?)?
+    private let inspect: Inspect
+    private let generate: Generate
 
-    init(peek: (@MainActor (URL) async -> String?)? = nil) {
+    init(peek: (@MainActor (URL) async -> String?)? = nil,
+         inspect: @escaping Inspect = KeptThumbnails.inspectFile,
+         generate: @escaping Generate = KeptThumbnails.quickLook) {
         peeker = peek
+        self.inspect = inspect
+        self.generate = generate
+    }
+
+    /// The file as it is on disk now, looked at on the disk's queue. Nil when
+    /// it can't be looked at.
+    nonisolated static func inspectFile(_ url: URL) async -> FileFacts? {
+        await KeptDisk.fileFacts(of: url)
+    }
+
+    /// Quick Look's picture at `side` points on the long edge, at `scale`.
+    nonisolated static func quickLook(_ url: URL, _ side: CGFloat, _ scale: CGFloat) async -> CGImage? {
+        let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: side, height: side), scale: scale,
+                                                   representationTypes: .thumbnail)
+        request.iconMode = false
+        return await withCheckedContinuation { continuation in
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
+                continuation.resume(returning: representation?.cgImage)
+            }
+        }
     }
 
     func image(for url: URL, side: CGFloat) -> CGImage? {
-        images[key(url, side)]
+        images[Key(side: Int(side), path: url.path)]
     }
-
-    private func key(_ url: URL, _ side: CGFloat) -> String { "\(Int(side))@\(url.path)" }
 
     // MARK: Text files
 
@@ -46,15 +87,32 @@ final class KeptThumbnails: ObservableObject {
 
     func peek(for url: URL) -> ShelfPeek? { peeks[url.path] }
 
-    /// Reads a text file's first bytes, once.
+    /// Reads a text file's first bytes, once for each state of the file: a file
+    /// that is not the one read before is read again.
     func wantPeek(_ url: URL) {
         let path = url.path
-        guard usesPeek(url), peeks[path] == nil, !peeking.contains(path), let peeker else { return }
+        guard usesPeek(url), !peeking.contains(path), let peeker else { return }
         peeking.insert(path)
+        let inspect = self.inspect
         Task { [weak self] in
-            let text = await peeker(url)
+            let facts = await inspect(url)
             guard let self else { return }
+            noteFile(path, facts)
+            // Put away in iCloud: no text to read; the card goes to the kind's symbol.
+            if facts?.putAway == true {
+                peeking.remove(path)
+                unreadable.insert(path)
+                objectWillChange.send()
+                return
+            }
+            if peeks[path] != nil {
+                peeking.remove(path)
+                return
+            }
+            let text = await peeker(url)
             peeking.remove(path)
+            // Another file came while this one was read: its own ask reads it.
+            guard stamps[path] == facts?.stamp else { return }
             if let text, let made = ShelfPeek.make(text: text, fileName: url.lastPathComponent) {
                 peeks[path] = made
             } else {
@@ -64,28 +122,65 @@ final class KeptThumbnails: ObservableObject {
         }
     }
 
-    /// Asks Quick Look for the picture, once, at `side` points on the long
-    /// edge, at the screen's scale.
+    // MARK: Pictures
+
+    /// Asks Quick Look for the picture, once for each state of the file, at
+    /// `side` points on the long edge, at the screen's scale. A file iCloud has
+    /// put away gets none (and is not downloaded to get one); neither does one
+    /// that is not the file the picture shown was drawn from, until it is drawn.
     func want(_ url: URL, side: CGFloat, scale: CGFloat, cropped: Bool = false) {
-        let key = key(url, side)
-        guard images[key] == nil, !pending.contains(key), !failed.contains(key) else { return }
+        let key = Key(side: Int(side), path: url.path)
+        guard !pending.contains(key) else { return }
         pending.insert(key)
-        let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: side, height: side), scale: scale,
-                                                   representationTypes: .thumbnail)
-        request.iconMode = false
-        Task.detached(priority: .utility) { [weak self] in
-            let image: CGImage? = await withCheckedContinuation { continuation in
-                QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
-                    continuation.resume(returning: representation?.cgImage)
-                }
+        let inspect = self.inspect, generate = self.generate
+        Task { [weak self] in
+            let facts = await inspect(url)
+            guard let self else { return }
+            noteFile(key.path, facts)
+            if facts?.putAway == true {
+                pending.remove(key)
+                failed.insert(key)
+                objectWillChange.send()
+                return
             }
+            guard images[key] == nil, !failed.contains(key) else {
+                pending.remove(key)
+                return
+            }
+            let image = await Task.detached(priority: .utility) { await generate(url, side, scale) }.value
             // A page's thumbnail is mostly paper: a card shows what is on it.
-            await self?.receive(cropped ? (image?.croppedToContent() ?? image) : image, for: key)
+            let shown = cropped ? (image?.croppedToContent() ?? image) : image
+            receive(shown, for: key, drawnFrom: facts?.stamp) {
+                // The file changed while it was drawn: draw the new one.
+                self.want(url, side: side, scale: scale, cropped: cropped)
+            }
         }
     }
 
-    private func receive(_ image: CGImage?, for key: String) {
+    /// The file is as it is now: if it is not the one the pictures and text
+    /// held for its path were made from, they go.
+    private func noteFile(_ path: String, _ facts: FileFacts?) {
+        let now = facts?.stamp
+        if let before = stamps[path], before != now {
+            let gone = images.keys.filter { $0.path == path }
+            for key in gone {
+                if let image = images.removeValue(forKey: key) { cost -= image.bytesPerRow * image.height }
+            }
+            order.removeAll { $0.path == path }
+            failed = failed.filter { $0.path != path }
+            peeks[path] = nil
+            unreadable.remove(path)
+            objectWillChange.send()
+        }
+        stamps[path] = now
+    }
+
+    private func receive(_ image: CGImage?, for key: Key, drawnFrom stamp: Stamp?, again: () -> Void) {
         pending.remove(key)
+        guard stamps[key.path] == stamp else {
+            again()
+            return
+        }
         guard let image else {
             failed.insert(key)
             objectWillChange.send()
@@ -110,6 +205,7 @@ final class KeptThumbnails: ObservableObject {
         order = []
         cost = 0
         failed = []
+        stamps = [:]
         objectWillChange.send()
     }
 }

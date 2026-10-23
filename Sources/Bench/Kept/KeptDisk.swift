@@ -136,6 +136,26 @@ struct KeptResult: Equatable, Sendable, Identifiable {
     var figureURL: URL { folder.appending(path: record.figure.path, directoryHint: .notDirectory) }
 }
 
+/// Which file a path holds, to a cache of pictures drawn from it: when it was
+/// last written, how big it is, and whether iCloud has put it away. If any
+/// differs, what was drawn is not what is there (another file, or the same
+/// one now back on this Mac).
+struct KeptFileStamp: Equatable, Sendable {
+    var modified: Date?
+    var size: Int?
+    var putAway = false
+}
+
+/// What a picture cache asks of a file (`KeptThumbnails`): its stamp, and
+/// whether iCloud has put it away (so a picture of it must not be asked for).
+struct KeptFileFacts: Equatable, Sendable {
+    var modified: Date?
+    var size: Int?
+    var putAway = false
+
+    var stamp: KeptFileStamp { KeptFileStamp(modified: modified, size: size, putAway: putAway) }
+}
+
 @MainActor
 final class KeptDisk {
     typealias Work = @Sendable () -> Void
@@ -192,6 +212,16 @@ final class KeptDisk {
 
     nonisolated static func runOnDisk(_ work: @escaping Work) {
         diskQueue.async(execute: work)
+    }
+
+    /// A file's stamp and whether iCloud has put it away, looked at on the
+    /// disk's queue (never the main actor, never a cooperative thread). Nil
+    /// when it can't be looked at. The picture cache asks it every time a card
+    /// does, so a file put in the place of another is told from it.
+    nonisolated static func fileFacts(of file: URL) async -> KeptFileFacts? {
+        await withCheckedContinuation { continuation in
+            runOnDisk { continuation.resume(returning: KeptDiskWork.fileFacts(file)) }
+        }
     }
 
     /// Whether a call is out past its limit and hasn't come back: for tests.
@@ -767,13 +797,32 @@ private enum KeptDiskWork {
 
     // MARK: A look at a text file
 
+    /// A file iCloud has put away (not on this Mac, or not all of it): reading
+    /// it, or asking Quick Look for its picture, would bring it back. A file
+    /// that isn't in iCloud has no such status, and is not put away.
+    static func isPutAway(_ file: URL) -> Bool {
+        // A URL keeps the values it was asked for: a fresh one, so it is today's.
+        var fresh = file
+        fresh.removeAllCachedResourceValues()
+        guard let status = (try? fresh.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]))?.ubiquitousItemDownloadingStatus else {
+            return false
+        }
+        return status != .current
+    }
+
+    /// A file's date, size and whether iCloud has put it away; nil when it
+    /// can't be looked at.
+    static func fileFacts(_ file: URL) -> KeptFileFacts? {
+        var fresh = file
+        fresh.removeAllCachedResourceValues()
+        guard let values = try? fresh.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return nil }
+        return KeptFileFacts(modified: values.contentModificationDate, size: values.fileSize, putAway: isPutAway(file))
+    }
+
     static func peek(_ file: URL, root: URL, limit: Int) -> String? {
         guard file.path.hasPrefix(root.path + "/") else { return nil }
         // A file iCloud has put away isn't read: reading it would bring it back.
-        if let status = (try? file.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]))?.ubiquitousItemDownloadingStatus,
-           status != .current {
-            return nil
-        }
+        if isPutAway(file) { return nil }
         guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
         defer { try? handle.close() }
         guard let data = try? handle.read(upToCount: limit), !data.isEmpty, !data.contains(0) else { return nil }
