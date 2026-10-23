@@ -158,7 +158,7 @@ struct FigureMenuSnapshotTests {
     }
 
     /// A real page with the script in it, in a window that is never shown.
-    private func loadedPage(dark: Bool, posts: Posts) async throws -> (WKWebView, NSWindow, Loaded) {
+    private func loadedPage(dark: Bool, posts: Posts, size: CGSize = CGSize(width: 520, height: 600), zoom: Double = 1) async throws -> (WKWebView, NSWindow, Loaded) {
         let configuration = WKWebViewConfiguration()
         // Real clicks can't be made here, so the trust check is lifted from this copy of the script and nothing else.
         let source = ConversationMenu.script
@@ -168,8 +168,10 @@ struct FigureMenuSnapshotTests {
         configuration.userContentController.addUserScript(WKUserScript(
             source: lifted, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: ConversationMenu.world))
         configuration.userContentController.add(posts, contentWorld: ConversationMenu.world, name: ConversationMenu.handlerName)
-        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 520, height: 600), configuration: configuration)
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 520, height: 600), styleMask: [.borderless],
+        let view = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration)
+        // Page zoom, as View > Zoom In has it: the window is that much shorter in CSS pixels.
+        view.pageZoom = zoom
+        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: size.width, height: size.height), styleMask: [.borderless],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = view
@@ -243,6 +245,80 @@ struct FigureMenuSnapshotTests {
             #expect(chosen?["action"] as? String == "keep", "\(mode)")
             #expect(chosen?["name"] as? String == "plate_map.png", "\(mode)")
             #expect(chosen?["version"] as? String == ShelfAddressTests.version, "\(mode)")
+        }
+    }
+
+    /// What the full menu looks like to someone who has to reach every item: the window's height, the menu's box, whether it
+    /// scrolls, and for each item where it ends up once the menu has scrolled it into view (`nearest`, as arrow keys do).
+    struct Reach {
+        struct Item { var label: String, top: Double, bottom: Double, inWindow: Bool }
+        var innerHeight: Double, menuTop: Double, menuBottom: Double, scrolls: Bool, overflowY: String
+        var items: [Item]
+        var unreachable: [String] { items.filter { !$0.inWindow }.map(\.label) }
+    }
+
+    private func reach(_ view: WKWebView) async -> Reach? {
+        let text = await js(view, """
+            (function () {
+              var menu = document.querySelector('[role=menu]');
+              var h = window.innerHeight, box = menu.getBoundingClientRect();
+              var items = Array.prototype.slice.call(menu.querySelectorAll('[role=menuitem]')).map(function (item) {
+                item.scrollIntoView({ block: 'nearest' });
+                var r = item.getBoundingClientRect(), m = menu.getBoundingClientRect();
+                return { label: item.textContent, top: r.top, bottom: r.bottom,
+                         inWindow: r.top >= 0 && r.bottom <= h && r.top >= m.top - 0.5 && r.bottom <= m.bottom + 0.5 };
+              });
+              menu.scrollTop = 0;
+              return JSON.stringify({ innerHeight: h, menuTop: box.top, menuBottom: box.bottom,
+                                      scrolls: menu.scrollHeight > menu.clientHeight + 1, overflowY: getComputedStyle(menu).overflowY, items: items });
+            })()
+            """) as? String
+        guard let data = text?.data(using: .utf8), let found = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let items = (found["items"] as? [[String: Any]] ?? []).map {
+            Reach.Item(label: $0["label"] as? String ?? "", top: $0["top"] as? Double ?? 0, bottom: $0["bottom"] as? Double ?? 0,
+                       inWindow: $0["inWindow"] as? Bool ?? false)
+        }
+        return Reach(innerHeight: found["innerHeight"] as? Double ?? 0, menuTop: found["menuTop"] as? Double ?? 0,
+                     menuBottom: found["menuBottom"] as? Double ?? 0, scrolls: found["scrolls"] as? Bool ?? false,
+                     overflowY: found["overflowY"] as? String ?? "", items: items)
+    }
+
+    /// The figure's menu with every item (a red Delete among them) in a short window at 200% and at 300% page zoom, in
+    /// a real WebKit view: the window as the smallest main window gives it (about 570 points of page), so 285 and 190
+    /// CSS pixels. Every item must be reachable, and the menu inside the window. PNGs show the top of the menu and, scrolled, its end.
+    @Test func theFullMenuStaysInAShortWindowAtHighPageZoomWhenAsked() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // (zoom, view size in points): 600 / 2 = 300 CSS pixels tall, and 600 / 3 = 200.
+        let cases: [(zoom: Double, size: CGSize, dark: Bool)] = [
+            (2, CGSize(width: 640, height: 600), false), (2, CGSize(width: 640, height: 600), true), (3, CGSize(width: 900, height: 600), false),
+        ]
+        for one in cases {
+            let mode = one.dark ? "dark" : "light"
+            let name = "figure-menu-zoom\(Int(one.zoom * 100))-\(Int(one.size.height / one.zoom))px-\(mode)"
+            let posts = Posts()
+            let (view, window, _) = try await loadedPage(dark: one.dark, posts: posts, size: one.size, zoom: one.zoom)
+            defer { window.close() }
+            await settle()
+            await js(view, "window.__withDelete = true; window.__rightClick();")
+            await settle()
+            let found = try #require(await reach(view), "\(name)")
+            #expect(found.innerHeight == Double(one.size.height / one.zoom), "the window is that tall in CSS pixels: \(name) \(found.innerHeight)")
+            #expect(found.items.count == 11, "\(name): the page's seven and Capsid's four")
+            #expect(found.unreachable.isEmpty, "\(name): out of reach even by scrolling: \(found.unreachable)")
+            #expect(found.menuTop >= 0 && found.menuBottom <= found.innerHeight, "\(name): the menu is in the window: \(found.menuTop)-\(found.menuBottom) of \(found.innerHeight)")
+            #expect(found.scrolls && found.overflowY == "auto", "\(name): it scrolls")
+            try await snapshot(view, to: directory.appendingPathComponent("\(name).png"))
+            // Scrolled to its end: the red item and the rule above it are there.
+            await js(view, "var menu = document.querySelector('[role=menu]'); menu.scrollTop = menu.scrollHeight;")
+            await settle()
+            try await snapshot(view, to: directory.appendingPathComponent("\(name)-scrolled.png"))
+            // A click on Show in Results, as it posts, closes it.
+            await js(view, "document.querySelector('[role=menu]').querySelectorAll('[role=menuitem]')[9].click();")
+            await settle()
+            #expect(posts.all.last?["action"] as? String == "showInResults", "\(name)")
+            #expect(await js(view, "window.__menuOpen()") as? Bool == false, "\(name): the menu closed")
         }
     }
 

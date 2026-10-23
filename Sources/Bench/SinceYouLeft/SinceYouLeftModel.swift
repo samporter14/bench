@@ -312,6 +312,14 @@ final class SinceYouLeftModel: ObservableObject {
         dependencies.readsContent() ? details[id] : nil
     }
 
+    /// A finished row's files (the list the sheet's tiles and its Results and Add to Shelf pills come from),
+    /// while the content setting allows them. Off, a row has no files to draw, whether they were read before
+    /// the setting went off or not: the same `.unknown` a row not yet read has, so the sheet looks the same
+    /// either way. (The Finished card and Results read `FinishedResults` directly and are not this.)
+    func listing(for id: String) -> FinishedResults.Listing {
+        dependencies.readsContent() ? finished.listing(for: id) : .unknown
+    }
+
     /// All of why a row's session stopped, for Copy: what the card read, else the line.
     func fullReason(for id: String) -> String? {
         guard dependencies.readsContent() else { return nil }
@@ -426,7 +434,8 @@ final class SinceYouLeftModel: ObservableObject {
                 }
             }
             for row in rows {
-                if Task.isCancelled || self.rule.isAway || self.pending == nil { break }
+                // The setting may be turned off while the rows are read one by one: nothing more is read then.
+                if Task.isCancelled || self.rule.isAway || self.pending == nil || !self.dependencies.readsContent() { break }
                 self.asked.insert(row.id)
                 if needsIDs.contains(row.id) {
                     // The card's own reads: the question and its choices.
@@ -445,6 +454,11 @@ final class SinceYouLeftModel: ObservableObject {
                     let answer = await self.dependencies.readAnswer(row.id)
                     if Task.isCancelled { break }
                     self.details[row.id, default: .init()].answer = answer
+                    // The setting went off during the read: no files either. The row is asked for again if it comes back on.
+                    if !self.dependencies.readsContent() {
+                        self.asked.remove(row.id)
+                        break
+                    }
                     // The pictures: the list of its files, then up to three thumbnails, in the typing gate's turn
                     // like the answer above (the panel's own reader: one read at a time).
                     await self.dependencies.loadFiles(self.finished, row.session)
