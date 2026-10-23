@@ -301,6 +301,16 @@ final class LabModel: ObservableObject {
     var sessionsRead: (SessionStanding) -> Void = { _ in }
     /// Phase 2 push: the same moments, for paired devices (PushCenter.swift).
     var pushRaised: (LabCard) -> Void = { _ in }
+    /// Since You Left (SinceYouLeft/SinceYouLeftModel.swift) listens here. Told of each event
+    /// that is new to Recent (a repeat of one turn's finish is not), after each read of the
+    /// sessions, whatever it found, and when a card's Show asks for the sheet. They do nothing
+    /// until `SinceYouLeftModel.attach()` sets them.
+    var eventRemembered: (LabEvent) -> Void = { _ in }
+    var readObserved: () -> Void = {}
+    var showSinceYouLeft: () -> Void = {}
+    /// The card for a return, asked for when finishes held for a focus session or a
+    /// presentation are released: it comes in place of the batched "N finished" card.
+    var sinceCard: () -> LabNotice? = { nil }
 
     private let source = CombinedScienceSource()
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
@@ -358,6 +368,8 @@ final class LabModel: ObservableObject {
         Router.shared.webNotificationClosed = { [weak self] in self?.closeWebNotification($0) }
         log.info("Lab started")
         read()
+        // What changed while someone was away (SinceYouLeft/): only the app's own model, never a test's.
+        if self === LabModel.shared { SinceYouLeftModel.shared.start() }
     }
 
     func stop() {
@@ -413,6 +425,9 @@ final class LabModel: ObservableObject {
                 // After the card is dismissed (below): the alert is modal and
                 // would hold the card on screen while it runs.
                 Task { @MainActor in UpdatePrompts.offer(update) }
+            case .sinceYouLeft:
+                // The card goes, the summary stays: the sheet is how to read it.
+                showSinceYouLeft()
             case .none:
                 break
             }
@@ -616,6 +631,7 @@ final class LabModel: ObservableObject {
         } else {
             scheduleFallback()
         }
+        readObserved()
     }
 
     /// Watches the database once it is known, and again if the active org
@@ -869,6 +885,7 @@ final class LabModel: ObservableObject {
     func quietChanged() {
         if !isQuiet() { releaseHeldFinishes(reason: .presenting) }
         armFrontCard()
+        readObserved()
     }
 
     /// The focus session ended: the reminders that waited for it come back,
@@ -885,6 +902,7 @@ final class LabModel: ObservableObject {
         }
         chime(sounds)
         releaseHeldFinishes()
+        readObserved()
     }
 
     /// What finished during the focus session or while presenting, as one
@@ -893,7 +911,9 @@ final class LabModel: ObservableObject {
     func releaseHeldFinishes(reason: NoticeRules.HoldReason = .focus) {
         guard !holdsFinishes(), !isQuiet(), let notice = NoticeRules.held(heldFinishes, reason: reason) else { return }
         heldFinishes = []
-        post(notice)
+        // A return from a long stretch away that was waiting for the same hold to lift
+        // says what finished, and more: its card comes in place of the batched one.
+        post(sinceCard() ?? notice)
     }
 
     /// Adds an event to Recent, once: a repeat of the same one (the same
@@ -901,6 +921,7 @@ final class LabModel: ObservableObject {
     private func remember(_ event: LabEvent) {
         guard !recent.contains(where: { $0.id == event.id }) else { return }
         recent = Array(([event] + recent).prefix(Self.recentLimit))
+        eventRemembered(event)
     }
 
     /// The page closed one of its notifications: its card goes too.

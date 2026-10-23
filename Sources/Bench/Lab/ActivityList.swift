@@ -14,6 +14,8 @@ struct ActivityList: View {
     @ObservedObject private var questions = QuestionReplier.shared
     /// A working session's plan progress, under its project (Lab/PanelInsights.swift).
     @ObservedObject private var insights = PanelInsights.shared
+    /// What changed while someone was away: the section at the top (SinceYouLeft/).
+    @ObservedObject private var since = SinceYouLeftModel.shared
     @Environment(\.colorScheme) private var colorScheme
 
     /// What a card offers and does (Lab/CardActions.swift), over the same model and states.
@@ -43,6 +45,9 @@ struct ActivityList: View {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
                     }
                     .font(.callout)
+                }
+                if let summary = since.display {
+                    sinceYouLeft(summary)
                 }
                 if !needs.isEmpty {
                     // What asks first, the longest wait on top; then what stopped with an
@@ -138,6 +143,37 @@ struct ActivityList: View {
     }
 
     // MARK: Parts
+
+    /// "Since you left · 2 h 14 min", and under it what changed in one line; a press opens
+    /// the sheet (SinceYouLeft/SinceYouLeftSheet.swift). Its rows' sentences and pictures
+    /// are read as the section shows, so the sheet is full when it opens.
+    private func sinceYouLeft(_ summary: SinceYouLeftSummary) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(SinceYouLeftText.listTitle(summary.away(now: Date())))
+                .font(.headline)
+                .padding(.leading, 6)
+                .padding(.bottom, 2)
+                .accessibilityAddTraits(.isHeader)
+            ActivityRow(action: {
+                close()
+                since.showSheet()
+            }) {
+                HStack(spacing: 10) {
+                    symbol("clock.arrow.circlepath")
+                        .frame(width: 26, height: 26)
+                    Text(verbatim: summary.headline ?? "")
+                        .lineLimit(2)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .accessibilityLabel("\(SinceYouLeftText.title), \(summary.headline ?? "")")
+            .accessibilityHint("Opens what changed")
+        }
+        .onAppear { since.loadDetails(cardActions: cardActions) }
+    }
 
     private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 2) {

@@ -109,7 +109,19 @@ enum Demo {
         case note
         /// Three sessions working; `--hover` opens the panel into a row each.
         case stack
+        /// Since You Left (SinceYouLeft/SinceYouLeftDemo.swift): the sheet on a
+        /// made-up return, in a plain window; `--step card` shows the panel's
+        /// card instead. Nothing is read from Claude Science, and answering
+        /// sends nothing anywhere.
+        case sinceYouLeft = "since-you-left"
     }
+
+    /// `--step` with `--demo since-you-left`; `sheet` when missing.
+    static let sinceYouLeftStep: String = {
+        let arguments = CommandLine.arguments
+        guard mode == .sinceYouLeft, let flag = arguments.firstIndex(of: "--step") else { return "sheet" }
+        return arguments.dropFirst(flag + 1).first ?? "sheet"
+    }()
 
     /// `--step` with `--demo kept`; `sheet` when missing.
     static let keptStep: String = {
@@ -299,6 +311,15 @@ enum Demo {
             if let step = mode.flatMap({ PanelDemo.Step(rawValue: $0.rawValue) }) {
                 let shown = PanelDemo.prepare(step, oneFigure: CommandLine.arguments.contains("--one-figure"))
                 showPanel(working: shown.working, cards: shown.cards)
+            }
+        case .sinceYouLeft?:
+            if sinceYouLeftStep == "card" {
+                let made = SinceYouLeftDemo.made()
+                let summary = SinceYouLeftSummary.make(since: made.since, back: made.back, events: made.events,
+                                                       waiting: [made.ask], working: [])
+                showPanel(working: [], cards: SinceYouLeftModel.notice(for: summary, now: made.back).map { [.notice($0)] } ?? [])
+            } else {
+                SinceYouLeftDemo.show(quiet: isQuiet)
             }
         case nil:
             break

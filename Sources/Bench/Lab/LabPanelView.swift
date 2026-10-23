@@ -477,12 +477,19 @@ struct LabPanelView: View {
                         Button("Install\u{2026}") { model.open(card) }
                             .panelButton(prominent: true)
                     }
+                } else if case .sinceYouLeft = notice.action {
+                    // Since You Left: Show opens its sheet (SinceYouLeft/SinceYouLeftSheet.swift).
+                    buttons {
+                        Button("Show") { model.open(card) }
+                            .panelButton(prominent: true)
+                    }
                 }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel([notice.caption, notice.title, notice.detail].filter { !$0.isEmpty }.joined(separator: ". "))
             .accessibilityActions {
                 if case .installUpdate = notice.action { Button("Install\u{2026}") { model.open(card) } }
+                if case .sinceYouLeft = notice.action { Button("Show") { model.open(card) } }
             }
         case .saved(let url):
             Row(side: wellSide, well: symbol("arrow.down.circle")) {
