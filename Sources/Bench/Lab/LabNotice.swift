@@ -177,33 +177,26 @@ enum NoticeRules {
 
     // MARK: After a Claude Science update
 
-    /// How many features the card names before it says "and 2 more".
-    static let updateNamesShown = 3
-
     /// The one card when Claude Science's version changed and the look
     /// Capsid took afterwards (App/CompatWatch.swift) found something that
     /// answers differently. Nothing turns itself off: those features keep
-    /// trying and may quietly do nothing, so that is what it says, and that
-    /// Capsid only looked. `version` is named only when it is plain numbers.
-    /// Nil when nothing is affected: no card for a clean look.
+    /// trying and may quietly do nothing, so the title says "may not work",
+    /// and the detail says where the rest is. It is sized for the panel's
+    /// card, whose title wraps to two lines and whose detail is one: the
+    /// first feature is named and the others counted, because naming two
+    /// would run to a third line on a narrow card. `version` only keys the
+    /// card, and only when it is plain numbers. Nil when nothing is
+    /// affected: no card for a clean look.
     static func afterUpdate(version: String?, features: [CompatFeature]) -> LabNotice? {
-        guard !features.isEmpty else { return nil }
-        let shown = features.prefix(updateNamesShown).map(\.inASentence)
-        let more = features.count - shown.count
-        var names = shown
-        if more > 0 { names.append("\(more) more") }
-        let list = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+        guard let first = features.first else { return nil }
+        let others = features.count - 1
+        let subject = others == 0 ? first.inASentence : "\(first.inASentence) and \(others) more"
         let named = version.flatMap { ScienceVersion.parse($0) != nil ? $0 : nil }
         return LabNotice(
-            id: "compat-update-\(named ?? "unknown")", symbol: "arrow.triangle.2.circlepath", caption: "Claude Science",
-            title: named.map { "Claude Science updated to \($0)" } ?? "Claude Science updated",
-            detail: "\(capitalised(list)) may not work: \(features.count == 1 ? "it" : "they") didn't answer as Capsid reads \(features.count == 1 ? "it" : "them"). "
-                + "Capsid only looked. Help \u{2192} Capsid Diagnostics\u{2026} has the detail.",
+            id: "compat-update-\(named ?? "unknown")", symbol: "arrow.triangle.2.circlepath", caption: "Claude Science updated",
+            title: subject.prefix(1).uppercased() + subject.dropFirst() + " may not work",
+            detail: "See Help \u{2192} Capsid Diagnostics\u{2026}",
             lifetime: .seconds(20))
-    }
-
-    private static func capitalised(_ text: String) -> String {
-        text.prefix(1).uppercased() + text.dropFirst()
     }
 
     // MARK: Nidus

@@ -342,8 +342,8 @@ struct CompatWatchSayingTests {
         await rig.watch.look()
         #expect(rig.posted.count == 1)
         let card = rig.posted[0]
-        #expect(card.title == "Claude Science updated to 0.1.70")
-        #expect(card.detail.hasPrefix("Close Other Tabs, the usage readout, the context ring and 1 more may not work: they didn't answer as Capsid reads them."))
+        #expect(card.caption == "Claude Science updated")
+        #expect(card.title == "Close Other Tabs and 3 more may not work")
         // The breadcrumb names the miss and the features; the log carries the same fixed words.
         let entry = rig.breadcrumbs.last
         #expect(entry?.miss == .probesAfterUpdate)
@@ -389,57 +389,73 @@ struct CompatWatchSayingTests {
 // MARK: The card's words
 
 struct CompatNoticeWordsTests {
-    private let tail = "Capsid only looked. Help \u{2192} Capsid Diagnostics\u{2026} has the detail."
+    private let detail = "See Help \u{2192} Capsid Diagnostics\u{2026}"
 
-    @Test func twoFeaturesAreNamedWithAnAnd() throws {
-        let card = try #require(NoticeRules.afterUpdate(version: "0.1.70", features: [.closeTabs, .usage]))
-        #expect(card.caption == "Claude Science")
-        #expect(card.title == "Claude Science updated to 0.1.70")
-        #expect(card.detail == "Close Other Tabs and the usage readout may not work: they didn't answer as Capsid reads them. \(tail)")
+    @Test func oneFeatureIsNamedAsItself() throws {
+        let card = try #require(NoticeRules.afterUpdate(version: "0.1.70", features: [.usage]))
+        #expect(card.caption == "Claude Science updated")
+        #expect(card.title == "The usage readout may not work")
+        #expect(card.detail == detail)
         #expect(card.id == "compat-update-0.1.70")
         #expect(card.action == .none && card.heldFor == nil && card.midRunNote == nil)
         #expect(card.lifetime == .seconds(20))
     }
 
-    @Test func oneFeatureIsNamedAsItself() throws {
-        let card = try #require(NoticeRules.afterUpdate(version: "0.1.70", features: [.usage]))
-        #expect(card.detail == "The usage readout may not work: it didn't answer as Capsid reads it. \(tail)")
+    @Test func severalAreTheFirstAndAHowMany() throws {
+        let two = try #require(NoticeRules.afterUpdate(version: "0.1.70", features: [.closeTabs, .usage]))
+        #expect(two.title == "Close Other Tabs and 1 more may not work")
+        let five = try #require(NoticeRules.afterUpdate(version: "0.1.70", features: [.closeTabs, .usage, .context, .planCard, .keep]))
+        #expect(five.title == "Close Other Tabs and 4 more may not work")
+        #expect(five.detail == detail)
     }
 
-    @Test func manyFeaturesAreCutAfterThree() throws {
-        let card = try #require(NoticeRules.afterUpdate(version: "0.1.70", features: [.closeTabs, .usage, .context, .planCard, .keep]))
-        #expect(card.detail == "Close Other Tabs, the usage readout, the context ring and 2 more may not work: they didn't answer as Capsid reads them. \(tail)")
-        let three = try #require(NoticeRules.afterUpdate(version: "0.1.70", features: [.closeTabs, .usage, .context]))
-        #expect(three.detail.hasPrefix("Close Other Tabs, the usage readout and the context ring may not work:"))
+    @Test func aFeatureNamedInLowerCaseStartsTheSentence() throws {
+        #expect(try #require(NoticeRules.afterUpdate(version: nil, features: [.planCard])).title == "Plans on cards may not work")
+        #expect(try #require(NoticeRules.afterUpdate(version: nil, features: [.reviewer, .keep])).title == "Reviewer findings and 1 more may not work")
+        #expect(try #require(NoticeRules.afterUpdate(version: nil, features: [.keep])).title == "Keep may not work")
     }
 
-    @Test func aVersionThatIsNotPlainNumbersIsNotNamed() throws {
+    @Test func aVersionThatIsNotPlainNumbersOnlyKeysTheCard() throws {
         for odd in ["0.1.71-rc1", "nightly", "", "0.1.70 (beta)"] {
             let card = try #require(NoticeRules.afterUpdate(version: odd, features: [.usage]))
-            #expect(card.title == "Claude Science updated", "\(odd)")
-            #expect(card.id == "compat-update-unknown")
+            #expect(card.id == "compat-update-unknown", "\(odd)")
+            #expect(!card.title.contains(odd) || odd.isEmpty, "\(odd)")
         }
-        let none = try #require(NoticeRules.afterUpdate(version: nil, features: [.usage]))
-        #expect(none.title == "Claude Science updated")
+        #expect(try #require(NoticeRules.afterUpdate(version: nil, features: [.usage])).id == "compat-update-unknown")
+        #expect(try #require(NoticeRules.afterUpdate(version: "0.1.71", features: [.usage])).id == "compat-update-0.1.71")
     }
 
     @Test func nothingAffectedIsNoCard() {
         #expect(NoticeRules.afterUpdate(version: "0.1.70", features: []) == nil)
     }
 
-    @Test func theWordsAreSolanumsAndNameNoOneAndNothingRead() throws {
+    @Test func theWordsAreSolanumsAndSayWhatIsTrue() throws {
         for features in [[CompatFeature.closeTabs], [.usage, .context], CompatFeature.allCases] {
             let card = try #require(NoticeRules.afterUpdate(version: "0.1.70", features: features))
             for text in [card.title, card.detail, card.caption] {
                 #expect(!text.contains("!"), "\(text)")
                 #expect(text.first?.isUppercase == true, "\(text)")
             }
-            // Plain sentences: the card says what happened, that things may not work, and where the detail is.
-            #expect(card.detail.contains("may not work"))
-            #expect(card.detail.contains("Capsid only looked."))
-            #expect(!card.detail.localizedCaseInsensitiveContains("turned off"))
-            #expect(!card.detail.localizedCaseInsensitiveContains("disabled"))
+            // What happened, and what may follow: not that anything was switched off, which nothing is.
+            #expect(card.title.hasSuffix(" may not work"))
+            for word in ["turned off", "disabled", "broken", "failed"] {
+                #expect(!card.title.localizedCaseInsensitiveContains(word) && !card.detail.localizedCaseInsensitiveContains(word), "\(word)")
+            }
         }
+    }
+
+    @Test func itFitsTheCardsTitleOfTwoLinesAndDetailOfOne() throws {
+        // The panel's title wraps to two lines (about 28 characters each on
+        // its narrowest card) and its detail stays on one (about 30). The
+        // longest a title gets: the longest feature name and a count.
+        let longest = CompatFeature.allCases.map(\.inASentence).max { $0.count < $1.count } ?? ""
+        let worst = try #require(NoticeRules.afterUpdate(version: nil, features: [.reviewer, .keep, .usage, .context, .planCard, .closeTabs, .planProgress]))
+        #expect(worst.title.count <= 42, "\(worst.title)")
+        #expect(worst.detail.count <= 30)
+        #expect(worst.caption.count <= 24)
+        // The features a probe can flag are all short.
+        let probed = Set(CompatProbes.Name.all.compactMap { CompatProbes.feature(ofProbe: $0) })
+        #expect(probed.allSatisfy { $0.inASentence.count <= 20 }, "\(longest)")
     }
 
     @Test func theNoticeIsInTheLabNoticeFile() {
