@@ -118,7 +118,7 @@ enum Demo {
         /// on made-up sessions, files and a limit; `--step since`, `empty` or `busy` for the other states.
         case menuBar = "menubar"
         /// The Shelf window (Kept/ShelfPDF*.swift) on the made-up shelf with two figures picked; the
-        /// PDF Make PDF… would make from them is written into a temporary folder (its path is printed).
+        /// PDF that Export 2 Figures as PDF… would make from them is written into a temporary folder (its path is printed).
         case shelfPdf = "shelf-pdf"
         /// Find any figure (Find/FindDemo.swift): the Shelf window with a search
         /// typed in it (`--query "<words>"`, "heatmap" when missing), so the shelf's

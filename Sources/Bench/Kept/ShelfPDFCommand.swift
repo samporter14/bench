@@ -1,4 +1,4 @@
-// ShelfPDFCommand.swift — Make PDF… on the Shelf (DESIGN.md, Shelf → Lab-meeting
+// ShelfPDFCommand.swift — Export Figure as PDF… on the Shelf (DESIGN.md, Shelf → Lab-meeting
 // PDF): what happens between the pick and the file. A save panel (Downloads,
 // "Lab meeting 2026-10-23.pdf"), the words of each text file read through the
 // disk layer, the drawing off the main actor (ShelfPDF.swift), and then the
@@ -124,7 +124,7 @@ final class ShelfPDFMaker: ObservableObject {
         panel.directoryURL = URL.downloadsDirectory
         panel.canCreateDirectories = true
         panel.isExtensionHidden = false
-        panel.prompt = "Make PDF"
+        panel.prompt = ShelfPDFRules.savePanelPrompt
         panel.message = "One figure on each page, 16:9, for lab meeting."
         return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             let done: @MainActor (NSApplication.ModalResponse) -> Void = { response in

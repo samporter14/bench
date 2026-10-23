@@ -54,7 +54,7 @@ struct ShelfView: View {
                 .sharedBackgroundVisibility(.hidden)
                 if model.pickCount > 0 {
                     ToolbarItem(placement: .primaryAction) {
-                        ShelfMakePDFButton(model: model)
+                        ShelfExportPDFButton(model: model)
                     }
                     .sharedBackgroundVisibility(.hidden)
                 }
@@ -198,7 +198,8 @@ struct ShelfView: View {
                 .disabled(Demo.mode != nil)
             Button("Quick Look") { model.selection = item.id; quickLookSelected() }
             Button("Copy") { ShelfActions.copy(item, disk: model.index.disk) }
-            Button("Make PDF\u{2026}") { model.makePDF(from: item) }
+            // On the picks when this card is one of them, else on this card alone: the name says which.
+            Button(model.exportName(from: item)) { model.exportPDF(from: item) }
             Divider()
             Button("Open") { NSWorkspace.shared.open(item.fileURL) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.folder]) }

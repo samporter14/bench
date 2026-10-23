@@ -64,7 +64,7 @@ struct ShelfPDFFreshTests {
         try await rig { model, item, editor, pages in
             editor.legend = "Z\u{2032} above 0.5 on every plate but 7."
             #expect(editor.hasUnsavedText)
-            await model.makePDF().value
+            await model.exportPDF().value
             #expect(pages.made == 1)
             #expect(pages.pages.map(\.legend) == ["Z\u{2032} above 0.5 on every plate but 7."])
             // What was typed is saved, not only drawn.
@@ -78,7 +78,7 @@ struct ShelfPDFFreshTests {
         try await rig { model, item, editor, pages in
             // The card's own wait is a minute here; the panel is answered before it is over.
             pages.whileAsking = { editor.legend = "Typed while the panel was up." }
-            await model.makePDF().value
+            await model.exportPDF().value
             #expect(pages.pages.map(\.legend) == ["Typed while the panel was up."])
             let onDisk = try await legendOnDisk(item, model.index.disk)
             #expect(onDisk == "Typed while the panel was up.")
@@ -92,7 +92,7 @@ struct ShelfPDFFreshTests {
                 let read = try? await disk.readme(at: item.folder)
                 _ = try? await disk.replaceLegend(at: item.folder, with: "Written in a text editor.", lastRead: read?.markdown ?? "")
             }
-            await model.makePDF().value
+            await model.exportPDF().value
             #expect(pages.pages.map(\.legend) == ["Written in a text editor."])
         }
     }
@@ -104,7 +104,7 @@ struct ShelfPDFFreshTests {
             let read = try await disk.readme(at: item.folder)
             _ = try await disk.replaceLegend(at: item.folder, with: "Theirs, from another app.", lastRead: read.markdown)
             editor.legend = "Mine, typed a moment ago."
-            await model.makePDF().value
+            await model.exportPDF().value
             // The editor's own way: nothing is forced, the field says what happened.
             #expect(editor.changedOutside)
             let onDisk = try await legendOnDisk(item, disk)
@@ -117,7 +117,7 @@ struct ShelfPDFFreshTests {
     @Test func aReadmeThatCantBeReadLeavesThePageAsTheShelfHadIt() async throws {
         try await rig { model, item, _, pages in
             try FileManager.default.removeItem(at: item.folder.appending(path: "README.md", directoryHint: .notDirectory))
-            await model.makePDF().value
+            await model.exportPDF().value
             #expect(pages.made == 1)
             #expect(pages.pages.map(\.legend) == [ShelfPDFRules.words(for: item).legend])
         }
@@ -131,7 +131,7 @@ struct ShelfPDFFreshTests {
             let read = try await disk.readme(at: other.folder)
             _ = try await disk.replaceLegend(at: other.folder, with: "Written beside the figure.", lastRead: read.markdown)
             editor.legend = "Typed on the first."
-            await model.makePDF().value
+            await model.exportPDF().value
             let byName = Dictionary(uniqueKeysWithValues: zip(model.pickedItems.map(\.id), pages.pages.map(\.legend)))
             #expect(byName[item.id] == "Typed on the first.")
             #expect(byName[other.id] == "Written beside the figure.")
@@ -142,7 +142,7 @@ struct ShelfPDFFreshTests {
         try await rig { model, item, editor, pages in
             pages.destination = nil
             editor.legend = "Typed, then the panel was cancelled."
-            await model.makePDF().value
+            await model.exportPDF().value
             // No PDF; the field's own wait is what saves it, as ever.
             #expect(pages.made == 0)
             #expect(editor.hasUnsavedText)

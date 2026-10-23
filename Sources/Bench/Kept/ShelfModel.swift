@@ -22,7 +22,7 @@ final class ShelfModel: ObservableObject {
 
     let shelf: Shelf
     var index: KeptIndex { shelf.index }
-    /// Make PDF… (ShelfPDFCommand.swift).
+    /// Export Figure as PDF… (ShelfPDFCommand.swift).
     let pdf: ShelfPDFMaker
 
     @Published private(set) var items: [ShelfItem] = []
@@ -39,7 +39,7 @@ final class ShelfModel: ObservableObject {
             pickAnchor = selection
         }
     }
-    /// Every item picked (⌘-click, ⇧-click, ⌘A), the selected one among them: what Make PDF… makes.
+    /// Every item picked (⌘-click, ⇧-click, ⌘A), the selected one among them: what Export as PDF… makes a page of each.
     @Published var picked: Set<String> = []
     /// The card a ⇧-click runs from.
     var pickAnchor: String?

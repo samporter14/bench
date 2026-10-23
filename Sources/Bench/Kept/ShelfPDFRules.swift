@@ -1,4 +1,4 @@
-// ShelfPDFRules.swift — the decisions behind Make PDF… (DESIGN.md, Shelf →
+// ShelfPDFRules.swift — the decisions behind Export Figure as PDF… (DESIGN.md, Shelf →
 // Lab-meeting PDF), pure: which words go on a figure's page (its title, its
 // legend, the line that says where it came from), which picture stands for a
 // file that isn't a picture, what the PDF is called, and the page's
@@ -305,6 +305,32 @@ enum ShelfPDFRules {
         let parts = gregorian.dateComponents([.year, .month, .day], from: date)
         return String(format: "Lab meeting %04d-%02d-%02d.pdf", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
+
+    // MARK: The command's name
+
+    /// What the command is called where there is room for the count: "Export Figure as PDF…" for one,
+    /// "Export 3 Figures as PDF…" for several. The save panel opens on it and the file is "Lab meeting <date>.pdf".
+    static func exportName(count: Int) -> String {
+        count > 1 ? "Export \(count) Figures as PDF\u{2026}" : "Export Figure as PDF\u{2026}"
+    }
+
+    /// The same, as VoiceOver says it: no ellipsis.
+    static func exportSpoken(count: Int) -> String {
+        count > 1 ? "Export \(count) Figures as PDF" : "Export Figure as PDF"
+    }
+
+    /// The title bar's pill. Short, because at the window's narrowest the bar also holds "Shelf", the project pill and
+    /// the search, and "Export 12 Figures as PDF…" would push the search off it; the count is on the card under the
+    /// grid, on the cards' page numbers and in what VoiceOver says, so the pill can leave it out.
+    static let exportPillName = "Export as PDF\u{2026}"
+
+    /// The pill and the card's button while the PDF is made: "Exporting…", then "Exporting… 2/3" for several pages.
+    static func exporting(done: Int, total: Int) -> String {
+        total > 1 ? "Exporting\u{2026} \(done)/\(total)" : "Exporting\u{2026}"
+    }
+
+    /// The save panel's button; its message says what the file is.
+    static let savePanelPrompt = "Export"
 
     // MARK: The sentences
 
