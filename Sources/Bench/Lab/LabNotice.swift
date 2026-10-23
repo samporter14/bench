@@ -175,6 +175,30 @@ enum NoticeRules {
             detail: parts.joined(separator: " · "), lifetime: .seconds(30))
     }
 
+    // MARK: After a Claude Science update
+
+    /// The one card when Claude Science's version changed and the look
+    /// Capsid took afterwards (App/CompatWatch.swift) found something that
+    /// answers differently. Nothing turns itself off: those features keep
+    /// trying and may quietly do nothing, so the title says "may not work",
+    /// and the detail says where the rest is. It is sized for the panel's
+    /// card, whose title wraps to two lines and whose detail is one: the
+    /// first feature is named and the others counted, because naming two
+    /// would run to a third line on a narrow card. `version` only keys the
+    /// card, and only when it is plain numbers. Nil when nothing is
+    /// affected: no card for a clean look.
+    static func afterUpdate(version: String?, features: [CompatFeature]) -> LabNotice? {
+        guard let first = features.first else { return nil }
+        let others = features.count - 1
+        let subject = others == 0 ? first.inASentence : "\(first.inASentence) and \(others) more"
+        let named = version.flatMap { ScienceVersion.parse($0) != nil ? $0 : nil }
+        return LabNotice(
+            id: "compat-update-\(named ?? "unknown")", symbol: "arrow.triangle.2.circlepath", caption: "Claude Science updated",
+            title: subject.prefix(1).uppercased() + subject.dropFirst() + " may not work",
+            detail: "See Help \u{2192} Capsid Diagnostics\u{2026}",
+            lifetime: .seconds(20))
+    }
+
     // MARK: Nidus
 
     /// What Nidus publishes in its folder (`focus.json`): only whether a

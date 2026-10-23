@@ -480,6 +480,8 @@ final class WebContainer: ObservableObject, WebPageWindow {
         // The daemon's own sign-in step (`/api/me`) is not the page.
         guard !SignInPlan.isSignInStep(url) else { return }
         status = .ready
+        // Looks once, quietly, when Claude Science's version has changed (App/CompatWatch.swift).
+        CompatWatch.shared.pageReady()
     }
 
     /// A page that can't be loaded from the daemon. Cancelled loads are our own
