@@ -13,6 +13,12 @@
 // every field again (`HistoryPage`); anything that doesn't match is
 // unreadable. What is read lives in memory only, while the answer is built.
 //
+// A message the agent sends the user mid-run (`toYou`) is cut at 2,000
+// characters on a page like a turn, and says so (`cut`); the whole-turn read
+// (`benchProjectTurn`) answers the row's messages whole in `notes`, one for
+// each `send_user_message` call in it, in order, so the Mac-side reader can
+// read the rest the way it reads a cut turn. The phone's JSON is unchanged.
+//
 // Keep (since 1.0) adds one more op beside these, on the same allowlisted GET:
 // `benchFindShowingMessage` finds the assistant message that shows a figure
 // (`ShowingRead`, below). It keeps the message's index, time and text and which
@@ -272,7 +278,7 @@ enum HistoryReaderScript {
                 entry.item = add({ i: i, kind: "ask", q: line(q, LINE), a: null });
             } else if (name === "send_user_message") {
                 const message = typeof input.message === "string" ? input.message.trim() : "";
-                entry.item = add({ i: i, kind: "toYou", text: cut(message, TEXT), files: [] });
+                entry.item = add({ i: i, kind: "toYou", text: cut(message, TEXT), cut: Array.from(message).length > TEXT, files: [] });
             } else if (name.startsWith("delegate") || HELPERS.indexOf(name) >= 0) {
                 add({ i: i, kind: "helper" });
             } else {
@@ -396,7 +402,7 @@ enum HistoryReaderScript {
             }
             if (item.kind === "plan") { return { i: item.i, kind: "plan", steps: item.steps }; }
             if (item.kind === "ask") { return { i: item.i, kind: "ask", q: item.q, a: item.a }; }
-            if (item.kind === "toYou") { return { i: item.i, kind: "toYou", text: item.text, files: files || [] }; }
+            if (item.kind === "toYou") { return { i: item.i, kind: "toYou", text: item.text, cut: item.cut === true, files: files || [] }; }
             return { i: item.i, kind: "helper" };
         });
 
@@ -409,7 +415,11 @@ enum HistoryReaderScript {
     """#
 
     /// `benchProjectTurn(page, index)`: one row's text whole (≤ 20,000), as
-    /// `{i, role, at, text}`; null when the row is no turn the history shows.
+    /// `{i, role, at, text, notes}`; null when the row is no turn the history
+    /// shows. `notes` is each `send_user_message` call's message in an
+    /// assistant row, whole (≤ 20,000 each), one for each call in order (an
+    /// empty one is ""), which is how the page's `toYou` items are counted; a
+    /// row with notes and no text is a turn with the text "".
     static let turnProjection = #"""
     function benchProjectTurn(page, index) {
         "use strict";
@@ -435,7 +445,19 @@ enum HistoryReaderScript {
             }
         } else { return null; }
         const joined = m.role === "assistant" ? texts.map(t => t.trim()).filter(Boolean).join("\n\n") : texts.join("\n\n").trim();
-        if (joined === "") { return null; }
+        // What the agent sent the user mid-run, whole: one for each send_user_message call.
+        const notes = [];
+        if (m.role === "assistant" && Array.isArray(m.content)) {
+            for (const block of m.content) {
+                if (isObject(block) && (block.type === "tool_use" || block.type === "server_tool_use")
+                    && typeof block.name === "string" && block.name.toLowerCase() === "send_user_message") {
+                    const note = isObject(block.input) && typeof block.input.message === "string" ? block.input.message.trim() : "";
+                    const chars = Array.from(note);
+                    notes.push(chars.length <= WHOLE ? note : chars.slice(0, WHOLE - 1).join("") + "…");
+                }
+            }
+        }
+        if (joined === "" && !notes.some(note => note !== "")) { return null; }
         if (m.role === "user" && HIDDEN_STARTS.some(start => joined.startsWith(start))) { return null; }
         // Attachment lines (the upload format) are shown as files in the page, not as text.
         const plain = joined.split("\n").filter(line => {
@@ -450,7 +472,7 @@ enum HistoryReaderScript {
         }
         const all = Array.from(plain);
         const text = all.length <= WHOLE ? plain : all.slice(0, WHOLE - 1).join("") + "…";
-        return { i: index, role: m.role === "user" ? "you" : "claude", at: at, text: text };
+        return { i: index, role: m.role === "user" ? "you" : "claude", at: at, text: text, notes: notes };
     }
     """#
 
@@ -1058,21 +1080,21 @@ enum HistoryItem: Equatable, Sendable {
     case plan(i: Int, steps: Int?)
     /// Asked the user `q`; `a` is the answer, once given.
     case ask(i: Int, q: String?, a: String?)
-    /// A message the agent sent the user mid-run.
-    case toYou(i: Int, text: String, files: [HistoryFile])
+    /// A message the agent sent the user mid-run; `cut` when the page cut it at 2,000 characters.
+    case toYou(i: Int, text: String, files: [HistoryFile], cut: Bool = false)
     /// Asked a helper agent.
     case helper(i: Int)
 
     var index: Int {
         switch self {
         case .turn(let i, _, _, _, _, _), .steps(let i, _, _, _), .plan(let i, _), .ask(let i, _, _),
-             .toYou(let i, _, _), .helper(let i): i
+             .toYou(let i, _, _, _), .helper(let i): i
         }
     }
 
     var files: [HistoryFile] {
         switch self {
-        case .turn(_, _, _, _, _, let files), .steps(_, _, _, let files), .toYou(_, _, let files): files
+        case .turn(_, _, _, _, _, let files), .steps(_, _, _, let files), .toYou(_, _, let files, _): files
         default: []
         }
     }
@@ -1126,7 +1148,9 @@ enum HistoryItem: Equatable, Sendable {
         case "toYou":
             guard let text = Pick.string(item["text"]), text.unicodeScalars.count <= HistoryReaderScript.turnText,
                   let files = files() else { return nil }
-            self = .toYou(i: i, text: text, files: files)
+            // Older pages say nothing of it: not cut.
+            guard item["cut"] == nil || Pick.bool(item["cut"]) != nil else { return nil }
+            self = .toYou(i: i, text: text, files: files, cut: Pick.bool(item["cut"]) ?? false)
         case "helper":
             self = .helper(i: i)
         default:
@@ -1193,20 +1217,43 @@ struct HistoryTurn: Equatable, Sendable {
     let role: HistoryItem.Role
     let at: Date?
     let text: String
+    /// What the agent sent the user mid-run in this row, whole: one for each
+    /// `send_user_message` call, in order (an empty one is ""). Only the
+    /// Mac-side reader reads them; the phone's turn leaves them out.
+    let notes: [String]
 
-    init(i: Int, role: HistoryItem.Role, at: Date?, text: String) {
+    static let notesLimit = 20
+
+    init(i: Int, role: HistoryItem.Role, at: Date?, text: String, notes: [String] = []) {
         self.i = i
         self.role = role
         self.at = at
         self.text = text
+        self.notes = notes
     }
 
     init?(object: Any?) {
         guard let turn = object as? [String: Any], let i = Pick.int(turn["i"]), (0...HistoryReaderScript.maxIndex).contains(i),
               let role = Pick.string(turn["role"]).flatMap(HistoryItem.Role.init(rawValue:)),
-              let at = Pick.optionalTime(turn["at"]),
-              let text = Pick.text(turn["text"], limit: HistoryReaderScript.wholeTurn) else { return nil }
-        self.init(i: i, role: role, at: at, text: text)
+              let at = Pick.optionalTime(turn["at"]) else { return nil }
+        var notes: [String] = []
+        if turn["notes"] != nil {
+            guard let raw = turn["notes"] as? [Any], raw.count <= Self.notesLimit else { return nil }
+            for one in raw {
+                guard let note = Pick.string(one), note.unicodeScalars.count <= HistoryReaderScript.wholeTurn else { return nil }
+                notes.append(note)
+            }
+        }
+        // A row of notes alone has no text of its own.
+        let text: String
+        if notes.contains(where: { !$0.isEmpty }), Pick.string(turn["text"]) == "" {
+            text = ""
+        } else if let given = Pick.text(turn["text"], limit: HistoryReaderScript.wholeTurn) {
+            text = given
+        } else {
+            return nil
+        }
+        self.init(i: i, role: role, at: at, text: text, notes: notes)
     }
 }
 

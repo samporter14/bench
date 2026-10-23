@@ -45,6 +45,10 @@ struct ReferenceAnswer: Equatable, Sendable, Identifiable {
     /// folded into one item, whose id is its first row) still holds its later
     /// rows. Nil for the newest reply read: it runs to the end.
     var rowEnd: Int? = nil
+    /// The first row read of the reply. Its id is its last row, which moves as
+    /// rows land after it; this stays, so the same reply is told again after
+    /// the newest rows are read once more.
+    var start: Int = 0
 
     /// The picture or file in this reply that has `version` (a draft too).
     func file(version: String) -> HistoryFile? {
@@ -164,10 +168,12 @@ enum ReferenceRules {
     /// Claude's replies in the rows read, oldest first. A reply begins at one
     /// of the user's turns and runs to the next; the rows before the first of
     /// the user's turns read so far are a reply whose start hasn't been read,
-    /// unless they begin the history. `whole` holds turns read whole since.
+    /// unless they begin the history. `whole` holds turns read whole since, and
+    /// `notes` the messages sent to the user mid-run in a row, whole, in order.
     /// A reply with neither words nor figures (only steps, a plan, a
     /// question) isn't one.
-    static func answers(items: [HistoryItem], reachedStart: Bool, whole: [Int: String]) -> [ReferenceAnswer] {
+    static func answers(items: [HistoryItem], reachedStart: Bool, whole: [Int: String],
+                        notes: [Int: [String]] = [:]) -> [ReferenceAnswer] {
         var groups: [[HistoryItem]] = []
         var current: [HistoryItem] = []
         for item in items.sorted(by: { $0.index < $1.index }) {
@@ -183,7 +189,7 @@ enum ReferenceRules {
         return groups.enumerated().compactMap { index, group in
             // The rows up to the next user message are this reply's.
             let end = index + 1 < groups.count ? groups[index + 1][0].index - 1 : nil
-            return answer(group, complete: isUsersTurn(group[0]) || reachedStart, whole: whole, end: end)
+            return answer(group, complete: isUsersTurn(group[0]) || reachedStart, whole: whole, notes: notes, end: end)
         }
     }
 
@@ -192,7 +198,8 @@ enum ReferenceRules {
         return false
     }
 
-    private static func answer(_ group: [HistoryItem], complete: Bool, whole: [Int: String], end: Int?) -> ReferenceAnswer? {
+    private static func answer(_ group: [HistoryItem], complete: Bool, whole: [Int: String], notes: [Int: [String]],
+                               end: Int?) -> ReferenceAnswer? {
         guard let last = group.last else { return nil }
         var question: String?
         var parts: [ReferenceAnswer.Part] = []
@@ -202,6 +209,8 @@ enum ReferenceRules {
         var others: [HistoryFile] = []
         var otherPlace: [String: Int] = [:]
         var versions: [HistoryFile] = []
+        // Messages to the user seen so far in each row: the nth of a row is the nth the whole read gives.
+        var sent: [Int: Int] = [:]
         func add(_ files: [HistoryFile]) {
             for file in files {
                 let key = file.a ?? file.v
@@ -232,9 +241,12 @@ enum ReferenceRules {
                 if !words.isEmpty { parts.append(.init(i: i, text: words, cut: full == nil && cut)) }
                 if let when { at = when }
                 add(files)
-            case .toYou(let i, let text, let files):
-                let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !words.isEmpty { parts.append(.init(i: i, text: words, cut: false)) }
+            case .toYou(let i, let text, let files, let cut):
+                let nth = sent[i, default: 0]
+                sent[i] = nth + 1
+                let full = notes[i].flatMap { nth < $0.count ? $0[nth] : nil }
+                let words = (full ?? text).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !words.isEmpty { parts.append(.init(i: i, text: words, cut: full == nil && cut)) }
                 add(files)
             case .steps(_, _, _, let files):
                 add(files)
@@ -244,7 +256,7 @@ enum ReferenceRules {
         }
         guard !parts.isEmpty || !figures.isEmpty else { return nil }
         return ReferenceAnswer(id: last.index, question: question, at: at, parts: parts, figures: figures, complete: complete,
-                               files: others, pictureVersions: versions, rowEnd: end)
+                               files: others, pictureVersions: versions, rowEnd: end, start: group[0].index)
     }
 
     /// "Claude's answer · 8:47 · 2 of 3": when Claude last spoke in the
@@ -334,6 +346,10 @@ final class ReferenceModel: ObservableObject {
     @Published private(set) var answers: [ReferenceAnswer] = []
     /// The reply shown, by its id.
     @Published private(set) var shownID: Int?
+    /// Which reply the page is on: moves when the window goes to another reply
+    /// (not when the reply it is on grows a row), so the page starts at the top
+    /// for another reply and stays where it is for the same one.
+    @Published private(set) var shownKey = 0
     @Published private(set) var phase: Phase = .idle
     /// Row 0 has been read: the oldest reply read is the session's first.
     @Published private(set) var reachedStart = false
@@ -366,13 +382,29 @@ final class ReferenceModel: ObservableObject {
     private var items: [Int: HistoryItem] = [:]
     /// Turns read whole since their page cut them.
     private var whole: [Int: String] = [:]
+    /// The messages sent to the user mid-run in a row, read whole with it.
+    private var wholeNotes: [Int: [String]] = [:]
     /// Bumped by `close`: a read that lands afterwards changes nothing.
     private var token = 0
     private var pageTask: Task<Void, Never>?
     private var wholeTasks: [Int: Task<Void, Never>] = [:]
     private var thumbnailTasks: [String: Task<Void, Never>] = [:]
     private var thumbnailsFailed: Set<String> = []
+    /// How many times each figure's picture was asked for.
+    private var thumbnailAsks: [String: Int] = [:]
     private var copiedTask: Task<Void, Never>?
+    /// When the newest rows were last read: the first page of a look, or a refresh.
+    private var lastTail: Date?
+    /// Earlier was pressed while a read was under way: it goes when that read ends (one step, and no more).
+    private var earlierQueued = false
+    /// The session finished while a read was under way: the newest rows are read again when it ends.
+    private var refreshQueued = false
+    /// The session's state as last told (`sessionChanged`).
+    private var lastState: SessionState?
+    /// The time, for the few seconds between two reads of the newest rows. Tests move it.
+    var clock: @MainActor () -> Date = { Date() }
+    /// How long Add to Shelf and Keep… wait, at most, for the rest of a long reply.
+    var restWait: Duration = .seconds(2)
     /// Each reply's drawn text, for the text it had when drawn.
     private var drawn: [Int: (text: String, rendered: NSAttributedString)] = [:]
 
@@ -383,6 +415,7 @@ final class ReferenceModel: ObservableObject {
         self.gate = gate
         self.thumbnails = thumbnails
         shelf = dependencies.shelf ?? .live
+        lastState = session.state
     }
 
     // MARK: What is shown
@@ -549,11 +582,21 @@ final class ReferenceModel: ObservableObject {
 
     func earlier() {
         if let index = shownIndex, index > 0 {
+            earlierQueued = false
             show(answers[index - 1].id)
             completeShown()
             return
         }
-        guard pageTask == nil, !reachedStart else { return }
+        guard !reachedStart else {
+            earlierQueued = false
+            return
+        }
+        guard pageTask == nil else {
+            // A read is under way, the window's own: the step waits for it. One step, not a pile
+            // of them, and only from a reply on the page (before one, there is nowhere to step from).
+            earlierQueued = shownID != nil
+            return
+        }
         let edge = shownID ?? Int.max
         look(until: { [unowned self] in answers.contains { $0.id < edge && $0.complete } }) { [unowned self] in
             // The user may have moved meanwhile: only from the edge does the
@@ -564,11 +607,16 @@ final class ReferenceModel: ObservableObject {
     }
 
     func later() {
+        earlierQueued = false
         guard let index = shownIndex, index + 1 < answers.count else { return }
         show(answers[index + 1].id)
     }
 
-    private func show(_ id: Int) {
+    /// Shows a reply. `before` is the start of the reply the page was on, when
+    /// its id may have moved since (the rows were read again): the page starts
+    /// again at its top only for another reply, not for the same one grown.
+    private func show(_ id: Int, from before: Int? = nil) {
+        if answers.first(where: { $0.id == id })?.start != (before ?? current?.start) { shownKey += 1 }
         shownID = id
         wholeForShown()
     }
@@ -583,6 +631,8 @@ final class ReferenceModel: ObservableObject {
     func close() {
         token += 1
         goal = nil
+        earlierQueued = false
+        refreshQueued = false
         pageTask?.cancel()
         pageTask = nil
         for task in wholeTasks.values { task.cancel() }
@@ -624,6 +674,7 @@ final class ReferenceModel: ObservableObject {
                 } catch {
                     guard self.token == token else { return }
                     phase = .failed(ReferenceRules.failureSentence)
+                    dropQueued()
                     endLook(token)
                     return
                 }
@@ -631,14 +682,17 @@ final class ReferenceModel: ObservableObject {
                 switch read {
                 case .unreadable:
                     phase = .failed(ReferenceRules.failureSentence)
+                    dropQueued()
                     endLook(token)
                     return
                 case .tooBig:
                     phase = .failed(ReferenceRules.tooBigSentence)
+                    dropQueued()
                     endLook(token)
                     return
                 case .page(let page):
                     looked += 1
+                    if before == nil { lastTail = clock() }
                     merge(page)
                 }
             }
@@ -647,7 +701,27 @@ final class ReferenceModel: ObservableObject {
             then()
             // A landing asked for while this look was reading carries on.
             landStep()
+            stepQueued()
         }
+    }
+
+    /// What was asked for while a read was under way, now that it is over: the
+    /// one Earlier, and a refresh the session's finishing called for.
+    private func stepQueued() {
+        guard pageTask == nil else { return }
+        if earlierQueued {
+            earlierQueued = false
+            earlier()
+        } else if refreshQueued {
+            refreshQueued = false
+            refresh(afterFinish: true)
+        }
+    }
+
+    /// A look that failed drops what was waiting on it.
+    private func dropQueued() {
+        earlierQueued = false
+        refreshQueued = false
     }
 
     /// A look is over: its task is let go, unless the window closed meanwhile.
@@ -671,13 +745,134 @@ final class ReferenceModel: ObservableObject {
     }
 
     private func rebuild() {
-        answers = ReferenceRules.answers(items: Array(items.values), reachedStart: reachedStart, whole: whole)
+        answers = ReferenceRules.answers(items: Array(items.values), reachedStart: reachedStart, whole: whole, notes: wholeNotes)
     }
 
-    /// The shown reply's cut turns, each read whole once, by row, so a late
-    /// answer for one row never lands on another.
+    // MARK: Refreshing
+
+    /// No sooner than this after the newest rows were last read, they are read again.
+    static let refreshEvery: TimeInterval = 5
+
+    private func recentlyRead() -> Bool {
+        guard let lastTail else { return false }
+        return clock().timeIntervalSince(lastTail) < Self.refreshEvery
+    }
+
+    /// Reads the newest rows again: the window was shown again or became key,
+    /// or the session finished the reply it was writing (`afterFinish`, which
+    /// is not held to the few seconds). A reply that has landed since is
+    /// reachable with Later; a window on the newest reply goes to the newest
+    /// (that reply grown, or a newer one); one on an older reply stays where
+    /// it is. One read at a time, in the place of any look (a look that is
+    /// reading calls for it again when it ends, if the session finished), and
+    /// quiet: a read that fails changes nothing. The rows between the new
+    /// ones and what was read before are read too, a look's worth; further
+    /// than that, what was read is let go and the window starts from the new
+    /// end, as on opening (Earlier reads back again).
+    func refresh(afterFinish: Bool = false) {
+        guard pageTask == nil, goal == nil else {
+            if afterFinish, pageTask != nil { refreshQueued = true }
+            return
+        }
+        guard afterFinish || !recentlyRead() else { return }
+        guard shownID != nil else {
+            // The first look found no reply, or failed: look again, from the newest end.
+            if answers.isEmpty { restart() }
+            return
+        }
+        lastTail = clock()
+        let token = self.token
+        pageTask = Task { [weak self] in
+            guard let self else { return }
+            let pages = await readNewest()
+            guard self.token == token else { return }
+            if let pages { applyNewest(pages) }
+            endLook(token)
+            landStep()
+            stepQueued()
+        }
+    }
+
+    /// The window has no reply: its first look again.
+    private func restart() {
+        items = [:]
+        from = nil
+        reachedStart = false
+        answers = []
+        phase = .idle
+        open()
+    }
+
+    /// The newest rows, then pages back from them until they meet what is read
+    /// (or a look's worth of pages). Nil when a read failed.
+    private func readNewest() async -> [HistoryPage]? {
+        let known = items.keys.max()
+        var pages: [HistoryPage] = []
+        var before: Int?
+        while true {
+            let read: ReferencePage
+            do {
+                read = try await gate.perform { [dependencies, session, before] in
+                    try await dependencies.readPage(session.id, before)
+                }
+            } catch {
+                return nil
+            }
+            guard case .page(let page) = read else { return nil }
+            // A page that didn't move back (a shape the page shouldn't give): stop here.
+            if let before, page.from >= before { break }
+            pages.append(page)
+            guard let known, page.from > known + 1, page.from > 0, pages.count <= Self.pagesPerLook else { break }
+            before = page.from
+        }
+        return pages
+    }
+
+    private func applyNewest(_ pages: [HistoryPage]) {
+        guard let low = pages.map(\.from).min() else { return }
+        let was = shownID
+        let wasStart = current?.start
+        let onNewest = was != nil && was == answers.last?.id
+        if let known = items.keys.max(), low > known + 1 {
+            items = [:]
+            from = nil
+            reachedStart = false
+        } else {
+            items = items.filter { $0.key < low }
+        }
+        for page in pages {
+            for item in page.items { items[item.index] = item }
+        }
+        from = Swift.min(from ?? low, low)
+        if low == 0 { reachedStart = true }
+        rebuild()
+        guard let was else { return }
+        // The reader stays on the reply they were reading: its last row may have moved, and when
+        // it was the newest they follow it to the newest.
+        let target = onNewest ? answers.last
+            : (answers.first { $0.id == was } ?? answers.last { $0.start <= was } ?? answers.last)
+        if let target { show(target.id, from: wasStart) }
+    }
+
+    /// The session's state as the panel's reads have it, told by the window's
+    /// owner. A session that stops running has finished the reply it was
+    /// writing: the newest rows are read again, at once.
+    func sessionChanged(to state: SessionState?) {
+        let was = lastState
+        lastState = state
+        guard was == .running, let state, state != .running else { return }
+        refresh(afterFinish: true)
+    }
+
+    /// The shown reply's cut turns, read whole.
     private func wholeForShown() {
         guard let answer = current else { return }
+        startWhole(for: answer)
+    }
+
+    /// A reply's cut turns (and cut messages to the user), each read whole
+    /// once, by row, so a late answer for one row never lands on another.
+    private func startWhole(for answer: ReferenceAnswer) {
         for row in answer.cutRows where whole[row] == nil && !restFailed.contains(row) && wholeTasks[row] == nil {
             let token = self.token
             wholeTasks[row] = Task { [weak self] in
@@ -698,7 +893,12 @@ final class ReferenceModel: ObservableObject {
                 guard self.token == token else { return }
                 if let turn, turn.role == .claude, turn.i == row {
                     whole[row] = turn.text
+                    wholeNotes[row] = turn.notes
                     rebuild()
+                    // A message the read had no word of stays cut, and says so.
+                    if answers.contains(where: { reply in reply.parts.contains { $0.i == row && $0.cut } }) {
+                        restFailed.insert(row)
+                    }
                 } else {
                     restFailed.insert(row)
                 }
@@ -706,10 +906,24 @@ final class ReferenceModel: ObservableObject {
         }
     }
 
-    /// A figure came into view: its picture, once.
+    /// Times a figure's picture is asked for again after the store let it go: a
+    /// reply with more pictures than the store holds would otherwise ask for
+    /// ever, each coming in as another goes out.
+    static let thumbnailReAsks = 2
+
+    /// A figure is drawn with no picture: its picture, when it has none and
+    /// none is on its way (it comes into view, or the store let it go).
     func wantThumbnail(_ file: HistoryFile) {
         guard ArtifactGate.thumb(kind: file.kind) == nil, !thumbnails.knows(file.v),
               !thumbnailsFailed.contains(file.v), thumbnailTasks[file.v] == nil else { return }
+        let asked = thumbnailAsks[file.v, default: 0]
+        guard asked <= Self.thumbnailReAsks else {
+            // Asked for as often as is fair: the card says it can't be shown.
+            thumbnailsFailed.insert(file.v)
+            objectWillChange.send()
+            return
+        }
+        thumbnailAsks[file.v] = asked + 1
         let token = self.token
         let version = file.v
         thumbnailTasks[version] = Task { [weak self] in
@@ -763,8 +977,30 @@ final class ReferenceModel: ObservableObject {
         return KeepSubject(session: session,
                            entry: ArtifactEntry(version: file.v, artifact: file.a, name: file.name, mime: nil,
                                                 size: file.size ?? 0, at: reply?.at),
-                           pinned: reply.map { KeepPinnedAnswer(text: $0.text, at: $0.at) },
+                           pinned: reply.map { KeepPinnedAnswer(text: $0.text, at: $0.at, cut: !$0.cutRows.isEmpty) },
                            selectsItsVersion: true)
+    }
+
+    /// Waits, a couple of seconds at most (`restWait`), for the rest of the long
+    /// turns of the reply that shows `file` to be read: Add to Shelf and Keep…
+    /// are pressed on a figure at any time, and the words kept with it should
+    /// be whole when they can be. The reads of a reply that isn't the one on
+    /// the page are started here. Words still cut when it ends are said to be
+    /// (`KeepPinnedAnswer.cut`), in the README.
+    func restRead(for file: HistoryFile) async {
+        guard let reply = answer(showing: file), !reply.cutRows.isEmpty else { return }
+        startWhole(for: reply)
+        let start = reply.start
+        let time = ContinuousClock()
+        let deadline = time.now + restWait
+        while time.now < deadline, restIsBeingRead(inReplyStartingAt: start) {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    private func restIsBeingRead(inReplyStartingAt start: Int) -> Bool {
+        guard let reply = answers.first(where: { $0.start == start }) else { return false }
+        return reply.cutRows.contains { wholeTasks[$0] != nil }
     }
 
     // MARK: The shelf
@@ -777,7 +1013,7 @@ final class ReferenceModel: ObservableObject {
         return ShelfSource(session: session,
                            entry: ArtifactEntry(version: file.v, artifact: file.a, name: file.name, mime: nil,
                                                 size: file.size ?? 0, at: reply?.at),
-                           answer: reply.map { KeepPinnedAnswer(text: $0.text, at: $0.at) },
+                           answer: reply.map { KeepPinnedAnswer(text: $0.text, at: $0.at, cut: !$0.cutRows.isEmpty) },
                            row: reply?.id, question: reply?.question)
     }
 
@@ -792,11 +1028,14 @@ final class ReferenceModel: ObservableObject {
     func addToShelf(_ file: HistoryFile) async -> ShelfAddOutcome? {
         guard shelfMark(file) == .off, !shelving.contains(file.v) else { return nil }
         let version = file.v
-        let source = shelfSource(file)
         shelving.insert(version)
         shelfProblems[version] = nil
         defer { shelving.remove(version) }
         let token = self.token
+        // The words go with it whole, when the reads under way bring the rest in time.
+        await restRead(for: file)
+        guard self.token == token else { return nil }
+        let source = shelfSource(file)
         let outcome = await shelf.add(source)
         guard self.token == token else { return outcome }
         switch outcome {

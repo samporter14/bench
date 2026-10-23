@@ -13,6 +13,7 @@
 // Where It Came From opens the window on the reply a shelved item came from,
 // scrolled to it.)
 import AppKit
+import Combine
 import SwiftUI
 
 /// The Window menu's Keep on Top: the key reference window, if any.
@@ -63,6 +64,8 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
 
     private var windows: [String: ReferenceWindow] = [:]
     private var models: [String: ReferenceModel] = [:]
+    /// Each window's watch on its session's state (the panel's reads), so a session that finishes is read again.
+    private var watches: [String: AnyCancellable] = [:]
 
     /// Opens a session's window, or brings it forward. With `row` or `mark`
     /// (Show Where It Came From, Open as Reference on a figure) it goes to
@@ -72,7 +75,12 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         if let window = windows[session.id] {
             Demo.activateUnlessQuiet()
             window.makeKeyAndOrderFront(nil)
-            if row != nil || mark != nil { models[session.id]?.land(at: row, mark: mark) }
+            if row != nil || mark != nil {
+                models[session.id]?.land(at: row, mark: mark)
+            } else {
+                // Shown again from any way in: a reply may have landed since.
+                models[session.id]?.refresh()
+            }
             return
         }
         ReadingGate.shared.start()
@@ -107,6 +115,10 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         }
         windows[session.id] = window
         models[session.id] = model
+        // A session that stops running has finished the reply it was writing.
+        watches[session.id] = LabModel.shared.reads.$sessions.sink { [weak model] sessions in
+            MainActor.assumeIsolated { model?.sessionChanged(to: sessions.first { $0.id == session.id }?.state) }
+        }
         model.open(at: row, mark: mark)
         Demo.activateUnlessQuiet()
         if Demo.isQuiet { window.orderFrontRegardless() } else { window.makeKeyAndOrderFront(nil) }
@@ -149,12 +161,15 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         models[id]?.close()
         models[id] = nil
         windows[id] = nil
+        watches[id] = nil
         if ReferenceCommands.shared.keyWindow === window { ReferenceCommands.shared.keyWindow = nil }
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
         guard let window = notification.object as? ReferenceWindow else { return }
         ReferenceCommands.shared.keyWindow = window
+        // Coming back to the window: the newest rows are read again (at most every few seconds).
+        if let id = windows.first(where: { $0.value === window })?.key { models[id]?.refresh() }
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -304,7 +319,8 @@ struct ReferenceView: View {
                     }
                 }
             }
-            .id(answer.id)
+            // Another reply starts at the top; the same one, grown by a read, stays where it is.
+            .id(model.shownKey)
         } else {
             empty
         }
@@ -345,8 +361,7 @@ struct ReferenceView: View {
         let mark = model.shelfMark(file)
         return VStack(alignment: .leading, spacing: 8) {
             ReferenceFigureView(store: model.thumbnails, file: file, failed: model.thumbnailFailed(file),
-                                shelved: mark == .on)
-                .onAppear { model.wantThumbnail(file) }
+                                shelved: mark == .on, wantsPicture: { model.wantThumbnail(file) })
                 .contextMenu { shelfItems(file, mark: mark) }
             HStack(spacing: 8) {
                 Text(file.name)
@@ -466,7 +481,12 @@ struct ReferenceView: View {
 
     private func keep(_ file: HistoryFile) {
         guard keeping == nil else { return }
-        keeping = KeepModel(subject: model.keepSubject(file), dependencies: .live(shelf: .shared))
+        Task { @MainActor in
+            // The words go with it whole, when the reads under way bring the rest in time.
+            await model.restRead(for: file)
+            guard keeping == nil else { return }
+            keeping = KeepModel(subject: model.keepSubject(file), dependencies: .live(shelf: .shared))
+        }
     }
 }
 
@@ -478,6 +498,9 @@ struct ReferenceFigureView: View {
     let failed: Bool
     /// On the shelf: board 11's slate chip and a 2-point ink ring.
     var shelved = false
+    /// Called each time the card is drawn with no picture (first drawn, or the
+    /// store let the picture go): the reader asks for it, if it isn't coming.
+    var wantsPicture: () -> Void = {}
 
     /// Taller than this, a picture is shown smaller rather than filling the window.
     private static let maxHeight: CGFloat = 520
@@ -502,6 +525,7 @@ struct ReferenceFigureView: View {
                             ProgressView().controlSize(.small)
                         }
                     }
+                    .onAppear(perform: wantsPicture)
             }
         }
         .background(Solanum.raised)

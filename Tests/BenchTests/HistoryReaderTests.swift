@@ -113,6 +113,27 @@ struct HistoryProjectionTests {
         #expect(text.hasSuffix("…"))
     }
 
+    @Test func aLongMessageToTheUserIsCutAtTwoThousandAndSaysSo() throws {
+        func messageToYou(_ count: Int) -> String {
+            let text = String(repeating: "é", count: count)
+            return #"[{"role": "assistant", "_ts": 1791833000000, "content": [{"type": "tool_use", "id": "t1", "name": "send_user_message", "input": {"message": "\#(text)"}}]}]"#
+        }
+        // 2,000 characters fit; 2,001 don't.
+        for (count, isCut) in [(1_999, false), (2_000, false), (2_001, true), (6_000, true)] {
+            let page = try #require(project(page(messageToYou(count), total: 1)).page)
+            guard case .toYou(_, let text, _, let cut) = try #require(page.items.first) else { Issue.record("no message"); return }
+            #expect(cut == isCut, "\(count)")
+            #expect(text.unicodeScalars.count == min(count, 2_000), "\(count)")
+            #expect(text.hasSuffix("\u{2026}") == isCut, "\(count)")
+        }
+        // A page from before the flag existed says nothing of it: not cut.
+        let old: [String: Any] = ["total": 3, "from": 1, "items": [["i": 1, "kind": "toYou", "text": "x", "files": []]]]
+        #expect(HistoryPage(object: old) == HistoryPage(total: 3, from: 1, items: [.toYou(i: 1, text: "x", files: [])]))
+        // A flag that isn't a boolean is no page.
+        let bad: [String: Any] = ["total": 3, "from": 1, "items": [["i": 1, "kind": "toYou", "text": "x", "cut": 1, "files": []]]]
+        #expect(HistoryPage(object: bad) == nil)
+    }
+
     @Test func atMostSixtyItemsTheOldestGoing() throws {
         let page = try #require(project(page(userRows(80), total: 180), base: 100).page)
         #expect(page.items.count == 60)
@@ -350,6 +371,52 @@ struct HistoryReaderPageTests {
         #expect(whole.role == .claude)
         #expect(whole.text.unicodeScalars.count == 20_000)
         #expect(!whole.text.contains("SECRET"))
+    }
+
+    @Test func aCutMessageToTheUserComesWholeInTheTurnsNotes() {
+        let long = String(repeating: "a", count: 25_000)
+        let row = #"""
+        {"role": "assistant", "_ts": 1791833000000, "content": [
+          {"type": "text", "text": "Here is what I found."},
+          {"type": "tool_use", "id": "t1", "name": "send_user_message", "input": {"message": "  \#(long)  "}},
+          {"type": "tool_use", "id": "t2", "name": "bash", "input": {"command": "SECRET"}},
+          {"type": "tool_use", "id": "t3", "name": "Send_User_Message", "input": {"message": "A short one."}},
+          {"type": "tool_use", "id": "t4", "name": "send_user_message", "input": {"files": "none"}}]}
+        """#
+        let (outcome, requests) = turn(7, answer: PageScript.Answer(status: 200, body: #"{"from": 7, "total": 10, "messages": [\#(row)]}"#))
+        #expect(requests.map(\.path) == [path("from=7&limit=1")])
+        guard case .turn(let whole)? = outcome else { Issue.record("no turn"); return }
+        #expect(whole.text == "Here is what I found.")
+        // One for each call, in order, as the page counts its toYou items: the third has no words.
+        #expect(whole.notes.count == 3)
+        #expect(whole.notes[0].unicodeScalars.count == 20_000 && whole.notes[0].hasSuffix("\u{2026}"))
+        #expect(whole.notes[1] == "A short one." && whole.notes[2] == "")
+        #expect(!whole.notes.joined().contains("SECRET"))
+    }
+
+    @Test func aRowOfMessagesToTheUserAloneIsATurnWithNoText() {
+        let row = #"{"role": "assistant", "_ts": 1791833000000, "content": [{"type": "tool_use", "id": "t1", "name": "send_user_message", "input": {"message": "Halfway."}}]}"#
+        let (outcome, _) = turn(7, answer: PageScript.Answer(status: 200, body: #"{"from": 7, "total": 10, "messages": [\#(row)]}"#))
+        guard case .turn(let whole)? = outcome else { Issue.record("no turn"); return }
+        #expect(whole.text == "" && whole.notes == ["Halfway."])
+        // Calls and nothing said are still no turn.
+        let quiet = #"{"role": "assistant", "_ts": 1791833000000, "content": [{"type": "tool_use", "id": "t1", "name": "bash", "input": {"command": "x"}}]}"#
+        #expect(turn(7, answer: PageScript.Answer(status: 200, body: #"{"from": 7, "total": 10, "messages": [\#(quiet)]}"#)).outcome == HistoryReaderScript.Outcome.none)
+        let empty = #"{"role": "assistant", "_ts": 1791833000000, "content": [{"type": "tool_use", "id": "t1", "name": "send_user_message", "input": {"message": "  "}}]}"#
+        #expect(turn(7, answer: PageScript.Answer(status: 200, body: #"{"from": 7, "total": 10, "messages": [\#(empty)]}"#)).outcome == HistoryReaderScript.Outcome.none)
+    }
+
+    @Test func aTurnsNotesAreCheckedBySwift() {
+        let good: [String: Any] = ["i": 3, "role": "claude", "at": NSNull(), "text": "", "notes": ["One."]]
+        #expect(HistoryTurn(object: good) == HistoryTurn(i: 3, role: .claude, at: nil, text: "", notes: ["One."]))
+        // No text and no notes is no turn; so are notes that aren't strings, or too many, or too long.
+        #expect(HistoryTurn(object: ["i": 3, "role": "claude", "at": NSNull(), "text": "", "notes": [String]()] as [String: Any]) == nil)
+        #expect(HistoryTurn(object: ["i": 3, "role": "claude", "at": NSNull(), "text": "x", "notes": [5]] as [String: Any]) == nil)
+        #expect(HistoryTurn(object: ["i": 3, "role": "claude", "at": NSNull(), "text": "x", "notes": Array(repeating: "n", count: 21)] as [String: Any]) == nil)
+        #expect(HistoryTurn(object: ["i": 3, "role": "claude", "at": NSNull(), "text": "x", "notes": [String(repeating: "n", count: 20_001)]] as [String: Any]) == nil)
+        // The phone's turns have none, and read as they did.
+        let plain: [String: Any] = ["i": 3, "role": "claude", "at": NSNull(), "text": "All of it"]
+        #expect(HistoryTurn(object: plain) == HistoryTurn(i: 3, role: .claude, at: nil, text: "All of it"))
     }
 
     @Test func aRowTheHistoryHidesIsNoTurn() {
