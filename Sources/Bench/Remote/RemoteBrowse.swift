@@ -344,7 +344,7 @@ enum BrowseAPI {
                 try c.encode("ask", forKey: .kind)
                 try c.encode(q, forKey: .q)
                 try c.encode(a, forKey: .a)
-            case .toYou(_, let text, let files):
+            case .toYou(_, let text, let files, _):
                 try c.encode("toYou", forKey: .kind)
                 try c.encode(text, forKey: .text)
                 try c.encode(files.map(FileJSON.init), forKey: .files)

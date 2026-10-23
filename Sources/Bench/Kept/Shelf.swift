@@ -201,7 +201,7 @@ final class Shelf: ObservableObject {
         var answer: ShelfRules.Answer?
         var row = source.row
         if let given = source.answer {
-            answer = ShelfRules.Answer(text: given.text, at: given.at, isLast: false)
+            answer = ShelfRules.Answer(text: given.text, at: given.at, isLast: false, cut: given.cut)
         } else if case .found(let message) = await d.keep.showing(source.session.id, [version], facts.at) {
             answer = ShelfRules.Answer(text: message.text, at: message.at, isLast: false)
             row = row ?? message.i

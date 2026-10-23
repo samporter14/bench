@@ -76,6 +76,10 @@ final class ShelfToastModel: ObservableObject {
         timer?.cancel()
         timer = nil
         state = nil
+        // The pill is gone and its pointer-exit may never arrive (Show Shelf
+        // and Undo remove it from under the pointer): the next toast must not
+        // wait for a pointer that left with this one.
+        hovering = false
     }
 
     /// The pointer arrived or left: arriving holds the toast, leaving gives it
@@ -168,8 +172,9 @@ struct ShelfToastView: View {
             Text(ShelfToastModel.words(state))
                 .font(.system(size: 13))
                 .foregroundStyle(Self.ivory)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .lineLimit(Self.lines(state))
+                .truncationMode(Self.truncation(state))
+                .fixedSize(horizontal: false, vertical: Self.lines(state) > 1)
             switch state {
             case .added:
                 button("Undo", filled: false) { Task { await model.undo() } }
@@ -182,7 +187,8 @@ struct ShelfToastView: View {
         }
         .padding(.leading, 16)
         .padding(.trailing, hasButtons(state) ? 8 : 16)
-        .frame(height: 40)
+        .padding(.vertical, Self.lines(state) > 1 ? 10 : 0)
+        .frame(minHeight: 40)
         .background(Capsule().fill(Self.ground))
         .overlay(Capsule().strokeBorder(Self.edge, lineWidth: 1))
         .environment(\.colorScheme, .dark)
@@ -191,6 +197,19 @@ struct ShelfToastView: View {
         .onHover { model.hover($0) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(ShelfToastModel.words(state))
+    }
+
+    /// A failure is its sentence and nothing else, so it may be a long one:
+    /// two lines, cut at the end, rather than the middle of its only
+    /// explanation. Every other toast is one line.
+    static func lines(_ state: ShelfToastModel.State) -> Int {
+        if case .failed = state { return 2 }
+        return 1
+    }
+
+    static func truncation(_ state: ShelfToastModel.State) -> Text.TruncationMode {
+        if case .failed = state { return .tail }
+        return .middle
     }
 
     private func hasButtons(_ state: ShelfToastModel.State) -> Bool {

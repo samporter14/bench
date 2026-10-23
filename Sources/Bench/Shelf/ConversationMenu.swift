@@ -253,6 +253,16 @@ private final class WeakConversationHandler: NSObject, WKScriptMessageHandler {
 final class ShelfSheetHost: ObservableObject {
     static let shared = ShelfSheetHost()
     @Published var keeping: KeepModel?
+
+    /// Puts a Keep sheet up unless one is up already: a second click on Keep…,
+    /// or Keep… on another figure, must not replace a sheet in use (a keep under
+    /// way, or a name half typed). The sheet is made only when it is put up.
+    @discardableResult
+    func present(_ make: () -> KeepModel) -> Bool {
+        guard keeping == nil else { return false }
+        keeping = make()
+        return true
+    }
 }
 
 /// The four actions, over the session the main window is showing. Every
@@ -296,7 +306,7 @@ final class ConversationShelf {
                 shelf: .live,
                 toast: .shared,
                 keep: { subject in
-                    ShelfSheetHost.shared.keeping = KeepModel(subject: subject, dependencies: .live(shelf: .shared))
+                    ShelfSheetHost.shared.present { KeepModel(subject: subject, dependencies: .live(shelf: .shared)) }
                 },
                 reference: { session, version in
                     ReferenceWindowController.shared.show(session, at: nil, mark: version)

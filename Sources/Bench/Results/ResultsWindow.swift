@@ -135,8 +135,8 @@ struct ResultsView: View {
     /// Why an add failed, by version, until the next try.
     @State private var shelfProblems: [String: String] = [:]
 
-    /// How many shelved results the section shows before "Open Shelf".
-    static let keptShown = 5
+    /// How many shelved items the section shows before "Open Shelf".
+    static let keptShown = ResultsOnShelf.shown
 
     var body: some View {
         let groups = ShelfResultSearch.groups(shelf.groups, matching: search)
@@ -258,14 +258,14 @@ struct ResultsView: View {
             List(selection: $selection) {
                 if !keptShownRows.isEmpty {
                     Section("On your shelf") {
-                        ForEach(keptShownRows) { result in
-                            keptRow(result)
-                                .tag(ShelfSelection.kept(result.id))
+                        ForEach(keptShownRows) { item in
+                            keptRow(item)
+                                .tag(ShelfSelection.kept(item.id))
                         }
-                        if kept.results.count > Self.keptShown || !search.isEmpty {
+                        if ResultsOnShelf.showsCount(of: kept.results, matching: search) {
                             HStack(spacing: 10) {
                                 Button("Open Shelf") { onShelf.show(nil) }
-                                Text(KeepRules.count(kept.results.count, "item") + " on your shelf")
+                                Text(ResultsOnShelf.countLine(of: kept.results))
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
@@ -306,19 +306,18 @@ struct ResultsView: View {
 
     // MARK: Kept
 
-    /// The newest kept results, the first few; the filter narrows them by
-    /// name and by the figure's file name.
-    private var keptShownRows: [KeptResult] {
-        let matching = search.isEmpty ? kept.results : kept.results.filter {
-            $0.record.name.localizedCaseInsensitiveContains(search) || $0.record.figure.path.localizedCaseInsensitiveContains(search)
-        }
-        return Array(matching.prefix(Self.keptShown))
+    /// The newest shelved items, the first few, as the Shelf and its pill group
+    /// them (a figure kept more than once is one row); the filter narrows them
+    /// by name and by the figure's file name.
+    private var keptShownRows: [ShelfItem] {
+        ResultsOnShelf.rows(from: kept.results, matching: search)
     }
 
-    /// A shelved result: its picture, its name, its collection and the day.
+    /// A shelved item: its picture, its name, its collection and the day.
     /// A double-click opens it in the Shelf window.
-    private func keptRow(_ result: KeptResult) -> some View {
-        HStack(spacing: 10) {
+    private func keptRow(_ item: ShelfItem) -> some View {
+        let result = item.result
+        return HStack(spacing: 10) {
             KeptThumbnailView(store: keptThumbnails, url: result.figureURL, side: 36,
                               kind: ArtifactKind.classify(name: result.record.figure.path, mime: nil))
                 .frame(width: 36, height: 36)
@@ -345,8 +344,16 @@ struct ResultsView: View {
             Button("Show on Shelf") { onShelf.show(result.folder) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([result.folder]) }
             Divider()
-            Button("Open Conversation") { LabModel.shared.open(sessionID: result.record.sessionID) }
+            Button("Open Conversation") { openConversation(of: result.record) }
         }
+    }
+
+    /// Open Conversation on a shelved row. A session Capsid has in memory opens
+    /// as it always did (its cards and reminder go: the user is looking at it
+    /// now); any other opens from the ids the README kept.
+    private func openConversation(of record: KeptRecord) {
+        if LabModel.shared.open(sessionID: record.sessionID) { return }
+        ResultsOnShelf.openConversation(of: record)
     }
 
     @ViewBuilder

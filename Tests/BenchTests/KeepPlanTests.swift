@@ -309,6 +309,30 @@ struct KeepPlanBuildTests {
         #expect(plan.files[0].name == "z_prime_by_plate 2.csv")
     }
 
+    @Test func anInputTheLineageListsTwiceIsKeptOnce() throws {
+        // A file two cells read is listed twice by its version. That used to trap
+        // (a dictionary built from the data files' versions) and, past the trap,
+        // fetched and kept the same bytes twice.
+        var sources = Made.full
+        sources.lineage = Made.lineage(inputs: [Made.savedInput, Made.savedInput, Made.inferredInput])
+        let plan = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: Made.choices))
+        #expect(plan.files.map(\.relativePath) == ["data/z_prime_by_plate.csv", "code/z_prime.py"])
+        #expect(plan.files.filter { $0.role == .data }.count == 1)
+        guard case .text(let script) = plan.files[1].source else { Issue.record("no script"); return }
+        #expect(script.contains("pd.read_csv(\"../data/z_prime_by_plate.csv\")"))
+        // The row counts the file once, and listed beats inferred.
+        let copyable = KeepRules.copyableInputs(sources).copyable
+        #expect(copyable.count == 1 && copyable.first?.inferred == false)
+        let data = KeepRules.rows(sources: sources).first { $0.kind == .data }!
+        #expect(data.detail == "z_prime_by_plate.csv · 4 KB · listed in its provenance")
+        // Twice over the cap is one file too big, once.
+        sources.inputFacts[Made.input] = ArtifactFacts(v: Made.input, a: Made.inputArtifact, n: 1, name: "huge.csv", mime: "text/csv",
+                                                       size: 9 * 1024 * 1024, at: nil, sha: nil, isUpload: false, code: nil,
+                                                       codeCut: false, environment: nil)
+        #expect(KeepRules.copyableInputs(sources).tooBig.count == 1)
+        #expect(KeepRules.rows(sources: sources).first { $0.kind == .data }!.detail == "1 file \u{00B7} too big to keep here (over 8 MB).")
+    }
+
     @Test func theDefaultNameIsTheFileWithoutItsExtension() {
         #expect(KeepRules.defaultName(for: Made.entry) == "z_prime")
         let bare = ArtifactEntry(version: Made.v1, artifact: nil, name: "README", mime: nil, size: 1, at: nil)
@@ -406,6 +430,26 @@ struct KeepRecordTests {
         #expect(text.origin.hasPrefix("[Plate reader QC](bench://session?project=p-1&frame=\(Made.session.id)), in Assay development.\nVersion 3 of 4 of z_prime.png, kept on "))
         #expect(text.origin.contains("by Capsid 1.0, from Claude Science 0.1.70."))
         #expect(text.legend.isEmpty)
+    }
+
+    @Test func anAnswerWhoseWordsAreCutSaysSoInTheREADME() throws {
+        var sources = Made.full
+        let plain = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: Made.choices))
+        let (_, whole) = KeepRules.record(subject: Made.subject, sources: sources, plan: plain, folderName: "Fig", keptAt: Made.at(100),
+                                          copied: [], missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0")
+        #expect(!whole.attribution.contains("cut off"))
+        sources.showingCut = true
+        let plan = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: Made.choices))
+        #expect(plan.answer?.cut == true)
+        let (_, text) = KeepRules.record(subject: Made.subject, sources: sources, plan: plan, folderName: "Fig", keptAt: Made.at(100),
+                                         copied: [], missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0")
+        #expect(text.attribution.hasPrefix("From Claude\u{2019}s answer at "))
+        #expect(text.attribution.hasSuffix(" The text is cut off: the rest couldn\u{2019}t be read."))
+        // With the answer unticked there is nothing to say it of.
+        var off = Made.choices
+        off.withAnswer = false
+        let none = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: off))
+        #expect(none.answer == nil)
     }
 
     @Test func anAnswerKeptWithAnotherVersionIsRecordedAsSuch() throws {

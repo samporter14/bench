@@ -283,6 +283,25 @@ struct ShelfReadmeWordsTests {
         #expect(parsed.record == made.record)
     }
 
+    @Test func wordsThatAreCutSaySoInTheirAttributionAndNothingElseDoes() throws {
+        let whole = ShelfRules.Answer(text: "Plate 7 is the low bar.", at: ago(minutes: 25), isLast: false)
+        #expect(!readme(answer: whole, row: 19, question: nil).text.attribution.contains("cut"))
+        var cut = whole
+        cut.cut = true
+        let made = readme(answer: cut, row: 19, question: nil)
+        #expect(made.text.attribution
+            == "From Claude\u{2019}s answer at 8:47 AM on 22 October 2026. The text is cut off: the rest couldn\u{2019}t be read.")
+        #expect(KeptReadme.cutSentence == "The text is cut off: the rest couldn\u{2019}t be read.")
+        // It is in the README under the words, and reads back as it was written.
+        let markdown = KeptReadme.render(made.record, text: made.text, timeZone: zone, locale: english)
+        #expect(markdown.contains("> Plate 7 is the low bar.\n\nFrom Claude\u{2019}s answer at 8:47 AM on 22 October 2026. The text is cut off: the rest couldn\u{2019}t be read.\n"))
+        let parsed = try #require(KeptReadme.parse(markdown))
+        #expect(KeptReadme.render(parsed.record, text: parsed.text, timeZone: zone, locale: english) == markdown)
+        // The last answer in the session, which was read whole, never says it.
+        let last = ShelfRules.Answer(text: "Words.", at: nil, isLast: true)
+        #expect(!readme(answer: last, row: nil, question: nil).text.attribution.contains("cut off"))
+    }
+
     @Test func withoutARowOrAQuestionTheSentencesSkipThem() {
         let answered = ShelfRules.Answer(text: "Words.", at: ago(minutes: 25), isLast: false)
         let made = readme(answer: answered, row: nil, question: nil)

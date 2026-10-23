@@ -558,7 +558,7 @@ final class LabInsights: ObservableObject {
     /// shown nor dismissed nor already waiting, oldest first.
     private func newNotes(in page: HistoryPage, of sessionID: String, since baseline: Int) -> [MidRunNote] {
         var fresh: [MidRunNote] = []
-        for case .toYou(let row, let text, _) in page.items where row >= baseline {
+        for case .toYou(let row, let text, _, _) in page.items where row >= baseline {
             let id = "\(sessionID)#\(row)"
             guard !seenSet.contains(id), !notes.contains(where: { $0.id == id }), !fresh.contains(where: { $0.id == id }),
                   let clean = NoteText.clean(text) else { continue }

@@ -32,6 +32,9 @@ struct KeepSubject: Equatable, Sendable {
 struct KeepPinnedAnswer: Equatable, Sendable {
     let text: String
     let at: Date?
+    /// Some of the words are cut: a long turn the page cut at 2,000 characters
+    /// whose rest couldn't be read in time. The README says so.
+    var cut = false
 }
 
 /// Claude's words about the figure: the answer that shows it, or the
@@ -41,6 +44,8 @@ struct KeepAnswer: Equatable, Sendable {
     let at: Date?
     let how: ShowingHow?
     let isFallback: Bool
+    /// Some of the words are cut (`KeepPinnedAnswer.cut`).
+    var cut = false
 }
 
 /// What the reads gave the sheet. Each piece may be missing: the sheet says
@@ -53,6 +58,8 @@ struct KeepSources: Equatable, Sendable {
     var versionsFailed: ShelfFailure? = nil
     /// The answer that shows one of the versions.
     var showing: ShowingMessage? = nil
+    /// Its words are cut (the caller pinned an answer that is).
+    var showingCut = false
     /// The session's last answer, the fallback.
     var lastAnswer: KeepAnswer? = nil
     /// Of the chosen version.
@@ -332,9 +339,27 @@ enum KeepRules {
     static func copyableInputs(_ sources: KeepSources) -> (copyable: [LineageInput], tooBig: [LineageInput], unsaved: [LineageInput]) {
         guard let lineage = sources.lineage else { return ([], [], []) }
         var copyable: [LineageInput] = [], tooBig: [LineageInput] = [], unsaved: [LineageInput] = []
+        // A lineage may list one input version twice (a file read by two cells):
+        // its bytes are fetched, and kept, once. Listed beats inferred.
+        var placed: [String: Int] = [:]
         for input in lineage.inputs.prefix(inputLimit) {
             guard input.fetchable, let v = input.v else { unsaved.append(input); continue }
-            if let size = sources.inputFacts[v]?.size, size > cap { tooBig.append(input) } else { copyable.append(input) }
+            let big = sources.inputFacts[v]?.size.map { $0 > cap } ?? false
+            if let at = placed[v] {
+                if big {
+                    if tooBig[at].inferred, !input.inferred { tooBig[at] = input }
+                } else if copyable[at].inferred, !input.inferred {
+                    copyable[at] = input
+                }
+                continue
+            }
+            if big {
+                placed[v] = tooBig.count
+                tooBig.append(input)
+            } else {
+                placed[v] = copyable.count
+                copyable.append(input)
+            }
         }
         return (copyable, tooBig, unsaved)
     }
@@ -486,15 +511,17 @@ enum KeepRules {
             }
         }
         if choices.withCode, rows.first(where: { $0.kind == .code })?.available == true, let code = sources.lineage?.code {
-            let names = Dictionary(uniqueKeysWithValues: files.filter { $0.role == .data }.compactMap { item in
+            // One path per version, the first kept: the script points there.
+            let names = Dictionary(files.filter { $0.role == .data }.compactMap { item in
                 item.version.map { ($0, item.relativePath) }
-            })
+            }, uniquingKeysWith: { first, _ in first })
             let text = rewriteScript(code, kept: names)
             files.append(KeepItem(role: .code, source: .text(text), artifact: nil, version: chosen,
                                   name: unique(scriptName(sources)), size: text.utf8.count, sha: nil))
         }
         let answer: KeepAnswer? = choices.withAnswer
-            ? (sources.showing.map { KeepAnswer(text: $0.text, at: $0.at, how: $0.how, isFallback: false) } ?? sources.lastAnswer)
+            ? (sources.showing.map { KeepAnswer(text: $0.text, at: $0.at, how: $0.how, isFallback: false, cut: sources.showingCut) }
+                ?? sources.lastAnswer)
             : nil
         // Kept with another version than the one it shows: the README notes which.
         let answerShows = answer?.isFallback == false ? answerShowsAnother(sources, chosen: chosen) : nil
@@ -625,6 +652,7 @@ enum KeepRules {
             if let shown = plan.answerShows {
                 attribution += " That answer shows \(versionName(shown, in: versions)), not this one."
             }
+            if answer.cut { attribution += " \(KeptReadme.cutSentence)" }
         } else {
             attribution = ""
         }

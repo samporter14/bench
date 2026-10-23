@@ -28,6 +28,10 @@ final class FakeHistory {
     var pagesThrow = false
     var turnsThrow = false
     var wholeTexts: [Int: String] = [:]
+    /// The messages sent to the user in a row, whole, as the whole-turn read answers them.
+    var wholeNotes: [Int: [String]] = [:]
+    /// Whole-turn reads wait here while `holdingTurns` (page reads go on); `release` lets them go.
+    var holdingTurns = false
     var thumbnails: [String: Data] = [:]
     private(set) var copied: [String] = []
     private(set) var opened: [String] = []
@@ -43,8 +47,8 @@ final class FakeHistory {
         for waiter in waiting { waiter.resume() }
     }
 
-    private func pass() async throws {
-        guard holding else { return }
+    private func pass(turn: Bool = false) async throws {
+        guard holding || (turn && holdingTurns) else { return }
         await withTaskCancellationHandler {
             await withCheckedContinuation { waiters.append($0) }
         } onCancel: {
@@ -67,10 +71,10 @@ final class FakeHistory {
             },
             readTurn: { [self] _, index in
                 turnReads.append(index)
-                try await pass()
+                try await pass(turn: true)
                 if turnsThrow { throw WebAPIError.notReady }
-                guard let text = wholeTexts[index] else { return nil }
-                return HistoryTurn(i: index, role: .claude, at: nil, text: text)
+                guard wholeTexts[index] != nil || wholeNotes[index] != nil else { return nil }
+                return HistoryTurn(i: index, role: .claude, at: nil, text: wholeTexts[index] ?? "", notes: wholeNotes[index] ?? [])
             },
             thumbnail: { [self] version in
                 thumbnailReads.append(version)

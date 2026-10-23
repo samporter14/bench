@@ -62,6 +62,18 @@ struct KeepDependencies {
     var now: @MainActor () -> Date
     /// A folder was kept: the Results window's Kept section takes it in.
     var didKeep: @MainActor (KeepOutcome) -> Void
+    /// Waits for a version to stay chosen before its provenance is read: the
+    /// read can start a model call on the daemon, so stepping through the
+    /// tiles must not ask once for each. The tests hold it.
+    var settle: @MainActor (Duration) async -> Void = KeepDependencies.pause
+
+    /// How long a choice must stay before its provenance is read.
+    static let settleTime: Duration = .milliseconds(400)
+
+    /// The real wait: it ends early when the asking task is cancelled.
+    static func pause(_ time: Duration) async {
+        try? await Task.sleep(for: time)
+    }
 
     @MainActor
     static func live(shelf: ResultsShelf) -> KeepDependencies {
@@ -177,6 +189,10 @@ final class KeepModel: ObservableObject, Identifiable {
     /// Files a Try Again put in the folder that its README doesn't list yet
     /// (rewriting it failed): the next Try Again adds them.
     private var unrecorded: [KeptFile] = []
+    /// The plan the keep was made with. Try Again, and the fate each row shows
+    /// after a keep, go by this one and not by the choices as they stand now:
+    /// the folder holds the files of that plan.
+    private var keptPlan: KeepPlan?
 
     private var openTask: Task<Void, Never>?
     private var chosenTask: Task<Void, Never>?
@@ -310,6 +326,7 @@ final class KeepModel: ObservableObject, Identifiable {
         if let pinned = subject.pinned {
             // `i` is the message's row in the history, which this answer wasn't read from.
             sources.showing = ShowingMessage(i: -1, at: pinned.at, text: pinned.text, how: .image, v: entry.version)
+            sources.showingCut = pinned.cut
         } else {
             let picked = subject.selectsItsVersion
             let ids = picked ? [entry.version] : sources.versions.map(\.v)
@@ -332,7 +349,7 @@ final class KeepModel: ObservableObject, Identifiable {
         // subject's own version, so that one is preselected; so is a version the
         // user picked without an answer, whichever answer is found or none is.
         choose(KeepRules.preselect(versions: sources.versions, showing: sources.showing,
-                                   picked: subject.picksItsVersion ? entry.version : nil))
+                                   picked: subject.picksItsVersion ? entry.version : nil), immediately: true)
         checkName()
     }
 
@@ -373,9 +390,26 @@ final class KeepModel: ObservableObject, Identifiable {
 
     // MARK: Choosing
 
+    /// Whether a version can be chosen now: while the sheet reads, when it is
+    /// ready, and after a failure that another version answers (the one that
+    /// went). Not while a keep is under way, nor after one that landed in part:
+    /// that folder holds the first version's files, and Try Again must finish
+    /// that version, not write another's beside it.
+    var canChoose: Bool {
+        switch phase {
+        case .reading, .ready: true
+        case .failed(_, let retry): retry == nil
+        case .keeping, .kept, .partial: false
+        }
+    }
+
     /// Picks a version: its provenance and facts are read, and the rows
-    /// follow. Picking the one chosen changes nothing.
-    func choose(_ version: String?) {
+    /// follow. Picking the one chosen changes nothing. The read waits for the
+    /// choice to stay (`KeepDependencies.settle`), so stepping through the
+    /// tiles reads once, for the one stopped on; `immediately` is the first
+    /// choice, made by the sheet itself as it opens.
+    func choose(_ version: String?, immediately: Bool = false) {
+        guard canChoose else { return }
         guard version != choices.version || sources.lineage?.v != version else { return }
         choices.version = version
         chosenTask?.cancel()
@@ -389,7 +423,13 @@ final class KeepModel: ObservableObject, Identifiable {
         if let answer = rows.first(where: { $0.kind == .answer }) { choices.withAnswer = answer.onByDefault }
         guard let version else { return }
         readingProvenance = true
+        let dependencies = self.dependencies
         chosenTask = Task { [weak self] in
+            if !immediately {
+                await dependencies.settle(KeepDependencies.settleTime)
+                // The choice moved on while it waited: the next one reads.
+                if Task.isCancelled { return }
+            }
             await self?.loadChosen(version)
         }
     }
@@ -461,11 +501,15 @@ final class KeepModel: ObservableObject, Identifiable {
         }
     }
 
-    /// The rows take their defaults when the provenance comes.
+    /// The data and code rows take their defaults when the provenance comes.
+    /// The answer's row isn't one of them: it doesn't depend on the provenance,
+    /// its default was applied when the version was chosen, and it can be
+    /// ticked from then on, so an untick made while the provenance was still
+    /// being read is the user's.
     private func applyRowDefaults() {
         for row in rows {
             switch row.kind {
-            case .answer: choices.withAnswer = row.onByDefault
+            case .answer: break
             case .data: choices.withData = row.onByDefault
             case .code: choices.withCode = row.onByDefault
             }
@@ -510,6 +554,7 @@ final class KeepModel: ObservableObject, Identifiable {
 
     func keep() {
         guard canKeep, let plan, keepTask == nil else { return }
+        keptPlan = plan
         let total = plan.all.count
         phase = .keeping(done: 0, total: total)
         keepTask = Task { [weak self] in
@@ -624,7 +669,7 @@ final class KeepModel: ObservableObject, Identifiable {
     /// that exists, and the README rewritten; when nothing is missing but the
     /// README couldn't be rewritten last time, only that.
     func retry() {
-        guard case .partial(let outcome) = phase, let plan, let folder, keepTask == nil else { return }
+        guard case .partial(let outcome) = phase, let plan = keptPlan, let folder, keepTask == nil else { return }
         let wanted = plan.files.filter { item in outcome.missing.contains { $0.name == item.name && $0.role == item.role } }
         guard !wanted.isEmpty || outcome.recordFailed != nil else { return }
         phase = .keeping(done: outcome.kept, total: outcome.total)
@@ -731,7 +776,7 @@ final class KeepModel: ObservableObject, Identifiable {
     /// After a keep, each row's fate: "Kept", or why not, or kept with bytes
     /// that don't match.
     func fate(of kind: KeepRowKind) -> (text: String, isProblem: Bool)? {
-        guard let outcome = shownOutcome, let plan else { return nil }
+        guard let outcome = shownOutcome, let plan = keptPlan ?? plan else { return nil }
         let role: KeptRole = switch kind {
         case .answer: .figure
         case .data: .data

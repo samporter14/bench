@@ -66,7 +66,8 @@ struct KeptDiskCallsTests {
             "KeptDisk.swift: .trashItem(": 1,
             // A text file's first bytes, for its card (and a look at whether iCloud has it).
             "KeptDisk.swift: FileHandle(": 1,
-            "KeptDisk.swift: resourceValues(": 1,
+            // Whether iCloud has a file put away, and a file's date and size (the picture cache's look at it).
+            "KeptDisk.swift: resourceValues(": 2,
             // The README's bytes, read whole; the atomic writes of a file, a README and a legend.
             "KeptDisk.swift: Data(contentsOf": 1,
             "KeptDisk.swift: .write(to:": 4,
