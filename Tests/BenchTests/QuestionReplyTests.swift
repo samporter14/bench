@@ -588,9 +588,8 @@ struct QuestionReplierUnknownTests {
         #expect(offer(replier).problem == QuestionReplier.Sentence.answerUnsure)
         // Sent at last: the earlier sentence is gone with the failure (the pure offer's `.sent` is covered in RowActionsTests).
         core.results = []
-        _ = await replier.submit(session)?.value
-        #expect(replier.replies[session]?.phase == .sent(RemoteDecide.Sentence.answered))
-        #expect(offer(replier).problem == nil)
+        #expect(await replier.submit(session)?.value == .sent(RemoteDecide.Sentence.answered))
+        #expect(offer(replier).problem == nil, "the card is let go once it is sent: no sentence left behind")
     }
 
     @Test func aReplyThatCantBeToldKeepsItsDraftToo() async {
