@@ -72,9 +72,14 @@ enum SinceTile: Equatable, Sendable {
 
     /// The file's own ending, in capitals, or its kind.
     static func label(for entry: ArtifactEntry) -> String {
-        let ext = (entry.name as NSString).pathExtension.uppercased()
+        label(name: entry.name, kind: entry.kind)
+    }
+
+    /// The same for a file whose kind is already known (the reference reader's).
+    static func label(name: String, kind: ArtifactKind) -> String {
+        let ext = (name as NSString).pathExtension.uppercased()
         if !ext.isEmpty, ext.count <= 5 { return ext }
-        switch entry.kind {
+        switch kind {
         case .image: return "IMG"
         case .svg: return "SVG"
         case .markdown: return "MD"

@@ -56,50 +56,125 @@ struct OnShelfChip: View {
     }
 }
 
-/// A file of another kind in the reply (a document, a table): its kind's
-/// glyph, its name and kind, and the pill; ringed in ink once it is on the
-/// shelf.
+/// A kind tile: the file's ending in capitals ("MD", "CSV"), as Since You
+/// Left draws a file without a picture, small enough for a row. Ringed in ink
+/// once the file is on the shelf.
+struct ReferenceKindTile: View {
+    let label: String
+    var ringed = false
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(Solanum.muted)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(width: 44, height: 34)
+            .background(Solanum.page, in: .rect(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(ringed ? Solanum.ink : Solanum.hairline, lineWidth: ringed ? 2 : 1))
+            .accessibilityHidden(true)
+    }
+}
+
+/// A small spinner on a card that is being read: on a round white ground,
+/// since the picture under it can be any colour.
+struct OpeningSpinner: View {
+    var body: some View {
+        ProgressView()
+            .controlSize(.small)
+            .frame(width: 34, height: 34)
+            .background(Circle().fill(Solanum.raised.opacity(0.9)))
+            .overlay(Circle().strokeBorder(Solanum.hairline, lineWidth: 1))
+            .accessibilityLabel("Opening")
+    }
+}
+
+/// A card that opens when pressed: a click, or Space or Return while it has
+/// the keyboard. It draws its own focus, a thin ink ring just outside the
+/// card (the system's would be the accent colour), and reads as a button to
+/// VoiceOver. The ink ring on the card itself stays the shelf's mark.
+struct OpensOnPress: ViewModifier {
+    let radius: CGFloat
+    let label: String
+    let open: () -> Void
+    @FocusState private var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(.rect(cornerRadius: radius))
+            .onTapGesture(perform: open)
+            .focusable()
+            .focused($focused)
+            .focusEffectDisabled()
+            .onKeyPress(keys: [.space, .return]) { _ in
+                open()
+                return .handled
+            }
+            .overlay {
+                if focused {
+                    RoundedRectangle(cornerRadius: radius + 3)
+                        .strokeBorder(Solanum.ink.opacity(0.55), lineWidth: 1.5)
+                        .padding(-4)
+                        .allowsHitTesting(false)
+                }
+            }
+            .pointerStyle(.link)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: label, open)
+    }
+}
+
+extension View {
+    func opensOnPress(radius: CGFloat, label: String, open: @escaping () -> Void) -> some View {
+        modifier(OpensOnPress(radius: radius, label: label, open: open))
+    }
+}
+
+/// A file of another kind in the reply (a document, a table): a kind tile,
+/// its name and kind, and the pill, on a small card; ringed in ink once it is
+/// on the shelf. Pressing the row opens the file (Quick Look, or the window
+/// for Markdown).
 struct ReferenceFileRow: View {
     let file: HistoryFile
     let mark: ShelfMark
+    /// The file is being read to open it.
+    var opening = false
+    var open: () -> Void = {}
     let add: () -> Void
     let show: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: ResultFileRow.symbol(file.kind))
-                .font(.system(size: 14))
-                .foregroundStyle(Solanum.muted)
-                .frame(width: 20)
-                .accessibilityHidden(true)
+        HStack(spacing: 12) {
+            ReferenceKindTile(label: ReferenceFileRules.tile(file))
             VStack(alignment: .leading, spacing: 1) {
                 Text(file.name)
                     .font(.system(size: 13))
                     .foregroundStyle(Solanum.ink)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(detail)
+                Text(ReferenceFileRules.detail(file))
                     .font(.system(size: 11))
                     .foregroundStyle(Solanum.muted)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            if opening {
+                ProgressView().controlSize(.mini)
+                    .accessibilityLabel("Opening")
+            }
             ShelfPill(mark: mark, add: add, show: show)
         }
-        .padding(.leading, 12)
+        .padding(.leading, 8)
         .padding(.trailing, 8)
         .padding(.vertical, 8)
         .background(Solanum.raised)
         .clipShape(.rect(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10)
             .strokeBorder(mark == .on ? Solanum.ink : Solanum.hairline, lineWidth: mark == .on ? 2 : 1))
+        .opensOnPress(radius: 10, label: ReferenceFileRules.readsInWindow(file) ? "Open \(file.name)" : "Open \(file.name) in Quick Look",
+                      open: open)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(ResultFileRow.label(file.kind)), \(file.name)")
-    }
-
-    /// "Markdown · 4 KB".
-    private var detail: String {
-        [ResultFileRow.label(file.kind), file.size.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }]
-            .compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 }

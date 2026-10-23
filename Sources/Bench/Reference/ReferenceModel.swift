@@ -107,12 +107,24 @@ struct ReferenceDependencies {
     /// Shelf ✓" and the mark. Nil is the real one (`ShelfAccess.live`); tests
     /// and snapshots stand a made-up shelf in.
     var shelf: ShelfAccess? = nil
+    /// A file's whole bytes, within the 8 MB cap (the Results shelf's download),
+    /// for Quick Look and the reading view. The model asks through the gate.
+    var download: @MainActor (_ version: String) async -> ReferenceDownload = { _ in .failed(.notReady) }
+    /// A Markdown document as the window draws it. Off the main actor: a
+    /// document can be 2 MiB.
+    var renderDocument: @Sendable (_ markdown: String) async -> AnswerDocument = { markdown in
+        await Task.detached { AnswerMarkdown.render(markdown, style: .reference) }.value
+    }
+    /// Where the temporary copies Quick Look needs are written. Nil is the
+    /// windows' own folder (`ReferenceFiles.sharedStorage`).
+    var storage: (any ShelfCopyStorage)? = nil
 
     /// The page's own readers (Remote/HistoryReader.swift): 25 rows a page,
     /// each read under a nonce so cancelling its task aborts the fetch.
     @MainActor
     static func live() -> ReferenceDependencies {
-        ReferenceDependencies(
+        ReferenceFiles.sweepLeftoversOnce()
+        return ReferenceDependencies(
             readPage: { frameID, before in
                 guard Demo.mode == nil else { return .unreadable }
                 switch try await WebContainer.shared.readHistory(frameID, before: before, rows: ReferenceModel.rows,
@@ -144,7 +156,12 @@ struct ReferenceDependencies {
                 pasteboard.clearContents()
                 return pasteboard.setString(text, forType: .string)
             },
-            render: { AnswerMarkdown.render($0, style: .reference).text })
+            render: { AnswerMarkdown.render($0, style: .reference).text },
+            download: { version in
+                guard Demo.mode == nil else { return .failed(.notReady) }
+                return ReferenceDownload(await ReferenceWindowController.transfers.read(.download(version: version),
+                                                                                       priority: .foreground))
+            })
     }
 }
 
@@ -285,8 +302,10 @@ enum ReferenceRules {
     }
 
     /// "— Claude, in “Plate reader QC” (Assay development), 22 October 2026, 8:47".
-    static func sourceLine(session: SessionStatus, at: Date?) -> String {
-        var line = "\u{2014} Claude, in \u{201C}\(session.displayTitle)\u{201D} (\(session.projectName))"
+    /// With `file`, a document's: "— reading_list.md, Claude, in …".
+    static func sourceLine(session: SessionStatus, at: Date?, file: String? = nil) -> String {
+        var line = "\u{2014} " + (file.map { "\($0), " } ?? "")
+            + "Claude, in \u{201C}\(session.displayTitle)\u{201D} (\(session.projectName))"
         if let at { line += ", \(KeepRules.longDate(at)), \(KeepRules.longTime(at))" }
         return line
     }
@@ -295,9 +314,9 @@ enum ReferenceRules {
     /// the source line and the link that opens the session in Capsid. The
     /// drawn text's line separators (a hard line break, `AnswerMarkdown`)
     /// go back to newlines, which is what a text field or a file expects.
-    static func copyText(_ text: String, session: SessionStatus, at: Date?) -> String {
+    static func copyText(_ text: String, session: SessionStatus, at: Date?, file: String? = nil) -> String {
         let body = text.replacingOccurrences(of: "\u{2028}", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return body + "\n\n" + sourceLine(session: session, at: at) + "\n" + KeepRules.deepLink(session)
+        return body + "\n\n" + sourceLine(session: session, at: at, file: file) + "\n" + KeepRules.deepLink(session)
     }
 
     /// Plain text in the system font, for tests and demos that don't want
@@ -341,6 +360,9 @@ final class ReferenceModel: ObservableObject {
     let thumbnails: ShelfThumbnails
     /// The shelf the window asks about and adds to.
     let shelf: ShelfAccess
+    /// Opening what the reply made: figures and documents in Quick Look, a
+    /// Markdown document in the window (ReferenceFiles.swift).
+    let files: ReferenceFiles
     private let dependencies: ReferenceDependencies
     private let gate: ReadingGate
 
@@ -419,6 +441,7 @@ final class ReferenceModel: ObservableObject {
         self.gate = gate
         self.thumbnails = thumbnails
         shelf = dependencies.shelf ?? .live
+        files = ReferenceFiles(dependencies: dependencies, gate: gate)
         lastState = session.state
     }
 
@@ -620,7 +643,12 @@ final class ReferenceModel: ObservableObject {
     /// its id may have moved since (the rows were read again): the page starts
     /// again at its top only for another reply, not for the same one grown.
     private func show(_ id: Int, from before: Int? = nil) {
-        if answers.first(where: { $0.id == id })?.start != (before ?? current?.start) { shownKey += 1 }
+        if answers.first(where: { $0.id == id })?.start != (before ?? current?.start) {
+            shownKey += 1
+            // A document is read from one reply, and a request to scroll was for its page.
+            files.closeDocument()
+            scrollRequest = nil
+        }
         shownID = id
         wholeForShown()
     }
@@ -645,6 +673,7 @@ final class ReferenceModel: ObservableObject {
         thumbnailTasks = [:]
         copiedTask?.cancel()
         thumbnails.removeAll()
+        files.close()
     }
 
     // MARK: Reading
@@ -949,11 +978,12 @@ final class ReferenceModel: ObservableObject {
     // MARK: Acting
 
     /// Copies `text` (the selection, or the whole reply as drawn) with the
-    /// reply's source line and link.
+    /// reply's source line and link. `file` names the document the text is
+    /// from, when the window is showing one.
     @discardableResult
-    func copy(_ text: String) -> Bool {
+    func copy(_ text: String, file: String? = nil) -> Bool {
         guard let answer = current else { return false }
-        let done = dependencies.pasteboard(ReferenceRules.copyText(text, session: session, at: answer.at))
+        let done = dependencies.pasteboard(ReferenceRules.copyText(text, session: session, at: answer.at, file: file))
         if done {
             copied = true
             copiedTask?.cancel()
@@ -968,6 +998,30 @@ final class ReferenceModel: ObservableObject {
 
     func openConversation() {
         dependencies.open(session)
+    }
+
+    // MARK: Opening files
+
+    /// The reply's documents: the files that aren't pictures, less the ones
+    /// Claude Science hides.
+    func documents(of answer: ReferenceAnswer) -> [HistoryFile] {
+        ReferenceFileRules.documents(of: answer)
+    }
+
+    /// A figure or a document was pressed: a picture or a document Quick Look
+    /// shows opens in the panel, which pages through the reply's figures and
+    /// then its documents; a Markdown document opens in the window.
+    func openFile(_ file: HistoryFile) {
+        guard let reply = answer(showing: file) else { return }
+        files.open(file, among: ReferenceFileRules.quickLookFiles(figures: figures(of: reply), documents: documents(of: reply)))
+    }
+
+    /// "‹ Answer": the reading view is left, and the page is scrolled to the
+    /// document's row, which is where it was pressed.
+    func closeDocument() {
+        guard let file = files.document?.file else { return }
+        files.closeDocument()
+        scrollRequest = ReferenceScroll(id: file.v, token: (scrollRequest?.token ?? 0) + 1)
     }
 
     /// The reply that shows `file`: the one on the page when it does, else the
