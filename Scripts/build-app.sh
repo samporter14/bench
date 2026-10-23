@@ -28,6 +28,9 @@ cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 # The last step of a native update (App/UpdateInstall.swift): Capsid copies it
 # out of the bundle and runs it once the new copy has been checked.
 cp "$ROOT/Resources/swap.sh" "$APP/Contents/Resources/swap.sh"
+# The panel's four sounds (Lab/PanelSound.swift): Capsid's own, since 1.0.1.
+mkdir -p "$APP/Contents/Resources/Sounds"
+cp "$ROOT"/Resources/Sounds/*.caf "$APP/Contents/Resources/Sounds/"
 
 # The icons: Capsid's own, an Icon Composer document in Solanum's product
 # family (a Clay tile, the broken ring with its escaped dot, an icosahedral

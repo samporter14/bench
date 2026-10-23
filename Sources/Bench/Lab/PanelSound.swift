@@ -1,12 +1,15 @@
 // PanelSound.swift — the panel's sounds, in one place (DESIGN.md, Lab, "Sound").
 // A question, a plan to approve, a failure and a finish each have a short
-// system sound of their own, so the kind of thing that happened is known
-// before the screen is looked at. One setting still decides whether any play:
+// sound of their own, so the kind of thing that happened is known before the
+// screen is looked at. One setting still decides whether any play:
 // Settings → Alerts → Play a sound (`soundOnNeedsInput`), which now covers a
 // finish as well as what asks and what fails.
 //
-// The sounds are placeholders: the Mac's own, picked to be told apart and to
-// be quiet enough to hear a hundred times a week.
+// The sounds are Capsid's own (since 1.0.1): one family of lab glass and metal,
+// made with ElevenLabs' sound effects, trimmed under a second and levelled to
+// the same loudness, in Resources/Sounds and copied into the app by
+// Scripts/build-app.sh. Where the bundle has none (`swift run`, the tests), the
+// Mac's own sounds stand in.
 import AppKit
 
 enum PanelSound: CaseIterable, Sendable {
@@ -19,8 +22,23 @@ enum PanelSound: CaseIterable, Sendable {
     /// A session finished.
     case finish
 
-    /// The system sound's name (`NSSound(named:)`): the one place that maps
-    /// the event to the sound.
+    /// The file in Resources/Sounds (a .caf), the one place that maps the
+    /// event to Capsid's own sound.
+    var fileName: String {
+        switch self {
+        case .question: "question"
+        case .plan: "plan"
+        case .failure: "failure"
+        case .finish: "finish"
+        }
+    }
+
+    /// Capsid's own sound in a bundle, when it is there.
+    func url(in bundle: Bundle = .main) -> URL? {
+        bundle.url(forResource: fileName, withExtension: "caf", subdirectory: "Sounds")
+    }
+
+    /// The Mac's sound that stands in where the bundle has none (`NSSound(named:)`).
     var systemName: String {
         switch self {
         case .question: "Glass"
@@ -30,10 +48,12 @@ enum PanelSound: CaseIterable, Sendable {
         }
     }
 
-    /// How loud, from 0 to 1. A finish is the one sound that comes without a
-    /// session waiting on you, and Hero is a fanfare: it plays at half.
-    var volume: Float {
-        self == .finish ? 0.5 : 1
+    /// How loud, from 0 to 1. Capsid's own sounds are levelled alike; a finish
+    /// is the one that comes without a session waiting on you, so it is a little
+    /// quieter. The Mac's Hero, standing in, is a fanfare: half.
+    func volume(own: Bool) -> Float {
+        guard self == .finish else { return 1 }
+        return own ? 0.8 : 0.5
     }
 
     /// The sound a card makes when it comes, or none: only the cards about a
@@ -67,8 +87,10 @@ enum PanelSound: CaseIterable, Sendable {
     /// change in Settings is heard at once.
     @MainActor
     static func play(_ sound: PanelSound, defaults: UserDefaults = .standard) {
-        guard defaults.bool(forKey: SettingsKey.soundOnNeedsInput), let named = NSSound(named: sound.systemName) else { return }
-        named.volume = sound.volume
-        named.play()
+        guard defaults.bool(forKey: SettingsKey.soundOnNeedsInput) else { return }
+        let own = sound.url().flatMap { NSSound(contentsOf: $0, byReference: true) }
+        guard let player = own ?? NSSound(named: sound.systemName) else { return }
+        player.volume = sound.volume(own: own != nil)
+        player.play()
     }
 }

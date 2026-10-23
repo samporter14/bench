@@ -756,8 +756,8 @@ Size setting; the width of the others does (Scenes settings).
     card for good (or hides the working panel until the next change).
     VoiceOver is offered the same as a named **Dismiss** action beside Open
     (since 0.9.3), so it needs no hover.
-- **Sound.** When a needs-input card arrives, play `NSSound(named: "Glass")`
-  (a setting, on by default).
+- **Sound.** When a needs-input card arrives, play its sound (a setting, on by
+  default; the four sounds are under "The panel's moments" below).
 - **Open.** Activate Capsid, show the window and navigate the web view to the
   session's `deepLink`, through the Router.
 
@@ -5982,11 +5982,20 @@ session beneath, **Open**) is a notice: it queues behind the cards about
 sessions, lasts 10 s, makes no sound and no Mac notification, and shows only
 where cards do and "Show plans, questions and requests on the card" is on.
 
-**Sound.** One setting covers four short system sounds, picked to be told
-apart (placeholders until someone designs them): Glass for a question or any
-request, Submarine for a plan, Basso for a failure, Hero at half volume for a
-finish. One read plays one sound, the most urgent. A held finish (Nidus focus,
-presenting) is silent.
+**Sound.** One setting covers four short sounds of Capsid's own (since 1.0.1;
+Sam's call: "SOUNDS use eleven labs"), one family of lab glass and metal made
+with ElevenLabs' sound effects (`eleven_text_to_sound_v2`, four takes each),
+each trimmed to start on the sound, faded, under a second, and levelled to the
+same loudness: two soft rising taps on a glass beaker for a question or any
+request (0.44 s), one struck test tube for a plan (0.85 s), a low muted
+centrifuge lid for a failure (0.62 s), and a pipette tip on a crystal vial for
+a finish (0.57 s, at 0.8 volume, the one that comes without a session waiting
+on you). They live in Resources/Sounds as .caf and are copied into the app by
+Scripts/build-app.sh; where a bundle has none (`swift run`, the tests) the Mac's
+Glass, Submarine, Basso and Hero (at half) stand in. Every take, with the ones
+in use marked, is on the "Capsid Sounds" listening page made for Sam. One read
+plays one sound, the most urgent. A held finish (Nidus focus, presenting) is
+silent.
 
 **The stack.** With two or more sessions working, the panel shows one with
 "+N more" as plain words; with the pointer over it, it opens into one row per

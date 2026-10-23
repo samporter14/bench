@@ -425,6 +425,23 @@ struct PanelSoundTests {
         for name in names { #expect(NSSound(named: name) != nil, "\(name)") }
     }
 
+    @Test func eachKindOfEventHasCapsidsOwnSoundAndTheAppCarriesThem() throws {
+        // Capsid's own four (since 1.0.1): a .caf each in Resources/Sounds, short, and copied into the app.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let folder = root.appendingPathComponent("Resources/Sounds")
+        let names = PanelSound.allCases.map(\.fileName)
+        #expect(Set(names).count == 4)
+        for name in names {
+            let url = folder.appendingPathComponent(name + ".caf")
+            let sound = try #require(NSSound(contentsOf: url, byReference: true), Comment(rawValue: name + ".caf"))
+            #expect(sound.duration > 0.1 && sound.duration <= 1.05, "\(name): \(sound.duration) s")
+        }
+        let script = try String(contentsOf: root.appendingPathComponent("Scripts/build-app.sh"), encoding: .utf8)
+        #expect(script.contains(#"cp "$ROOT"/Resources/Sounds/*.caf "$APP/Contents/Resources/Sounds/""#))
+        // The tests' bundle has none: the Mac's sound stands in.
+        #expect(PanelSound.question.url() == nil)
+    }
+
     @Test func theTableMapsEveryCardToItsSoundOrNone() {
         let s = Fixture.session("a", .needsInput, reason: .question)
         #expect(PanelSound.sound(for: .needsInput(s)) == .question)
@@ -498,7 +515,8 @@ struct PanelSoundTests {
     }
 
     @Test func aFinishIsTheQuietestSound() {
-        #expect(PanelSound.finish.volume < PanelSound.question.volume)
+        #expect(PanelSound.finish.volume(own: true) < PanelSound.question.volume(own: true))
+        #expect(PanelSound.finish.volume(own: false) < PanelSound.question.volume(own: false))
     }
 }
 
