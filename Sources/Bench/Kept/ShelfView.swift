@@ -517,15 +517,14 @@ struct ShelfDetail: View {
 struct ShelfExtras: View {
     let item: ShelfItem
     @ObservedObject var model: ShelfModel
-    /// The legend field's text, its saves and its problem (ShelfLegend.swift). One per item: the card puts `.id(item.id)` on this view.
-    @StateObject private var editor: ShelfLegendEditor
+    /// The legend field's text, its saves and its problem (ShelfLegend.swift). One per item, and the model's, not
+    /// the card's: a draft whose save failed after the card was left is here when the item is chosen again.
+    @ObservedObject private var editor: ShelfLegendEditor
 
     init(item: ShelfItem, model: ShelfModel) {
         self.item = item
         self.model = model
-        _editor = StateObject(wrappedValue: ShelfLegendEditor(folder: item.folder, disk: model.index.disk) {
-            await model.index.reload(item.result)
-        })
+        _editor = ObservedObject(wrappedValue: model.legendEditor(for: item))
     }
 
     private var record: KeptRecord { item.record }
@@ -577,13 +576,11 @@ struct ShelfExtras: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // The model is told of the field, so a PDF made right after typing waits for what was typed to be saved.
-        .task {
-            model.track(legend: editor, for: item.id)
-            await editor.load()
-        }
-        // Another item chosen, or the window closed: what was typed in the last second is saved now, not dropped.
-        .onDisappear { editor.flush() }
+        // A draft kept from before is shown as it was left; anything else is read from the README.
+        .task { await editor.show() }
+        // Another item chosen, or the window closed: what was typed in the last second is saved now, not dropped, and
+        // if that save fails the draft stays with the model and the window says so.
+        .onDisappear { editor.hide() }
     }
 
     private func label(_ text: String) -> some View {

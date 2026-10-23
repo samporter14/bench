@@ -46,12 +46,11 @@ struct ShelfPDFFreshTests {
         let shelf = KeptDemo.shelf(index: index, root: root)
         await index.refreshAndWait()
         let pages = Pages()
-        let model = ShelfModel(shelf: shelf, pdf: pages.maker)
+        let model = ShelfModel(shelf: shelf, pdf: pages.maker, legendDelay: .seconds(60))
         let item = try #require(model.shown.first { !$0.text.legend.isEmpty })
         model.pick(item.id, .only)
-        let editor = ShelfLegendEditor(folder: item.folder, disk: disk, delay: .seconds(60)) { await index.reload(item.result) }
-        await editor.load()
-        model.track(legend: editor, for: item.id)
+        let editor = model.legendEditor(for: item)
+        await editor.show()
         #expect(editor.canEdit && editor.legend == item.text.legend)
         try await body(model, item, editor, pages)
     }
