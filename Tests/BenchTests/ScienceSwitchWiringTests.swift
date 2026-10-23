@@ -79,8 +79,11 @@ struct ScienceSwitchInventoryTests {
 
     @Test func theWatchScriptIsTheOneThatHoldsTheDialogSelectorAndTheSignInScriptStillOnlyTheButton() {
         #expect(HandoverWatch.script.contains(#"[data-testid="restarting-dialog"]"#))
-        // The dialog's words are never read: no compared text in its script.
-        #expect(!HandoverWatch.script.contains("textContent") && !HandoverWatch.script.contains("innerText"))
+        // Every restart shows the dialog, so its words are compared in the page with the handover's one
+        // phrase, and only a yes ever leaves it: the one postMessage carries `shown: true` and nothing read.
+        #expect(HandoverWatch.script.contains("now opens in its own window"))
+        #expect(HandoverWatch.script.components(separatedBy: "postMessage(").count == 2)
+        #expect(HandoverWatch.script.contains("handler.postMessage({ shown: true })"))
         #expect(!SignInScript.press.contains("restarting-dialog") && !SignInScript.look.contains("restarting-dialog"))
     }
 }

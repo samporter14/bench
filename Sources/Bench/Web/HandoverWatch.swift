@@ -2,9 +2,12 @@
 // its own window (DESIGN.md, Daemon and sign-in; 1.0 spikes S1). When Claude
 // Science switches from a browser tab to its own app window, the page shows
 // a dialog (`[data-testid="restarting-dialog"]`, "Claude Science now opens
-// in its own window") and the daemon restarts as the app's child. A user
-// script watches for that dialog and tells Capsid once; the dialog's words
-// are never read, only that it is on screen.
+// in its own window") and the daemon restarts as the app's child. The page
+// shows the same dialog for every restart (an update, a sign-out, another
+// organisation, a data move), titled "Restarting Claude Science…" for all of
+// them but the handover (0.1.70's bundle), so the user script looks at the
+// dialog's words in the page and tells Capsid once, with a yes and nothing
+// else, only when they say it now opens in its own window.
 //
 // Built like the notification bridge (Web/NotificationBridge.swift): one user
 // script in the main frame, one message handler held weakly, and a message
@@ -54,8 +57,10 @@ final class HandoverWatch {
     // MARK: The page's side
 
     /// Looks for the dialog after the page changes, at most once a second
-    /// (a page that streams text changes all the time), and says so once. A
-    /// check is one selector; the observer is dropped as soon as it has found it.
+    /// (a page that streams text changes all the time), and says so once, only
+    /// for the handover's own title. A check is one selector; the observer is
+    /// dropped as soon as it has found it, and keeps watching past any other
+    /// restart's dialog.
     nonisolated static let script = #"""
     (() => {
       "use strict";
@@ -68,7 +73,10 @@ final class HandoverWatch {
       let timer = null;
       const look = () => {
         timer = null;
-        if (told || !document.querySelector('[data-testid="restarting-dialog"]')) return;
+        if (told) return;
+        const dialog = document.querySelector('[data-testid="restarting-dialog"]');
+        // Every restart shows this dialog; only the handover's says it now opens in its own window.
+        if (!dialog || !/now opens in its own window/i.test(String(dialog.textContent || ""))) return;
         told = true;
         observer.disconnect();
         handler.postMessage({ shown: true });

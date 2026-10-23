@@ -165,13 +165,13 @@ clay-text (Look).
   then a separator, at the top of WebKit's menu.
   - **They press the page's own close buttons**, one tab at a time, from inside the page
     (`callAsyncJavaScript`, `.defaultClient`), so the page's own check before discarding
-    unsaved edits still applies. The strip is read again after every press. In 0.1.63 that
+    unsaved edits still applies. The strip is read again after every press. In 0.1.63 (and 0.1.70) that
     check is not a `confirm`: the page raises its own dialog and keeps the tab until it is
     answered, and a second close that needs an answer would replace the first dialog. So
     each press waits up to 300 ms for the tab to leave, and the sweep stops at the first tab
     that is still there. That tab and the ones after it stay, and are counted as such; the
     user answers the page and asks again. Only one sweep runs at a time.
-  - **Selectors relied on (Claude Science 0.1.63):** one `[data-testid="right-tab-strip"]`
+  - **Selectors relied on (Claude Science 0.1.70; first read from 0.1.63):** one `[data-testid="right-tab-strip"]`
     holding `[role="toolbar"][aria-label="Open panels"]`; in it each tab is
     `[data-tab-id]`, with `[data-tab-btn]` (`aria-current="true"` on the shown tab, or
     `data-shown` on the tab) and `button[data-tab-close]`. Tabs are looked for only inside
@@ -364,9 +364,9 @@ plan preview and every write are off through the same "page ready" gates as
 ever; Open on a card, Next Waiting or a notification brings Claude Science
 forward (`Router.openInScience`).
 
-When the page shows `[data-testid="restarting-dialog"]` (a document-end
-observer that never reads the dialog's words, posts once and disconnects),
-Capsid stops its reconnect tries, posts one card ("Claude Science now opens in
+When the page shows `[data-testid="restarting-dialog"]` with the handover's
+own title (a document-end observer that posts once and disconnects), Capsid
+stops its reconnect tries, posts one card ("Claude Science now opens in
 its own window. Capsid keeps working beside it. It no longer starts Claude
 Science's server: open Claude Science to start it."), and for about a quarter
 of an hour asks `status` for a different daemon (another pid, port or starter)
@@ -2923,17 +2923,44 @@ that couldn't be told).
 
 **The steps, in order.**
 1. The `claude-science` tool and its `status`: running, version, port, data folder.
-2. **The version line.** "Claude Science 0.1.65; Capsid was last checked with 0.1.63". The running version is
+2. **The version line.** "Claude Science 0.1.71; Capsid was last checked with 0.1.70". The running version is
    `status.version` from the same `claude-science status` the app already runs to find the daemon (a CLI
    that omits it reads "unknown", and the line says Claude Science didn't say). No page or API read is used
-   for it. `CompatInventory.checkedWith` is the version Capsid was last checked with: 0.1.63, the one whose web
-   bundle the tab markup was read from (Main window, above). The versions are compared as numbers
+   for it. `CompatInventory.checkedWith` is the version Capsid was last checked with: 0.1.70 (since the 1.0
+   safety batch; 0.1.63 before), the one whose web bundle the page, read and write entries were walked
+   against, by reading its files only (the command line and the database entries rest on Diagnostics' live
+   steps and the 1.0 spikes, and were not re-derived). The versions are compared as numbers
    (`ScienceVersion`: 0.1.9 is older than 0.1.63; a suffix like "-rc1" can't be ordered and reads as
    different). If the status can't be read, the line is only "Capsid was last checked with Claude Science
-   0.1.63". When they differ, ✓ becomes • and a second line says, in plain words, that this is a newer (or
+   0.1.70". When they differ, ✓ becomes • and a second line says, in plain words, that this is a newer (or
    older, or different) Claude Science than Capsid was checked with, so features that depend on its page (the
    tab commands, the readouts, Approve) may need a look. Moving `checkedWith` is a claim: walk the whole
-   inventory again first (and the 0.1.63 sentence in the Main window section).
+   inventory again first (and the version named in the Main window section).
+
+   **After an update** (App/CompatWatch.swift, since 1.0). Capsid remembers the Claude Science version
+   `claude-science status` last reported (`lastScienceVersionSeen`). When the main page is ready it asks
+   `status` again, at most once a minute. Nothing stored yet: it keeps the version and looks at nothing. A
+   different version: it waits four seconds for the page to draw, runs `CompatProbes` once, then keeps the
+   new version whatever they found (a quit before the page was ready looks again next launch). A probe counts
+   as a change only when it answered in a shape Capsid doesn't read (usage's `ok: false` is an ordinary
+   state) or answered 404, 405 or 410; not on screen, signed out, refused, slow, too big and cancelled count
+   for nothing. None counts: it says nothing. Some do: one card, "Claude Science updated · Close Other Tabs
+   and 3 more may not work · See Help → Capsid Diagnostics…" (20 s, no button, not behind Heads-up: a break
+   isn't a heads-up), and Last problem says "A Claude Science update" with the features in brackets. Nothing
+   turns itself off (no feature has an off switch: they keep trying and may quietly do nothing), so the card
+   says "may not work". The window adds "Claude Science version Capsid last saw: …" and a ✓ or ✗ line when a
+   look happened this run. Nothing is asked or kept in a demo.
+
+   **The 0.1.70 walk** (2026-10-22, the web bundle's files only). None of the 94 entries is gone. Reworded to
+   what the bundle shows: the only exact "Sign in" buttons are the `sign-in-again-banner` (a stale account
+   login), the account menu and the package-mirror dialog; previews draw in a sandbox frame on the daemon's
+   `__OPERON__.sandboxOrigin`; `_plan_json` is not named by the page (only the live progress read can confirm
+   it); `?include_metadata=true` is the page's "Download with metadata". And one defect it found:
+   `[data-testid="restarting-dialog"]` is the page's dialog for **every** restart (an update, a sign-out,
+   another organisation, a data move, a proxy change), titled "Restarting Claude Science…" for all but the
+   handover's "Claude Science now opens in its own window". HandoverWatch matched the test id alone, so an
+   ordinary update would have stopped the reconnect tries and said Claude Science had moved to its own
+   window. Its script now compares the dialog's words in the page with that one phrase and posts only a yes.
 3. Each data folder and org database, and which was picked.
 4. The database opens read-only, and each table has the columns the queries read. The list is the
    inventory's (below), so it now includes `conversation_type`, `agent_name`, `task_summary` and `input_data`,
@@ -5849,9 +5876,9 @@ readable), the public docs, and Capsid's code. No database was opened, no
 auth-shaped file was read, no call went to the daemon, nothing was built or
 launched. The full write-ups, with byte offsets for every finding, were handed
 to Sam beside the 1.0 handoff; this section keeps the decisions, the reads each
-feature would add, and what only a live check can settle. Capsid's inventory
-still says it was last walked against Claude Science 0.1.63; nothing in the
-0.1.63 → 0.1.70 changelog touches the paths below, but that is an inference.
+feature would add, and what only a live check can settle. (When these spikes
+ran, the inventory still said 0.1.63; the safety batch walked it against
+0.1.70: see Diagnostics, "The 0.1.70 walk".)
 
 ### Baseline corrections
 

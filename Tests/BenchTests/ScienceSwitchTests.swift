@@ -732,12 +732,12 @@ private final class HandoverPage {
         context.exceptionHandler = { _, exception in Issue.record("script threw: \(exception?.toString() ?? "?")") }
         context.evaluateScript("""
         var __posts = [], __timers = [], __observers = [], __asked = [];
-        var __dialog = \(dialogThere);
+        var __dialog = \(dialogThere ? "'\(HandoverPage.handoverText)'" : "null");
         var window = { webkit: { messageHandlers: \(withHandler ? "{ benchHandover: { postMessage: function (m) { __posts.push(JSON.stringify(m)); } } }" : "{}") } };
         var location = { protocol: "\(scheme)", hostname: "\(host)" };
         var document = {
           documentElement: {},
-          querySelector: function (s) { __asked.push(s); return (s === '[data-testid="restarting-dialog"]' && __dialog) ? {} : null; }
+          querySelector: function (s) { __asked.push(s); return (s === '[data-testid="restarting-dialog"]' && __dialog) ? { textContent: __dialog } : null; }
         };
         function MutationObserver(cb) { this.cb = cb; this.on = false; __observers.push(this); }
         MutationObserver.prototype.observe = function () { this.on = true; };
@@ -748,8 +748,13 @@ private final class HandoverPage {
         """)
     }
 
+    /// The dialog's words for the handover, and for any other restart (0.1.70's bundle).
+    static let handoverText = "Claude Science now opens in its own windowYou can close this tab."
+    static let restartText = "Restarting Claude Science\u{2026}Applying update."
+
     func load() { context.evaluateScript(HandoverWatch.script) }
-    func set(dialog: Bool) { context.evaluateScript("__dialog = \(dialog);") }
+    func set(dialog: Bool) { context.evaluateScript(dialog ? "__dialog = '\(Self.handoverText)';" : "__dialog = null;") }
+    func set(dialogText: String) { context.evaluateScript("__dialog = '\(dialogText)';") }
     func mutate() { context.evaluateScript("__mutate();") }
     func runTimers() { context.evaluateScript("__runTimers();") }
     var posts: [String] { (context.evaluateScript("__posts")?.toArray() as? [String]) ?? [] }
@@ -778,6 +783,20 @@ struct HandoverScriptTests {
         // And nothing more, however the page goes on changing.
         page.mutate(); page.runTimers(); page.mutate(); page.runTimers()
         #expect(page.posts.count == 1)
+    }
+
+    @Test func anyOtherRestartsDialogIsNotTheHandover() {
+        let page = HandoverPage()
+        page.load()
+        // An update, a sign-out, another organisation: the same dialog, titled "Restarting Claude Science…".
+        page.set(dialogText: HandoverPage.restartText)
+        page.mutate(); page.runTimers()
+        #expect(page.posts.isEmpty)
+        #expect(page.watching == 1)
+        // The handover's own title, later on the same page, is still heard.
+        page.set(dialog: true)
+        page.mutate(); page.runTimers()
+        #expect(page.posts == [#"{"shown":true}"#])
     }
 
     @Test func aDialogAlreadyThereWhenTheScriptRunsIsSaidAtOnce() {
