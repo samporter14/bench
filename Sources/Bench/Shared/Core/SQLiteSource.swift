@@ -1057,10 +1057,16 @@ func fetchSessionByIntent(db: URL, project: String, intent: String, now: Date = 
 // names, or were last made on the day it names (`d<n>`, the versions made
 // that day); every word must match one way or another. The matches are the
 // artifacts Claude Science's own list shows (not ephemeral, not an upload,
-// not `user_hidden`; their latest version not an intermediate), joined to
-// their latest version, newest first, cut at the limit, and only then to
-// their session and project, so the wide `frames` rows are read for the few
-// that are listed and never for the many that were looked at.
+// not `user_hidden`, not the planner's `plan*.json` and `goal_*.html`, in a
+// session its list shows; their latest version not an intermediate), joined
+// to their latest version, newest first, cut at the limit, and only then to
+// their session's title and project, so those wide `frames` rows are read for
+// the few that are listed. Everything that leaves a file out is decided before
+// the limit, never after it: files of a hidden session, of the concierge or
+// of the planner, which can be newer than every real match, once used the
+// limit up and a search returned nothing though real files matched. What it
+// costs is one look at each session that has a match (`shown`), not one for
+// each file.
 //
 // Two optional speed-ups, each used only when the database has the index (a
 // probe, remembered five minutes): `ix_frames_bench_name_search`, the compact
@@ -1072,8 +1078,13 @@ func fetchSessionByIntent(db: URL, project: String, intent: String, now: Date = 
 // Measured on a made-up database of 79,688 artifacts, 142,960 versions and
 // 2,000 sessions with 1 GB of blobs, built from the 0.1.70 migrations: 50 to
 // 180 ms warm, 0.3 to 0.9 s cold; without the indexes' hints the title look
-// alone was 290 ms against 1.4 ms. Not measured on a real database. The read is
-// interrupted at `timeout` seconds, as Quick Open's is.
+// alone was 290 ms against 1.4 ms. With the exclusions before the limit, on a
+// made-up database of 80,000 artifacts and 2,000 sessions with 900 MB of
+// blobs (the worst case: a word that matches every session) a search took
+// 220 to 450 ms warm where it took 45 to 130 ms; the wide rows are the cost, one
+// for each session, and a real database lists a few thousand files, not
+// eighty thousand. Not measured on a real database. The read is interrupted at
+// `timeout` seconds, as Quick Open's is.
 enum FindSQL {
     /// Which speed-ups the database has.
     struct Shape: Equatable, Sendable {
@@ -1119,6 +1130,11 @@ enum FindSQL {
         }
         if let kind = query.kind { where_.append("(\(FindExtensions.condition(kind, column: "a.filename")))") }
         where_ += matches
+        // The planner's own files, by the last part of the name (`FindRanking.isPlanningFile`), are left out here and
+        // not after the limit, where enough of them could use it up. Last, so only the rows that match are looked at.
+        // `_` is a wildcard of LIKE, so the one in "goal_" is escaped.
+        let base = lastPartSQL("a.filename")
+        where_.append(#"NOT (\#(base) LIKE 'plan%.json' OR \#(base) LIKE 'goal\_%.html' ESCAPE '\')"#)
         let limit = bind(.integer(Int64(max(1, min(query.limit, FindQuery.maxLimit)))))
         with.append("""
             hits AS MATERIALIZED (
@@ -1126,12 +1142,19 @@ enum FindSQL {
                 FROM artifacts a
                 WHERE \(where_.joined(separator: "\n  AND ")))
             """)
+        // The sessions the matches belong to that a session list would show: each session once, however many
+        // files it has, so the few hundred wide rows of sessions are read and not one for each of the many files.
+        with.append("""
+            shown AS MATERIALIZED (
+                SELECT f.id FROM (SELECT DISTINCT fid FROM hits) d JOIN frames f ON f.id = d.fid
+                WHERE \(sessionKindSQL("f")))
+            """)
         with.append("""
             top AS MATERIALIZED (
                 SELECT v.id AS vid, h.aid, h.name, v.content_type AS mime, v.size_bytes AS size, v.created_at AS at,
                        v.version_number AS n, h.fid, h.pid
                 FROM hits h JOIN artifact_versions v\(versions) ON v.id = h.vid
-                WHERE v.is_intermediate = 0
+                WHERE v.is_intermediate = 0 AND h.fid IN shown
                 ORDER BY v.created_at DESC, v.id DESC
                 LIMIT \(limit))
             """)
@@ -1140,15 +1163,21 @@ enum FindSQL {
             SELECT t.vid, t.aid, \(oneLineSQL("t.name")), COALESCE(t.mime,''), t.size, t.at, t.n,
                    t.fid, \(oneLineSQL("f.name")), t.pid, \(oneLineSQL("p.name"))
             FROM top t JOIN frames f ON f.id = t.fid LEFT JOIN projects p ON p.id = t.pid
-            WHERE \(sessionKindSQL("f"))
             ORDER BY t.at DESC, t.vid DESC;
             """
         return (sql, arguments)
     }
 
+    /// The part of a name after its last "/" (SQLite has no basename): what is left of `column` once the trailing
+    /// characters that are not "/" are cut, taken off the whole. A name with no "/" is its own last part.
+    static func lastPartSQL(_ column: String) -> String {
+        "substr(\(column), length(rtrim(\(column), replace(\(column), '/', ''))) + 1)"
+    }
+
     /// A row of the statement, or nil when an id isn't one the daemon writes
-    /// (a file Capsid could not safely name in a request) or the file is one
-    /// Claude Science hides from its own list.
+    /// (a file Capsid could not safely name in a request) or the file is the
+    /// planner's, which the statement already leaves out, checked here too in
+    /// the one place that names a file's last part the Swift way.
     static func file(_ cols: [String]) -> FoundFile? {
         guard cols.count >= 11, PlanCheck.isVersionID(cols[0]), PlanCheck.isFrameID(cols[7]) else { return nil }
         let name = (cols[2] as NSString).lastPathComponent.trimmingCharacters(in: .whitespaces)

@@ -271,6 +271,16 @@ struct FindDatabase {
     func file(_ name: String, in session: String, project: String = "proj_a", at: Int64, versions: Int = 1, mime: String = "image/png",
               size: Int = 1_000, intermediate: Bool = false, priority: String = "unknown", upload: Bool = false,
               ephemeral: Bool = false, id: Int) throws -> [String] {
+        let (sql, ids) = Self.fileSQL(name, in: session, project: project, at: at, versions: versions, mime: mime, size: size,
+                                      intermediate: intermediate, priority: priority, upload: upload, ephemeral: ephemeral, id: id)
+        try run(sql)
+        return ids
+    }
+
+    /// The statements `file` runs, for a test that adds many files in one go (one `sqlite3` process, not one each).
+    static func fileSQL(_ name: String, in session: String, project: String = "proj_a", at: Int64, versions: Int = 1, mime: String = "image/png",
+                        size: Int = 1_000, intermediate: Bool = false, priority: String = "unknown", upload: Bool = false,
+                        ephemeral: Bool = false, id: Int) -> (sql: String, versions: [String]) {
         let artifact = madeUpID(0x1000 + id)
         var ids: [String] = []
         var sql = ""
@@ -292,9 +302,9 @@ struct FindDatabase {
                 is_ephemeral, sort_order, priority)
             VALUES (\(Self.q(artifact)), \(Self.q(project)), \(Self.q(session)), \(Self.q(session)), \(Self.q(name)), \(at - 1_000),
                 \(Self.q(ids.last)), \(upload ? 1 : 0), \(ephemeral ? 1 : 0), 0, \(Self.q(priority)));
+
             """
-        try run(sql)
-        return ids
+        return (sql, ids)
     }
 
     /// The version id of file `id`'s `n`th version.

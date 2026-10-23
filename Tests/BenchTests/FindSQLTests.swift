@@ -168,6 +168,84 @@ struct FindSQLTests {
         #expect(try found(db, "hidden plate").isEmpty && (try found(db, "concierge")).isEmpty)
     }
 
+    // MARK: What is left out is left out before the limit
+
+    /// A made-up database in which the newest matches of "run" are all files Find never lists (two hundred of them,
+    /// twice the default limit), with five that it does, older. `indexes` as `FindDatabase`.
+    private func crowded(indexes: Bool) throws -> FindDatabase {
+        let db = try FindDatabase(indexes: indexes)
+        try db.project("proj_a", "Assay development")
+        try db.session(madeUpID(1), project: "proj_a", title: "Plate reader QC")
+        try db.session(madeUpID(5), project: "proj_a", title: "Hidden helper session", hidden: true)
+        try db.session(madeUpID(6), project: "proj_a", title: "Concierge session", agent: "CONCIERGE")
+        try db.session(madeUpID(7), project: "proj_a", title: "Uploads session", type: "uploads")
+        var sql = ""
+        var id = 1
+        func add(_ name: String, in session: String, at: Int64, mime: String = "image/png") {
+            sql += FindDatabase.fileSQL(name, in: session, at: at, mime: mime, id: id).sql
+            id += 1
+        }
+        // The newest: a hidden session's files, the concierge's, the uploads session's, and the planner's own.
+        for n in 1...60 { add("run_hidden_\(n).png", in: madeUpID(5), at: t - Int64(n) * 60_000) }
+        for n in 1...40 { add("run_concierge_\(n).png", in: madeUpID(6), at: t - Int64(100 + n) * 60_000) }
+        for n in 1...30 { add("run_upload_\(n).png", in: madeUpID(7), at: t - Int64(200 + n) * 60_000) }
+        for n in 1...50 { add("plan_run_\(n).json", in: madeUpID(1), at: t - Int64(300 + n) * 60_000, mime: "application/json") }
+        for n in 1...20 { add("goal_run_\(n).html", in: madeUpID(1), at: t - Int64(400 + n) * 60_000, mime: "text/html") }
+        // Older, and the only ones that should be found.
+        for n in 1...5 { add("run_valid_\(n).png", in: madeUpID(1), at: t - Int64(n) * hour) }
+        try db.run(sql)
+        return db
+    }
+
+    @Test func filesFromHiddenSessionsAndThePlannersFilesNeverUseUpTheLimit() throws {
+        for indexes in [true, false] {
+            let db = try crowded(indexes: indexes)
+            defer { db.remove() }
+            let valid = (1...5).map { "run_valid_\($0).png" }
+            // More than the default limit of them are newer than the first valid one.
+            #expect(names(try found(db, "run")) == valid, "indexes: \(indexes)")
+            // A smaller limit is filled from the valid ones too, newest first.
+            #expect(names(try found(db, "run", limit: 3)) == Array(valid.prefix(3)), "indexes: \(indexes)")
+            // And with the kind chip on: the same files, the same way.
+            #expect(names(try found(db, "run", kind: .figure, limit: 2)) == Array(valid.prefix(2)), "indexes: \(indexes)")
+        }
+    }
+
+    @Test func theStatementLeavesThemOutBeforeItsLimit() throws {
+        let (sql, _) = FindSQL.statement(try #require(FindTime.parse("run", limit: 5)))
+        // The limit is applied once, in `top`; the exclusions come before it in the text.
+        let limit = try #require(sql.range(of: "LIMIT ?"))
+        let sessions = try #require(sql.range(of: "is_hidden IS NOT 1"))
+        let planning = try #require(sql.range(of: "plan%.json"))
+        #expect(sessions.lowerBound < limit.lowerBound && planning.lowerBound < limit.lowerBound)
+        #expect(sql.components(separatedBy: "LIMIT ?").count == 2)
+    }
+
+    /// The statement's idea of a planning file is `FindRanking.isPlanningFile`'s: the last part of the name, case ignored,
+    /// and "goal_" with its underscore, not any letter.
+    @Test func thePlannersFilesAreLeftOutByTheirLastPartAndOnlyThose() throws {
+        let db = try FindDatabase()
+        defer { db.remove() }
+        try db.project("proj_a", "Assay development")
+        try db.session(madeUpID(1), project: "proj_a", title: "Plate reader QC")
+        let names = ["out/plan_run_main.json", "PLAN_run_Upper.JSON", "planet_run.json", "goal_run_a.html", "figures/goal_run_b.HTML",
+                     // Not the planner's:
+                     "plan_dir/run_curve.json", "run_plan.json", "goal.run.html", "goalXrun.html", "goal_run.htm", "plan_run.md", "airplane_run.json",
+                     "my_goal_run_1.html", "run_plane.png"]
+        var sql = ""
+        for (n, name) in names.enumerated() {
+            sql += FindDatabase.fileSQL(name, in: madeUpID(1), at: t - Int64(n) * 60_000, mime: "text/plain", id: n + 1).sql
+        }
+        try db.run(sql)
+        let listed = Set(names.filter { !FindRanking.isPlanningFile(($0 as NSString).lastPathComponent) })
+        #expect(listed.count == 9)
+        // The statement alone, before the Swift check on each row, leaves out the same ones.
+        let (statement, arguments) = FindSQL.statement(try #require(FindTime.parse("run")))
+        let rows = try runReadOnlyQuery(db: db.url, sql: statement, arguments: arguments)
+        #expect(Set(rows.map { $0[2] }) == listed)
+        #expect(Set(try found(db, "run").map(\.name)) == Set(listed.map { ($0 as NSString).lastPathComponent }))
+    }
+
     @Test func aFileMadeByAHelperBelongsToItsArtifactsSession() throws {
         let db = try standard()
         defer { db.remove() }
