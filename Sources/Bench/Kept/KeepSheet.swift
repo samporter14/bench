@@ -59,6 +59,8 @@ struct KeepSheet: View {
             model.open()
             nameFocused = true
         }
+        // Esc and a click outside close a sheet too: not while the folder is being put in place.
+        .interactiveDismissDisabled(!model.canCancel)
         .onChange(of: model.phase) { _, phase in
             // Kept with nothing to say: the sheet closes. Kept with files that
             // don't match their checksums: it stays to say so, until Done.
@@ -368,7 +370,8 @@ struct KeepSheet: View {
         case .keeping(let done, let total):
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Keeping \(done) of \(total) files\u{2026}")
+                // Once the folder is being put in place the count is over: say what is going on.
+                Text(model.isFinishing ? KeepRules.finishingSentence : "Keeping \(done) of \(total) files\u{2026}")
                     .font(.system(size: 12))
                     .foregroundStyle(Solanum.muted)
                     .monospacedDigit()
@@ -415,6 +418,9 @@ struct KeepSheet: View {
                 Button("Cancel") { model.cancel(); dismiss() }
                     .buttonStyle(SolanumPillStyle(.regular))
                     .keyboardShortcut(.cancelAction)
+                    // Not once the folder is being put in place: that can't be stopped.
+                    .disabled(!model.canCancel)
+                    .help(model.canCancel ? "" : KeepRules.finishingHelp)
                 // The label changes; the button's width mustn't.
                 Button { model.keep() } label: {
                     Text(isKeeping ? "Keeping…" : "Keep").frame(minWidth: 66)

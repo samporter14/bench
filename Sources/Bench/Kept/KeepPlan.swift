@@ -605,6 +605,12 @@ enum KeepRules {
     /// After files landed in a kept folder and its README couldn't be rewritten.
     static let recordFailedSentence = "The files landed, but README.md couldn\u{2019}t be updated to list them."
 
+    /// The sheet's status once the folder is being put in place: no count any
+    /// more, and Cancel is off (`KeepModel.isFinishing`).
+    static let finishingSentence = "Finishing\u{2026}"
+    /// Why Cancel is off then (its tooltip).
+    static let finishingHelp = "The folder is being put in place. It can\u{2019}t be cancelled now."
+
 
     static func roleTitle(_ role: KeptRole) -> String {
         switch role {

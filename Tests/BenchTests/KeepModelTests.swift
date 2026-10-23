@@ -4,7 +4,11 @@
 // Again; the version that went, swapped for another; an answer pinned by the
 // caller, and an answer kept with a version it doesn't show; bytes that don't
 // match the daemon's checksum, kept and named; a README that couldn't be
-// rewritten after a Try Again, and a Cancel in the middle of one. The reads
+// rewritten after a Try Again, and a Cancel in the middle of one; a README a
+// person added sections to, kept as it is through a Try Again, and left alone
+// when it was edited while Try Again worked; a Cancel after the last copy and
+// while the version is asked (nothing published), and one refused once the
+// folder is being put in place. The reads
 // are fakes (nothing here talks to Claude Science); the disk is the real
 // `KeptDisk` on a folder made for each test and removed after it.
 import Foundation
@@ -56,6 +60,11 @@ private final class Science {
     /// The answer the history search finds.
     var showing: ShowingMessage? = Made.showing(Made.v4)
     private(set) var showingCalls = 0
+    /// Claude Science's version, asked once per keep: held while `holdVersion`, and `onVersion` runs as it is asked.
+    var holdVersion = false
+    var onVersion: (@MainActor () -> Void)?
+    private(set) var versionAsks = 0
+    private var versionWaiters: [CheckedContinuation<Void, Never>] = []
     /// The first facts reads time out, this many of them.
     var factsFailures = 0
     /// A version's download times out this many times first.
@@ -95,6 +104,20 @@ private final class Science {
             await withCheckedContinuation { lineageWaiters.append($0) }
         }
         return self.read(read)
+    }
+
+    func version() async -> String? {
+        versionAsks += 1
+        onVersion?()
+        if holdVersion { await withCheckedContinuation { versionWaiters.append($0) } }
+        return "0.1.70"
+    }
+
+    func releaseVersion() {
+        holdVersion = false
+        let waiting = versionWaiters
+        versionWaiters = []
+        for waiter in waiting { waiter.resume() }
     }
 
     func releaseLineage() {
@@ -162,12 +185,22 @@ private final class HeldCalls: @unchecked Sendable {
     private let lock = NSLock()
     private var held: [KeptDisk.Work] = []
     private var hold = false
+    /// Calls still to go through before the next one is held.
+    private var allowed: Int?
 
     func holding(_ on: Bool) { lock.withLock { hold = on } }
+    /// The next `calls` calls run; the one after them, and every later one, is held.
+    func holdAfter(_ calls: Int) { lock.withLock { allowed = calls } }
     var count: Int { lock.withLock { held.count } }
 
     func run(_ work: @escaping KeptDisk.Work) {
-        if lock.withLock({ hold }) { lock.withLock { held.append(work) } } else { work() }
+        let held = lock.withLock { () -> Bool in
+            if let left = allowed {
+                if left == 0 { allowed = nil; hold = true } else { allowed = left - 1 }
+            }
+            return hold
+        }
+        if held { lock.withLock { self.held.append(work) } } else { work() }
     }
 
     /// Lets the held calls finish, late, in the order they came.
@@ -186,16 +219,23 @@ private final class Rig {
     let disk: KeptDisk
     private let settings = ScratchDefaults.make(prefix: "capsid-tests-keep")
     var defaults: UserDefaults { settings.defaults }
+    /// The keeps the Results window was told about (`didKeep`).
+    private(set) var kept: [KeepOutcome] = []
 
-    /// `hold` makes the disk one that can stop answering, as a dropped volume does.
-    init(hold: HeldCalls? = nil) throws {
+    /// `hold` makes the disk one that can stop answering, as a dropped volume does:
+    /// its held calls time out at once, unless `patient`, which waits for them.
+    init(hold: HeldCalls? = nil, patient: Bool = false) throws {
         let scratch = FileManager.default.temporaryDirectory.appending(path: "capsid-tests-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         let root = scratch.appending(path: "Kept", directoryHint: .isDirectory)
         self.scratch = scratch
         self.root = root
         if let hold {
-            disk = KeptDisk(root: { root }, wait: { _ in }, run: { hold.run($0) })
+            if patient {
+                disk = KeptDisk(root: { root }, wait: { try? await Task.sleep(for: $0) }, run: { hold.run($0) })
+            } else {
+                disk = KeptDisk(root: { root }, wait: { _ in }, run: { hold.run($0) })
+            }
         } else {
             disk = KeptDisk(root: { root })
         }
@@ -216,10 +256,10 @@ private final class Rig {
             disk: disk,
             defaults: defaults,
             root: { root },
-            scienceVersion: { "0.1.70" },
+            scienceVersion: { await science.version() },
             capsidVersion: "1.0",
             now: { Made.at(100) },
-            didKeep: { _ in },
+            didKeep: { [self] outcome in kept.append(outcome) },
             settle: { _ in await science.settle() })
         return KeepModel(subject: KeepSubject(session: Made.session, entry: entry, pinned: pinned, selectsItsVersion: selectsItsVersion),
                          dependencies: dependencies)
@@ -1118,5 +1158,263 @@ struct KeepChoosingTests {
         host.keeping = nil
         #expect(host.present { made += 1; return second })
         #expect(host.keeping === second && made == 2)
+    }
+}
+
+// MARK: E. Try Again leaves a person's README as it is
+
+@MainActor
+struct KeepRetryReadmeTests {
+    /// A partial keep: the table timed out, so the figure and the script are in and the table is missing.
+    private func partialKeep(_ rig: Rig) async throws -> (model: KeepModel, outcome: KeepOutcome, readme: URL, original: String) {
+        rig.science.downloadFailures[Made.in1] = 1
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep ends") { model.partialOutcome != nil }
+        let outcome = try #require(model.partialOutcome)
+        let readme = outcome.folder.appending(path: "README.md", directoryHint: .notDirectory)
+        return (model, outcome, readme, try String(contentsOf: readme, encoding: .utf8))
+    }
+
+    /// What Try Again should leave of `edited`: the table listed, nothing missing, and no "Not copied".
+    private func landed(_ edited: String, reason: String) -> String {
+        let sha = KeptDisk.sha256(of: Made.table(Made.in1))
+        let code = "  - { path: \"code/z_prime.py\", "
+        guard let row = edited.range(of: code), let end = edited[row.lowerBound...].firstIndex(of: "\n") else { return edited }
+        let table = "  - { path: \"data/z_prime_by_plate.csv\", role: data, artifact: \"\(Made.inputArtifact)\", version: \"\(Made.in1)\", "
+            + "sha256: \"\(sha)\", bytes: \(Made.table(Made.in1).count) }\n"
+        var out = edited
+        out.insert(contentsOf: table, at: out.index(after: end))
+        return out
+            .replacingOccurrences(of: "missing:\n  - { role: data, name: \"z_prime_by_plate.csv\", reason: \(KeptReadme.quoted(reason)) }\n",
+                                  with: "missing: []\n")
+            .replacingOccurrences(of: "## Not copied\n\n- The data file, z_prime_by_plate.csv: \(reason).\n\n", with: "")
+    }
+
+    @Test func aSectionAPersonAddedToTheReadmeSurvivesTryAgain() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let (model, first, readme, original) = try await partialKeep(rig)
+        let reason = try #require(first.missing.first?.reason)
+        // Notes before the legend and after the last section, a line after the fine print, and a legend.
+        let edited = original
+            .replacingOccurrences(of: "## Your legend", with: "## Lab notes\n\nPlate 7 re-run on the 22nd.\n\n## Your legend")
+            .replacingOccurrences(of: "---\n\nCapsid changes", with: "## Follow-ups\n\n- Ask about column 12\n\n---\n\nCapsid changes")
+            + "Added by hand.\n"
+        #expect(edited != original)
+        try Data(edited.utf8).write(to: readme)
+
+        model.retry()
+        try await until("it is kept") { model.keptOutcome != nil }
+        #expect(try #require(model.keptOutcome).isComplete)
+        let after = try String(contentsOf: readme, encoding: .utf8)
+        // The README a person edited, with the table listed and nothing missing: not one byte more.
+        #expect(after == landed(edited, reason: reason))
+        #expect(after.contains("## Lab notes\n\nPlate 7 re-run on the 22nd.\n\n## Your legend"))
+        #expect(after.contains("## Follow-ups\n\n- Ask about column 12\n\n---\n\nCapsid changes"))
+        #expect(after.hasSuffix("Added by hand.\n"))
+        let back = try await rig.disk.readme(at: first.folder)
+        #expect(back.record.files.map(\.path) == ["code/z_prime.py", "data/z_prime_by_plate.csv"])
+        #expect(back.record.missing.isEmpty)
+    }
+
+    @Test func aNewChecksumSectionIsMadeBesideCapsidsOwnAndLeavesThePersonsAlone() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        // The table times out, then comes with other bytes: it lands, listed with the checksum it didn't match.
+        rig.science.corrupt[Made.in1] = 1
+        rig.science.downloadFailures[Made.in1] = 1
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep ends") { model.partialOutcome != nil }
+        let first = try #require(model.partialOutcome)
+        let readme = first.folder.appending(path: "README.md", directoryHint: .notDirectory)
+        let edited = try String(contentsOf: readme, encoding: .utf8)
+            .replacingOccurrences(of: "---\n\nCapsid changes", with: "## Follow-ups\n\nRe-download the table.\n\n---\n\nCapsid changes")
+        try Data(edited.utf8).write(to: readme)
+
+        model.retry()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let after = try String(contentsOf: readme, encoding: .utf8)
+        #expect(after.contains("## Checksums\n\n- data/z_prime_by_plate.csv doesn\u{2019}t match"))
+        #expect(after.contains("Re-download the table.\n\n---\n\nCapsid changes"))
+        let order = ["## Where it came from", "## Checksums", "## Follow-ups"]
+        let places = try order.map { try #require(after.range(of: $0)?.lowerBound) }
+        #expect(places == places.sorted())
+    }
+
+    @Test func aReadmeAnEditorSavedWithAByteOrderMarkIsUpdatedAndKeepsIt() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let (model, first, readme, original) = try await partialKeep(rig)
+        let reason = try #require(first.missing.first?.reason)
+        let mark = Data([0xEF, 0xBB, 0xBF])
+        try (mark + Data(original.utf8)).write(to: readme)
+
+        model.retry()
+        try await until("it is kept") { model.keptOutcome != nil }
+        #expect(try #require(model.keptOutcome).isComplete)
+        let bytes = try Data(contentsOf: readme)
+        #expect(bytes.starts(with: mark))
+        #expect(String(decoding: bytes.dropFirst(3), as: UTF8.self) == landed(original, reason: reason))
+    }
+
+    @Test func anEditMadeWhileTryAgainWorksLeavesTheReadmeAsThePersonLeftItAndSaysSo() async throws {
+        let hold = HeldCalls()
+        let rig = try Rig(hold: hold, patient: true)
+        defer { rig.tearDown() }
+        // The first keep doesn't use the held disk: it goes through, with the table missing.
+        let (model, first, readme, original) = try await partialKeep(rig)
+        let reason = try #require(first.missing.first?.reason)
+        let downloads = rig.science.downloads.count
+
+        // Try Again: the table is written (call 1) and the README read (call 2); the call that
+        // writes the README (call 3) is held, as a share that has stopped answering holds it.
+        rig.science.onDownload = { _ in
+            hold.holdAfter(2)
+            return nil
+        }
+        model.retry()
+        try await until("the README write is held") { hold.count == 1 }
+        #expect(exists(first.folder, "data/z_prime_by_plate.csv"))
+        // Meanwhile it is edited in another app.
+        let edited = original + "\nWritten in an editor while Capsid worked.\n"
+        try Data(edited.utf8).write(to: readme)
+        hold.holding(false)
+        hold.release()
+
+        try await until("the retry ends") { model.partialOutcome?.recordFailed != nil }
+        let stuck = try #require(model.partialOutcome)
+        // Left exactly as the person saved it, with no temporary file beside it.
+        #expect(try String(contentsOf: readme, encoding: .utf8) == edited)
+        #expect(names(first.folder) == ["README.md", "code", "data", "z_prime.png"])
+        // The sheet says so in one sentence, and Try Again is there.
+        #expect(stuck.recordFailed == KeepModel.readmeChangedSentence)
+        #expect(KeepModel.readmeChangedSentence == "README.md was changed in another app, so Capsid left it alone.")
+        #expect(KeepRules.outcomeSentence(stuck)
+            == "Kept 3 files. The files landed, but README.md couldn\u{2019}t be updated to list them. \(KeepModel.readmeChangedSentence)")
+        #expect(stuck.kept == 3 && stuck.missing.isEmpty && !stuck.isComplete)
+        #expect(model.keptOutcome == nil)
+
+        // Try Again reads it as it is now and updates that: the person's line stays, and nothing is copied again.
+        model.retry()
+        try await until("it is kept") { model.keptOutcome != nil }
+        #expect(try #require(model.keptOutcome).isComplete)
+        #expect(rig.science.downloads.count == downloads + 1)
+        let after = try String(contentsOf: readme, encoding: .utf8)
+        #expect(after == landed(edited, reason: reason))
+        #expect(after.contains("\nWritten in an editor while Capsid worked.\n"))
+    }
+}
+
+// MARK: F. Cancel, right up to the folder going into place
+
+@MainActor
+struct KeepCancelTests {
+    /// The hidden folder a keep builds in, beside where it will be.
+    private func hiddenFolders(_ rig: Rig) -> [String] { names(rig.collection).filter { $0.hasPrefix(".") } }
+
+    @Test func aCancelWhileTheLastFileIsBeingWrittenKeepsNothing() async throws {
+        let hold = HeldCalls()
+        let rig = try Rig(hold: hold, patient: true)
+        defer { rig.tearDown() }
+        // The figure and the table go in; the disk stops answering as the script, the last file, is written.
+        rig.science.onDownload = { v in
+            if v == Made.in1 { hold.holdAfter(1) }
+            return nil
+        }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the last write is held") { hold.count == 1 }
+        #expect(hiddenFolders(rig).count == 1)
+        #expect(model.cancel())
+
+        // The write comes back (it ignores a Cancel, as it must): the keep still stops, and the folder never appears.
+        hold.holding(false)
+        hold.release()
+        try await until("the keep stops") { model.phase == .ready }
+        #expect(names(rig.collection).isEmpty)
+        #expect(rig.kept.isEmpty)
+        #expect(model.folder == nil && model.keptOutcome == nil && model.partialOutcome == nil)
+        #expect(!model.isFinishing)
+        // Not even Claude Science's version was asked for.
+        #expect(rig.science.versionAsks == 0)
+        // The same sheet keeps again.
+        #expect(model.canKeep)
+    }
+
+    @Test func aCancelWhileClaudeSciencesVersionIsAskedKeepsNothing() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.holdVersion = true
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the version is asked") { rig.science.versionAsks == 1 }
+        // Every file is copied into the hidden folder, and nothing is in place yet.
+        #expect(hiddenFolders(rig).count == 1)
+        #expect(model.phase == .keeping(done: 3, total: 3))
+        #expect(!model.isFinishing && model.canCancel)
+        #expect(model.cancel())
+
+        rig.science.releaseVersion()
+        try await until("the keep stops") { model.phase == .ready }
+        #expect(names(rig.collection).isEmpty)
+        #expect(rig.kept.isEmpty)
+        #expect(model.folder == nil && model.keptOutcome == nil)
+        #expect(!model.isFinishing)
+    }
+
+    @Test func aCancelOnceTheFolderIsBeingPutInPlaceIsRefusedAndTheSheetSaysSo() async throws {
+        let hold = HeldCalls()
+        let rig = try Rig(hold: hold, patient: true)
+        defer { rig.tearDown() }
+        // The version is the last thing asked before the folder is put in place: the next disk call, held, is that.
+        rig.science.onVersion = { hold.holding(true) }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.canCancel && !model.isFinishing)
+        model.keep()
+        try await until("the folder is being put in place") { model.isFinishing && hold.count == 1 }
+
+        // Cancel is off, and says why where the sheet says what it is doing.
+        #expect(!model.canCancel)
+        #expect(!model.cancel())
+        #expect(KeepRules.finishingSentence == "Finishing\u{2026}")
+        #expect(KeepRules.finishingHelp == "The folder is being put in place. It can\u{2019}t be cancelled now.")
+        #expect(model.phase == .keeping(done: 3, total: 3))
+
+        // The refusal changed nothing: the folder goes in place, and the sheet says kept.
+        hold.holding(false)
+        hold.release()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.isComplete && outcome.kept == 3)
+        #expect(names(rig.collection) == ["z_prime"])
+        #expect(rig.kept.count == 1)
+        #expect(!model.isFinishing && model.canCancel)
+    }
+
+    /// The sheet is the model's two facts and nothing of its own: its status says "Finishing…" in place of
+    /// the count while `isFinishing`, and its Cancel (and so Esc) follows `canCancel`. (An accessibility
+    /// tree needs a window, and a test opens none: the sheet is drawn to PNGs by `KeepSheetSnapshotTests`.)
+    @Test func theSheetFollowsTheModelsFinishingAndCanCancel() throws {
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath, isDirectory: false)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Bench/Kept/KeepSheet.swift", isDirectory: false), encoding: .utf8)
+        let lines = source.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        #expect(lines.contains { $0.contains("model.isFinishing ? KeepRules.finishingSentence : \"Keeping \\(done) of \\(total) files") })
+        // The Cancel of a keep that is under way (not the one of a failed read) is dimmed with the help that says why.
+        #expect(lines.contains(".disabled(!model.canCancel)"))
+        #expect(lines.contains { $0.hasPrefix(".help(model.canCancel ? \"\" : KeepRules.finishingHelp)") })
+        #expect(lines.contains(".interactiveDismissDisabled(!model.canCancel)"))
     }
 }
