@@ -115,7 +115,7 @@ enum CompanionDemo {
             post: { _ in throw WebAPIError.notAllowed }, approvedPause: .milliseconds(1500)))
         let questions = QuestionReplier(model: lab, dependencies: QuestionReplier.Dependencies(
             isEnabled: { false }, isReady: { false }, read: { _ in nil },
-            respond: { _, _ in .unavailable }))
+            respond: { _, _, _ in .unavailable }))
         let cards = CardActions(model: lab, plans: plans, questions: questions, showReply: { _, _ in })
         let made = sessions(now: now)
         var working = [made.plate, made.screen]

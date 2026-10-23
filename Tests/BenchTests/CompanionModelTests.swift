@@ -42,7 +42,7 @@ private struct Rig {
             isEnabled: { false }, isReady: { false }, get: { _ in throw WebAPIError.notAllowed },
             post: { _ in throw WebAPIError.notAllowed }, approvedPause: .milliseconds(10)))
         let questions = QuestionReplier(model: lab, dependencies: QuestionReplier.Dependencies(
-            isEnabled: { false }, isReady: { false }, read: { _ in nil }, respond: { _, _ in .unavailable }))
+            isEnabled: { false }, isReady: { false }, read: { _ in nil }, respond: { _, _, _ in .unavailable }))
         let cards = CardActions(model: lab, plans: plans, questions: questions, showReply: { _, _ in })
         let lab = lab
         model = CompanionModel(sources: CompanionModel.Sources(
