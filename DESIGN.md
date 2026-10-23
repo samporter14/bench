@@ -6178,9 +6178,10 @@ with ElevenLabs' sound effects (`eleven_text_to_sound_v2`, four takes each),
 each trimmed to start on the sound, faded, under a second, and levelled to the
 same loudness: two soft rising taps on a glass beaker for a question or any
 request (0.44 s), one struck test tube for a plan (0.85 s), a low muted
-centrifuge lid for a failure (0.62 s), and a pipette tip on a crystal vial for
-a finish (0.57 s, at 0.8 volume, the one that comes without a session waiting
-on you). They live in Resources/Sounds as .caf and are copied into the app by
+centrifuge lid for a failure (0.48 s), and a pipette tip on a crystal vial for
+a finish (0.42 s, at 0.8 volume, the one that comes without a session waiting
+on you). The failure and the finish are takes 2 since Sam's listen after 1.0.1
+("f2 is a better sound than f4, d2 is better"), made the same way. They live in Resources/Sounds as .caf and are copied into the app by
 Scripts/build-app.sh; where a bundle has none (`swift run`, the tests) the Mac's
 Glass, Submarine, Basso and Hero (at half) stand in. Every take, with the ones
 in use marked, is on the "Capsid Sounds" listening page made for Sam. One read
