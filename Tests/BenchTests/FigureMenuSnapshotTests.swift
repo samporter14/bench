@@ -6,7 +6,7 @@
 // icon box, the rule and the red item, with the few utility rules they use
 // written out, light and dark), runs the real script from
 // Shelf/ConversationMenu.swift in it, and writes PNGs of the menu with
-// Capsid's items in it, with a red item above them and without. It also drives the whole round in WebKit itself,
+// Capsid's items in it, with a red item below them and without. It also drives the whole round in WebKit itself,
 // with the script in its own content world as in the app (only the check that a
 // click is a real one is lifted, since no test can make one):
 // the right-click, the items appearing, a click on one and the message it
@@ -214,8 +214,9 @@ struct FigureMenuSnapshotTests {
             await js(view, "window.__withDelete = true; window.__rightClick();")
             await settle()
             let shape = await js(view, "window.__shape()") as? [String]
-            #expect(shape == ["Copy image", "Open in Artifact Viewer", "-", "Open in split view", "Provenance", "Copy link", "Download", "-", "Delete",
-                              "-", "Add to Shelf", "Keep with Data and Code\u{2026}", "Open as Reference", "Show in Results"], "\(mode)")
+            // Above the page's rule and its red Delete, which stays last.
+            #expect(shape == ["Copy image", "Open in Artifact Viewer", "-", "Open in split view", "Provenance", "Copy link", "Download",
+                              "-", "Add to Shelf", "Keep with Data and Code\u{2026}", "Open as Reference", "Show in Results", "-", "Delete"], "\(mode)")
             #expect(posts.all.first?["kind"] as? String == "image", "the old message is still posted: \(mode)")
             try await snapshot(view, to: directory.appendingPathComponent("figure-menu-\(mode).png"))
             // And what a menu looks like with no Delete, for the common case.

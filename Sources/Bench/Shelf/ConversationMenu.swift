@@ -15,8 +15,9 @@
 // component, `role="menu"` named "Artifact actions") and cancels the Mac's, so
 // `willOpenMenu` never runs for them. For those the same script waits, for two
 // seconds after a right-click on a figure whose address names a version, for
-// that menu to open, and adds a rule and the four items at its end, drawn with
-// the menu's own item classes. A click on one tells Swift, which runs the same
+// that menu to open, and adds a rule and the four items at its end (above its
+// red item and that item's rule, when it has one, so the destructive item stays
+// last, as on the Mac), drawn with the menu's own item classes. A click on one tells Swift, which runs the same
 // action as the Mac menu's item, and the script closes the page's menu the way
 // the page does (Escape on the document).
 //
@@ -279,7 +280,8 @@ final class ConversationMenu {
     /// the page's own menu (`role="menu"` named "Artifact actions"): a
     /// MutationObserver that ends the moment it has placed the items, or at
     /// the end of the two seconds, and that then only looks after the menu
-    /// until it closes. The items are a rule and four buttons made from the
+    /// until it closes. The items are a rule and four buttons, at the menu's end
+    /// or, when it has a red item, just above that item's own rule, made from the
     /// menu's own first item (its classes, its icon box; never its words), with
     /// an icon of Capsid's own drawing in the box. A real click on one posts
     /// `{action, version, name, kind}` and closes the menu with Escape on the
@@ -478,7 +480,7 @@ final class ConversationMenu {
         view.nodes = nodes;
         if (view.timer) { clearTimeout(view.timer); view.timer = null; }
         view.hold = setTimeout(() => { if (watch === view) stopWatch(); }, HOLD_MS);
-        nodes.forEach((node) => menu.appendChild(node));
+        nodes.forEach((node) => menu.insertBefore(node, anchorIn(menu, nodes)));
         fit(menu);
         // From here the page's whole body is not watched: only the menu, what
         // it sits in and what that sits in, one level each (the menu's items
@@ -492,13 +494,39 @@ final class ConversationMenu {
         }
       }
 
-      // React drew the menu again and left the items out, or added an item of
-      // its own after them: put the group back, last.
+      // What the group goes in front of: the page's rule right above its red
+      // item, else the red item itself, else nothing (the end). The group's own
+      // nodes don't count; "red" is the page's own word for it, `danger`, in
+      // its classes.
+      function anchorIn(menu, nodes) {
+        const kids = Array.prototype.slice.call(menu.children).filter((kid) => nodes.indexOf(kid) < 0);
+        for (let index = 0; index < kids.length; index++) {
+          if (String(kids[index].tagName).toLowerCase() !== "button" || String(kids[index].className).indexOf("danger") < 0) continue;
+          const above = index > 0 ? kids[index - 1] : null;
+          const isRule = !!above && String(above.tagName).toLowerCase() === "div" && !above.firstChild;
+          return isRule ? above : kids[index];
+        }
+        return null;
+      }
+
+      // Whether the rule and the four items sit one after another, in order, in
+      // front of what they belong in front of (or last, with no red item).
+      function inPlace(view) {
+        const kids = Array.prototype.slice.call(view.menu.children);
+        const first = kids.indexOf(view.nodes[0]);
+        if (first < 0) return false;
+        for (let index = 0; index < view.nodes.length; index++) {
+          if (kids[first + index] !== view.nodes[index]) return false;
+        }
+        return (kids[first + view.nodes.length] || null) === anchorIn(view.menu, view.nodes);
+      }
+
+      // React drew the menu again and left the items out, or put an item of its
+      // own among or after them: put the group back where it belongs.
       function restore(view) {
         const menu = view.menu;
-        const last = view.nodes[view.nodes.length - 1];
-        if (!view.nodes.some((node) => node.parentNode !== menu) && menu.lastElementChild === last) return;
-        view.nodes.forEach((node) => menu.appendChild(node));
+        if (inPlace(view)) return;
+        view.nodes.forEach((node) => menu.insertBefore(node, anchorIn(menu, view.nodes)));
         fit(menu);
         view.observer.takeRecords();
       }

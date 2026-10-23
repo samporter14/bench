@@ -426,6 +426,60 @@ struct FigureMenuScriptTests {
         #expect(posted(script).last?["action"] as? String == "openAsReference")
     }
 
+    // MARK: With a red item in the page's menu
+
+    /// The words of Capsid's group, after its own rule.
+    private static let group = ["rule"] + words.map { "ours:" + $0 }
+
+    @Test func aMenuWithADeleteGetsTheGroupAboveItsRuleAndIt() {
+        let script = page()
+        script.evaluate("__rightClick(__tileImg)")
+        script.evaluate("__openMenu(['Copy image', 'Open in split view', '-', '!Delete'])")
+        // …, Open in split view, [our rule], the four, [the page's rule], Delete.
+        #expect(shape(script) == ["page:Copy image", "page:Open in split view"] + Self.group + ["page-rule", "page:Delete"])
+        script.evaluate("__click(__ours()[3])")
+        #expect(posted(script).last?["action"] as? String == "openAsReference")
+    }
+
+    @Test func aDeleteWithNoRuleAboveItGetsTheGroupJustBeforeIt() {
+        let script = page()
+        script.evaluate("__rightClick(__tileImg)")
+        script.evaluate("__openMenu(['Copy image', '!Delete'])")
+        #expect(shape(script) == ["page:Copy image"] + Self.group + ["page:Delete"])
+    }
+
+    @Test func aRedItemFirstGetsTheGroupBeforeItAndTheTemplateIsNotRed() {
+        let script = page()
+        script.evaluate("__rightClick(__tileImg)")
+        script.evaluate("__openMenu(['!Delete', 'Copy image', '-', 'Open in split view'])")
+        #expect(shape(script) == Self.group + ["page:Delete", "page:Copy image", "page-rule", "page:Open in split view"])
+        #expect(script.evaluate("String(__ours().slice(1).every(function (b) { return b.className === \(FakeFigurePage.itemClass.debugDescription); }))") == "true")
+    }
+
+    @Test func aDeleteGroupDrawnAgainGetsTheGroupBackAboveIt() {
+        let script = page()
+        script.evaluate("__rightClick(__tileImg)")
+        script.evaluate("__openMenu(['Copy image', 'Open in split view', '-', '!Delete'])")
+        let placed = ["page:Copy image", "page:Open in split view"] + Self.group + ["page-rule", "page:Delete"]
+        script.evaluate("var __first = __ours();")
+        // The page redraws and leaves Capsid's out: they come back above the page's rule, the same buttons.
+        script.evaluate("__ours().forEach(function (b) { b.remove(); }); __flush();")
+        #expect(shape(script) == placed)
+        #expect(script.evaluate("String(__ours().every(function (b, i) { return b === __first[i]; }))") == "true")
+        // An item the page adds after Delete leaves the group where it is.
+        script.evaluate("__guarded(__item(__menu, 'After delete')); __flush();")
+        #expect(shape(script) == placed + ["page:After delete"])
+        // One it puts between the group and the rule above Delete: the group goes after it.
+        script.evaluate("var __late = __guarded(__item(__menu, 'Late')); __menu.insertBefore(__late, __menu.children[__menu.children.length - 4]); __flush();")
+        #expect(shape(script) == ["page:Copy image", "page:Open in split view", "page:Late"] + Self.group + ["page-rule", "page:Delete", "page:After delete"])
+        // And one it puts between Capsid's items: the group is made one run again.
+        script.evaluate("var __mid = __guarded(__item(__menu, 'Middle')); __menu.insertBefore(__mid, __ours()[3]); __flush();")
+        #expect(shape(script) == ["page:Copy image", "page:Open in split view", "page:Late", "page:Middle"] + Self.group + ["page-rule", "page:Delete", "page:After delete"])
+        script.evaluate("__click(__ours()[2])")
+        #expect(posted(script).last?["action"] as? String == "keep")
+        #expect(script.exception == nil, "\(script.exception ?? "")")
+    }
+
     @Test func onceTheItemsAreInOnlyTheMenuAndWhatItSitsInAreWatched() {
         let script = page()
         script.evaluate("__rightClick(__tileImg)")
