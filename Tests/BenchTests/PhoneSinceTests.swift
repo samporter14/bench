@@ -232,6 +232,44 @@ struct PhoneSinceTests {
         #expect(lines(app) == "Stopped with an error")
     }
 
+    private func pictures(_ app: PhoneAppHarness) -> String? {
+        app.string("document.querySelectorAll('.since-row .since-pic').map(function (e) { return e.querySelector('img') ? 'image' : e.textContent; }).join('|')")
+    }
+
+    @Test func withTheMacsCardSettingOffNoFileIsListedAndNoPictureOrTileIsDrawn() throws {
+        let stopped = #"{"id":"\#(Self.rebuild)","title":"Figure 2 rebuild","project":"Manuscript figures","at":"\#(Self.iso(minutesAgo: 120))","reason":null}"#
+        let app = try app(since: Self.since(stopped: [stopped], content: false))
+        #expect(app.exceptions == [])
+        // The rows are there, and not a file of any session was asked for (the lists are the page's own, at most four, once each).
+        #expect(app.string("document.querySelectorAll('.since-row').length") == "4")
+        for id in [Self.plate, Self.literature, Self.blot] {
+            #expect(app.requests(to: "/api/sessions/\(id)/artifacts") == 0, Comment(rawValue: id))
+        }
+        #expect(app.string("document.querySelectorAll('.since-row img').length") == "0")
+        #expect(app.string("document.querySelectorAll('.since-pic').length") == "0")
+        #expect(pictures(app) == "")
+    }
+
+    @Test func picturesAlreadyDrawnGoWhenTheSettingTurnsOffAndComeBackWithoutAskingAgain() throws {
+        let app = try app(since: Self.since())
+        #expect(pictures(app) == "image|CSV|image")
+        #expect(app.requests(to: "/api/sessions/\(Self.plate)/artifacts") == 1)
+        let stopped = #"{"id":"\#(Self.rebuild)","title":"Figure 2 rebuild","project":"Manuscript figures","at":"\#(Self.iso(minutesAgo: 120))","reason":null}"#
+        app.sendState(Self.state(since: Self.since(stopped: [stopped], content: false)))
+        #expect(app.stateFailures == [])
+        #expect(app.exceptions == [])
+        #expect(app.string("document.querySelectorAll('.since-row img').length") == "0")
+        #expect(app.string("document.querySelectorAll('.since-pic').length") == "0")
+        #expect(app.string("document.querySelectorAll('.since-row').length") == "4", "the rows themselves stay")
+        // Turned on again: what the page had listed is drawn, with nothing asked for a second time.
+        app.sendState(Self.state(since: Self.since(stopped: [stopped], content: true)))
+        #expect(app.stateFailures == [])
+        #expect(pictures(app) == "image|CSV|image")
+        for id in [Self.plate, Self.literature, Self.blot] {
+            #expect(app.requests(to: "/api/sessions/\(id)/artifacts") == 1, Comment(rawValue: id))
+        }
+    }
+
     @Test func withoutBrowsingThereAreNoPicturesAndNoArtifactReads() throws {
         let app = try app(since: Self.since(), extra: ["/api/me": #"{"paired":true,"browse":false,"act":true}"#])
         #expect(app.exceptions == [])

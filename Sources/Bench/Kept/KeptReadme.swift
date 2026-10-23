@@ -24,8 +24,11 @@
 // are written as given and read back as written. (An empty `origin` is made
 // from the record; `origin(for:)` and `attribution(answerAt:)` make the
 // usual ones, with the dates written out in English and the time the way the
-// Mac writes it.) Capsid changes only "Your legend" afterwards, and
-// `replacingLegend` leaves every other byte of the file as it was.
+// Mac writes it.) Afterwards Capsid changes only "Your legend" (`replacingLegend`)
+// and, when Try Again copies what was missing, the `files:` and `missing:` rows
+// and the "Not copied" and "Checksums" sections that follow from them
+// (`updating`); both leave every other byte of the file as it was, so a section
+// or a note a person added is never lost.
 //
 // A string in the front matter is escaped as in a YAML double-quoted string:
 // `\"`, `\\`, `\n`, `\r`, `\t`, and `\uXXXX` for the other control characters
@@ -464,6 +467,110 @@ enum KeptReadme {
         let body = block(legend)
         all.replaceSubrange((start + 1)..<end, with: ["", body.isEmpty ? legendComment : body, ""].flatMap { lines($0) })
         return all.joined(separator: "\n")
+    }
+
+    /// The README with only what Capsid keeps in it changed: the `files:` and
+    /// `missing:` rows of the front matter, and the "Not copied" and "Checksums"
+    /// sections that follow from them (made, changed or taken out as the rows
+    /// ask). Every other byte stays as it was: a section a person added, text
+    /// they wrote in or after any section or after the fine print, their
+    /// spacing, the legend, a byte order mark. It is what Try Again does to a
+    /// kept folder's README (`render` would write the whole file again, from
+    /// the sections `parse` returns, and lose all of that). For a README
+    /// `render` made and nobody touched, the answer is what `render` would
+    /// have written for the same record. Nil when the file isn't one `parse`
+    /// reads, or when the result wouldn't read back as asked (nothing is then
+    /// written).
+    ///
+    /// A new "Not copied" goes where the "Where it came from" section ends,
+    /// and a new "Checksums" after "Not copied" (else there), so Capsid's own
+    /// sections stay together and a person's go on after them.
+    static func updating(_ markdown: String, files: [KeptFile], missing: [KeptMissing]) -> String? {
+        guard let parsed = parse(markdown) else { return nil }
+        var record = parsed.record
+        record.files = files
+        record.missing = missing
+
+        var all = lines(markdown)
+        let mark = all.first?.hasPrefix("\u{FEFF}") == true
+        if mark { all[0].removeFirst() }
+        guard let front = parseFrontMatter(all) else { return nil }
+
+        // The sections first, below the front matter, so the front matter's own lines keep their places.
+        let notCopiedRows = record.missing.map { "- \(notCopied($0))" }
+        let checksumRows = mismatched(record).map { "- \(checksumSentence($0))" }
+        guard setList(notCopiedRows, under: missingHeading, in: &all, from: front.next, after: [originHeading]),
+              setList(checksumRows, under: checksumHeading, in: &all, from: front.next, after: [missingHeading, originHeading])
+        else { return nil }
+
+        let blocks = [("missing", rows("missing", record.missing.map(missingMap))),
+                      ("files", rows("files", record.files.map(fileMap)))]
+        for (key, replacement) in blocks {
+            guard let block = frontMatterBlock(key, in: all, upTo: front.next - 1) else { return nil }
+            all.replaceSubrange(block, with: replacement)
+        }
+
+        let updated = (mark ? "\u{FEFF}" : "") + all.joined(separator: "\n")
+        // Only a result that reads back as the record asked, with the person's sections as they were.
+        guard let back = parse(updated), back.record == record, back.text == parsed.text else { return nil }
+        return updated
+    }
+
+    /// Where `key:` and its rows are in the front matter (the lines before `end`,
+    /// the closing divider's place).
+    private static func frontMatterBlock(_ key: String, in all: [String], upTo end: Int) -> Range<Int>? {
+        guard let at = all[..<end].firstIndex(where: { $0 == "\(key):" || $0 == "\(key): []" }) else { return nil }
+        var stop = at + 1
+        while stop < end, all[stop].hasPrefix("  - ") { stop += 1 }
+        return at..<stop
+    }
+
+    /// A section's lines: its heading, to the next heading or the divider.
+    private static func sectionRange(_ heading: String, in all: [String], from start: Int) -> Range<Int>? {
+        guard let divider = all.lastIndex(of: "---"), divider > start,
+              let at = all[start..<divider].firstIndex(of: heading) else { return nil }
+        let end = all[(at + 1)..<divider].firstIndex { $0.hasPrefix("## ") } ?? divider
+        return at..<end
+    }
+
+    /// The rows of the list Capsid keeps under `heading` set to `rows`. The
+    /// list is the run of "- " lines at the top of the section; whatever else a
+    /// person put in the section stays. No rows take the list out, and the
+    /// whole section with it when nothing else is in it. A section that isn't
+    /// there is made, after the last of `anchors` there is. False when there
+    /// is nowhere to put it.
+    private static func setList(_ rows: [String], under heading: String, in all: inout [String], from start: Int,
+                                after anchors: [String]) -> Bool {
+        if let range = sectionRange(heading, in: all, from: start) {
+            var body = Array(all[(range.lowerBound + 1)..<range.upperBound])
+            let first = body.firstIndex { !isBlank($0) } ?? body.count
+            var stop = first
+            while stop < body.count, body[stop].hasPrefix("- ") { stop += 1 }
+            if stop > first {
+                body.replaceSubrange(first..<stop, with: rows)
+            } else if !rows.isEmpty {
+                // No list there (a person took it out): it goes back at the top of the section.
+                if body.allSatisfy(isBlank) {
+                    body = [""] + rows + [""]
+                } else {
+                    body.insert(contentsOf: (first == 0 ? [""] : []) + rows + [""], at: first)
+                }
+            }
+            if body.allSatisfy(isBlank) {
+                all.removeSubrange(range)
+            } else {
+                all.replaceSubrange(range, with: [heading] + body)
+            }
+            return true
+        }
+        guard !rows.isEmpty else { return true }
+        var found: Int?
+        for anchor in anchors where found == nil { found = sectionRange(anchor, in: all, from: start)?.upperBound }
+        guard let place = found else { return false }
+        // A blank line between what comes before and the heading, and one after the rows.
+        let lead = isBlank(all[place - 1]) ? [] : [""]
+        all.insert(contentsOf: lead + [heading, ""] + rows + [""], at: place)
+        return true
     }
 
     // MARK: Front matter, read

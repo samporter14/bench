@@ -5,6 +5,7 @@
 // the card taking the batched finish card's place, and the rule for reads: none
 // before the sheet or the list shows them, none while away, six sessions at
 // most, one read each. Nothing here touches a real session or the real page.
+import CoreGraphics
 import Foundation
 import Testing
 @testable import Bench
@@ -29,6 +30,12 @@ private final class Latch {
     }
 }
 
+/// What the files' reader was asked for, shared with the closure that answers it.
+@MainActor
+private final class FileReadLog {
+    var reads: [ArtifactRead] = []
+}
+
 /// One return's whole scene, with the clock and the switches in hand.
 @MainActor
 private final class Rig {
@@ -45,11 +52,33 @@ private final class Rig {
     var holdAnswers: Latch?
     var knownReasons: [String: String] = [:]
     let lab = LabModel()
-    let finished = FinishedResults(dependencies: .init(read: { _ in .unreadable }, isReady: { false }))
+    /// Every read the files' reader (the panel's own, which the rows use) was asked for: the lists of files and the
+    /// thumbnails, answered with a picture and a table each, so what a row draws is real.
+    var fileReads: [ArtifactRead] { fileReadLog.reads }
+    private let fileReadLog: FileReadLog
+    let finished: FinishedResults
     let actions: CardActions
+
+    /// The files every session in the rig made: a picture and a table.
+    static let files = [
+        ArtifactEntry(version: "v-picture", artifact: nil, name: "z_prime.png", mime: "image/png", size: 2_048, at: nil),
+        ArtifactEntry(version: "v-table", artifact: nil, name: "plates_cleaned.csv", mime: "text/csv", size: 512, at: nil),
+    ]
 
     init() {
         let lab = lab
+        let picture = CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
+        let log = FileReadLog()
+        fileReadLog = log
+        finished = FinishedResults(dependencies: .init(read: { read in
+            log.reads.append(read)
+            switch read {
+            case .list: return .list(Rig.files)
+            case .thumb: return .bytes(Data("RIFF".utf8) + Data([0, 0, 0, 0]) + Data("WEBP".utf8))
+            default: return .unreadable
+            }
+        }, isReady: { true }), thumbnails: ShelfThumbnails(decoder: { _ in .success(picture) }))
         actions = CardActions(model: lab, plans: PlanApprover.shared,
                               questions: QuestionReplier(model: lab, dependencies: .live()))
         // Re-made with this rig's own closures (the struct's are values).
@@ -541,6 +570,91 @@ struct SinceYouLeftModelTests {
         #expect(rig.m.detail(for: "s0") == nil && rig.m.detail(for: "f1") == nil)
         #expect(summary.map { rig.m.detailsForPhone($0).isEmpty } == true)
         #expect(rig.m.fullReason(for: "s0") == nil)
+    }
+
+    // MARK: Files, with the content setting
+
+    private func fileVersions(_ rig: Rig) -> Set<String> {
+        Set(rig.fileReads.compactMap { if case .thumb(let version, _) = $0 { version } else { nil } })
+    }
+
+    private func isLoaded(_ listing: FinishedResults.Listing) -> Bool {
+        if case .loaded = listing { true } else { false }
+    }
+
+    @Test func withTheContentSettingOffNoFileIsListedOrFetchedAndNoRowHasATile() async {
+        let rig = Rig()
+        rig.mayRead = false
+        rig.leave()
+        manyFinished(rig, count: 2)
+        rig.advance(minutes: 70, idle: 2)
+        rig.m.loadDetails(cardActions: rig.actions)
+        await rig.m.settled()
+        #expect(rig.fileReads.isEmpty, "no list of files and no picture is asked for")
+        #expect(rig.m.listing(for: "f1") == .unknown && rig.m.listing(for: "f2") == .unknown)
+        // The rows stay what they were before any read.
+        #expect(rig.m.display?.count == 2)
+    }
+
+    @Test func withTheContentSettingOnTheRowsGetTheirFilesAndTheirPictures() async {
+        let rig = Rig()
+        rig.leave()
+        manyFinished(rig, count: 2)
+        rig.advance(minutes: 70, idle: 2)
+        rig.m.loadDetails(cardActions: rig.actions)
+        await rig.m.settled()
+        await rig.finished.thumbnails.settled()
+        let lists = rig.fileReads.filter { if case .list = $0 { true } else { false } }
+        #expect(lists.count == 2, "one list for each finished row")
+        #expect(fileVersions(rig) == ["v-picture"])
+        #expect(isLoaded(rig.m.listing(for: "f1")) && isLoaded(rig.m.listing(for: "f2")))
+    }
+
+    @Test func turningTheContentSettingOffAfterTheFilesLoadedTakesTheirTilesAway() async {
+        let rig = Rig()
+        rig.leave()
+        manyFinished(rig, count: 2)
+        rig.advance(minutes: 70, idle: 2)
+        rig.m.loadDetails(cardActions: rig.actions)
+        await rig.m.settled()
+        await rig.finished.thumbnails.settled()
+        #expect(isLoaded(rig.m.listing(for: "f1")))
+        #expect(SinceTile.tiles(from: Rig.files) == [.picture(version: "v-picture"), .kind("CSV")])
+        rig.mayRead = false
+        // What was read is still held in memory, but the sheet is not given any of it.
+        #expect(isLoaded(rig.finished.listing(for: "f1")), "the cache is the Finished card's own")
+        #expect(rig.m.listing(for: "f1") == .unknown && rig.m.listing(for: "f2") == .unknown)
+        let reads = rig.fileReads.count
+        rig.m.loadDetails(cardActions: rig.actions)
+        await rig.m.settled()
+        #expect(rig.fileReads.count == reads, "nothing is read again while it is off")
+        // Back on, they are there again, as they were.
+        rig.mayRead = true
+        #expect(isLoaded(rig.m.listing(for: "f1")))
+    }
+
+    @Test func turningTheContentSettingOffWhileTheRowsAreReadStopsTheReadsAtOnce() async {
+        let rig = Rig()
+        let latch = Latch()
+        rig.holdAnswers = latch
+        rig.leave()
+        manyFinished(rig, count: 2)
+        rig.advance(minutes: 70, idle: 2)
+        rig.m.loadDetails(cardActions: rig.actions)
+        for _ in 0..<2_000 where latch.holding == 0 { await Task.yield() }
+        #expect(latch.holding == 1 && rig.answered.count == 1, "the first row's answer is in flight")
+        rig.mayRead = false
+        latch.open()
+        await rig.m.settled()
+        #expect(rig.answered.count == 1, "the second row is not read")
+        #expect(rig.fileReads.isEmpty, "and the first one's files are not asked for after its answer")
+        // Turned on again, the rows that were not finished are read.
+        rig.mayRead = true
+        rig.m.loadDetails(cardActions: rig.actions)
+        await rig.m.settled()
+        await rig.finished.thumbnails.settled()
+        #expect(Set(rig.answered) == ["f1", "f2"])
+        #expect(isLoaded(rig.m.listing(for: "f1")) && isLoaded(rig.m.listing(for: "f2")))
     }
 
     @Test func aRowWhoseSessionIsNoLongerThereIsNotRead() async {

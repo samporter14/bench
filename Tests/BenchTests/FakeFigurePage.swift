@@ -263,6 +263,9 @@ enum FakeFigurePage {
           width = this.__size.width;
           height = 12 + kids.filter(function (k) { return k.localName === "button"; }).length * 32
             + kids.filter(function (k) { return k.localName === "div" && !k.firstChild; }).length * 9;
+          // A box is no taller than its `max-height`, as CSS has it (what is past it scrolls, or spills).
+          var cap = parseFloat(this.style.maxHeight);
+          if (isFinite(cap)) { height = Math.min(height, cap); }
         }
         return { left: left, top: top, width: width, height: height, right: left + width, bottom: top + height };
       }
@@ -376,7 +379,8 @@ enum FakeFigurePage {
       text(button, label);
       return button;
     }
-    // items: labels; "-" is a rule; "!x" is a red item. Options: label, size, left, top, icons.
+    // items: labels; "-" is a rule; "!x" is a red item. Options: label, size, left, top, icons, maxHeight and
+    // overflowY (what the page itself put on the menu's style).
     function __openMenu(items, options) {
       options = options || {};
       __wrapper = el("div", { "class": "contents", "data-cds": "CdsLayerVarBridge" });
@@ -384,6 +388,8 @@ enum FakeFigurePage {
       __menu.style.left = (options.left === undefined ? 40 : options.left) + "px";
       __menu.style.top = (options.top === undefined ? 60 : options.top) + "px";
       __menu.__size = { width: 220 };
+      if (options.maxHeight) { __menu.style.maxHeight = options.maxHeight; }
+      if (options.overflowY) { __menu.style.overflowY = options.overflowY; }
       (items || ["Copy image", "Open in split view"]).forEach(function (label) {
         if (label === "-") { el("div", { "class": __RULE }, __menu); }
         else if (label[0] === "!") { __item(__menu, label.slice(1), { danger: true, icon: options.icons !== false }); }

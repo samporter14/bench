@@ -2,7 +2,8 @@
 // Kept folder made for each test, with made-up figures: that a keep is laid out
 // exactly and its README is written last, that a name taken is never
 // overwritten, that an abandoned keep leaves nothing, what a look finds (and
-// passes over), the legend's round trip and its refusal after an outside edit,
+// passes over), the legend's round trip and its refusal after an outside edit
+// (and the README's, when it is replaced after Try Again, byte order mark and all),
 // what a folder that isn't there says, and what a folder that stops answering
 // says: held as a dropped volume would hold it, with a clock that never sleeps.
 // Nothing here touches a real folder: the root is under the temporary folder.
@@ -308,6 +309,57 @@ struct KeptDiskTests {
             let found = try await disk.scan()
             #expect(found.count == 1)
             #expect(found.first?.record.files.count == 3)
+        }
+    }
+
+    @Test func aReadmeIsReplacedOnlyIfItIsStillWhatWasRead() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk, missing: true)
+            let url = folder.appending(path: "README.md")
+            let read = try await disk.readme(at: folder)
+            let (record, base) = made()
+            var text = base
+            text.legend = read.text.legend
+            let rewritten = KeptReadme.render(record, text: text)
+
+            // Edited in another app after it was read: left as that app saved it, nothing beside it.
+            let edited = read.markdown + "\nAdded in an editor.\n"
+            try Data(edited.utf8).write(to: url)
+            await #expect(throws: KeptDiskError.changedOutside) {
+                try await disk.replaceReadme(at: folder, markdown: rewritten, lastRead: read.markdown)
+            }
+            #expect(try Data(contentsOf: url) == Data(edited.utf8))
+            #expect(try listing(folder) == ["README.md", "code", "code/plot_z_prime.py", "data", "data/z_prime_by_plate.csv", "z_prime.png"])
+
+            // Read again, it goes through.
+            let now = try await disk.readme(at: folder)
+            try await disk.replaceReadme(at: folder, markdown: rewritten, lastRead: now.markdown)
+            #expect(try String(contentsOf: url, encoding: .utf8) == rewritten)
+
+            // A README that is gone is refused, whatever was read.
+            try files.removeItem(at: url)
+            await #expect(throws: KeptDiskError.failed("There is no README.md in this folder.")) {
+                try await disk.replaceReadme(at: folder, markdown: rewritten, lastRead: rewritten)
+            }
+        }
+    }
+
+    @Test func aByteOrderMarkIsComparedWithoutItAndKept() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk, missing: true)
+            let url = folder.appending(path: "README.md")
+            let mark = Data([0xEF, 0xBB, 0xBF])
+            try (mark + Data(readme(missing: true).utf8)).write(to: url)
+            // Reading it as text drops the mark; the README is still the one that was read.
+            let read = try await disk.readme(at: folder)
+            #expect(!read.markdown.hasPrefix("\u{FEFF}"))
+            let rewritten = readme(missing: false)
+            try await disk.replaceReadme(at: folder, markdown: rewritten, lastRead: read.markdown)
+            #expect(try Data(contentsOf: url) == mark + Data(rewritten.utf8))
+            // The README is not what was read any more: refused, mark or no mark.
+            await #expect(throws: KeptDiskError.changedOutside) {
+                try await disk.replaceReadme(at: folder, markdown: rewritten, lastRead: read.markdown)
+            }
         }
     }
 }

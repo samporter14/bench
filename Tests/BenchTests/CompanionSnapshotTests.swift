@@ -1,6 +1,7 @@
 // CompanionSnapshotTests.swift — not a check: when `CAPSID_SNAPSHOT_DIR` names
 // a folder, draws the home popover (board 1's state, a return waiting, nothing
-// to do, more rows than fit) and the menu bar item's faces into it as PNGs,
+// to do, more rows than fit, Recent alone, the field typed in, started and
+// failed) and the menu bar item's faces into it as PNGs,
 // light and dark, so they can be looked at without opening a window. Without
 // it the test does nothing.
 //
@@ -18,7 +19,10 @@ import Testing
 struct CompanionSnapshotTests {
     private func image(of step: CompanionDemo.Step, dark: Bool) async throws -> NSBitmapImageRep {
         let made = CompanionDemo.made(step)
+        // The room a 900-point-tall space under the menu bar leaves, as the panel works it out.
+        made.model.room = 900 - CompanionHomeView.pinnedHeight
         made.model.open()
+        CompanionDemo.fill(made, step: step)
         defer { made.model.close() }
         let view = ZStack {
             Rectangle().fill(CompanionDemo.ground(dark: dark))
@@ -28,7 +32,13 @@ struct CompanionSnapshotTests {
         .environment(\.stillSpecimens, true)
         .environment(\.colorScheme, dark ? .dark : .light)
         // The tallest picture is the busy one.
-        let height: CGFloat = step == .busy ? 1000 : step == .empty ? 440 : step == .unread ? 700 : 820
+        let height: CGFloat = switch step {
+        case .busy: 1100
+        case .empty: 440
+        case .recent: 640
+        case .unread: 860
+        default: 1000
+        }
         return try await PanelSnapshotTests.capture(view, size: NSSize(width: 456, height: height), dark: dark, settle: 6)
     }
 
@@ -84,6 +94,10 @@ struct CompanionSnapshotTests {
         #expect(rows.map(\.pills).map { $0.map(\.title) } == [["Reply", "Open", "Later"], ["Approve", "Request changes…"]])
         #expect(rows.map(\.steps) == [nil, 6])
         #expect(made.results.picture(for: "demo-volcano") != nil && made.results.picture(for: "demo-zprime") != nil)
+        #expect(sections.recent.map(\.session.displayTitle) == ["Western blot densitometry", "Primer design for KO validation",
+                                                                 "Ferroptosis reading list"])
+        #expect(sections.recentHidden == 2 && sections.blocks == [.needs, .working, .recent, .results])
+        #expect(made.model.start.project?.name == "Assay development" && made.model.start.line == nil)
     }
 
     @Test func theOtherDemoStepsShowWhatTheyAreFor() async {
@@ -99,6 +113,21 @@ struct CompanionSnapshotTests {
         busy.model.open()
         #expect(busy.model.sections.needsHidden > 0 && busy.model.sections.workingHidden > 0)
         busy.model.close()
+        let recent = CompanionDemo.made(.recent)
+        recent.model.open()
+        #expect(recent.model.sections.isQuiet && recent.model.sections.recent.count == 5 && recent.model.sections.recentHidden == 0)
+        recent.model.close()
+        for step in [CompanionDemo.Step.typing, .started, .failed] {
+            let made = CompanionDemo.made(step)
+            made.model.open()
+            CompanionDemo.fill(made, step: step)
+            switch step {
+            case .typing: #expect(made.model.start.line == .hint("↩ starts it with a plan first"))
+            case .started: #expect(made.model.start.line == .started("Started in Assay development."))
+            default: #expect(made.model.start.line == .failed(QuickStartFlow.Sentence.startNotThere))
+            }
+            made.model.close()
+        }
         let unread = CompanionDemo.made(.unread)
         unread.model.open()
         #expect(unread.model.sections.results?.title == "Results today" && unread.model.sections.results?.tiles.isEmpty == true)

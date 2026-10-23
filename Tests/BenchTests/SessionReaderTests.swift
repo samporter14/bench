@@ -127,6 +127,27 @@ struct SessionProjectionTests {
         #expect(project(ReaderFixture.frame(), ReaderFixture.page(rows)).read?.turns?.map(\.text) == ["Shown"])
     }
 
+    @Test func aTurnOfYoursCarriesItsIntentIDAndItsFilesIDsAndNothingMoreOfThem() throws {
+        let intent = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+        let line = #"{"type":"attachment","id":"11111111-AAAA-4111-8111-111111111111","version_id":"22222222-2222-4222-8222-222222222222","filename":"plate.csv","artifact_ref":"{{artifact:22222222-2222-4222-8222-222222222222}}","content_type":"text/csv","size_bytes":10}"#
+        let rows = [
+            ReaderFixture.userRow("Look at this.\n\n" + line, #", "_intent_id": "\#(intent)""#),
+            ReaderFixture.userRow("No id here.", #", "_intent_id": "not-an-intent""#),
+            ReaderFixture.userRow("Upper case is not one.", #", "_intent_id": "1B4E28BA-2FA1-41D2-883F-0016D3CCA427""#),
+            ReaderFixture.userRow("Odd file.\n\n" + #"{"type":"attachment","id":"------------------------------------","filename":"odd.csv"}"#),
+            #"{"role": "assistant", "content": "Done.", "_ts": 1791833000000, "_intent_id": "\#(intent)"}"#,
+        ]
+        let (json, read) = project(ReaderFixture.frame(), ReaderFixture.page("[\(rows.joined(separator: ","))]"))
+        let turns = try #require(read?.turns)
+        #expect(turns.map(\.intent) == [intent, nil, nil, nil, nil])
+        // An id that isn't one is left out, and the session still reads.
+        #expect(turns.map(\.files) == [["11111111-aaaa-4111-8111-111111111111"], [], [], [], []])
+        #expect(turns[3].text == "Odd file.\n\nAttached: odd.csv")
+        #expect(turns.first?.text == "Look at this.\n\nAttached: plate.csv")
+        // Of the attachment line only its file id: no version, no reference.
+        #expect(json?.contains("22222222") == false)
+    }
+
     @Test func atMostTwelveTurnsOldestFirstEachCut() throws {
         let rows = (0..<20).map { ReaderFixture.userRow("Turn \($0)", at: 1791833000000 + $0 * 1000) }
             + [ReaderFixture.userRow(String(repeating: "é", count: 3000), at: 1791833100000)]
@@ -303,6 +324,15 @@ struct SessionProjectionTests {
 
     @Test func aValidProjectionIsTaken() {
         #expect(SessionProjection(object: Self.valid()) != nil)
+        // A turn with its intent id and its files' ids, or with neither (null or left out).
+        var object = Self.valid()
+        object["turns"] = [["role": "you", "at": 1_791_833_000_000, "text": "t", "intent": "1b4e28ba-2fa1-41d2-883f-0016d3cca427",
+                            "files": ["11111111-2222-4333-8444-555555555555"]],
+                           ["role": "claude", "at": NSNull(), "text": "u", "intent": NSNull(), "files": [Any]()],
+                           ["role": "claude", "at": NSNull(), "text": "v"]]
+        let read = SessionProjection(object: object)
+        #expect(read?.turns?.map(\.intent) == ["1b4e28ba-2fa1-41d2-883f-0016d3cca427", nil, nil])
+        #expect(read?.turns?.map(\.files) == [["11111111-2222-4333-8444-555555555555"], [], []])
     }
 
     /// Each a field set to something out of shape.
@@ -328,13 +358,20 @@ struct SessionProjectionTests {
             ("turns", [["role": "system", "at": 1_791_833_000_000, "text": "t"]]),
             ("turns", [["role": "you", "at": "yesterday", "text": "t"]]),
             ("turns", [["role": "you", "at": 1_791_833_000_000, "text": String(repeating: "t", count: 2001)]]),
+            ("turns", [["role": "you", "at": 1_791_833_000_000, "text": "t", "intent": "not-an-intent"]]),
+            ("turns", [["role": "you", "at": 1_791_833_000_000, "text": "t", "intent": 7]]),
+            ("turns", [["role": "you", "at": 1_791_833_000_000, "text": "t", "files": "11111111-2222-4333-8444-555555555555"]]),
+            ("turns", [["role": "you", "at": 1_791_833_000_000, "text": "t", "files": ["11111111-2222-4333-8444-55555555555X"]]]),
+            ("turns", [["role": "you", "at": 1_791_833_000_000, "text": "t", "files": ["11111111-AAAA-4333-8444-555555555555"]]]),
+            ("turns", [["role": "you", "at": 1_791_833_000_000, "text": "t",
+                        "files": Array(repeating: "11111111-2222-4333-8444-555555555555", count: 21)]]),
         ]
     }
 
-    @Test(arguments: 0..<20)
+    @Test(arguments: 0..<26)
     func anythingOutOfShapeIsUnreadable(_ index: Int) throws {
         let cases = Self.outOfShape()
-        #expect(cases.count == 20)
+        #expect(cases.count == 26)
         let (key, value) = try #require(index < cases.count ? cases[index] : nil)
         var object = Self.valid()
         object[key] = value

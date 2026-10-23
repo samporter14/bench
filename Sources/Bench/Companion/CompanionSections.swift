@@ -30,6 +30,25 @@ enum CompanionText {
 
     static func more(_ n: Int) -> String { "\(n) more" }
 
+    static let recentTitle = "Recent"
+
+    /// "Assay development · 8:47 AM", "Cloning · Yesterday": the project, and when the session last did
+    /// something, in the Shelf's words for a time (the time today, "Yesterday", the weekday this week, else the day).
+    static func recentDetail(project: String, at: Date, now: Date, calendar: Calendar = .current,
+                             locale: Locale = .autoupdatingCurrent) -> String {
+        "\(project) · \(ShelfRules.when(at, now: now, calendar: calendar, locale: locale))"
+    }
+
+    /// The line under the field while something is typed: what ↩ does, and that ⌘↩ is the whole panel.
+    static func startHint(planFirst: Bool) -> String {
+        planFirst ? "↩ starts it with a plan first" : "↩ starts it without a plan first"
+    }
+
+    static let fullPanelHint = "⌘↩ Quick Start"
+    static let starting = "Starting…"
+    /// The project pill with no project to start in yet.
+    static let chooseProject = "Choose a project"
+
     /// The foot's button. Capsid's window is always there; the board's "Open
     /// Claude Science" is for the day Capsid's window can be off.
     static func openButton(capsidWindowOn: Bool = true) -> String {
@@ -163,6 +182,30 @@ struct CompanionWorkingRow: Identifiable, Equatable {
     var id: String { session.id }
 }
 
+// MARK: Recent
+
+/// A session that neither needs you nor works, among the latest active: a quiet row that opens it (⌥ as a
+/// reference beside the work).
+struct CompanionRecentRow: Identifiable, Equatable {
+    let session: SessionStatus
+    /// "Assay development · 8:47 AM".
+    let detail: String
+    /// A session put off with Later still waits for you: its dot is clay, the others' are muted.
+    var waits: Bool { session.state == .needsInput }
+    var id: String { session.id }
+
+    /// What a press on the row does.
+    enum Route: Equatable {
+        /// Capsid's window, at the session (`LabModel.open`).
+        case open
+        /// The reference reader beside the work (`ReferenceWindowController`); the session's cards stay.
+        case reference
+    }
+
+    /// A click opens the session; ⌥-click opens it as a reference, as ⌥↩ does in Quick Open.
+    static func route(option: Bool) -> Route { option ? .reference : .open }
+}
+
 // MARK: Results, Since You Left, the limit
 
 struct CompanionTile: Identifiable, Equatable {
@@ -233,6 +276,11 @@ struct CompanionSections: Equatable {
     var working: [CompanionWorkingRow] = []
     var workingHidden = 0
     var allPaused = false
+    /// Recent: the sessions active latest that neither need you nor work, the newest first (`recentLimit` at most).
+    var recentTotal = 0
+    var recent: [CompanionRecentRow] = []
+    /// Of `recentTotal`, the rows behind "N more" (which opens Quick Open).
+    var recentHidden = 0
     var results: CompanionResultsSection?
     var since: CompanionSinceSection?
     var usage: CompanionUsageLine?
@@ -244,7 +292,7 @@ struct CompanionSections: Equatable {
     enum Block: Hashable {
         /// "Nothing needs you and nothing is working."
         case quiet
-        case needs, working, results, since
+        case needs, working, recent, results, since
     }
 
     /// The blocks that have something to show, top to bottom.
@@ -253,6 +301,7 @@ struct CompanionSections: Equatable {
         if isQuiet { blocks.append(.quiet) }
         if needsTotal > 0 { blocks.append(.needs) }
         if workingTotal > 0 { blocks.append(.working) }
+        if recentTotal > 0 { blocks.append(.recent) }
         if results != nil { blocks.append(.results) }
         if since != nil { blocks.append(.since) }
         return blocks
@@ -260,6 +309,56 @@ struct CompanionSections: Equatable {
 
     /// How many rows each list shows before "N more".
     static let rowLimit = 3
+    /// The most Recent holds: the five most recently active, as the Dock menu's Latest (`LabModel.latestLimit`).
+    static let recentLimit = 5
+
+    /// How many of Recent's rows show: the lists' three, or all five when nothing needs you and nothing works
+    /// (Recent is what the popover is for then); fewer when the room under the menu bar runs out, but never
+    /// fewer than two. `room` is the height the popover's middle may take, `used` what the other blocks take.
+    static func recentShown(_ total: Int, quiet: Bool, room: CGFloat? = nil, used: CGFloat = 0) -> Int {
+        let cap = min(total, quiet ? recentLimit : rowLimit)
+        guard let room else { return cap }
+        let floor = min(total, 2)
+        // The title and the hairline above it, and "N more" if any is left out.
+        let left = room - used - Estimate.title - Estimate.divider - (total > cap ? Estimate.more : 0)
+        let fits = Int((left / Estimate.recent).rounded(.down))
+        guard fits < cap else { return cap }
+        return max(floor, fits)
+    }
+
+    /// About how tall each part of the popover's middle is drawn, for Recent's share of the room. A guess that
+    /// is a little off only means a little scrolling.
+    enum Estimate {
+        static let title: CGFloat = 26
+        static let divider: CGFloat = 13
+        static let more: CGFloat = 24
+        static let quiet: CGFloat = 36
+        /// A Needs you row with its buttons.
+        static let need: CGFloat = 96
+        static let working: CGFloat = 46
+        static let recent: CGFloat = 44
+        static let results: CGFloat = 134
+        static let resultsBare: CGFloat = 32
+        static let since: CGFloat = 70
+    }
+
+    /// What everything but Recent takes of the middle, by the estimates.
+    var usedWithoutRecent: CGFloat {
+        var used: CGFloat = 0
+        var blocks = 0
+        if isQuiet { used += Estimate.quiet; blocks += 1 }
+        if needsTotal > 0 {
+            used += Estimate.title + CGFloat(needs.count) * Estimate.need + (needsHidden > 0 ? Estimate.more : 0)
+            blocks += 1
+        }
+        if workingTotal > 0 {
+            used += Estimate.title + CGFloat(working.count) * Estimate.working + (workingHidden > 0 ? Estimate.more : 0)
+            blocks += 1
+        }
+        if let results { used += results.tiles.isEmpty ? Estimate.resultsBare : Estimate.results; blocks += 1 }
+        if since != nil { used += Estimate.title + Estimate.since; blocks += 1 }
+        return used + CGFloat(max(0, blocks - 1)) * Estimate.divider
+    }
 
     var needsTitle: String? { needsTotal > 0 ? CompanionText.needs(needsTotal) : nil }
     var workingTitle: String? { workingTotal > 0 ? CompanionText.working(workingTotal, paused: allPaused) : nil }
@@ -289,6 +388,10 @@ struct CompanionSections: Equatable {
         var now: Date
         var showsAllNeeds = false
         var showsAllWorking = false
+        /// The sessions in memory (the last read's, Quick Open's), whatever their state: Recent is made from them.
+        var recent: [SessionStatus] = []
+        /// The height the popover's middle may take under the menu bar, when known: Recent keeps to it.
+        var room: CGFloat? = nil
     }
 
     @MainActor
@@ -332,6 +435,23 @@ struct CompanionSections: Equatable {
             sections.since = CompanionSinceSection(
                 title: SinceYouLeftText.listTitle(since.away(now: input.now)), headline: headline)
         }
+
+        // Recent: what neither Needs you nor Working shows. A running session is under Working and an asking one
+        // under Needs you; a session put off with Later isn't, so it is here. One row each, the newest first, in
+        // the room the other blocks leave.
+        let above = Set(rows.map(\.session.id)).union(input.working.map(\.id))
+        var seen = Set<String>()
+        let recent = input.recent
+            .filter { $0.state != .running && !above.contains($0.id) }
+            .sorted { $0.updatedAt != $1.updatedAt ? $0.updatedAt > $1.updatedAt : $0.id < $1.id }
+            .filter { seen.insert($0.id).inserted }
+            .prefix(recentLimit)
+        sections.recentTotal = recent.count
+        let recentShown = recentShown(recent.count, quiet: sections.isQuiet, room: input.room, used: sections.usedWithoutRecent)
+        sections.recent = recent.prefix(recentShown).map {
+            CompanionRecentRow(session: $0, detail: CompanionText.recentDetail(project: $0.projectName, at: $0.updatedAt, now: input.now))
+        }
+        sections.recentHidden = recent.count - recentShown
 
         if let limit = input.usage {
             sections.usage = CompanionUsageLine(

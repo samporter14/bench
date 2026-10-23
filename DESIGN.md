@@ -1366,13 +1366,15 @@ ivory tint (slate in the dark), 400 points wide, 18-point corners, a hairline
 edge. It doesn't activate Capsid and takes the keyboard for its Quick Start
 field. Esc, a click anywhere else, another app coming forward, another window
 taking the keyboard, or the item's own click puts it away. From the top:
-"Capsid", Quiet While Presenting and Settings; the Quick Start field (Return
-opens Quick Start with the text, and Quick Start's key is shown); **Needs you
+"Capsid", Quiet While Presenting and Settings; the "Start a session…" field
+and its project pill (Return starts the session there; ⌘Return opens Quick
+Start); **Needs you
 · N**, each row with the cards' own buttons through `CardActions` (a question:
 Reply, Open, Later; a plan: Approve, Request changes…; a request: its lead,
 Deny, Later; a stop: Open), a spinner while a send goes and "Approved ✓"
 after; **Working · N**, each with its specimen and the turn's clock, "Paused"
-when a used-up limit holds them; **Results today · N**, four tiles, pictures
+when a used-up limit holds them; **Recent**, the latest sessions neither list
+shows; **Results today · N**, four tiles, pictures
 first, and Show all; **Since you left** when a return is waiting (a press
 opens the sheet); the 5-hour limit and its bar; Open Capsid. Past three rows a
 list says "N more". Left out: the board's Lab Board (after 1.0) and the status
@@ -1388,7 +1390,28 @@ today's results' missing lists and pictures (`CompanionResults`,
 `readsListsWhenOpen`: at most 8 sessions, one at a time through the typing
 gate, only while open, cancelled on close; on by the lead's call, since board
 1 draws pictures and kind labels alone read as broken). `--demo menubar`
-(`--step board|since|empty|busy|unread|panel`).
+(`--step board|since|empty|busy|unread|panel|recent|typing|started|failed`;
+no demo step opens a menu, since a menu makes the quiet panel key and it once
+took four of Sam's keystrokes).
+
+The field starts a session without leaving the menu bar (since 1.0.1, Sam: "it
+should give me an option to select with project"). Inside it a quiet pill names
+the project, the one worked in last (Quick Start's first chip); its menu lists
+Quick Start's three most recent projects, then Other Projects. Return starts the
+session there through Quick Start's own flow (its checks, bounded writes, one
+intent id across a retry of the same request), with a plan first when Quick
+Start's box last asked for one. A line under the field says what Return does and
+that ⌘Return is Quick Start; then "Starting…", then "Started in Assay
+development." with Open, or the flow's own sentence with the words kept. ⌘Return,
+and Return on an empty field, open Quick Start with the words, the project and
+the plan setting. A send that ends while the popover is closed shows its outcome
+once, at the next opening. **Recent**, after Working and before Results today,
+holds the five sessions active latest that are in neither list (one put off with
+Later among them, its dot clay): a dot, the title, and "project · when" in the
+Shelf's words. A click opens it, ⌥-click opens it as a reference, and its menu
+has Open, Open as Reference and Copy Link. Three rows show, all five when
+nothing needs you or works, never under two; "N more" opens Quick Open. It reads
+the sessions in memory and the project list once per opening.
 
 ### Mac notifications (since 0.3.3)
 
@@ -1712,9 +1735,8 @@ A write that gets no answer is **unknown**: it may have been made, and it is
 neither done nor failed. The card, the reply window and Quick Start say "Not
 sure that went through. Checking…", and the session is read once more:
 approve checks that the plan still waits at that version, an answer that the
-question is still pending, a message for a dated turn of yours with the same
-words (or a larger queued count), a permission that the request is still at
-the head, a new session by its intent id. Then the answer is shown as it is:
+question is still pending, a message for a turn that is that very message, a
+permission that the request is still at the head, a new session by its intent id. Then the answer is shown as it is:
 done; "That didn't go through. Try again." when the read shows it didn't
 land; or "Not sure that went through…" when even that read can't tell. The
 same words sent again are the daemon's own repeat (a plan already approved, a
@@ -1728,7 +1750,23 @@ add a second copy."
 A session's actions go one at a time. A turn that runs out of time ends and
 the next begins; what it was doing is cancelled and sends nothing more. It
 says "Not sure that went through" only if its write had left, otherwise that
-nothing was sent.
+nothing was sent. A caller that gives up while its action waits is answered at
+once, but the action keeps its place until those ahead of it have finished, and
+then ends without reading or writing; the next one still waits behind them
+(since Codex's review of 1.0).
+
+A message is found by what ties a turn to it alone. A turn of yours carries the
+intent id it was sent with (a user row's `_intent_id`, read with its attachment
+lines' file ids only to tell a message just sent from another; the phone never
+receives either), and a turn with this message's intent id is this message,
+whatever its words. A turn with another intent id never is; with the same words
+since the send the answer is "Not sure", not "didn't go through". A turn with no
+intent id is this message only when all of it agrees: the same words whole, the
+same files by id, and a time no earlier than the send. A queue that grew says
+nothing of whose message joined it, so it leaves the answer "Not sure", and the
+phone keeps the words. A photo's turn that runs out of time stops at its next
+step: one given up on while it reads the session uploads nothing, and an upload
+never starts for a caller already given up on.
 
 ### Answering from the card (Lab/QuestionReply.swift, Lab/ReplyWindow.swift, since 0.7.0)
 
@@ -5300,7 +5338,12 @@ reconstruction's text with `{{artifact:<v>}}` rewritten to `../data/<name>`
 for the inputs that were kept (the daemon's own script bundle does the same
 to its `inputs/`). README.md is written last and the folder renamed into
 place. "Keeping 2 of 4 files…" meanwhile; Cancel stops the reads and deletes
-the hidden folder. A figure that vanished mid-way: nothing is kept, the tile
+the hidden folder whenever it is pressed: between two files, while the last file
+is being written (the write finishes, then the keep stops), and while Claude
+Science's version is asked; a Cancel never leaves a folder behind. From the
+moment README.md is written and the folder renamed into place it can no longer
+stop it: the status reads "Finishing…", Cancel is dimmed ("The folder is being
+put in place. It can't be cancelled now."), and the keep ends as kept. A figure that vanished mid-way: nothing is kept, the tile
 reads "Gone", and the sheet says "Version 3 isn't in Claude Science any more,
 so nothing was kept. Choose another version, or Cancel."; never another
 version in its place. A folder is its figure (since the safety batch, Codex's
@@ -5315,9 +5358,20 @@ here, so nothing was kept. Choose another version, or Cancel." or
 disk." Any other file that couldn't be copied is listed under `missing:` and
 the sheet stays: "Kept 3 of 4 files. The data it was drawn
 from wasn't copied.", the row saying why in clay-text, with **Try Again**
-(copies only what is missing, into the folder, and rewrites the README),
+(copies only what is missing, into the folder, and updates the README),
 **Show in Finder** and **Done**. Everything copied: the sheet closes and the
 Kept section shows the new row; no card, no toast.
+
+**Updating a README keeps the person's words (since Codex's review of 1.0).**
+Try Again changes only what Capsid keeps in README.md: the `files:` and
+`missing:` rows of the front matter and the "Not copied" and "Checksums"
+sections (`KeptReadme.updating`). Every other byte stays: a section or note a
+person added, their spacing, the legend, a byte order mark. The write is checked
+against what was read (`KeptDisk.replaceReadme(…lastRead:)`, the comparison and
+the write in one disk call); if README.md was edited in another app meanwhile it
+is left as it is, and the sheet says "The files landed, but README.md couldn't
+be updated to list them. README.md was changed in another app, so Capsid left it
+alone." Try Again then reads it as it is now.
 
 **Recovery and the record (since a Codex review of M3).** A failure before
 anything landed says what Try Again will do (`KeepRetry`): if the sheet's
@@ -5527,8 +5581,15 @@ session's history. You asked: “…”"). The legend comment and fine print say
   Capsid's own. A click tells Capsid, which does what the Mac menu's item
   does (`ConversationMenuMessage.Choice`), and the script closes the page's
   menu the way the page does, with Escape (then a click outside if Escape did
-  nothing). If the page draws the menu again, the items are put back in the
-  same place; if the menu has nothing to copy, Last problem notes that the
+  nothing). In a window shorter than the menu with Capsid's items in it (the
+  smallest main window at 200 to 300% page zoom is 190 to 285 CSS pixels tall;
+  the full menu with its red Delete is 391), the menu takes `max-height`
+  (the window's height less 16) and `overflow-y: auto` on the page's own menu
+  element, so it scrolls and every item can be reached; it is then moved inside
+  the window as before. The two are set only while the group is in the menu and
+  only when it would not fit, and the element's own values come back when the
+  menu closes or is drawn again. If the page draws the menu again, the items are
+  put back in the same place; if the menu has nothing to copy, Last problem notes that the
   figure menu didn't look as Capsid expects (`figureMenuNotUnderstood`). Arrow
   keys reach the items, since the page re-queries its items on each key.
   Tiles of files that show no picture (Markdown, CSV) carry no address in the
@@ -5892,6 +5953,24 @@ the whole-turn read (`notes`, up to 20,000 characters each), and the reader
 holds every item the page gave for a row, so the words before a tool call count
 too. Add to Shelf and Keep… wait up to 2 s for reads under way.
 
+**Opening what a reply made (since 1.0, after the first look).** "The figures and the .md files are often the valuable part," Sam said of the window, so both open from it.
+
+*What the reader knows.* `ReferenceRules.answers` already sorts every file of a reply's steps, turns and messages to the user by `ArtifactGate.thumb(kind:)`: a picture (`ArtifactKind.image`) is a figure (`ReferenceAnswer.figures`), anything else is `ReferenceAnswer.files` (a Markdown file, a table, a PDF, a page, a script or other text, a notebook, a vector picture, a file of no known kind), one to an artifact, the last version, 24 at most, the user's own uploads left out. It knows each file as `{v, a, name, kind, size}` (`HistoryFile`) and no more, and only files the page lists: the `artifacts` of a tool's result (run and save), the attachments of a message to the user, and a message's `_artifact_refs`. A file the words only name is not one. The documents of a reply (`ReferenceFileRules.documents`) are those files less the two kinds Claude Science's own list hides (`plan*.json`, `goal_*.html`).
+
+*Figures.* A figure card opens in Quick Look when it is pressed, or on Space or Return while it has the keyboard (the card draws its own focus, a thin ink ring just outside it, and reads as a button to VoiceOver); its context menu has Quick Look first. While the full-size file is read the card wears a small spinner; if it can't be had, one sentence sits under the card (the shelf's own: "Couldn't read this.", "This isn't in Claude Science any more.", "Too big to open here (over 8 MB). Open the conversation instead."). A reply's figures page in the panel with ← →, then its documents that Quick Look shows (`ReferenceFileRules.quickLookFiles`), the file pressed first. Only that file is read at once; the others are read as the arrow keys reach them, the one left is withdrawn, and one that can't be had leaves the panel and says why on its card.
+
+*Documents.* They are listed under the figures, as quiet small cards in board 11's style: a kind tile (the file's ending in capitals, "MD", "CSV", the way Since You Left draws a file without a picture), the name over "Markdown · 4 KB", and Add to Shelf as the small pill (ringed in ink once it is on the shelf). Pressing one opens it: a Markdown document in the window, everything else (a table, a PDF, a page, a script) in Quick Look like the figures.
+
+*The reading view.* A Markdown document replaces the page: a small "‹ Answer" pill, a title row (the kind tile, the file's name in 15-point semibold, Add to Shelf), a hairline, then the document drawn by the window's own renderer (`AnswerMarkdown`, `AnswerStyle.reference`, 14 on 21, selectable). Esc and ⌘[ go back, as the pill does (the window takes them in `performKeyEquivalent` and `cancelOperation`, ahead of the History menu's Back, and only while a document is open); the answer stays under the document (the document is laid over it), so back is the same place, selection and all. Another reply (Earlier, Later) is the answer again. The foot is the reply's own: Copy with Source copies the selection or the whole document with a source line that names the file ("— plate_qc_notes.md, Claude, in “Plate reader QC” (Assay development), 22 October 2026, 8:47") and the same link. A document is read whole to 2 MiB (the history reads' own cap, `HistoryReaderScript.bodyCap`), cut back to a whole character and then to the end of a line, and the page says "Only the first 2 MB are shown. Add it to your shelf for the whole file." under it. Bytes that aren't UTF-8 text go to Quick Look instead; an empty one says "This document is empty." A table in a document is the renderer's placeholder, "Not shown here: a table."
+
+*Reads and writes* (`ReferenceFiles.swift`). One read path, the Results shelf's: `ArtifactRead.download`, through the reference windows' own one-at-a-time queue (`ReferenceWindowController.transfers`), within 8 MB by the listing and again by the bytes, and each read through the reading gate (one at a time, none within 400 ms of typing in the main window; the figures' pictures on the cards don't go through it). No route and no page script is new. Quick Look wants files, so the bytes are written to `<temporary folder>/Capsid Reference Files/<UUID>/<version id>/<name>` (0700 folders, 0600 files, the real name kept, the shelf's `ShelfTemporaryCopies`), one run to a window; the panel is closed and the run's folder deleted when the window closes, and a window that never closed leaves its folder for the next launch's first window to delete. A Markdown document is never written. The Results shelf's own folder ("Capsid Quick Look") is untouched.
+
+*Tests.* `ReferenceFileRulesTests` (figures against documents, a reply's documents, hidden names, the Quick Look list, the kind tile), `ReferenceReadBoundsTests` (the 2 MiB limit and the cut, a split character, a byte-order mark, bytes that aren't text, the cap and the sentences of a failed read), `ReferenceQuickLookTests` (the items and the data source, the copy's name and permissions, the arrow keys, the folder gone on close, a late read dropped), `ReferenceOpeningTests` (a failed read's sentence, the size refusals, the gate's waiting and its order), `ReferenceReadingViewTests` (the reading view, the cut and its note, Add to Shelf on a document, Copy with Source, Esc and ⌘[ on a window), and `ReferenceFilesSnapshotTests`. Only a person can confirm the panel itself (its arrow keys and the temporary copy it shows).
+
+*Two fixes found on the way, in the same window.* A landing's scroll (Show Where It Came From) waited one yield for the page to be laid out, which was too soon: in a real window it stayed at the top. It waits 120 ms. And the title bar's band was drawn behind the page, so a picture scrolled under the title showed through it; it is drawn over the page now, on the page's own colour. `--step documents` opens the demo scrolled to the documents.
+
+Quick Look draws HTML and SVG in the system's own sandbox, not on Capsid's origin or the page's, so opening one never runs it where Capsid or Claude Science could be reached.
+
 ## Quick Start (QuickStart/, since 1.0)
 
 Board 4 of the 1.0 mock-ups. A small floating panel for a request in one
@@ -6159,8 +6238,16 @@ the typing gate (`ReadingGate`: no read within 400 ms of a key in the main
 window). A finished row is `readSession(_, turns: false)` (one GET; its
 `reply` is Claude's last words) and then its file list and up to three
 thumbnails by the panel's own reader; a stopped row is the failure card's
-shallow frame read, or what the card already read. Turning the setting off
-later hides what was read, on the sheet and the phone.
+shallow frame read, or what the card already read. With the setting off a finished row is its title, project and time and nothing
+more: no lines, no tiles, no pictures, and no Results or Add to Shelf pills (the
+list of its files is as much of the session as its words), whether the files
+were read before the setting went off or not (`SinceYouLeftModel.listing(for:)`
+gives the sheet `.unknown`; rows not yet read are not read, including one whose
+answer was in flight). What was read stays in memory for the return and is drawn
+again if the setting comes back on. The phone's section does the same from
+`since.content`: false asks for no session's artifacts and draws no tile or
+picture, even for files the page already listed. The Finished card and Results
+read files as before; they are outside Since You Left.
 
 **Privacy.** Sam's call (2026-10-22, "features over extreme privacy for now"):
 the failure reason, which DESIGN once kept to the card, also shows on the sheet

@@ -35,6 +35,11 @@ final class CompanionModel: ObservableObject {
         var prepare: @MainActor (SessionStatus) -> Void
         var quickStartKey: @MainActor () -> GlobalHotKey.Choice
         var now: @MainActor () -> Date = { Date() }
+        /// The sessions in memory, whatever their state (the last read's, which Quick Open searches): Recent's.
+        var recent: @MainActor () -> [SessionStatus] = { [] }
+        /// What the "Start a session…" field reads and sends with (CompanionStart.swift); none given, it has no
+        /// project and sends nothing.
+        var start: CompanionStart.Dependencies? = nil
         /// What to watch while the popover is open; any of them firing looks again.
         var changes: @MainActor () -> [AnyPublisher<Void, Never>]
 
@@ -51,12 +56,17 @@ final class CompanionModel: ObservableObject {
                 progress: { PanelInsights.shared.progress[$0] },
                 prepare: { cards.prepare($0) },
                 quickStartKey: { GlobalKeys.shared.choice(for: .quickStart) },
+                recent: { lab.sessions },
+                start: .live(),
                 changes: {
                     func tell<P: Publisher>(_ publisher: P) -> AnyPublisher<Void, Never> where P.Failure == Never {
                         publisher.map { _ in () }.eraseToAnyPublisher()
                     }
                     return [
+                        // Recent follows `latest`, which moves when the quiet sessions do, and not `reads`, which
+                        // moves with every read of a working session's tokens.
                         tell(lab.$working), tell(lab.$waiting), tell(lab.$cards), tell(lab.$snoozed), tell(lab.$problem),
+                        tell(lab.$latest),
                         tell(cards.plans.objectWillChange), tell(cards.questions.objectWillChange),
                         tell(usage.$limits), tell(SinceYouLeftModel.shared.$pending),
                         tell(UsagePauseModel.shared.objectWillChange), tell(PanelInsights.shared.$progress),
@@ -71,13 +81,20 @@ final class CompanionModel: ObservableObject {
     @Published private(set) var quickStartKey: String?
     @Published private(set) var showsAllNeeds = false
     @Published private(set) var showsAllWorking = false
+    /// The height the popover's middle may take, under the menu bar item it opens from (the panel sets it before
+    /// it opens): Recent shows what fits in it. Nil, no limit.
+    var room: CGFloat?
 
     let sources: Sources
+    /// The "Start a session…" field: its words, its project, its send. It outlives a closing, so a send in flight
+    /// goes on and says how it went at the next opening.
+    let start: CompanionStart
     private var subscriptions: Set<AnyCancellable> = []
     private var scheduled = false
 
     init(sources: Sources) {
         self.sources = sources
+        start = CompanionStart(dependencies: sources.start ?? .none)
     }
 
     // MARK: Opening and closing
@@ -87,6 +104,7 @@ final class CompanionModel: ObservableObject {
         isOpen = true
         // The files in memory first, so the first look has them.
         sources.results.open()
+        start.open()
         watch()
         refresh()
         for row in sections.needs where row.kind != .stopped { sources.prepare(row.session) }
@@ -98,6 +116,7 @@ final class CompanionModel: ObservableObject {
         subscriptions.removeAll()
         scheduled = false
         sources.results.close()
+        start.close()
         sections = .empty
         showsAllNeeds = false
         showsAllWorking = false
@@ -151,7 +170,7 @@ final class CompanionModel: ObservableObject {
             pause: { [sources] in sources.pause($0.id) }, progress: { [sources] in sources.progress($0.id) },
             results: sources.results.entries, resultsPartial: sources.results.partial,
             since: sources.since(), usage: sources.usage(), problem: lab.problem, now: sources.now(),
-            showsAllNeeds: showsAllNeeds, showsAllWorking: showsAllWorking)
+            showsAllNeeds: showsAllNeeds, showsAllWorking: showsAllWorking, recent: sources.recent(), room: room)
         let made = CompanionSections.make(input)
         if made != sections { sections = made }
         let key = CompanionText.quickStartKey(sources.quickStartKey())
@@ -172,8 +191,16 @@ struct CompanionActions {
     var perform: @MainActor (CardAction, SessionStatus) -> Void = { _, _ in }
     var later: @MainActor (SessionStatus) -> Void = { _ in }
     var open: @MainActor (SessionStatus) -> Void = { _ in }
-    /// Return in the Quick Start field: opens Quick Start with the text.
-    var quickStart: @MainActor (String) -> Void = { _ in }
+    /// ⌥-click on a Recent row, or its menu's Open as Reference: the reader beside the work.
+    var reference: @MainActor (SessionStatus) -> Void = { _ in }
+    /// A Recent row's Copy Link: the `bench://` link that opens the session in Capsid.
+    var copyLink: @MainActor (SessionStatus) -> Void = { _ in }
+    /// Recent's "N more": Quick Open, which lists every session.
+    var showQuickOpen: @MainActor () -> Void = {}
+    /// ⌘↩ in the field (and ↩ with nothing typed): opens Quick Start with the words, the project and the plan setting.
+    var quickStart: @MainActor (CompanionStart.HandOff) -> Void = { _ in }
+    /// Open beside "Started in …": the session the field just started (its id, its project's).
+    var openStarted: @MainActor (String, String) -> Void = { _, _ in }
     var showResults: @MainActor () -> Void = {}
     var showSince: @MainActor () -> Void = {}
     var openCapsid: @MainActor () -> Void = {}

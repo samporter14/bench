@@ -5,8 +5,12 @@
 // against the daemon's checksum (bytes that don't match are kept, never
 // silently: the README and the sheet say so), written into a hidden folder
 // beside its destination, the README last, then the folder renamed into
-// place. What couldn't be copied is listed, never guessed, and Try Again copies only that and then rewrites the README: it
-// isn't done until the README agrees with the folder. The figure is the
+// place. Cancel stops a keep up to the moment the folder is put in place (after
+// the last copy and the version lookup too, never only between two files), and
+// then it is refused and the sheet says "Finishing…". What couldn't be copied is
+// listed, never guessed, and Try Again copies only that and then updates the
+// README (only the parts Capsid keeps in it, and only if nobody changed it
+// meanwhile): it isn't done until the README agrees with the folder. The figure is the
 // exception: a folder is its figure, so a figure that can't be copied (over
 // the cap, or the disk refused it) ends the keep with nothing made. A failure before
 // anything landed says what Try Again will do (read again, or keep again).
@@ -186,6 +190,9 @@ final class KeepModel: ObservableObject, Identifiable {
     @Published private(set) var readingProvenance = false
     /// After a partial keep: the folder, for Try Again and Show in Finder.
     @Published private(set) var folder: URL?
+    /// The folder is being put in place: README.md written and the hidden
+    /// folder renamed. That can't be taken back, so Cancel is off while it is.
+    @Published private(set) var isFinishing = false
     /// Files a Try Again put in the folder that its README doesn't list yet
     /// (rewriting it failed): the next Try Again adds them.
     private var unrecorded: [KeptFile] = []
@@ -563,12 +570,22 @@ final class KeepModel: ObservableObject, Identifiable {
         }
     }
 
-    /// Cancel while copying: the reads stop and the hidden folder goes.
-    func cancel() {
+    /// Whether Cancel does anything: not once the folder is being put in place
+    /// (`isFinishing`), which a Cancel can no longer stop.
+    var canCancel: Bool { !isFinishing }
+
+    /// Cancel while copying: the reads stop and the hidden folder goes, and
+    /// nothing is kept, however late it comes (after the last copy and while
+    /// Claude Science's version is asked, as much as between two files). Once the
+    /// folder is being put in place it is refused (false) and the keep goes on.
+    @discardableResult
+    func cancel() -> Bool {
+        guard canCancel else { return false }
         keepTask?.cancel()
         openTask?.cancel()
         chosenTask?.cancel()
         thumbnailTasks.forEach { $0.cancel() }
+        return true
     }
 
     private func perform(_ plan: KeepPlan) async {
@@ -633,7 +650,14 @@ final class KeepModel: ObservableObject, Identifiable {
             }
             phase = .keeping(done: index + 1, total: plan.all.count)
         }
+        // The last copy is done. A write goes on whatever happens to the task that
+        // asked for it, so a Cancel pressed during it is seen here, and not before.
+        if Task.isCancelled { await d.disk.abandon(destination); phase = .ready; return }
         let scienceVersion = await d.scienceVersion()
+        if Task.isCancelled { await d.disk.abandon(destination); phase = .ready; return }
+        // From here the folder is put in place, and a Cancel can't stop it: the sheet says so.
+        isFinishing = true
+        defer { isFinishing = false }
         let (record, text) = KeepRules.record(subject: subject, sources: sources, plan: plan, folderName: destination.name,
                                               keptAt: keptAt, copied: copied, missing: missing,
                                               scienceVersion: scienceVersion, capsidVersion: d.capsidVersion)
@@ -730,18 +754,30 @@ final class KeepModel: ObservableObject, Identifiable {
         let rewrite = Task { @MainActor () -> String? in
             do {
                 let read = try await disk.readme(at: folder)
-                var record = read.record
-                let listed = Set(record.files.map(\.path))
-                record.files += landed.filter { !listed.contains($0.path) }
-                record.missing = missing
-                try await disk.replaceReadme(at: folder, markdown: KeptReadme.render(record, text: read.text))
+                let listed = Set(read.record.files.map(\.path))
+                let files = read.record.files + landed.filter { !listed.contains($0.path) }
+                // Only what Capsid keeps in it is changed: a section a person added stays as it is.
+                guard let updated = KeptReadme.updating(read.markdown, files: files, missing: missing) else {
+                    return Self.readmeNotUpdatableSentence
+                }
+                // And only if it is still what was read: an edit made meanwhile is never written over.
+                try await disk.replaceReadme(at: folder, markdown: updated, lastRead: read.markdown)
                 return nil
+            } catch KeptDiskError.changedOutside {
+                return Self.readmeChangedSentence
             } catch {
                 return KeptDiskError.sentence(error)
             }
         }
         return await rewrite.value
     }
+
+    /// Said (after "README.md couldn't be updated to list them.") when the README
+    /// was edited between Try Again reading it and writing it: it is left as it is,
+    /// and Try Again reads it again.
+    static let readmeChangedSentence = "README.md was changed in another app, so Capsid left it alone."
+    /// Said when the README is one Capsid reads but can't be changed without risk to the rest of it.
+    static let readmeNotUpdatableSentence = "README.md has a form Capsid can\u{2019}t update safely, so it was left alone."
 
     private func replaceReason(_ missing: inout [KeptMissing], _ item: KeepItem, _ reason: String) {
         missing.removeAll { $0.name == item.name && $0.role == item.role }

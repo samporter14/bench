@@ -339,11 +339,16 @@ final class KeptDisk {
 
     /// Replaces README.md in a kept folder (a temporary file, then a rename):
     /// for a rewritten `missing:` list and "Not copied" section. Both the
-    /// README that is there and the new one must be Capsid's.
-    func replaceReadme(at folder: URL, markdown: String) async throws {
+    /// README that is there and the new one must be Capsid's. With `lastRead`,
+    /// the text the new one was made from, it is replaced only if the README
+    /// is still, byte for byte, that (`changedOutside` when it isn't, and
+    /// nothing is written): the comparison and the write are one call, so a
+    /// person's edit in between is never written over.
+    func replaceReadme(at folder: URL, markdown: String, lastRead: String? = nil) async throws {
         let bytes = Data(markdown.utf8)
-        try await perform(.write, allowed: limit(bytes.count)) { wanted in
-            try KeptDiskWork.replaceReadme(in: folder, with: bytes)
+        let last = lastRead.map { Data($0.utf8) }
+        try await perform(.write, allowed: limit(bytes.count + (last?.count ?? 0))) { wanted in
+            try KeptDiskWork.replaceReadme(in: folder, with: bytes, lastRead: last)
         }
     }
 
@@ -901,12 +906,30 @@ private enum KeptDiskWork {
 
     // MARK: Changing READMEs
 
-    static func replaceReadme(in folder: URL, with markdown: Data) throws {
+    /// An editor's byte order mark: not in the text a README is read as (turning
+    /// its bytes into text drops it), so it is set aside to compare, and put
+    /// back when the file is written again.
+    private static let byteOrderMark = Data([0xEF, 0xBB, 0xBF])
+
+    static func replaceReadme(in folder: URL, with markdown: Data, lastRead: Data? = nil) throws {
+        var written = markdown
+        if let lastRead {
+            guard look(folder.appending(path: KeptLayout.readmeName, directoryHint: .notDirectory)).exists else {
+                throw KeptDiskError.failed("There is no README.md in this folder.")
+            }
+            let current = try readmeData(in: folder)
+            let marked = current.starts(with: byteOrderMark)
+            // Bytes, not characters: "é" typed two ways is two files.
+            guard Data(marked ? current.dropFirst(byteOrderMark.count) : current[...]) == lastRead else {
+                throw KeptDiskError.changedOutside
+            }
+            if marked { written = byteOrderMark + markdown }
+        }
         guard keptReadme(in: folder) != nil else { throw KeptDiskError.failed(notKept) }
         guard let text = String(data: markdown, encoding: .utf8), KeptReadme.parse(text) != nil else {
             throw KeptDiskError.failed("That README isn't one Capsid can read back.")
         }
-        try markdown.write(to: folder.appending(path: KeptLayout.readmeName, directoryHint: .notDirectory), options: .atomic)
+        try written.write(to: folder.appending(path: KeptLayout.readmeName, directoryHint: .notDirectory), options: .atomic)
     }
 
     static func replaceLegend(in folder: URL, with legend: String, lastRead: Data) throws -> String {

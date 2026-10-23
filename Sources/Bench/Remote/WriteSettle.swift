@@ -14,8 +14,8 @@
 //
 // The reads are those the actions already make (`SessionProjection`, which is
 // not this file's to change): the frame's status, plan and pending questions,
-// the head of the permission queue, the last twelve turns and a bare count of
-// queued messages.
+// the head of the permission queue, the last twelve turns (a turn of yours
+// with its intent id and its files' ids) and a bare count of queued messages.
 import Foundation
 
 // MARK: A plan
@@ -60,55 +60,105 @@ extension PlanCheck {
 
 // MARK: A message
 
-/// Whether a message just sent can be seen in the session.
+/// Whether a message just sent can be seen in the session, by what ties a
+/// turn to this very message and to no other.
+///
+/// The turn's intent id is this message's (a turn of yours carries the id it
+/// was sent with, `_intent_id`): it is this one, whatever its words. A turn
+/// with another intent id is never this one; if it has the same words since
+/// the send, though, it leaves the answer unclear rather than absent. A turn
+/// with no intent id is this one only when all of it agrees: the same words,
+/// whole (not their opening), the same files (by id, not by name), and a time
+/// no earlier than the send. A larger queue says nothing of whose message
+/// joined it: another device's would do the same.
 enum MessageSeen: Equatable, Sendable {
-    /// A turn of yours, made since it was sent, begins with its words.
+    /// A turn that is this message.
     case sent
-    /// It is not a turn, but the queue holds more messages than before.
-    case queued
-    /// Neither: it did not land.
+    /// Nothing that is this message, and nothing that could be.
     case absent
-    /// A turn begins with its words but has no time, so it could be an
-    /// earlier message of the same words.
+    /// Something that could be this message and could be another: a turn of
+    /// the same words with no time, cut short, or whose files can't be seen;
+    /// or a queue that grew.
     case unclear
 
-    /// How far before the send a turn may be dated and still be this message
-    /// (the two clocks are one Mac's, so this is for rounding).
-    static let slack: TimeInterval = 5
-    /// How much of the words are compared: the turns the session reads back
-    /// are cut, and an attachment line is rewritten to a file name.
-    static let compared = 200
-
-    static func look(text: String, turns: [SessionProjection.Turn], since: Date,
+    static func look(text: String, intent: String?, turns: [SessionProjection.Turn], since: Date,
                      queuedBefore: Int, queuedNow: Int) -> MessageSeen {
-        let wanted = key(of: text)
-        var undated = false
+        let wanted = Request(text)
+        // Turns are dated in whole milliseconds; the send began within the one `since` is in.
+        let start = Date(timeIntervalSince1970: (since.timeIntervalSince1970 * 1000).rounded(.down) / 1000)
+        var maybe = false
         for turn in turns.reversed() where turn.role == .you {
-            guard matches(turn.text, wanted) else { continue }
-            guard let at = turn.at else { undated = true; continue }
-            if at >= since.addingTimeInterval(-slack) { return .sent }
+            if let seen = turn.intent, seen == intent { return .sent }
+            let likeness = wanted.compare(turn)
+            if likeness == .different { continue }
+            // Nil: the turn has no time, so it could be from before the send or after.
+            let since = turn.at.map { $0 >= start }
+            if likeness == .same, turn.intent == nil, since == true { return .sent }
+            if since ?? true { maybe = true }
         }
-        if queuedNow > queuedBefore { return .queued }
-        return undated ? .unclear : .absent
+        if queuedNow > queuedBefore { return .unclear }
+        return maybe ? .unclear : .absent
     }
 
-    /// The words of a request without its attachment lines, on one line, and
-    /// the first `compared` characters of them.
-    static func key(of text: String) -> String {
-        let words = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix(#"{"type":"attachment""#) }
-            .joined(separator: " ")
-        return String(oneLine(words).prefix(compared))
+    /// A request's words and files, as the session reader would show them.
+    struct Request: Equatable {
+        /// The words without the attachment lines, on one line.
+        let words: String
+        /// The attachment lines' file ids, lowercased, in order.
+        let files: [String]
+
+        init(_ text: String) {
+            var kept: [Substring] = []
+            var files: [String] = []
+            for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                if let id = MessageSeen.attachmentID(line) {
+                    files.append(id)
+                } else {
+                    kept.append(line)
+                }
+            }
+            words = MessageSeen.oneLine(kept.joined(separator: "\n"))
+            self.files = files
+        }
+
+        enum Likeness { case same, couldBe, different }
+
+        /// How a turn of yours compares with it.
+        func compare(_ turn: SessionProjection.Turn) -> Likeness {
+            // The reader cuts a long turn and ends it "…": only its opening can be compared.
+            let limit = SessionProjection.Limit.turn
+            if turn.text.unicodeScalars.count >= limit, turn.text.hasSuffix("…") {
+                let opening = MessageSeen.oneLine(String(turn.text.dropLast()))
+                return !opening.isEmpty && words.hasPrefix(opening) ? .couldBe : .different
+            }
+            guard MessageSeen.oneLine(MessageSeen.withoutFileNames(turn)) == words else { return .different }
+            if turn.files == files { return .same }
+            // The words are these, but the files can't be seen in the turn.
+            return turn.files.isEmpty && !files.isEmpty ? .couldBe : .different
+        }
     }
 
-    /// A turn is this message when it begins with its words; a message of
-    /// files alone has none, and its turn begins with "Attached:".
-    static func matches(_ turn: String, _ key: String) -> Bool {
-        let line = oneLine(turn)
-        return key.isEmpty ? line.hasPrefix("Attached:") : line.hasPrefix(key)
+    /// A line that is one of Claude Science's attachment lines: its file id.
+    static func attachmentID(_ line: Substring) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix(#"{"type":"attachment""#),
+              let object = (try? JSONSerialization.jsonObject(with: Data(trimmed.utf8))) as? [String: Any],
+              Pick.string(object["type"]) == "attachment" else { return nil }
+        guard let id = Pick.string(object["id"]), PhotoAttachment.isUUID(id) else { return "" }
+        return id.lowercased()
     }
 
-    private static func oneLine(_ text: String) -> String {
+    /// A turn's words: the reader puts "Attached: <names>" after them, as a
+    /// paragraph of its own, when the message had files.
+    static func withoutFileNames(_ turn: SessionProjection.Turn) -> String {
+        guard !turn.files.isEmpty else { return turn.text }
+        if let range = turn.text.range(of: "\n\nAttached: ", options: .backwards) {
+            return String(turn.text[..<range.lowerBound])
+        }
+        return turn.text.hasPrefix("Attached: ") ? "" : turn.text
+    }
+
+    static func oneLine(_ text: String) -> String {
         text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 }
@@ -139,21 +189,21 @@ extension RemoteDecide {
         return RemoteActionResult(result: .changed, sentence: Sentence.alreadyAnswered)
     }
 
-    /// A message that got no answer: seen in the session, or not. `before` is
-    /// the read the write was decided by (its status says send, queue or
-    /// resume; its count is the queue's); `fresh` must have the turns.
-    static func settledMessage(text: String, before: SessionProjection?, since: Date,
+    /// A message that got no answer: seen in the session, or not
+    /// (`MessageSeen`). `intent` is the id it was sent with; `before` is the
+    /// read the write was decided by (its status says send, queue or resume;
+    /// its count is the queue's); `fresh` must have the turns. Sent only on a
+    /// turn that is this message: a queue that grew is unknown, never queued.
+    static func settledMessage(text: String, intent: String?, before: SessionProjection?, since: Date,
                                fresh: SessionProjection?) -> RemoteActionResult {
         guard let fresh, let turns = fresh.turns else { return .unsure }
-        let seen = MessageSeen.look(text: text, turns: turns, since: since,
+        let seen = MessageSeen.look(text: text, intent: intent, turns: turns, since: since,
                                     queuedBefore: before?.queued ?? 0, queuedNow: fresh.queued)
         switch seen {
         case .sent:
             return RemoteMessageMode(status: before?.status ?? "") == .resume
                 ? RemoteActionResult(result: .resumed, sentence: Sentence.resumed)
                 : RemoteActionResult(result: .sent, sentence: Sentence.sent)
-        case .queued:
-            return RemoteActionResult(result: .queued, sentence: Sentence.queued)
         case .absent:
             return .notThere
         case .unclear:
@@ -162,17 +212,17 @@ extension RemoteDecide {
     }
 
     /// What to change in a plan, sent and not answered: the words are a turn
-    /// of yours, or the plan is still waiting at the version shown (and they
-    /// are not), or it moved on.
-    static func settledPlanFeedback(version: String, text: String, since: Date,
+    /// of yours (by the same rule as a message), or the plan is still waiting
+    /// at the version shown (and they are not), or it moved on.
+    static func settledPlanFeedback(version: String, text: String, intent: String?, since: Date,
                                     fresh: SessionProjection?) -> RemoteActionResult {
         guard let fresh, let turns = fresh.turns else { return .unsure }
-        switch MessageSeen.look(text: text, turns: turns, since: since, queuedBefore: 0, queuedNow: 0) {
+        switch MessageSeen.look(text: text, intent: intent, turns: turns, since: since, queuedBefore: 0, queuedNow: 0) {
         case .sent:
             return RemoteActionResult(result: .sent, sentence: Sentence.revising)
         case .unclear:
             return .unsure
-        case .queued, .absent:
+        case .absent:
             switch PlanCheck.settle(fresh.planFrame, version: version) {
             case .waiting: return .notThere
             case .unclear: return .unsure

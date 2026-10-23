@@ -54,6 +54,18 @@ enum RemoteWrite: Equatable, Sendable {
     /// `newSession`, with the same room for the attachment lines.
     case newSessionWithFiles(project: String, text: String, planMode: Bool, intentID: String)
 
+    /// The intent id a message or a new session goes with: what a turn of
+    /// the session carries back (`MessageSeen`). Nil for the other writes.
+    var intentID: String? {
+        switch self {
+        case .message(_, _, _, _, let intent, _), .newSession(_, _, _, let intent, _), .planFeedback(_, _, _, _, let intent),
+             .messageWithFiles(_, _, _, _, let intent), .newSessionWithFiles(_, _, _, let intent):
+            intent
+        case .approvePlan, .answer, .cancel, .permission:
+            nil
+        }
+    }
+
     /// The script's arguments: every name always there, null when unused.
     var arguments: [String: Any] {
         var all: [String: Any] = ["kind": "", "frameId": "", "toolId": NSNull(), "mode": NSNull(), "answers": NSNull(),

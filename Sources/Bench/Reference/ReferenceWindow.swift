@@ -5,15 +5,19 @@
 // "<project> · read only", centred, and two round chevrons, Earlier and Later
 // (⌥⌘← and ⌥⌘→ while the window is key). The page: "Claude's answer · 8:47",
 // what the user asked, the figures on white cards with Add to Shelf under
-// each, then what Claude said, then its other files. At the foot, two pills:
-// Copy with Source (⇧⌘C) and Open Conversation. Window → Keep on Top floats the
-// key one. Nothing here is in the clay: the window reads, it never asks. (What
-// it does besides is the Shelf's: Add to Shelf, "On Shelf ✓" once it is, and
-// a shelved figure wears board 11's mark, a slate chip and an ink ring. Show
-// Where It Came From opens the window on the reply a shelved item came from,
-// scrolled to it.)
+// each, the reply's other files as quiet rows under them (a kind tile, the
+// name, Add to Shelf), then what Claude said. A figure opens in Quick Look
+// when it is pressed (Space too), a document likewise, except a Markdown one,
+// which is read in the window itself ("‹ Answer", Esc or ⌘[ goes back; see
+// ReferenceFiles.swift). At the foot, two pills: Copy with Source (⇧⌘C) and
+// Open Conversation. Window → Keep on Top floats the key one. Nothing here is
+// in the clay: the window reads, it never asks. (What it does besides is the
+// Shelf's: Add to Shelf, "On Shelf ✓" once it is, and a shelved figure wears
+// board 11's mark, a slate chip and an ink ring. Show Where It Came From opens
+// the window on the reply a shelved item came from, scrolled to it.)
 import AppKit
 import Combine
+import QuickLookUI
 import SwiftUI
 
 /// The Window menu's Keep on Top: the key reference window, if any.
@@ -31,8 +35,40 @@ final class ReferenceCommands: ObservableObject {
 }
 
 final class ReferenceWindow: NSWindow {
+    /// What the window opens in Quick Look (ReferenceFiles.swift).
+    var files: ReferenceFiles?
+    /// Leaves the reading view for the answer: Esc and ⌘[ while a document
+    /// is open. True when it did; any other time the keys are not the window's.
+    var goBack: (@MainActor () -> Bool)?
+
     func setOnTop(_ on: Bool) {
         level = on ? .floating : .normal
+    }
+
+    /// The window takes charge of the Quick Look panel while it is key (the
+    /// responder chain finds it), as the Results window does.
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { files?.begin(panel) }
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { files?.end(panel) }
+    }
+
+    /// Esc and ⌘[ go back from a document before the History menu's Back
+    /// (also ⌘[, for the page in the main window) can claim the key.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if ReferenceFileRules.goesBack(event), goBack?() == true { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    /// Esc not claimed by anything in the window. (Not passed up: nothing
+    /// above the window takes it, and the responder chain is not asked to
+    /// answer a selector it may not implement.)
+    override func cancelOperation(_ sender: Any?) {
+        _ = goBack?()
     }
 }
 
@@ -108,6 +144,9 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         window.isRestorable = false
         window.toolbarStyle = .unified
         window.delegate = self
+        window.files = model.files
+        model.files.window = window
+        window.goBack = Self.goBack(for: model)
         if !window.setFrameUsingName(Self.frameName) { window.center() }
         // A second window at the remembered place steps down from the first.
         if windows.values.contains(where: { $0.frame.origin == window.frame.origin }) {
@@ -122,6 +161,15 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         model.open(at: row, mark: mark)
         Demo.activateUnlessQuiet()
         if Demo.isQuiet { window.orderFrontRegardless() } else { window.makeKeyAndOrderFront(nil) }
+    }
+
+    /// Esc and ⌘[ in a window: back from the document open in it, if one is.
+    static func goBack(for model: ReferenceModel) -> @MainActor () -> Bool {
+        { [weak model] in
+            guard let model, model.files.document != nil else { return false }
+            model.closeDocument()
+            return true
+        }
     }
 
     /// The window a session shows in, for tests and the demo.
@@ -158,6 +206,8 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
               let id = windows.first(where: { $0.value === window })?.key else { return }
         // A demo's window remembers nothing.
         if Demo.mode == nil { window.saveFrame(usingName: Self.frameName) }
+        // The panel shows a temporary copy that the window's close deletes.
+        models[id]?.files.closePanel()
         models[id]?.close()
         models[id] = nil
         windows[id] = nil
@@ -199,7 +249,11 @@ struct ReferenceView: View {
     @ObservedObject var model: ReferenceModel
     /// The shelf, watched so "On Shelf ✓" and the mark follow it.
     @ObservedObject private var shelf: ShelfAccess
+    /// What is being opened and the document that is, watched for the spinners and the reading view.
+    @ObservedObject private var files: ReferenceFiles
     let selection: ReferenceSelection
+    /// The document's own: the answer's text view is still under it.
+    @State private var documentSelection = ReferenceSelection()
     @State private var keeping: KeepModel?
     /// The window's width, for the Keep sheet: one wider than the window
     /// would hang off both sides.
@@ -214,6 +268,7 @@ struct ReferenceView: View {
         self.model = model
         self.selection = selection
         _shelf = ObservedObject(wrappedValue: model.shelf)
+        _files = ObservedObject(wrappedValue: model.files)
     }
 
     var body: some View {
@@ -223,17 +278,23 @@ struct ReferenceView: View {
         }
         .frame(minWidth: 360, minHeight: 320)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
-        .background {
+        .background { Solanum.page.ignoresSafeArea() }
+        .overlay {
+            // The title bar's band and its hairline, over the page (which scrolls
+            // under it) and under the toolbar.
             GeometryReader { proxy in
                 VStack(spacing: 0) {
-                    // The title bar's band and its hairline, under the toolbar.
-                    Solanum.bar
+                    // The band is a little see-through: on the page's own colour, so
+                    // nothing scrolling under it shows.
+                    ZStack { Solanum.page; Solanum.bar }
                         .frame(height: proxy.safeAreaInsets.top)
                         .overlay(alignment: .bottom) { Solanum.hairline.frame(height: 1) }
-                    Solanum.page
+                    Spacer(minLength: 0)
                 }
                 .ignoresSafeArea()
             }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -276,8 +337,22 @@ struct ReferenceView: View {
         }
     }
 
-    @ViewBuilder
+    /// The answer, with a Markdown document over it while one is open: the
+    /// answer stays where it is, so "‹ Answer" returns to the same place.
     private var content: some View {
+        ZStack {
+            answerPage
+                .disabled(files.document != nil)
+                .accessibilityHidden(files.document != nil)
+            if let document = files.document {
+                documentPage(document)
+                    .background(Solanum.page, ignoresSafeAreaEdges: [])
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var answerPage: some View {
         if let answer = model.current {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -290,6 +365,12 @@ struct ReferenceView: View {
                         }
                         if let question = answer.question { asked(question) }
                         ForEach(model.figures(of: answer), id: \.v) { file in figure(file).id(file.v) }
+                        let documents = model.documents(of: answer)
+                        if !documents.isEmpty {
+                            VStack(spacing: 8) {
+                                ForEach(documents, id: \.v) { file in fileRow(file).id(file.v) }
+                            }
+                        }
                         if !answer.parts.isEmpty {
                             ReferenceTextView(text: model.rendered(answer), selection: selection)
                         }
@@ -297,11 +378,6 @@ struct ReferenceView: View {
                             Text(model.readingRest ? "Reading the rest\u{2026}" : "Part of this answer couldn\u{2019}t be read.")
                                 .font(.system(size: Solanum.captionSize))
                                 .foregroundStyle(Solanum.muted)
-                        }
-                        if !answer.files.isEmpty {
-                            VStack(spacing: 8) {
-                                ForEach(answer.files, id: \.v) { file in fileRow(file).id(file.v) }
-                            }
                         }
                     }
                     .padding(.horizontal, Self.side)
@@ -314,7 +390,8 @@ struct ReferenceView: View {
                 .onChange(of: model.scrollRequest, initial: true) { _, request in
                     guard let request else { return }
                     Task { @MainActor in
-                        await Task.yield()
+                        // After the page is laid out: a card's place isn't known before.
+                        try? await Task.sleep(for: .milliseconds(120))
                         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(request.id, anchor: .center) }
                     }
                 }
@@ -324,6 +401,61 @@ struct ReferenceView: View {
         } else {
             empty
         }
+    }
+
+    /// A Markdown document the reply made, read in the window: "‹ Answer" to
+    /// go back (also Esc and ⌘[, the window's), the file's name and Add to
+    /// Shelf, then the document in the answer's own type. Cut at 2 MB, and
+    /// says so under the text.
+    private func documentPage(_ document: ReferenceDocument) -> some View {
+        let file = document.file
+        let mark = model.shelfMark(file)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: Self.gap) {
+                HStack(spacing: 8) {
+                    Button { model.closeDocument() } label: {
+                        Label("Answer", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(SolanumPillStyle(.small))
+                    .help("Back to the answer (Esc or Command-[)")
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 10) {
+                    ReferenceKindTile(label: ReferenceFileRules.tile(file), ringed: mark == .on)
+                    Text(file.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Solanum.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(file.name)
+                    Spacer(minLength: 8)
+                    ShelfPill(mark: mark, add: { shelve(file) }, show: { model.showOnShelf(file) })
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Document, \(file.name)")
+                problem(file)
+                Solanum.hairline.frame(height: 1)
+                if document.isEmpty {
+                    Text(ReferenceFileRules.emptySentence)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Solanum.muted)
+                } else {
+                    ReferenceTextView(text: document.rendered, selection: documentSelection)
+                }
+                if document.cut {
+                    Text(ReferenceFileRules.cutSentence)
+                        .font(.system(size: Solanum.captionSize))
+                        .foregroundStyle(Solanum.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, Self.side)
+            .padding(.top, Self.top)
+            .padding(.bottom, Self.side)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollContentBackground(.hidden)
+        .id(file.v)
     }
 
     /// "Claude's answer · 8:47 · 2 of 3", the count once the start is read,
@@ -361,7 +493,8 @@ struct ReferenceView: View {
         let mark = model.shelfMark(file)
         return VStack(alignment: .leading, spacing: 8) {
             ReferenceFigureView(store: model.thumbnails, file: file, failed: model.thumbnailFailed(file),
-                                shelved: mark == .on, wantsPicture: { model.wantThumbnail(file) })
+                                shelved: mark == .on, opening: files.preparing.contains(file.v),
+                                wantsPicture: { model.wantThumbnail(file) }, open: { model.openFile(file) })
                 .contextMenu { shelfItems(file, mark: mark) }
             HStack(spacing: 8) {
                 Text(file.name)
@@ -378,20 +511,21 @@ struct ReferenceView: View {
         .accessibilityLabel(mark == .on ? "Figure, \(file.name), on your shelf" : "Figure, \(file.name)")
     }
 
-    /// A file that isn't a picture, in a quiet row under the words.
+    /// A file that isn't a picture, in a quiet row under the figures.
     private func fileRow(_ file: HistoryFile) -> some View {
         let mark = model.shelfMark(file)
         return VStack(alignment: .leading, spacing: 6) {
-            ReferenceFileRow(file: file, mark: mark, add: { shelve(file) }, show: { model.showOnShelf(file) })
+            ReferenceFileRow(file: file, mark: mark, opening: files.preparing.contains(file.v),
+                             open: { model.openFile(file) }, add: { shelve(file) }, show: { model.showOnShelf(file) })
                 .contextMenu { shelfItems(file, mark: mark) }
             problem(file)
         }
     }
 
-    /// Why an add failed, under the file, until the next try.
+    /// Why an add or an opening failed, under the file, until the next try.
     @ViewBuilder
     private func problem(_ file: HistoryFile) -> some View {
-        if let sentence = model.shelfProblems[file.v] {
+        if let sentence = model.shelfProblems[file.v] ?? files.problems[file.v] {
             Text(sentence)
                 .font(.system(size: Solanum.captionSize))
                 .foregroundStyle(Theme.clayText)
@@ -402,6 +536,8 @@ struct ReferenceView: View {
     /// The context menu of a figure or a file.
     @ViewBuilder
     private func shelfItems(_ file: HistoryFile, mark: ShelfMark) -> some View {
+        Button(ReferenceFileRules.readsInWindow(file) ? "Open" : "Quick Look") { model.openFile(file) }
+        Divider()
         if mark == .on {
             Button("Show on Shelf") { model.showOnShelf(file) }
         } else {
@@ -423,7 +559,7 @@ struct ReferenceView: View {
             Button(model.copied ? "Copied" : "Copy with Source") { copy() }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(model.current == nil)
-                .help("The selection, or the whole answer, with where it came from (Shift-Command-C)")
+                .help("The selection, or the whole answer or document, with where it came from (Shift-Command-C)")
             Spacer(minLength: 8)
             Button("Open Conversation") { model.openConversation() }
                 .help("This session in the main window")
@@ -475,6 +611,10 @@ struct ReferenceView: View {
     }
 
     private func copy() {
+        if let document = files.document {
+            model.copy(documentSelection.selectedText ?? document.rendered.string, file: document.file.name)
+            return
+        }
         guard let answer = model.current else { return }
         model.copy(selection.selectedText ?? model.rendered(answer).string)
     }
@@ -498,9 +638,13 @@ struct ReferenceFigureView: View {
     let failed: Bool
     /// On the shelf: board 11's slate chip and a 2-point ink ring.
     var shelved = false
+    /// Its full-size file is being read for Quick Look: a small spinner on the card.
+    var opening = false
     /// Called each time the card is drawn with no picture (first drawn, or the
     /// store let the picture go): the reader asks for it, if it isn't coming.
     var wantsPicture: () -> Void = {}
+    /// Opens the full-size picture in Quick Look: a click, or Space with the card focused.
+    var open: () -> Void = {}
 
     /// Taller than this, a picture is shown smaller rather than filling the window.
     private static let maxHeight: CGFloat = 520
@@ -533,8 +677,12 @@ struct ReferenceFigureView: View {
         .overlay(alignment: .topLeading) {
             if shelved { OnShelfChip().padding(10) }
         }
+        .overlay {
+            if opening { OpeningSpinner() }
+        }
         .overlay(RoundedRectangle(cornerRadius: 10)
             .strokeBorder(shelved ? Solanum.ink : Solanum.hairline, lineWidth: shelved ? 2 : 1))
+        .opensOnPress(radius: 10, label: "Open \(file.name) in Quick Look", open: open)
     }
 }
 
@@ -562,6 +710,10 @@ struct ReferenceTextView: NSViewRepresentable {
     final class Coordinator {
         /// The text last put in, by identity: the model renders once per text.
         var shown: NSAttributedString?
+        /// The height last measured, for the text shown at that width: a
+        /// document of 2 MiB takes a second to lay out, and SwiftUI asks again
+        /// at the same width.
+        var measured: (text: NSAttributedString, width: CGFloat, height: CGFloat)?
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -606,11 +758,19 @@ struct ReferenceTextView: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView textView: NSTextView, context: Context) -> CGSize? {
         guard let width = proposal.width, width > 0, let container = textView.textContainer,
               let layout = textView.layoutManager else { return nil }
+        let coordinator = context.coordinator
+        if let measured = coordinator.measured, measured.text === text, measured.width == width,
+           coordinator.shown === text {
+            return CGSize(width: width, height: measured.height)
+        }
         let placed = container.containerSize
         container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
         container.containerSize = placed
-        return CGSize(width: width, height: ceil(used.height))
+        let height = ceil(used.height)
+        // Kept only when what was measured is the text being shown.
+        if coordinator.shown === text { coordinator.measured = (text, width, height) }
+        return CGSize(width: width, height: height)
     }
 }

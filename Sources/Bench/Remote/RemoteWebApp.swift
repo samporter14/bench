@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "535d29b1fa0c",
+        "/app.js": "71a8eaa66465",
         "/app.css": "b948887bc2c7",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=535d29b1fa0c"></script>
+<script type="module" src="/app.js?v=71a8eaa66465"></script>
 </body>
 </html>
 """#
@@ -940,7 +940,7 @@ v.asks.slice(0, SINCE_ASKS).forEach((a) => { if (!S.sess[a.id]) ask(a.id, 's', (
 const content = v.sn.content !== false;
 v.finished.slice(0, SINCE_ROWS).forEach((f) => {
 if (content && !f.line && !S.sess[f.id]) ask(f.id, 's', () => loadSession(f.id));
-if (browseOn() && !art(f.id).loaded) ask(f.id, 'a', () => loadArtifacts(f.id));
+if (content && browseOn() && !art(f.id).loaded) ask(f.id, 'a', () => loadArtifacts(f.id));
 });
 }
 function singleChoice(q) {
@@ -982,7 +982,8 @@ onclick: () => sinceAnswer(a.id, q, o.label),
 })) : [h('a', { class: 'since-choice since-go', href: sessionHref(a.id), text: d && d.question ? 'Answer…' : 'Open' })]),
 note ? h('p', { class: 'since-note', role: 'status', text: note }) : null);
 }
-function sinceTile(f) {
+function sinceTile(f, content) {
+if (!content) return null;
 const A = browseOn() ? art(f.id) : null;
 const img = A && A.loaded ? A.items.find((x) => x.kind === 'image') : null;
 if (img) {
@@ -996,7 +997,7 @@ function sinceFinishedRow(f, content) {
 const d = content && S.sess[f.id] && S.sess[f.id].data;
 const line = content ? f.line || (d && d.reply && typeof d.reply.text === 'string' ? d.reply.text : '') : '';
 return h('a', { class: 'since-row', href: sessionHref(f.id), 'data-key': 'sf:' + f.id },
-sinceTile(f),
+sinceTile(f, content),
 h('span', { class: 'since-main' }, h('span', { class: 'since-title', text: f.title }), line ? h('span', { class: 'since-line', text: sinceLine(line) }) : null));
 }
 function sinceLine(text) {

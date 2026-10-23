@@ -72,9 +72,14 @@ enum SinceTile: Equatable, Sendable {
 
     /// The file's own ending, in capitals, or its kind.
     static func label(for entry: ArtifactEntry) -> String {
-        let ext = (entry.name as NSString).pathExtension.uppercased()
+        label(name: entry.name, kind: entry.kind)
+    }
+
+    /// The same for a file whose kind is already known (the reference reader's).
+    static func label(name: String, kind: ArtifactKind) -> String {
+        let ext = (name as NSString).pathExtension.uppercased()
         if !ext.isEmpty, ext.count <= 5 { return ext }
-        switch entry.kind {
+        switch kind {
         case .image: return "IMG"
         case .svg: return "SVG"
         case .markdown: return "MD"
@@ -132,6 +137,9 @@ struct SinceYouLeftSheet: View {
     /// The limit moves under the block.
     @ObservedObject private var usage = PlanUsageModel.shared
     @AppStorage(SinceYouLeftSettings.sheetKey) private var showsWhenAway = true
+    /// "Show plans, questions and requests on the card", which the rows follow (the model reads it): kept here so the
+    /// sheet draws again when it is turned off, or on, while the sheet is up. The model's reads are what act on it.
+    @AppStorage(SettingsKey.showPlansOnCard) private var contentOn = true
     /// The shelf a finished row's figure is added to, and asked about.
     @ObservedObject var onShelf: ShelfAccess = .live
     /// Why the last Add to Shelf of a figure failed, by version, when it did.
@@ -170,6 +178,7 @@ struct SinceYouLeftSheet: View {
 
     var body: some View {
         let summary = model.display
+        let _ = contentOn
         VStack(spacing: 0) {
             header(summary)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chromeHeights[0] = $0 }
@@ -203,6 +212,8 @@ struct SinceYouLeftSheet: View {
         // The failure card's own reasons, and each ask's question, are read as the sheet comes up.
         .onAppear { model.loadDetails(cardActions: actions) }
         .onChange(of: model.display?.count) { _, _ in model.loadDetails(cardActions: actions) }
+        // Turned back on: the rows that were not read are read now. (Turned off, the rows draw without what was read.)
+        .onChange(of: contentOn) { _, _ in model.loadDetails(cardActions: actions) }
         .environment(\.appearsActive, true)
     }
 
@@ -470,7 +481,8 @@ struct SinceYouLeftSheet: View {
 
     private func finishedRow(_ row: SinceYouLeftSummary.Row) -> some View {
         let session = row.session
-        let listing = finished.listing(for: session.id)
+        // The model's own gate: with the content setting off a row has no files, read before or not.
+        let listing = model.listing(for: session.id)
         var tiles: [SinceTile] = []
         var keepable: ArtifactEntry?
         var hasFiles = false
