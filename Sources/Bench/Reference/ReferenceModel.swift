@@ -1016,12 +1016,10 @@ final class ReferenceModel: ObservableObject {
         files.open(file, among: ReferenceFileRules.quickLookFiles(figures: figures(of: reply), documents: documents(of: reply)))
     }
 
-    /// "‹ Answer": the reading view is left, and the page is scrolled to the
-    /// document's row, which is where it was pressed.
+    /// "‹ Answer": the reading view is left. The answer was under it all the
+    /// while, so the page is where it was.
     func closeDocument() {
-        guard let file = files.document?.file else { return }
         files.closeDocument()
-        scrollRequest = ReferenceScroll(id: file.v, token: (scrollRequest?.token ?? 0) + 1)
     }
 
     /// The reply that shows `file`: the one on the page when it does, else the

@@ -91,9 +91,10 @@ enum Demo {
         /// The reference window (Reference/ReferenceDemo.swift) on a made-up
         /// session whose pages and pictures are answered from here; with
         /// `--step figures`, on the answer with two figures and two
-        /// documents, with `--step document`, on that answer with its
-        /// Markdown document open, and with `--step failed`, on reads that
-        /// fail. Nothing is read from Claude Science.
+        /// documents, with `--step documents`, scrolled to the documents,
+        /// with `--step document`, on that answer with its Markdown document
+        /// open, and with `--step failed`, on reads that fail. Nothing is
+        /// read from Claude Science.
         case reference
         /// Quick Start (QuickStart/QuickStartDemo.swift): its panel on made-up
         /// projects, recipes and a file; Start shows its sent state and sends

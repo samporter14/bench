@@ -252,6 +252,8 @@ struct ReferenceView: View {
     /// What is being opened and the document that is, watched for the spinners and the reading view.
     @ObservedObject private var files: ReferenceFiles
     let selection: ReferenceSelection
+    /// The document's own: the answer's text view is still under it.
+    @State private var documentSelection = ReferenceSelection()
     @State private var keeping: KeepModel?
     /// The window's width, for the Keep sheet: one wider than the window
     /// would hang off both sides.
@@ -276,17 +278,23 @@ struct ReferenceView: View {
         }
         .frame(minWidth: 360, minHeight: 320)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
-        .background {
+        .background { Solanum.page.ignoresSafeArea() }
+        .overlay {
+            // The title bar's band and its hairline, over the page (which scrolls
+            // under it) and under the toolbar.
             GeometryReader { proxy in
                 VStack(spacing: 0) {
-                    // The title bar's band and its hairline, under the toolbar.
-                    Solanum.bar
+                    // The band is a little see-through: on the page's own colour, so
+                    // nothing scrolling under it shows.
+                    ZStack { Solanum.page; Solanum.bar }
                         .frame(height: proxy.safeAreaInsets.top)
                         .overlay(alignment: .bottom) { Solanum.hairline.frame(height: 1) }
-                    Solanum.page
+                    Spacer(minLength: 0)
                 }
                 .ignoresSafeArea()
             }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -329,11 +337,23 @@ struct ReferenceView: View {
         }
     }
 
-    @ViewBuilder
+    /// The answer, with a Markdown document over it while one is open: the
+    /// answer stays where it is, so "‹ Answer" returns to the same place.
     private var content: some View {
-        if let document = files.document {
-            documentPage(document)
-        } else if let answer = model.current {
+        ZStack {
+            answerPage
+                .disabled(files.document != nil)
+                .accessibilityHidden(files.document != nil)
+            if let document = files.document {
+                documentPage(document)
+                    .background(Solanum.page, ignoresSafeAreaEdges: [])
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var answerPage: some View {
+        if let answer = model.current {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: Self.gap) {
@@ -370,7 +390,8 @@ struct ReferenceView: View {
                 .onChange(of: model.scrollRequest, initial: true) { _, request in
                     guard let request else { return }
                     Task { @MainActor in
-                        await Task.yield()
+                        // After the page is laid out: a card's place isn't known before.
+                        try? await Task.sleep(for: .milliseconds(120))
                         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(request.id, anchor: .center) }
                     }
                 }
@@ -419,7 +440,7 @@ struct ReferenceView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Solanum.muted)
                 } else {
-                    ReferenceTextView(text: document.rendered, selection: selection)
+                    ReferenceTextView(text: document.rendered, selection: documentSelection)
                 }
                 if document.cut {
                     Text(ReferenceFileRules.cutSentence)
@@ -591,7 +612,7 @@ struct ReferenceView: View {
 
     private func copy() {
         if let document = files.document {
-            model.copy(selection.selectedText ?? document.rendered.string, file: document.file.name)
+            model.copy(documentSelection.selectedText ?? document.rendered.string, file: document.file.name)
             return
         }
         guard let answer = model.current else { return }

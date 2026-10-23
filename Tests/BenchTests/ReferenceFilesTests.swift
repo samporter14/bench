@@ -617,22 +617,25 @@ struct ReferenceReadingViewTests {
         #expect(rig.model.files.items[0].previewItemURL?.lastPathComponent == "plate_qc_notes.md")
     }
 
-    @Test func backLeavesTheDocumentAndScrollsToItsRow() async throws {
+    @Test func backLeavesTheDocumentAndTheAnswerIsUntouched() async throws {
         let rig = FilesRig()
         defer { rig.cleanUp() }
         await rig.open()
         rig.model.openFile(FilesRig.notes)
         await rig.settle()
         #expect(rig.model.files.document != nil)
+        let shown = rig.model.shownID, key = rig.model.shownKey
         rig.model.closeDocument()
         #expect(rig.model.files.document == nil)
-        #expect(rig.model.scrollRequest?.id == FilesRig.notes.v)
-        let token = rig.model.scrollRequest?.token
-        // Again: a second request for the same row is seen as a new one.
+        // The page under it is the same reply, not started again: nothing scrolls it.
+        #expect(rig.model.shownID == shown && rig.model.shownKey == key && rig.model.scrollRequest == nil)
+        // Back with nothing open does nothing.
+        rig.model.closeDocument()
+        #expect(rig.model.shownKey == key)
+        // And it can be opened again.
         rig.model.openFile(FilesRig.notes)
         await rig.settle()
-        rig.model.closeDocument()
-        #expect(rig.model.scrollRequest?.token == (token ?? 0) + 1)
+        #expect(rig.model.files.document != nil)
     }
 
     @Test func anotherReplyIsTheAnswerAgain() async throws {
@@ -719,7 +722,6 @@ struct ReferenceReadingViewTests {
             #expect(rig.model.files.document != nil)
             #expect(window.performKeyEquivalent(with: try key(code, characters, modifiers, in: window)))
             #expect(rig.model.files.document == nil)
-            #expect(rig.model.scrollRequest?.id == FilesRig.notes.v)
         }
     }
 

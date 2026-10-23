@@ -4,8 +4,9 @@
 // (the figures sit on the steps that made them), then answers. Nothing is
 // read from Claude Science; Open Conversation and Copy with Source do their
 // ordinary things (the latter on the real pasteboard). `--step figures`
-// opens it on the answer with two figures and two documents, `--step document`
-// on that answer with its Markdown document open, `--step failed` on reads that fail,
+// opens it on the answer with two figures and two documents, `--step documents`
+// on that answer scrolled to the documents, `--step document` on it with its
+// Markdown document open, `--step failed` on reads that fail,
 // and `--step shelved` on that answer by Show Where It Came From, the bar chart
 // on a made-up shelf (it writes nothing, and reads nothing of the real one).
 import AppKit
@@ -140,6 +141,11 @@ enum ReferenceDemo {
             // The reply that holds history row 19, scrolled to the bar chart, which is on the shelf.
             demoShelf.put(barChart.v)
             ReferenceWindowController.shared.show(session, dependencies: dependencies(), at: 19, mark: barChart.v)
+            return
+        }
+        if step == "documents" {
+            // The same reply, scrolled to the Markdown document's row.
+            ReferenceWindowController.shared.show(session, dependencies: dependencies(), at: 19, mark: notes.v)
             return
         }
         ReferenceWindowController.shared.show(session, dependencies: dependencies(failing: step == "failed"))
