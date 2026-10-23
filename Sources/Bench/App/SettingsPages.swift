@@ -219,6 +219,7 @@ struct AlertSettingsView: View {
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
     @AppStorage(SettingsKey.showPlansOnCard) private var plansOnCard = true
     @AppStorage(SettingsKey.holdDuringFocus) private var holdDuringFocus = true
+    @AppStorage(SinceYouLeftSettings.sheetKey) private var sinceYouLeftSheet = true
 
     var body: some View {
         Form {
@@ -238,6 +239,13 @@ struct AlertSettingsView: View {
                 }
             }
 
+            Section("When you\u{2019}re back") {
+                Toggle(isOn: $sinceYouLeftSheet) {
+                    InfoTitle("Show what changed while you were away", info: AlertsInfo.sinceYouLeft)
+                    Text("After 30 minutes or more away: what finished, what stopped and what needs you, on one sheet.")
+                }
+            }
+
             QuietWhilePresentingSection()
 
             MacNotificationsSection()
@@ -252,7 +260,7 @@ struct AlertSettingsView: View {
                 .onChange(of: holdDuringFocus) { _, on in if !on { LabModel.shared.releaseHeldFinishes() } }
             }
         }
-        .settingsPage(height: 818)
+        .settingsPage(height: 940)
     }
 }
 
@@ -307,6 +315,15 @@ enum AlertsInfo {
         Turning this off brings what is waiting, unless Capsid is quiet for a presentation.
         """
 
+    static let sinceYouLeft = """
+        The sheet opens over Capsid's main window the first time you're back after 30 minutes or more away, or \
+        after 10 minutes when a new day has started. It waits while Capsid is quiet for a presentation or Nidus is \
+        focusing.
+
+        Off, nothing opens by itself: the panel shows a card with what finished and stopped, and the toolbar's \
+        list has a Since You Left section at the top. Your phone shows it either way.
+        """
+
     static let answerOnCard = """
         A plan shows its summary, with Approve and Request changes. A question shows what it asks, with Reply. A \
         permission request shows what it wants, with Allow Once or Deny when they can be answered here (code is \
@@ -316,7 +333,8 @@ enum AlertsInfo {
         or it can't be answered here, the card opens the session instead.
 
         A session that stopped with an error shows the first line of why, with Copy for all of it. That is read \
-        from the session, once, when its card comes up. Mac notifications and your phone never show it.
+        from the session, once, when its card comes up. Mac notifications never show it; Since You Left shows it \
+        here and on your phone, with Claude's last words in each finished session.
 
         With names shown in Mac notifications, a question's notification offers its answers too.
         """

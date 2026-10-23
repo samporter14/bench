@@ -292,6 +292,7 @@ final class SinceYouLeftModel: ObservableObject {
     /// The details of a summary's rows for the phone: what was read for the sheet, and a reason the failure
     /// card has read though the sheet has not.
     func detailsForPhone(_ summary: SinceYouLeftSummary) -> [String: SinceYouLeftDetail] {
+        guard dependencies.readsContent() else { return [:] }
         var all = details
         for row in summary.stopped where all[row.id]?.reason == nil {
             if let reason = dependencies.knownReason(row.id) { all[row.id, default: .init()].reason = reason }
@@ -299,9 +300,16 @@ final class SinceYouLeftModel: ObservableObject {
         return all
     }
 
+    /// What was read for a row, while the content setting allows it: turned off after the reads,
+    /// a row is its title, project and time again, on the sheet and on the phone.
+    func detail(for id: String) -> SinceYouLeftDetail? {
+        dependencies.readsContent() ? details[id] : nil
+    }
+
     /// All of why a row's session stopped, for Copy: what the card read, else the line.
     func fullReason(for id: String) -> String? {
-        dependencies.fullReason(id) ?? details[id]?.reason
+        guard dependencies.readsContent() else { return nil }
+        return dependencies.fullReason(id) ?? details[id]?.reason
     }
 
     /// What the stretch used of the 5-hour limit, when it can be said.

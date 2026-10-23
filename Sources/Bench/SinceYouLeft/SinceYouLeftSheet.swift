@@ -132,6 +132,15 @@ struct SinceYouLeftSheet: View {
     /// The limit moves under the block.
     @ObservedObject private var usage = PlanUsageModel.shared
     @AppStorage(SinceYouLeftSettings.sheetKey) private var showsWhenAway = true
+    /// The shelf a finished row's figure is added to, and asked about.
+    @ObservedObject var onShelf: ShelfAccess = .live
+    /// Why the last Add to Shelf of a figure failed, by version, when it did.
+    @State private var shelfProblems: [String: String] = [:]
+    /// How tall the rows are, and the header and the foot: the scroll view is exactly as tall as its rows
+    /// up to what `cap` leaves, so the window that follows the sheet's size shows them (a scroll view
+    /// alone asks for no height) and scrolls only past it.
+    @State private var rowsHeight: CGFloat = 0
+    @State private var chromeHeights: [CGFloat] = [0, 0]
     @Environment(\.colorScheme) private var colorScheme
 
     /// Done and Esc, and the sheet's other ways out (Open, Results), by the controller.
@@ -163,6 +172,7 @@ struct SinceYouLeftSheet: View {
         let summary = model.display
         VStack(spacing: 0) {
             header(summary)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chromeHeights[0] = $0 }
             hairline
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -177,13 +187,15 @@ struct SinceYouLeftSheet: View {
                 .padding(.horizontal, 28)
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowsHeight = $0 }
             }
+            .frame(height: min(rowsHeight, max(120, cap - chromeHeights.reduce(2, +))))
             .scrollBounceBehavior(.basedOnSize)
             hairline
             footer
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chromeHeights[1] = $0 }
         }
         .frame(width: Self.width)
-        .frame(maxHeight: cap)
         .background(Solanum.page)
         .presentationBackground(Solanum.page)
         // Esc: the same as Done, as Quick Open's sheet closes on it (the window's own `cancelOperation` is the fallback).
@@ -467,9 +479,25 @@ struct SinceYouLeftSheet: View {
             hasFiles = !entries.isEmpty
         }
         return FinishedRow(
-            session: session, at: row.at, answer: model.details[session.id]?.answer, tiles: tiles, store: finished.thumbnails,
+            session: session, at: row.at, answer: model.detail(for: session.id)?.answer, tiles: tiles, store: finished.thumbnails,
             open: { open(session) }, results: hasFiles ? { showResults(session) } : nil,
-            keep: keepable.map { entry in { keep(entry, of: session) } })
+            keep: keepable.map { entry in { keep(entry, of: session) } },
+            shelf: keepable.map { ShelfMark($0.version, in: onShelf) },
+            addToShelf: keepable.map { entry in { addToShelf(entry, of: session) } },
+            showShelf: { onShelf.show(nil) },
+            problem: keepable.flatMap { shelfProblems[$0.version] })
+    }
+
+    /// Add to Shelf, one click as in Results: the pill turns to "On Shelf ✓" from the shelf itself; a
+    /// failure is a sentence under the row.
+    private func addToShelf(_ entry: ArtifactEntry, of session: SessionStatus) {
+        guard Demo.mode == nil, ShelfMark(entry.version, in: onShelf) == .off else { return }
+        shelfProblems[entry.version] = nil
+        Task { @MainActor in
+            if case .failed(let sentence) = await onShelf.add(ShelfSource(session: session, entry: entry)) {
+                shelfProblems[entry.version] = sentence
+            }
+        }
     }
 
     private func showResults(_ session: SessionStatus) {
@@ -487,7 +515,7 @@ struct SinceYouLeftSheet: View {
 
     private func stoppedRow(_ row: SinceYouLeftSummary.Row) -> some View {
         let session = row.session
-        let reason = model.details[session.id]?.reason
+        let reason = model.detail(for: session.id)?.reason
         return HStack(alignment: .center, spacing: 16) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 18, weight: .regular))
@@ -562,7 +590,8 @@ struct SinceYouLeftSheet: View {
 /// A finished session: its title and when, the first two lines of Claude's
 /// last answer, and up to three of its files as small tiles. A click opens the
 /// session; with the pointer over it (or the keyboard on it) the row offers
-/// Open, Results and, when exactly one figure was made, Keep…, which are also
+/// Open, Results and, when exactly one figure was made, Add to Shelf (Keep with
+/// Data and Code… in its menu), which are also
 /// its context menu and VoiceOver's actions.
 private struct FinishedRow: View {
     let session: SessionStatus
@@ -573,6 +602,12 @@ private struct FinishedRow: View {
     let open: () -> Void
     let results: (() -> Void)?
     let keep: (() -> Void)?
+    /// Where its figure stands on the shelf, when it has one to add.
+    var shelf: ShelfMark? = nil
+    var addToShelf: (() -> Void)? = nil
+    var showShelf: () -> Void = {}
+    /// Why the last add failed.
+    var problem: String? = nil
     @State private var hovering = false
     @FocusState private var focused: Bool
 
@@ -602,6 +637,13 @@ private struct FinishedRow: View {
                                 .truncationMode(.tail)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                        if let problem {
+                            Text(verbatim: problem)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Solanum.muted)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     HStack(spacing: 6) {
@@ -623,10 +665,7 @@ private struct FinishedRow: View {
                 HStack(spacing: 6) {
                     Button("Open", action: open)
                     if let results { Button("Results", action: results) }
-                    if let keep {
-                        Button("Keep\u{2026}", action: keep)
-                            .help("Keep this figure with its words, its data and its code")
-                    }
+                    shelfPill
                 }
                 .buttonStyle(SolanumPillStyle(.small))
                 .padding(.trailing, tilesWidth)
@@ -637,11 +676,38 @@ private struct FinishedRow: View {
         .contextMenu {
             Button("Open", action: open)
             if let results { Button("Results", action: results) }
-            if let keep { Button("Keep\u{2026}", action: keep) }
+            shelfMenuItem
+            if let keep { Button(ShelfWords.keep, action: keep) }
         }
         .accessibilityActions {
             if let results { Button("Results", action: results) }
-            if let keep { Button("Keep\u{2026}", action: keep) }
+            shelfMenuItem
+            if let keep { Button(ShelfWords.keep, action: keep) }
+        }
+    }
+
+    /// Add to Shelf, a spinner's "Adding…" while it is added, then "On Shelf ✓", which shows the shelf.
+    @ViewBuilder private var shelfPill: some View {
+        switch shelf {
+        case .off?:
+            if let addToShelf {
+                Button(ShelfWords.add, action: addToShelf)
+                    .help("Add to Shelf: this figure, with what Claude said about it and where it came from")
+            }
+        case .adding?:
+            Button(ShelfWords.adding) {}.disabled(true)
+        case .on?:
+            Button(ShelfWords.on, action: showShelf).help("Show the Shelf")
+        case nil:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder private var shelfMenuItem: some View {
+        switch shelf {
+        case .off?: if let addToShelf { Button(ShelfWords.add, action: addToShelf) }
+        case .on?: Button("Show in Shelf", action: showShelf)
+        case .adding?, nil: EmptyView()
         }
     }
 }
@@ -656,6 +722,9 @@ final class SinceYouLeftSheetController: NSObject {
 
     private var sheet: NSWindow?
 
+    /// The window follows the sheet's ideal size: its rows, up to the screen's height.
+    static let sizing: NSHostingSizingOptions = [.minSize, .maxSize]
+
     var isShowing: Bool { sheet != nil }
 
     /// Opens the sheet on the main window, bringing the window forward first.
@@ -665,7 +734,7 @@ final class SinceYouLeftSheetController: NSObject {
         guard let parent = MainWindowController.shared.windowIfLoaded else { return }
         let view = SinceYouLeftSheet(model: model, done: { model.done() }, dismiss: { [weak self] in self?.close() })
         let host = NSHostingController(rootView: view)
-        host.sizingOptions = [.preferredContentSize]
+        host.sizingOptions = Self.sizing
         let window = SheetWindow(contentViewController: host)
         window.styleMask = [.titled]
         window.titleVisibility = .hidden

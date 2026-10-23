@@ -171,7 +171,10 @@ enum SinceYouLeftDemo {
                                       dependencies: Self.demoDependencies(model: nil))
         fill(model: model, replier: .shared, radio: true)
         let view = SinceYouLeftSheet(model: model, done: { model.done() }, dismiss: {})
-        let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+        // Sized as the real sheet is (SinceYouLeftSheetController), so the demo shows what a return shows.
+        let host = NSHostingController(rootView: view)
+        host.sizingOptions = SinceYouLeftSheetController.sizing
+        let window = NSWindow(contentViewController: host)
         window.title = "Since you left"
         window.styleMask = [.titled, .closable]
         window.center()

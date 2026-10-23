@@ -465,6 +465,22 @@ struct SinceYouLeftModelTests {
         #expect(rig.m.fullReason(for: "f1") == nil)
     }
 
+    @Test func turningTheContentSettingOffAfterTheReadsHidesWhatWasRead() async {
+        let rig = Rig()
+        rig.knownReasons["s0"] = "Out of memory."
+        rig.leave()
+        manyFinished(rig, count: 1, stopped: 1)
+        rig.advance(minutes: 70, idle: 2)
+        rig.m.loadDetails(cardActions: rig.actions)
+        await rig.m.settled()
+        #expect(rig.m.detail(for: "s0")?.reason == "Out of memory.")
+        rig.mayRead = false
+        let summary = try? #require(rig.m.display)
+        #expect(rig.m.detail(for: "s0") == nil && rig.m.detail(for: "f1") == nil)
+        #expect(summary.map { rig.m.detailsForPhone($0).isEmpty } == true)
+        #expect(rig.m.fullReason(for: "s0") == nil)
+    }
+
     @Test func aRowWhoseSessionIsNoLongerThereIsNotRead() async {
         let rig = Rig()
         rig.leave()
