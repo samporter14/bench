@@ -4,7 +4,9 @@
 // (the figures sit on the steps that made them), then answers. Nothing is
 // read from Claude Science; Open Conversation and Copy with Source do their
 // ordinary things (the latter on the real pasteboard). `--step figures`
-// opens it on the answer with two figures, `--step failed` on reads that fail,
+// opens it on the answer with two figures and two documents, `--step documents`
+// on that answer scrolled to the documents, `--step document` on it with its
+// Markdown document open, `--step failed` on reads that fail,
 // and `--step shelved` on that answer by Show Where It Came From, the bar chart
 // on a made-up shelf (it writes nothing, and reads nothing of the real one).
 import AppKit
@@ -22,6 +24,11 @@ enum ReferenceDemo {
                                       name: "z_prime_by_plate.png", kind: .image, size: 85_000)
     static let heatmap = HistoryFile(v: "aaaaaaaa-0000-4000-8000-000000000011", a: "bbbbbbbb-0000-4000-8000-000000000002",
                                      name: "plate_7_heatmap.png", kind: .image, size: 120_000)
+    /// The documents of the same reply: Markdown opens in the window, the table in Quick Look.
+    static let notes = HistoryFile(v: "aaaaaaaa-0000-4000-8000-000000000021", a: "bbbbbbbb-0000-4000-8000-000000000003",
+                                   name: "plate_qc_notes.md", kind: .markdown, size: 1_900)
+    static let table = HistoryFile(v: "aaaaaaaa-0000-4000-8000-000000000022", a: "bbbbbbbb-0000-4000-8000-000000000004",
+                                   name: "z_prime_by_plate.csv", kind: .table, size: 1_100)
     /// An earlier draft of the bar chart: the reply shows only the last version.
     static let barChartDraft = HistoryFile(v: "aaaaaaaa-0000-4000-8000-000000000003", a: "bbbbbbbb-0000-4000-8000-000000000001",
                                            name: "z_prime_by_plate.png", kind: .image, size: 84_000)
@@ -40,13 +47,39 @@ enum ReferenceDemo {
         items.append(.turn(i: 9, role: .claude, at: at(64), text: first, cut: false, files: []))
         items.append(.turn(i: 10, role: .you, at: at(63),
                            text: "Plot Z\u{2032} by plate, and show me where plate 7 goes wrong.", cut: false, files: []))
-        steps(11...18, files: [13: [barChartDraft], 15: [barChart], 17: [heatmap]])
+        steps(11...18, files: [13: [barChartDraft], 15: [barChart], 16: [table], 17: [heatmap], 18: [notes]])
         items.append(.turn(i: 19, role: .claude, at: at(58), text: second, cut: false, files: []))
         items.append(.turn(i: 20, role: .you, at: at(55), text: "Write up what you found.", cut: false, files: []))
         steps(21...32)
         items.append(.turn(i: 33, role: .claude, at: at(50), text: String(third.prefix(2_000)), cut: true, files: []))
         return items
     }()
+
+    /// The Markdown document of the middle reply.
+    static let notesText = """
+    # Plate reader QC notes
+
+    Twelve 384-well plates from the overnight run, each with 16 DMSO wells and 16 positive controls in the \
+    outer columns. **Eleven pass.** Plate 7 fails on an edge effect in column 12.
+
+    ## Z\u{2032} by plate
+
+    - Plates 1 to 6 and 8 to 12 sit between 0.62 and 0.78.
+    - Plate 7 reads 0.41, against a cutoff of 0.5.
+    - The DMSO controls are within 5% of each other across plates.
+
+    ## What I\u{2019}d do next
+
+    1. Repeat plate 7 with a fresh seal and a humidified incubator.
+    2. Send the other eleven to hit picking as they are.
+    3. Keep the repeat\u{2019}s plate map the same, so the columns compare.
+
+    > The positive controls are tight: CV under 4% on every plate.
+
+    The values behind the bar chart are in `z_prime_by_plate.csv`.
+    """
+
+    static let tableText = "plate,z_prime,pass\n1,0.71,yes\n2,0.69,yes\n7,0.41,no\n8,0.74,yes\n"
 
     static let first = """
     I ran the QC over all twelve plates. **Eleven passed.** Plate 7 has an edge effect in column 12: \
@@ -110,12 +143,21 @@ enum ReferenceDemo {
             ReferenceWindowController.shared.show(session, dependencies: dependencies(), at: 19, mark: barChart.v)
             return
         }
+        if step == "documents" {
+            // The same reply, scrolled to the Markdown document's row.
+            ReferenceWindowController.shared.show(session, dependencies: dependencies(), at: 19, mark: notes.v)
+            return
+        }
         ReferenceWindowController.shared.show(session, dependencies: dependencies(failing: step == "failed"))
-        guard step == "figures" else { return }
+        guard step == "figures" || step == "document" else { return }
         Task { @MainActor in
             let model = ReferenceWindowController.shared.model(for: session.id)
             for _ in 0..<50 where model?.current == nil { try? await Task.sleep(for: .milliseconds(100)) }
             model?.earlier()
+            guard step == "document" else { return }
+            // The middle reply's Markdown document, open in the window.
+            for _ in 0..<50 where model?.current?.shows(version: notes.v) != true { try? await Task.sleep(for: .milliseconds(100)) }
+            model?.openFile(notes)
         }
     }
 
@@ -136,6 +178,17 @@ enum ReferenceDemo {
             try await Task.sleep(for: delay)
             guard !failing, index == 33 else { return nil }
             return HistoryTurn(i: 33, role: .claude, at: Date().addingTimeInterval(-50 * 60), text: third)
+        }
+        live.download = { version in
+            try? await Task.sleep(for: delay)
+            if failing { return .failed(.unreadable) }
+            switch version {
+            case notes.v: return .bytes(Data(notesText.utf8))
+            case table.v: return .bytes(Data(tableText.utf8))
+            case barChart.v: return .bytes(KeptDemo.chart(variant: 1))
+            case heatmap.v: return .bytes(heatmapPicture())
+            default: return .failed(.missing)
+            }
         }
         live.thumbnail = { version in
             try? await Task.sleep(for: delay)
