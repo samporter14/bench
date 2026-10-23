@@ -1712,9 +1712,8 @@ A write that gets no answer is **unknown**: it may have been made, and it is
 neither done nor failed. The card, the reply window and Quick Start say "Not
 sure that went through. Checking…", and the session is read once more:
 approve checks that the plan still waits at that version, an answer that the
-question is still pending, a message for a dated turn of yours with the same
-words (or a larger queued count), a permission that the request is still at
-the head, a new session by its intent id. Then the answer is shown as it is:
+question is still pending, a message for a turn that is that very message, a
+permission that the request is still at the head, a new session by its intent id. Then the answer is shown as it is:
 done; "That didn't go through. Try again." when the read shows it didn't
 land; or "Not sure that went through…" when even that read can't tell. The
 same words sent again are the daemon's own repeat (a plan already approved, a
@@ -1728,7 +1727,23 @@ add a second copy."
 A session's actions go one at a time. A turn that runs out of time ends and
 the next begins; what it was doing is cancelled and sends nothing more. It
 says "Not sure that went through" only if its write had left, otherwise that
-nothing was sent.
+nothing was sent. A caller that gives up while its action waits is answered at
+once, but the action keeps its place until those ahead of it have finished, and
+then ends without reading or writing; the next one still waits behind them
+(since Codex's review of 1.0).
+
+A message is found by what ties a turn to it alone. A turn of yours carries the
+intent id it was sent with (a user row's `_intent_id`, read with its attachment
+lines' file ids only to tell a message just sent from another; the phone never
+receives either), and a turn with this message's intent id is this message,
+whatever its words. A turn with another intent id never is; with the same words
+since the send the answer is "Not sure", not "didn't go through". A turn with no
+intent id is this message only when all of it agrees: the same words whole, the
+same files by id, and a time no earlier than the send. A queue that grew says
+nothing of whose message joined it, so it leaves the answer "Not sure", and the
+phone keeps the words. A photo's turn that runs out of time stops at its next
+step: one given up on while it reads the session uploads nothing, and an upload
+never starts for a caller already given up on.
 
 ### Answering from the card (Lab/QuestionReply.swift, Lab/ReplyWindow.swift, since 0.7.0)
 
@@ -5300,7 +5315,12 @@ reconstruction's text with `{{artifact:<v>}}` rewritten to `../data/<name>`
 for the inputs that were kept (the daemon's own script bundle does the same
 to its `inputs/`). README.md is written last and the folder renamed into
 place. "Keeping 2 of 4 files…" meanwhile; Cancel stops the reads and deletes
-the hidden folder. A figure that vanished mid-way: nothing is kept, the tile
+the hidden folder whenever it is pressed: between two files, while the last file
+is being written (the write finishes, then the keep stops), and while Claude
+Science's version is asked; a Cancel never leaves a folder behind. From the
+moment README.md is written and the folder renamed into place it can no longer
+stop it: the status reads "Finishing…", Cancel is dimmed ("The folder is being
+put in place. It can't be cancelled now."), and the keep ends as kept. A figure that vanished mid-way: nothing is kept, the tile
 reads "Gone", and the sheet says "Version 3 isn't in Claude Science any more,
 so nothing was kept. Choose another version, or Cancel."; never another
 version in its place. A folder is its figure (since the safety batch, Codex's
@@ -5315,9 +5335,20 @@ here, so nothing was kept. Choose another version, or Cancel." or
 disk." Any other file that couldn't be copied is listed under `missing:` and
 the sheet stays: "Kept 3 of 4 files. The data it was drawn
 from wasn't copied.", the row saying why in clay-text, with **Try Again**
-(copies only what is missing, into the folder, and rewrites the README),
+(copies only what is missing, into the folder, and updates the README),
 **Show in Finder** and **Done**. Everything copied: the sheet closes and the
 Kept section shows the new row; no card, no toast.
+
+**Updating a README keeps the person's words (since Codex's review of 1.0).**
+Try Again changes only what Capsid keeps in README.md: the `files:` and
+`missing:` rows of the front matter and the "Not copied" and "Checksums"
+sections (`KeptReadme.updating`). Every other byte stays: a section or note a
+person added, their spacing, the legend, a byte order mark. The write is checked
+against what was read (`KeptDisk.replaceReadme(…lastRead:)`, the comparison and
+the write in one disk call); if README.md was edited in another app meanwhile it
+is left as it is, and the sheet says "The files landed, but README.md couldn't
+be updated to list them. README.md was changed in another app, so Capsid left it
+alone." Try Again then reads it as it is now.
 
 **Recovery and the record (since a Codex review of M3).** A failure before
 anything landed says what Try Again will do (`KeepRetry`): if the sheet's
@@ -5527,8 +5558,15 @@ session's history. You asked: “…”"). The legend comment and fine print say
   Capsid's own. A click tells Capsid, which does what the Mac menu's item
   does (`ConversationMenuMessage.Choice`), and the script closes the page's
   menu the way the page does, with Escape (then a click outside if Escape did
-  nothing). If the page draws the menu again, the items are put back in the
-  same place; if the menu has nothing to copy, Last problem notes that the
+  nothing). In a window shorter than the menu with Capsid's items in it (the
+  smallest main window at 200 to 300% page zoom is 190 to 285 CSS pixels tall;
+  the full menu with its red Delete is 391), the menu takes `max-height`
+  (the window's height less 16) and `overflow-y: auto` on the page's own menu
+  element, so it scrolls and every item can be reached; it is then moved inside
+  the window as before. The two are set only while the group is in the menu and
+  only when it would not fit, and the element's own values come back when the
+  menu closes or is drawn again. If the page draws the menu again, the items are
+  put back in the same place; if the menu has nothing to copy, Last problem notes that the
   figure menu didn't look as Capsid expects (`figureMenuNotUnderstood`). Arrow
   keys reach the items, since the page re-queries its items on each key.
   Tiles of files that show no picture (Markdown, CSV) carry no address in the
@@ -6177,8 +6215,16 @@ the typing gate (`ReadingGate`: no read within 400 ms of a key in the main
 window). A finished row is `readSession(_, turns: false)` (one GET; its
 `reply` is Claude's last words) and then its file list and up to three
 thumbnails by the panel's own reader; a stopped row is the failure card's
-shallow frame read, or what the card already read. Turning the setting off
-later hides what was read, on the sheet and the phone.
+shallow frame read, or what the card already read. With the setting off a finished row is its title, project and time and nothing
+more: no lines, no tiles, no pictures, and no Results or Add to Shelf pills (the
+list of its files is as much of the session as its words), whether the files
+were read before the setting went off or not (`SinceYouLeftModel.listing(for:)`
+gives the sheet `.unknown`; rows not yet read are not read, including one whose
+answer was in flight). What was read stays in memory for the return and is drawn
+again if the setting comes back on. The phone's section does the same from
+`since.content`: false asks for no session's artifacts and draws no tile or
+picture, even for files the page already listed. The Finished card and Results
+read files as before; they are outside Since You Left.
 
 **Privacy.** Sam's call (2026-10-22, "features over extreme privacy for now"):
 the failure reason, which DESIGN once kept to the card, also shows on the sheet
