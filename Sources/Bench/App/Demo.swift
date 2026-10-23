@@ -114,6 +114,9 @@ enum Demo {
         /// card instead. Nothing is read from Claude Science, and answering
         /// sends nothing anywhere.
         case sinceYouLeft = "since-you-left"
+        /// The Shelf window (Kept/ShelfPDF*.swift) on the made-up shelf with two figures picked; the
+        /// PDF Make PDF… would make from them is written into a temporary folder (its path is printed).
+        case shelfPdf = "shelf-pdf"
     }
 
     /// `--step` with `--demo since-you-left`; `sheet` when missing.
@@ -321,6 +324,8 @@ enum Demo {
             } else {
                 SinceYouLeftDemo.show(quiet: isQuiet)
             }
+        case .shelfPdf?:
+            ShelfPDFDemo.show()
         case nil:
             break
         }
