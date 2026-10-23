@@ -149,7 +149,7 @@ struct KeepSheetSnapshotTests {
         let thumbnails = ShelfThumbnails()
         for (index, v) in versionIDs.enumerated() { thumbnails.receive(figures[index], for: v) }
         let at = { (minutesAgo: Double) in Date().addingTimeInterval(-minutesAgo * 60) }
-        let defaults = UserDefaults(suiteName: "keep-snapshot-\(UUID().uuidString)")!
+        let defaults = ScratchDefaults.make(prefix: "keep-snapshot").defaults
         let dependencies = KeepDependencies(
             read: { read in
                 switch read {

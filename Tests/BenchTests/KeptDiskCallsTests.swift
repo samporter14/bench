@@ -29,6 +29,9 @@ struct KeptDiskCallsTests {
         ".fileExists(", ".attributesOfItem(", ".subpathsOfDirectory(", ".write(to:", "renamex_np(", "NSFileCoordinator",
         // The Trash.
         ".trashItem(",
+        // A picture read by AppKit on the calling thread (a figure's Copy did this on the main actor, up to
+        // 8 MB, with the Kept folder on a share): the bytes come through `KeptDisk.pictureBytes`, off it.
+        "NSImage(contentsOf",
     ]
 
     /// `file: call` → how many lines of code say it, in every file of Kept/.
@@ -64,8 +67,9 @@ struct KeptDiskCallsTests {
             "KeptDisk.swift: .removeItem(": 1,
             // Taking a folder off the shelf: into the Trash, never deleted.
             "KeptDisk.swift: .trashItem(": 1,
-            // A text file's first bytes, for its card (and a look at whether iCloud has it).
-            "KeptDisk.swift: FileHandle(": 1,
+            // A text file's first bytes, for its card (and a look at whether iCloud has it), and a figure's
+            // whole file for Copy (`pictureBytes`): the two reads by handle.
+            "KeptDisk.swift: FileHandle(": 2,
             // Whether iCloud has a file put away, and a file's date and size (the picture cache's look at it).
             "KeptDisk.swift: resourceValues(": 2,
             // The README's bytes, read whole; the atomic writes of a file, a README and a legend.
@@ -84,6 +88,8 @@ struct KeptDiskCallsTests {
             "ShelfPDF.swift: FileManager.default": 1,
             "ShelfPDF.swift: .moveItem(": 1,
             "ShelfPDF.swift: .removeItem(": 1,
+            // An SVG is drawn from AppKit's image of it, on the same queue.
+            "ShelfPDF.swift: NSImage(contentsOf": 1,
             "ShelfPDFCommand.swift: NSWorkspace": 1,
         ]
         let now = try found()

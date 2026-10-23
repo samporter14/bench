@@ -318,10 +318,9 @@ struct PhoneSetupTests {
 @MainActor
 struct PhoneSetupPollTests {
     private func withDefaults(_ body: @MainActor (UserDefaults) async throws -> Void) async throws {
-        let name = "bench.tests.phone.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
-        try await body(defaults)
+        let scratch = ScratchDefaults.make(prefix: "bench.tests.phone")
+        defer { scratch.discard() }
+        try await body(scratch.defaults)
     }
 
     @Test func aLookReadsStatusOnlyAndOneAtATime() async throws {

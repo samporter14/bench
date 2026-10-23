@@ -177,12 +177,11 @@ private final class Rig {
     let fake = FakeCenter()
     let model = LabModel()
     let notifications: MacNotifications
-    private let defaults: UserDefaults
-    private let suite = "NotificationSweepTests-\(UUID().uuidString)"
+    private let scratch = ScratchDefaults.make(prefix: "NotificationSweepTests")
 
     /// `real` false is a demo or `swift test` itself: no center at all.
     init(on: Bool = true, finishes: Bool = false, names: Bool = true, real: Bool = true) {
-        defaults = UserDefaults(suiteName: suite)!
+        let defaults = scratch.defaults
         defaults.set(on, forKey: SettingsKey.macNotifications)
         defaults.set(finishes, forKey: SettingsKey.macNotifyFinishes)
         defaults.set(names, forKey: SettingsKey.macNotifyNames)
@@ -194,7 +193,7 @@ private final class Rig {
         notifications.start()
     }
 
-    deinit { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+    deinit { scratch.discard() }
 
     /// For an assertion that nothing happened, which a slow machine cannot
     /// make fail: a short wait for anything wrongly started to show itself.

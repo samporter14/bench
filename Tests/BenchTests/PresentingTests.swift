@@ -540,7 +540,9 @@ struct PresentingNotificationTests {
     }
 
     @Test func theSettingsReadWhetherPresenting() {
-        let defaults = UserDefaults(suiteName: "presenting-tests-\(UUID().uuidString)")!
+        let scratch = ScratchDefaults.make(prefix: "presenting-tests")
+        defer { scratch.discard() }
+        let defaults = scratch.defaults
         #expect(NotificationRules.Settings(authorized: true, holdingFinishes: false, defaults: defaults).presenting == false)
         #expect(NotificationRules.Settings(authorized: true, holdingFinishes: false, presenting: true, defaults: defaults).presenting)
     }

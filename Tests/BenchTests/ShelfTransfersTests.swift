@@ -426,13 +426,11 @@ private final class ShelfRig {
     var recent: [SessionStatus] = []
     var storage: (any ShelfCopyStorage)?
     var copied: [ShelfCopyContent] = []
-    let suite = "capsid-tests-\(UUID().uuidString)"
+    let settings = ScratchDefaults.make(prefix: "capsid-tests")
 
     deinit {
         try? FileManager.default.removeItem(at: scratch)
-        if let used = UserDefaults(suiteName: suite), used.persistentDomain(forName: suite) != nil {
-            used.removePersistentDomain(forName: suite)
-        }
+        settings.discard()
     }
 
     /// The writer the shelf saves through: real threads, a fake clock.
@@ -463,7 +461,7 @@ private final class ShelfRig {
             storage: storage,
             exists: exists ?? { saved.exists($0) },
             list: list ?? { saved.names(in: $0) },
-            defaults: UserDefaults(suiteName: suite)!,
+            defaults: settings.defaults,
             pasteboard: { [unowned self] content in
                 self.copied.append(content)
                 return true
@@ -2994,7 +2992,7 @@ struct ShelfLookTimeoutTests {
         let silent = Switch(true)
         let shelf = askingShelf(rig, gate, silent: silent)
         let dropped = rig.scratch.appending(path: "Dropped", directoryHint: .isDirectory)
-        UserDefaults(suiteName: rig.suite)!.set(["proj_a": dropped.path], forKey: ShelfFolderMemory.key)
+        rig.settings.defaults.set(["proj_a": dropped.path], forKey: ShelfFolderMemory.key)
         let ask = Task { await shelf.startingFolder(for: "proj_a") }
         await until { gate.hasEntered && rig.writeClock.pending == 1 }
         #expect(gate.ranOnMain == false)

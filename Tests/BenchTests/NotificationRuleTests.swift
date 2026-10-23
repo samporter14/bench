@@ -189,9 +189,9 @@ struct NotificationRuleTests {
     // MARK: Settings
 
     @Test func theSettingsAreOffByDefaultAndNamesAreOn() throws {
-        let suite = "NotificationRuleTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let scratch = ScratchDefaults.make(prefix: "NotificationRuleTests")
+        defer { scratch.discard() }
+        let defaults = scratch.defaults
         defaults.register(defaults: [
             SettingsKey.macNotifications: false,
             SettingsKey.macNotifyFinishes: false,

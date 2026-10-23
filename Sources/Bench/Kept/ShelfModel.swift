@@ -45,6 +45,11 @@ final class ShelfModel: ObservableObject {
     var pickAnchor: String?
     @Published private(set) var note: Note?
 
+    /// Items being taken off right now, by id: Remove pressed again before the first removal is done (a
+    /// double-click) asks for nothing more, so the second can't fail on a folder that has already moved and
+    /// put its error where the Undo was.
+    private(set) var removing: Set<String> = []
+
     private var subscription: AnyCancellable?
     private var noteTask: Task<Void, Never>?
     private var pending: (folder: URL, until: Date)?
@@ -155,10 +160,11 @@ final class ShelfModel: ObservableObject {
 
     /// Takes the selected item off the shelf (to the Trash) and says so, with Undo.
     func removeSelected() {
-        guard let item = selected else { return }
+        guard let item = selected, removing.insert(item.id).inserted else { return }
         let neighbour = neighbour(of: item)
         Task { [weak self] in
             guard let self else { return }
+            defer { removing.remove(item.id) }
             let removal = await shelf.remove(item)
             if removal.isEmpty {
                 say(ShelfRules.couldntRemove(item.fileName, removal.problem))

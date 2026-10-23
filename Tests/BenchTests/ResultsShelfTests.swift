@@ -151,19 +151,12 @@ private final class FakeShelf {
     /// A folder of this test's own, for the temporary copies and anything real.
     let scratch = FileManager.default.temporaryDirectory.appending(path: "capsid-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
     var temporaryFolder: URL { scratch.appending(path: ShelfTemporaryCopies.folderName, directoryHint: .isDirectory) }
-    let suite = "capsid-tests-\(UUID().uuidString)"
-    let defaults: UserDefaults
-
-    init() {
-        defaults = UserDefaults(suiteName: suite)!
-    }
+    private let settings = ScratchDefaults.make(prefix: "capsid-tests")
+    var defaults: UserDefaults { settings.defaults }
 
     deinit {
         try? FileManager.default.removeItem(at: scratch)
-        // A suite nothing was saved in has no file to clean up.
-        if let used = UserDefaults(suiteName: suite), used.persistentDomain(forName: suite) != nil {
-            used.removePersistentDomain(forName: suite)
-        }
+        settings.discard()
     }
 
     func shelf(thumbnails: ShelfThumbnails = ShelfThumbnails()) -> ResultsShelf {

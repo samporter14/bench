@@ -184,8 +184,8 @@ private final class Rig {
     let scratch: URL
     let root: URL
     let disk: KeptDisk
-    private let suite = "capsid-tests-keep-\(UUID().uuidString)"
-    let defaults: UserDefaults
+    private let settings = ScratchDefaults.make(prefix: "capsid-tests-keep")
+    var defaults: UserDefaults { settings.defaults }
 
     /// `hold` makes the disk one that can stop answering, as a dropped volume does.
     init(hold: HeldCalls? = nil) throws {
@@ -199,7 +199,6 @@ private final class Rig {
         } else {
             disk = KeptDisk(root: { root })
         }
-        defaults = UserDefaults(suiteName: suite)!
     }
 
     /// Where the made-up session's keeps go: its project's name.
@@ -228,7 +227,7 @@ private final class Rig {
 
     func tearDown() {
         try? FileManager.default.removeItem(at: scratch)
-        defaults.removePersistentDomain(forName: suite)
+        settings.discard()
     }
 }
 

@@ -103,11 +103,11 @@ struct ShelfAddSnapshotTests {
         guard let directory = ShelfSnapshot.directory else { return }
         // Nothing real: a folder and a defaults suite of this test's own, removed after.
         let scratch = FileManager.default.temporaryDirectory.appending(path: "capsid-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
-        let suite = "capsid-tests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let settings = ScratchDefaults.make(prefix: "capsid-tests")
+        let defaults = settings.defaults
         defer {
             try? FileManager.default.removeItem(at: scratch)
-            if defaults.persistentDomain(forName: suite) != nil { defaults.removePersistentDomain(forName: suite) }
+            settings.discard()
         }
         let results = ResultsShelf(dependencies: .init(
             recent: { [] }, older: { _ in nil }, read: { _ in .unreadable }, isReady: { false }, open: { _ in },

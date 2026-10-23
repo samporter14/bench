@@ -197,7 +197,7 @@ struct ShelfView: View {
             Button("Show Where It Came From") { ShelfActions.showWhereItCameFrom(item) }
                 .disabled(Demo.mode != nil)
             Button("Quick Look") { model.selection = item.id; quickLookSelected() }
-            Button("Copy") { ShelfActions.copy(item) }
+            Button("Copy") { ShelfActions.copy(item, disk: model.index.disk) }
             Button("Make PDF\u{2026}") { model.makePDF(from: item) }
             Divider()
             Button("Open") { NSWorkspace.shared.open(item.fileURL) }
@@ -344,13 +344,24 @@ enum ShelfActions {
                                               projectName: record.projectName, at: record.sourceRow, mark: record.figure.version)
     }
 
-    /// The file on the pasteboard and, for a picture, the picture too.
-    static func copy(_ item: ShelfItem) {
-        let pasteboard = NSPasteboard.general
+    /// The file on the pasteboard at once and, for a figure, the picture too, in the same item, when it has been
+    /// read (`KeptDisk`, off the main actor) and made ready (`ShelfPicture`, on a thread of its own). Nothing is
+    /// read or decoded on the main actor; the file may be on a share. The picture is added only if nothing else
+    /// has been copied meanwhile. The task is the picture's, for a test to wait for.
+    @discardableResult
+    static func copy(_ item: ShelfItem, disk: KeptDisk, to pasteboard: NSPasteboard = .general) -> Task<Void, Never> {
         pasteboard.clearContents()
-        var objects: [NSPasteboardWriting] = [item.fileURL as NSURL]
-        if item.kind == .figure, let image = NSImage(contentsOf: item.fileURL) { objects.append(image) }
-        pasteboard.writeObjects(objects)
+        pasteboard.writeObjects([item.fileURL as NSURL])
+        let count = pasteboard.changeCount
+        guard item.kind == .figure else { return Task {} }
+        let url = item.fileURL
+        return Task { @MainActor in
+            guard let bytes = try? await disk.pictureBytes(url),
+                  let picture = await ShelfPicture.flavor(of: bytes, fileName: url.lastPathComponent),
+                  pasteboard.changeCount == count else { return }
+            pasteboard.addTypes([picture.type], owner: nil)
+            pasteboard.setData(picture.data, forType: picture.type)
+        }
     }
 
     /// The Keep sheet's subject for an item: its version, pinned to the answer
@@ -478,7 +489,7 @@ struct ShelfDetail: View {
                   ? "The conversation it came from, in Capsid"
                   : "The conversation, at the message that showed it")
             Button(copied ? "Copied" : "Copy") {
-                ShelfActions.copy(item)
+                ShelfActions.copy(item, disk: model.index.disk)
                 copied = true
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(1.5))
@@ -502,18 +513,23 @@ struct ShelfDetail: View {
 
 /// The legend and the files of an item kept with data and code: today's Kept
 /// detail, under the card's main row.
-private struct ShelfExtras: View {
+struct ShelfExtras: View {
     let item: ShelfItem
     @ObservedObject var model: ShelfModel
-    @State private var legend = ""
-    /// The README as last read, so an edit made elsewhere is never written over.
-    @State private var lastRead: String?
-    @State private var problem: String?
-    @State private var changedOutside = false
-    @State private var saveTask: Task<Void, Never>?
+    /// The legend field's text, its saves and its problem (ShelfLegend.swift). One per item: the card puts `.id(item.id)` on this view.
+    @StateObject private var editor: ShelfLegendEditor
+
+    init(item: ShelfItem, model: ShelfModel) {
+        self.item = item
+        self.model = model
+        _editor = StateObject(wrappedValue: ShelfLegendEditor(folder: item.folder, disk: model.index.disk) {
+            await model.index.reload(item.result)
+        })
+    }
 
     private var record: KeptRecord { item.record }
-    private var disk: KeptDisk { model.index.disk }
+    /// The README couldn't be read: the field is off, and the line says why.
+    private var unreadable: Bool { !editor.canEdit && editor.problem != nil }
 
     var body: some View {
         HStack(alignment: .top, spacing: 20) {
@@ -533,7 +549,7 @@ private struct ShelfExtras: View {
             .frame(width: 260, alignment: .leading)
             VStack(alignment: .leading, spacing: 6) {
                 label("Your legend")
-                TextField("The legend you\u{2019}ll use in the paper", text: $legend, axis: .vertical)
+                TextField("The legend you\u{2019}ll use in the paper", text: $editor.legend, axis: .vertical)
                     .lineLimit(2...8)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
@@ -544,23 +560,25 @@ private struct ShelfExtras: View {
                     .background(Solanum.page, in: .rect(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Solanum.strong, lineWidth: 1))
                     .accessibilityLabel("Your legend")
-                    .onChange(of: legend) { _, text in scheduleSave(text) }
-                if let problem {
+                    .disabled(!editor.canEdit)
+                    .opacity(unreadable ? 0.55 : 1)
+                if let problem = editor.problem {
                     note(problem)
                 }
-                if changedOutside {
+                if editor.changedOutside {
                     HStack(spacing: 8) {
                         note("README.md was changed in another app.")
-                        Button("Use Mine") { Task { await save(legend, force: true) } }
-                        Button("Use Theirs") { Task { await load() } }
+                        Button("Use Mine") { Task { await editor.useMine() } }
+                        Button("Use Theirs") { Task { await editor.load() } }
                     }
                     .buttonStyle(SolanumPillStyle(.small))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task { await load() }
-        .onDisappear { saveTask?.cancel() }
+        .task { await editor.load() }
+        // Another item chosen, or the window closed: what was typed in the last second is saved now, not dropped.
+        .onDisappear { editor.flush() }
     }
 
     private func label(_ text: String) -> some View {
@@ -596,42 +614,6 @@ private struct ShelfExtras: View {
         .contextMenu {
             Button("Open") { NSWorkspace.shared.open(url) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-        }
-    }
-
-    // MARK: The legend
-
-    private func load() async {
-        changedOutside = false
-        problem = nil
-        guard let read = try? await disk.readme(at: item.folder) else { return }
-        lastRead = read.markdown
-        legend = read.text.legend
-    }
-
-    private func scheduleSave(_ text: String) {
-        guard let lastRead, KeptReadme.parse(lastRead)?.text.legend != text else { return }
-        saveTask?.cancel()
-        saveTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled else { return }
-            await save(text, force: false)
-        }
-    }
-
-    private func save(_ text: String, force: Bool) async {
-        var base = lastRead
-        if force, let fresh = try? await disk.readme(at: item.folder) { base = fresh.markdown }
-        guard let base else { return }
-        do {
-            lastRead = try await disk.replaceLegend(at: item.folder, with: text, lastRead: base)
-            changedOutside = false
-            problem = nil
-            await model.index.reload(item.result)
-        } catch KeptDiskError.changedOutside {
-            changedOutside = true
-        } catch {
-            problem = "Couldn\u{2019}t save the legend: \(KeptDiskError.sentence(error)) Your text is kept here."
         }
     }
 }

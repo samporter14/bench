@@ -266,6 +266,16 @@ final class KeptDisk {
         }
     }
 
+    /// A kept picture's bytes, whole, for Copy: nil for a file that isn't under
+    /// the Kept folder, that iCloud has put away (never fetched for a copy), is
+    /// empty, or is bigger than `limit` (the 8 MB a keep takes).
+    func pictureBytes(_ file: URL, limit: Int = 8 << 20) async throws -> Data? {
+        let root = rootURL()
+        return try await perform(.look, allowed: lookLimit) { wanted in
+            KeptDiskWork.bytes(of: file, root: root, limit: limit)
+        }
+    }
+
     /// Whether `<root>/<collection>/<name>` is there already: false when the
     /// collection isn't there yet. The names are cleaned as `prepare` cleans them.
     func isTaken(collection: String, name: String) async throws -> Bool {
@@ -831,6 +841,17 @@ private enum KeptDiskWork {
             if let text = String(data: data.prefix(data.count - cut), encoding: .utf8) { return text }
         }
         return nil
+    }
+
+    /// A file's bytes when it is under `root`, is here, and is no bigger than
+    /// `limit`: one byte more than that is read to tell. Nil otherwise.
+    static func bytes(of file: URL, root: URL, limit: Int) -> Data? {
+        guard file.path.hasPrefix(root.path + "/") else { return nil }
+        if isPutAway(file) { return nil }
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: limit + 1), !data.isEmpty, data.count <= limit else { return nil }
+        return data
     }
 
     // MARK: The Trash

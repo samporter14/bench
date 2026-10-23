@@ -217,10 +217,9 @@ struct AppIconChoiceTests {
     // MARK: The setting
 
     private func suite(_ body: (UserDefaults) throws -> Void) throws {
-        let name = "AppIconChoiceTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
-        try body(defaults)
+        let scratch = ScratchDefaults.make(prefix: "AppIconChoiceTests")
+        defer { scratch.discard() }
+        try body(scratch.defaults)
     }
 
     /// Read from the registered defaults rather than the stored ones, so a value set on this

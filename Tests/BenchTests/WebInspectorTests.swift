@@ -6,10 +6,9 @@ import Testing
 
 @Suite struct WebInspectorTests {
     private func defaults(_ body: (UserDefaults) -> Void) {
-        let name = "capsid-inspector-tests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        body(defaults)
-        defaults.removePersistentDomain(forName: name)
+        let scratch = ScratchDefaults.make(prefix: "capsid-inspector-tests")
+        defer { scratch.discard() }
+        body(scratch.defaults)
     }
 
     @Test func aReleaseBuildIsNotInspectableByDefault() {

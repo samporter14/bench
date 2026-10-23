@@ -858,9 +858,9 @@ struct LabInsightsGateTests {
     /// registered defaults: those are in memory, so no preferences file is
     /// ever written for it.
     private func gate(plans: Bool?, cards: Bool?) throws -> Bool {
-        let name = "LabInsightsTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+        let scratch = ScratchDefaults.make(prefix: "LabInsightsTests")
+        defer { scratch.discard() }
+        let defaults = scratch.defaults
         var registered: [String: Any] = [:]
         if let plans { registered[SettingsKey.showPlansOnCard] = plans }
         if let cards { registered[SettingsKey.showCards] = cards }
