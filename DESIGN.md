@@ -5509,6 +5509,32 @@ session's history. You asked: “…”"). The legend comment and fine print say
   the page is logged. Both are in the compatibility inventory, checked only
   when used. Board 10's in-page "Shelf" pill on a file chip is left out: there
   is no verified stable hook on the page's chips.
+
+  **Claude Science's own figure menu** (since 1.0's walkthrough, Sam: "2 I
+  can't find at all"). Claude Science 0.1.70 draws the menu for a figure
+  itself (`div[role="menu"][aria-label="Artifact actions"]`, in a portal on
+  `document.body`): one menu for a tile, a picture in a reply, a card under a
+  reply and the side pane's image. Its opener calls `preventDefault()` and
+  `stopPropagation()`, so the Mac's menu never opens on them. And the page lays
+  a transparent annotation layer over each picture, so the old
+  `closest("img, a[href]")` found nothing under the click. The script now
+  takes the picture under the pointer (a sibling of the layer, or a tray
+  card's thumbnail) and, for two seconds after a right-click on one whose
+  address names a version, waits for that menu to open. It then adds a rule
+  and the four items at the end, above the menu's red Delete and its rule
+  when it has one, so Delete stays last. They are drawn with the menu's own
+  item classes and icon box (never its words) and with line icons of
+  Capsid's own. A click tells Capsid, which does what the Mac menu's item
+  does (`ConversationMenuMessage.Choice`), and the script closes the page's
+  menu the way the page does, with Escape (then a click outside if Escape did
+  nothing). If the page draws the menu again, the items are put back in the
+  same place; if the menu has nothing to copy, Last problem notes that the
+  figure menu didn't look as Capsid expects (`figureMenuNotUnderstood`). Arrow
+  keys reach the items, since the page re-queries its items on each key.
+  Tiles of files that show no picture (Markdown, CSV) carry no address in the
+  page and get no items; Results and the Shelf's search are the way in for
+  them. The menu's selectors are page hooks in the inventory, checked when
+  used.
 - *The toast* (board 10): a dark glass pill at the bottom centre of the main
   window, 96 points above its foot: a clay check, "On your shelf: <name>",
   Undo and Show Shelf (ivory), about four seconds, held while the pointer is
