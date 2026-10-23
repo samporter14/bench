@@ -73,13 +73,16 @@ struct ShelfView: View {
                     .fixedSize()
                 }
                 .sharedBackgroundVisibility(.hidden)
+                // On the Mac, items start at the leading edge, and with the title removed nothing pushes them right:
+                // board 12 has the search at the right of the bar (board 11's window drew it by the project pill).
+                ToolbarSpacer(.flexible)
                 if model.showsExportPill {
-                    ToolbarItem(placement: .primaryAction) {
+                    ToolbarItem {
                         ShelfExportPDFButton(model: model)
                     }
                     .sharedBackgroundVisibility(.hidden)
                 }
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem {
                     ShelfSearchPill(search: $model.search, width: ShelfSearchPill.width(forWindow: size.width))
                 }
                 .sharedBackgroundVisibility(.hidden)

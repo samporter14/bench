@@ -5623,24 +5623,53 @@ Capsid reads at once. Earlier keeps looking."); it scrolls to the marked file.
 With no row, the newest reply that shows the file. A draft that a later
 version replaced shows as that draft.
 
-**The Shelf window** (board 11, left): 880 × 820, minimum 620 × 480, frame
-`CapsidShelf`; "Shelf" with a project pill ("All projects"; collections are
-projects) and a search pill in the title bar; chips "All · 12 / Figures · 7 /
-Documents · 3 / Tables · 2", counting what the project and the search leave
-(the chosen chip ink with page-coloured words); a grid of four cards a row,
-newest first, with Quick Look pictures (a note's or table's first lines are
-drawn instead, since Quick Look's page of them is too small to read), the
-chosen card a 2-point ink stroke; and the detail card at the foot: a 260 ×
-170 preview, the name, "From Claude's answer at 8:47 in “Plate reader QC” ·
-Assay development · version 3", what was asked, Claude's words (three lines,
-More), and **Show Where It Came From** (clay), Copy, Keep with Data and Code…
-(the Keep sheet pinned to that answer, sized to the window) and Remove (to the
-Trash, with a dark Undo pill for eight seconds). An item kept with data and
-code also shows its legend field and files below, so nothing the Kept window
-had is lost; a figure shelved and later kept with data and code is one item,
-shown from the richer folder. ↑↓←→ move, Space is Quick Look, a card drags
-out as a file. Empty: "Nothing on your shelf yet" and "Right-click a figure in
-a conversation and choose Add to Shelf." Settings → General → "Shelf folder".
+**The Shelf window** (board 12, "the same shelf, a little prettier", Sam:
+"2 approved"; board 11 before it): 940 × 820, minimum 620 × 480, frame
+`CapsidShelf` (a window whose frame was saved keeps it). In the title bar,
+"Shelf" with a project pill ("All projects"; collections are projects) at the
+left and the search at the right, 200 points (160 in a window under 760);
+Export as PDF… joins them only while two or more are picked. Chips "All · 12 /
+Figures · 7 / Documents · 3 / Tables · 2", counting what the project and the
+search leave (the chosen chip ink with page-coloured words). The cards stand
+under quiet day headings (12-point semibold, muted), by when each was put on
+the shelf (the README's `kept_at`, the newest of an item's folders) in the
+user's calendar: **Today**, **Yesterday**, **This week** (the five days before
+yesterday, the days a card's caption names by weekday), **Earlier this
+month**, then the month ("September", "September 2025" in another year).
+Newest first; a date after now is Today's; a day with nothing on it has no
+heading, and the chips and the project pill filter the days with the cards
+(`ShelfRules.days`). Three cards a row at the window's first width, two at its
+narrowest, more when it is made wide (`ShelfRules.columns(forWidth:)`: 24-point
+gutters, 18 between cards, none narrower than 240). A card's picture is as
+wide as its column and 150/285 of that tall, 12-point corners, a soft hairline
+(ink at 12%), the picked card a 2-point ink stroke: a figure fills it on white
+paper a few points in (white in the dark too, framed by the card's slate);
+Quick Look's picture of a table or a page, a note's or table's first lines
+(Quick Look's page of them is too small to read), at the new size. Under it the
+name: the file's own with its extension in grey and never bold
+("z_prime_by_plate" then ".png"; only a last part of one to eight letters and
+digits with a letter in it, so "results_v1.0" stays whole), or a keep's own
+name as it is; then "Plate reader QC · 8:47 AM". ↑ and ↓ move by the rows
+drawn, across the headings, to the same column (the last card of a shorter
+row); ← and → run on through the cards. The detail card at the foot (14-point
+corners, ink at 20% for its edge): a 250 × 150 preview (less in a narrow
+window), the name at 17 points with its grey extension, "Plate reader QC ·
+Assay development · version 3 · 8:47 AM" (the session, the project, the
+version and when Claude answered, each only when known), what was asked in
+quotes, muted, Claude's words (three lines, More; when they are only the
+session's last answer, a muted line says so: "Claude's last answer in the
+session; the one that showed this wasn't found."), then **Show Where It Came
+From** (clay, the one action that asks), Copy, and a round ⋯ with Keep with
+Data and Code… (the Keep sheet pinned to that answer, sized to the window;
+only for an item not kept with its data and code), Export Figure as PDF…, and,
+after a rule, Remove (to the Trash, with a dark Undo pill for eight seconds).
+Each of the ⋯ items is also a VoiceOver action on the card (`ShelfRules.moreMenu`).
+An item kept with data and code also shows its legend field and files below,
+so nothing the Kept window had is lost; a figure shelved and later kept with
+data and code is one item, shown from the richer folder. Space is Quick Look,
+a card drags out as a file. Hairlines, no shadows. Empty: "Nothing on your
+shelf yet" and "Right-click a figure in a conversation and choose Add to
+Shelf." Settings → General → "Shelf folder".
 
 `--demo kept --step window` shows the Shelf with ten made-up items of every
 kind; `--demo reference --step shelved` the reference window with a shelved
@@ -5655,7 +5684,10 @@ back to one. While several are picked the cards wear their page number, and
 a card in place of the detail says how many, shows the pages small, and holds
 the one clay action, **Export 3 Figures as PDF…** (the number picked; **Export
 Figure as PDF…** for one). The same command is a quiet pill in the title bar
-(⌘P) and in a card's menu. The menu names what it exports: with the count on
+once two or more are picked (board 12), in the detail's ⋯ and a card's menu
+with one, and ⌘P with one or several: the key is a button of its own that
+nothing shows (`ShelfExportPDFKey`), and the pill has none, so it never asks
+twice. The menu names what it exports: with the count on
 a card among the picks, "Export Figure as PDF…" on a card outside them, which
 is exported alone. The pill says **Export as PDF…** without the count: at the
 window's narrowest, 620 points, the bar also holds "Shelf", the project pill
