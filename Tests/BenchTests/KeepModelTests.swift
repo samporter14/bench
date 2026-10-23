@@ -42,6 +42,17 @@ private enum Made {
 @MainActor
 private final class Science {
     var inputs = [Made.in1]
+    /// The inputs a version's provenance lists, when they aren't `inputs`.
+    var inputsByVersion: [String: [String]] = [:]
+    /// The versions whose provenance was read, in order.
+    private(set) var lineageReads: [String] = []
+    /// A provenance read waits here while `holdLineage`; `releaseLineage` lets them go.
+    var holdLineage = false
+    private var lineageWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Settles (the wait for a choice to stay) asked for, held while `holdSettles`.
+    private(set) var settles = 0
+    var holdSettles = false
+    private var settleWaiters: [CheckedContinuation<Void, Never>] = []
     /// The answer the history search finds.
     var showing: ShowingMessage? = Made.showing(Made.v4)
     private(set) var showingCalls = 0
@@ -78,6 +89,35 @@ private final class Science {
         return .found(showing)
     }
 
+    /// The read as the sheet makes it: a provenance read can be held.
+    func readHeld(_ read: ArtifactRead) async -> ShelfTransferResult {
+        if case .lineage = read, holdLineage {
+            await withCheckedContinuation { lineageWaiters.append($0) }
+        }
+        return self.read(read)
+    }
+
+    func releaseLineage() {
+        holdLineage = false
+        let waiting = lineageWaiters
+        lineageWaiters = []
+        for waiter in waiting { waiter.resume() }
+    }
+
+    /// The wait for a choice to stay: at once, unless held.
+    func settle() async {
+        settles += 1
+        guard holdSettles else { return }
+        await withCheckedContinuation { settleWaiters.append($0) }
+    }
+
+    func releaseSettles() {
+        holdSettles = false
+        let waiting = settleWaiters
+        settleWaiters = []
+        for waiter in waiting { waiter.resume() }
+    }
+
     func read(_ read: ArtifactRead) -> ShelfTransferResult {
         switch read {
         case .facts(let v):
@@ -98,10 +138,11 @@ private final class Science {
                                 at: Made.at(Double(Made.n($0))), parent: nil)
             }))
         case .lineage(let v):
+            lineageReads.append(v)
             return .answered(.lineage(ArtifactLineage(
                 v: v, code: Made.script, codeCut: false, description: nil, language: "python", pending: false,
                 unavailableModel: nil, unavailableReason: nil, hasCells: true, hasEnvironment: true, mappingStatus: "complete",
-                inputs: inputs.map { LineageInput(v: $0, a: Made.inputArtifact, name: inputNames[$0], file: nil, how: "runtime", inferred: false) })))
+                inputs: (inputsByVersion[v] ?? inputs).map { LineageInput(v: $0, a: Made.inputArtifact, name: inputNames[$0], file: nil, how: "runtime", inferred: false) })))
         case .download(let v):
             downloads.append(v)
             if let answer = onDownload?(v) { return answer }
@@ -169,7 +210,7 @@ private final class Rig {
                                   size: Made.figure(v).count, at: Made.at(Double(Made.n(v))))
         let science = self.science, root = self.root
         let dependencies = KeepDependencies(
-            read: { science.read($0) },
+            read: { await science.readHeld($0) },
             showing: { _, versions, _ in science.search(versions) },
             lastAnswer: { _ in science.last },
             thumbnails: ShelfThumbnails(),
@@ -179,7 +220,8 @@ private final class Rig {
             scienceVersion: { "0.1.70" },
             capsidVersion: "1.0",
             now: { Made.at(100) },
-            didKeep: { _ in })
+            didKeep: { _ in },
+            settle: { _ in await science.settle() })
         return KeepModel(subject: KeepSubject(session: Made.session, entry: entry, pinned: pinned, selectsItsVersion: selectsItsVersion),
                          dependencies: dependencies)
     }
@@ -908,5 +950,174 @@ struct KeepFigureFirstModelTests {
         let back = try await rig.disk.readme(at: outcome.folder)
         #expect(back.record.figure.sha256 == KeptDisk.sha256(of: Made.figure(Made.v4)))
         #expect(back.record.missing.map(\.name) == ["z_prime_by_plate.csv"])
+    }
+}
+
+// MARK: E. Choosing a version: once the keep has begun, and once the choice stays
+
+@MainActor
+struct KeepChoosingTests {
+    @Test func stepsThroughTheTilesReadTheProvenanceOnceForTheOneStoppedOn() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        // The sheet's own first choice reads at once, with no wait.
+        #expect(rig.science.settles == 0)
+        #expect(rig.science.lineageReads == [Made.v4])
+
+        // Arrow, arrow, arrow: each choice waits to stay, and the next one cancels it.
+        rig.science.holdSettles = true
+        model.choose(Made.v3)
+        model.choose(Made.v2)
+        model.choose(Made.v1)
+        try await until("the waits begin") { rig.science.settles == 3 }
+        #expect(model.choices.version == Made.v1)
+        #expect(model.readingProvenance)
+        #expect(!model.canKeep)
+        #expect(rig.science.lineageReads == [Made.v4])
+
+        rig.science.releaseSettles()
+        try await until("the one it stopped on is read") { model.settled }
+        // One more read, for the version stopped on; the ones stepped past never asked the daemon.
+        #expect(rig.science.lineageReads == [Made.v4, Made.v1])
+        #expect(model.plan?.figure.version == Made.v1)
+    }
+
+    @Test func aChoiceThatMovedOnIsNotReadWhenItsWaitEnds() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        rig.science.holdSettles = true
+        model.choose(Made.v2)
+        try await until("the wait begins") { rig.science.settles == 1 }
+        // Cancel (or the sheet closing) while it waits: nothing is read afterwards.
+        model.cancel()
+        rig.science.releaseSettles()
+        for _ in 0..<50 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(rig.science.lineageReads == [Made.v4])
+    }
+
+    @Test func versionsCanBeChosenOnlyWhileTheSheetReadsOrIsReadyOrOnlyAnotherVersionHelps() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.vanished = [Made.v4]
+        let model = rig.model()
+        #expect(model.phase == .reading && model.canChoose)
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.canChoose)
+        // The version went: only another version helps, so one can be chosen.
+        model.keep()
+        try await until("the keep fails") { model.failure != nil }
+        #expect(model.failure?.retry == nil)
+        #expect(model.canChoose)
+        // A failure that Try Again answers leaves the version as it is.
+        let other = try Rig()
+        defer { other.tearDown() }
+        other.science.downloadFailures[Made.v4] = 1
+        let again = other.model()
+        again.open()
+        try await until("the sheet is filled") { again.isReady }
+        again.keep()
+        try await until("the keep fails") { again.failure != nil }
+        #expect(again.failure?.retry == .keep)
+        #expect(!again.canChoose)
+        again.choose(Made.v3)
+        #expect(again.choices.version == Made.v4)
+    }
+
+    @Test func afterAPartialKeepTheVersionStaysAndTryAgainFinishesThatVersion() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        // Version 3's provenance lists a different table that has the same file name.
+        rig.science.inputsByVersion[Made.v3] = [Made.in2]
+        rig.science.inputNames[Made.in2] = "z_prime_by_plate.csv"
+        rig.science.downloadFailures[Made.in1] = 1
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.choices.version == Made.v4)
+        model.keep()
+        try await until("the keep ends") { model.partialOutcome != nil }
+        let first = try #require(model.partialOutcome)
+        #expect(first.missing.map(\.name) == ["z_prime_by_plate.csv"])
+
+        // The tiles are still there to press (and the arrow keys): the sheet takes no notice.
+        #expect(!model.canChoose)
+        model.choose(Made.v3)
+        try await until("a choice would be read") { model.settled }
+        #expect(model.choices.version == Made.v4)
+        #expect(model.plan?.figure.version == Made.v4)
+
+        model.retry()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.folder == first.folder && outcome.isComplete)
+        // Version 4's table landed in version 4's folder, not version 3's.
+        let table = try Data(contentsOf: outcome.folder.appending(path: "data/z_prime_by_plate.csv", directoryHint: .notDirectory))
+        #expect(table == Made.table(Made.in1))
+        let back = try await rig.disk.readme(at: outcome.folder)
+        #expect(back.record.figure.version == Made.v4)
+        #expect(back.record.files.first { $0.path == "data/z_prime_by_plate.csv" }?.version == Made.in1)
+        #expect(!rig.science.downloads.contains(Made.in2))
+    }
+
+    @Test func tryAgainCopiesWhatTheKeepWasMadeWithNotWhatIsTickedNow() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.downloadFailures[Made.in1] = 1
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep ends") { model.partialOutcome != nil }
+        // The data row is unticked afterwards (the sheet disables it; the model must not depend on that).
+        model.toggle(.data, false)
+        #expect(model.plan?.files.contains { $0.role == .data } == false)
+        model.retry()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.isComplete && outcome.kept == 3)
+        #expect(exists(outcome.folder, "data/z_prime_by_plate.csv"))
+        let back = try await rig.disk.readme(at: outcome.folder)
+        #expect(back.record.missing.isEmpty)
+    }
+
+    @Test func anUntickMadeWhileTheProvenanceIsReadStaysUnticked() async throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.science.holdLineage = true
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is ready and reading the provenance") { model.phase == .ready && model.readingProvenance }
+        #expect(model.isOn(.answer))
+        model.toggle(.answer, false)
+        rig.science.releaseLineage()
+        try await until("the provenance is read") { model.settled }
+        // The lineage landing gives the data and code rows their defaults, and leaves the answer's alone.
+        #expect(!model.isOn(.answer))
+        #expect(model.isOn(.data) && model.isOn(.code))
+        #expect(model.plan?.answer == nil)
+    }
+
+    @Test func aSecondKeepDoesntReplaceASheetInUse() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let host = ShelfSheetHost()
+        let first = rig.model(), second = rig.model()
+        var made = 0
+        #expect(host.present { made += 1; return first })
+        #expect(host.keeping === first)
+        // Keep… again, on this figure or another: the sheet in use stays, and the second is never made.
+        #expect(!host.present { made += 1; return second })
+        #expect(host.keeping === first && made == 1)
+        host.keeping = nil
+        #expect(host.present { made += 1; return second })
+        #expect(host.keeping === second && made == 2)
     }
 }

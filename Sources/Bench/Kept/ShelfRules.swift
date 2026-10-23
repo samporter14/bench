@@ -289,6 +289,8 @@ enum ShelfRules {
         var at: Date?
         /// Claude's last answer in the session, in place of the one that showed the file.
         var isLast: Bool
+        /// Some of its words are cut (`KeepPinnedAnswer.cut`).
+        var cut = false
     }
 
     /// The record and the sections for a figure put on the shelf: no data and
@@ -314,6 +316,7 @@ enum ShelfRules {
             } else {
                 attribution = KeptReadme.attribution(answerAt: answer.at, timeZone: timeZone, locale: locale)
             }
+            if answer.cut { attribution += " \(KeptReadme.cutSentence)" }
         }
 
         // Where it came from, in words: the session, then the answer, then the file.

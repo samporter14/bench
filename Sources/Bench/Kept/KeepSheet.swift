@@ -173,7 +173,10 @@ struct KeepSheet: View {
                 .frame(height: isReading ? VersionTileView.placeholderHeight : 24, alignment: .topLeading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
+                // Once a keep has begun, or landed in part, the version stays as it was
+                // (KeepModel.canChoose): Try Again finishes that version's folder.
                 VersionGrid(model: model)
+                    .disabled(!model.canChoose)
             }
             let sentence = model.versionSentence
             if !sentence.isEmpty {
@@ -454,7 +457,7 @@ struct VersionGrid: View {
                         VersionTileView(tile: tile, chosen: model.choices.version == tile.v, store: model.thumbnails,
                                         kind: model.subject.entry.kind)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .onTapGesture { if !tile.gone { model.choose(tile.v) } }
+                            .onTapGesture { if !tile.gone, model.canChoose { model.choose(tile.v) } }
                     }
                     // A short last row keeps its tiles the width of the rest.
                     ForEach(0..<(Self.columns - row.count), id: \.self) { _ in
@@ -479,7 +482,7 @@ struct VersionGrid: View {
 
     private func move(_ step: Int) {
         let tiles = model.tiles.filter { !$0.gone }
-        guard !tiles.isEmpty else { return }
+        guard model.canChoose, !tiles.isEmpty else { return }
         let index = tiles.firstIndex { $0.v == model.choices.version } ?? (step > 0 ? -1 : tiles.count)
         let next = min(max(index + step, 0), tiles.count - 1)
         model.choose(tiles[next].v)

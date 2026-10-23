@@ -205,6 +205,10 @@ enum KeptReadme {
         return first + "\n" + second
     }
 
+    /// Said after the attribution when words kept here are cut: a long turn the
+    /// page cut at 2,000 characters, and its rest couldn't be read in time.
+    static let cutSentence = "The text is cut off: the rest couldn\u{2019}t be read."
+
     /// "From Claude’s answer at 8:12 AM on 22 October 2026."
     static func attribution(answerAt date: Date?, timeZone: TimeZone = .current, locale: Locale = .current) -> String {
         guard let date else { return "From Claude’s answer." }
