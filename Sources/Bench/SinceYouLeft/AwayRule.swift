@@ -3,7 +3,7 @@
 // the screen is off and the calendar come in as values, so the rule is tested
 // without leaving a Mac alone.
 //
-// Nothing here runs a timer. `AwayWatcher` (SinceYouLeftModel.swift) hands it
+// Nothing here runs a timer. `SinceYouLeftModel.observe` hands it
 // an observation whenever Capsid already looks (a read of the sessions, a
 // wake, an unlock) and the rule decides from the last two what happened:
 //

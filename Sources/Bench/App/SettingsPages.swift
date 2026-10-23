@@ -316,12 +316,12 @@ enum AlertsInfo {
         """
 
     static let sinceYouLeft = """
-        The sheet opens over Capsid's main window the first time you're back after 30 minutes or more away, or \
-        after 10 minutes when a new day has started. It waits while Capsid is quiet for a presentation or Nidus is \
-        focusing.
+        When you're back after 30 minutes or more away (or 10 minutes once a new day has started), the sheet opens \
+        over Capsid's main window if that's the window you're using; otherwise the panel shows a card that opens \
+        it. Neither comes while Capsid is quiet for a presentation or Nidus is focusing.
 
-        Off, nothing opens by itself: the panel shows a card with what finished and stopped, and the toolbar's \
-        list has a Since You Left section at the top. Your phone shows it either way.
+        Off, nothing opens by itself: the panel's card still comes, and the toolbar's list has a Since You Left \
+        section at the top until you press Done. Your phone shows it either way.
         """
 
     static let answerOnCard = """

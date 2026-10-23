@@ -196,6 +196,17 @@ it says why. A note Claude sends while it works comes up as a quiet card. A
 question, a plan, a failure and a finish each have their own sound. With two
 or more sessions working, hover over the panel to see them all.
 
+## Since you left
+
+Come back after half an hour or more and one sheet says what changed while you
+were away: what needs you (answer a question right there), what finished
+(Claude's last words and a few of its files, with Add to Shelf), what stopped
+and why, and how much of your 5-hour limit it used. It opens over Capsid's
+window when that's the window you're using; otherwise the panel shows a card,
+and the activity list keeps a section at the top until you press Done. Your
+phone shows the same. Turn the sheet off in its own foot, or in Settings →
+Alerts.
+
 ## Capsid on your phone
 
 Use Claude Science from your iPhone, iPad or another computer while you're

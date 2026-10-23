@@ -345,11 +345,17 @@ as the app's daemon answers. The tool inside the own-window app comes first
 once that app is installed. Pages load from the host `url_host` names
 (`localhost` or `127.0.0.1`, else `localhost`).
 
-Signing in to a daemon the app started loads `/api/me?nonce=<code>`, presses
-its one Sign in button, lets it end on JSON (shown in place, never saved), then
-loads the page. With `require_token` true, or no code from `claude-science url`
-(asked twice, 1.5 s apart, after the cookie was refused), Capsid stops retrying
-and only reads: "Capsid can't sign in to Claude Science's own server.
+Capsid always asks `claude-science url` for a one-time code
+(`SignInPlan.decide`). Signing in to a daemon the app started loads
+`/api/me?nonce=<code>`, presses its one Sign in button, lets it end on JSON
+(shown in place, never saved), then loads the page. A browser-tab daemon signs
+in with the code as it always did, whatever `require_token` says: Sam's 0.1.70
+daemon reports `require_token: yes`, and the first M9a build went read-only on
+it (fixed in b2a6bda; the lesson: check a sign-in change against the real
+daemon's `status` before installing). Only beside the app, with no code from
+`claude-science url` (asked twice, 1.5 s apart, after the cookie was refused)
+and `require_token` true, does Capsid stop retrying and only read: "Capsid
+can't sign in to Claude Science's own server.
 Everything from your sessions' database keeps working; actions open Claude
 Science." with Open Claude Science and Try again, and one card says it once.
 Cards, panel, badge, notifications, Next Waiting, Activity, Quick Open and the
@@ -1933,7 +1939,8 @@ tested on made-up JSON). Only for a frame whose `status` is `failed` and whose
 
 **Privacy.** This widens Capsid's "never read content" rule by exactly a
 failed frame's `status`, `output_data.error` and `error_status`, for the
-card. Only those are picked (not the name, the input, the response or the
+card (and, since 1.0, Since You Left's sheet and the phone's section: see
+Since You Left). Only those are picked (not the name, the input, the response or the
 rest of the frame), kept in memory for as long as the card is up, and never
 logged, saved or sent anywhere: the log says only "read" or "none". Copy puts
 the text on the pasteboard only when pressed. **Not in Mac notifications,
@@ -5721,6 +5728,96 @@ findings land before `completed`.
 
 `--demo progress`, `--demo finished` (`--one-figure` offers Keep…), `--demo
 note`, `--demo stack` (`--hover` opens it): made-up insights; nothing is read.
+
+## Since You Left (SinceYouLeft/, since 1.0)
+
+Board 2 of the 1.0 mock-ups. Sessions finish, stop and ask while you are at a
+seminar or overnight, and coming back meant opening each one. Now the first
+time you're back after a while, one sheet says what changed.
+
+**Away and back** (`AwayRule`, pure). Nothing runs a timer: every time Capsid
+already looks (a read of the sessions, a wake, an unlock, Capsid or its main
+window coming forward), `SinceYouLeftModel.observe` hands the rule the clock, the idle time
+(`MacPresence`, the reader the specimens' hold uses) and whether the screen is
+off (asleep, display asleep, locked, another user in front). Away begins at
+the last input before an idle stretch of 2 minutes or more, at once when the
+screen goes off, or, after a hole of 10 minutes between looks (the Mac slept
+without a word), at the last moment someone was seen. Back is the first look
+with input after that. A return counts when the stretch lasted 30 minutes, or
+10 minutes when it crossed into a new day (the first activity of the day). The
+idle counter is not trusted across a sleep: a screen that is off is away.
+
+**What changed** (`SinceYouLeftSummary`, pure). From the lab's events after
+the stretch began (200 kept, none older than a day), each session's latest
+only, grouped as the board groups them: **needs you** (began to wait since,
+still waits, not put off with Later; the longest wait first), **stopped** (its
+latest event is an error and it neither works nor waits), **finished** (the
+same for a finish). A session that finished and runs again, or was answered
+elsewhere, is what it is now: the summary is rebuilt from the sessions as they
+stand each time it is shown. Six rows at most (needs you, then stopped, then
+finished), with the whole counts in the headline ("3 finished, 1 stopped, 1
+needs you") and "N more" below. An empty stretch shows nothing.
+
+**Where it shows** (`SinceYouLeftModel`). On a return that counts:
+- **The sheet**, when "Show what changed while you were away" is on (Settings
+  → Alerts → When you're back, and the sheet's own foot; `sinceYouLeftSheet`,
+  on by default), Capsid's main window is the key window, and neither Quiet
+  While Presenting nor a Nidus focus session holds back. It is a sheet of the
+  main window (Done and Esc end it), 760 wide, its rows exactly as tall as they
+  are up to the screen's height, then scrolling (a scroll view alone asks for
+  no height: the first build showed only the header and the foot).
+- **Otherwise the panel's card**, "Since you left: 3 finished, 1 stopped" (what
+  needs you has its own cards), for 30 s, taking the place of the batched
+  "finished" card when a focus hold lifts; Open opens the sheet.
+- **The activity list** has a section at the top, "Since you left · 2 h 14 min"
+  with the headline; a press opens the sheet.
+- **The phone**: `since` in `/api/state` (its own version 1, additive): while a
+  stretch of 30 minutes is still on, what has happened so far; after the
+  return, the summary until Done. Rows carry ids, titles, projects and times,
+  and Claude's last words or the reason when Capsid has read them.
+A pending summary goes after Done, after 12 hours, or when a newer return
+replaces it.
+
+**The sheet** (`SinceYouLeftSheet`, board 2, Solanum surfaces). A header with
+"Since you left · 2 hours 14 minutes" over the headline (22 pt), and on the
+right "5-hour limit used while away" with a clay bar and "62% left · resets
+11:12 AM" (`UsageWhileAway`: the limit when the stretch began against the
+limit now; nothing when a reading is missing or the window started over).
+Then:
+- *Needs you*: a card per session as the panel's card would be, with the
+  question and its choices as radios and Send, Type an answer…, Open (or the
+  plan's and the request's own buttons), all through `CardActions`.
+- *Finished*: the title, project and time, two lines of Claude's last words
+  (`AnswerLines`: the Markdown's marks out, tables and pictures skipped), and up
+  to three files as 64-point tiles (a picture, or the kind: CSV, MD, XLSX). On
+  hover or focus: Open, Results, and Add to Shelf for a single figure (then On
+  Shelf ✓, which shows the shelf); its menu adds Keep with Data and Code….
+- *Stopped*: the title and the first line of why, in clay, with Copy and Open.
+The foot has the one setting, Open Results and Done (a slate pill).
+
+**Reads** (`SinceYouLeftReads`; 1.0 spike S5: shallow reads, not history
+pages). Nothing is read until the sheet or the list shows the rows, nothing
+while away, before the page is up or in a demo, and nothing with "Show plans,
+questions and requests on the card" off: a row is then its title, project and
+time. At most six sessions, each once per return, one at a time, each through
+the typing gate (`ReadingGate`: no read within 400 ms of a key in the main
+window). A finished row is `readSession(_, turns: false)` (one GET; its
+`reply` is Claude's last words) and then its file list and up to three
+thumbnails by the panel's own reader; a stopped row is the failure card's
+shallow frame read, or what the card already read. Turning the setting off
+later hides what was read, on the sheet and the phone.
+
+**Privacy.** Sam's call (2026-10-22, "features over extreme privacy for now"):
+the failure reason, which DESIGN once kept to the card, also shows on the sheet
+and in the phone's Since You Left, behind the same card setting. It stays out
+of Mac notifications, the activity list (counts only), the Dock menu and the
+menu bar. Nothing a session says is logged; the log says "Back after N
+minutes".
+
+**Demo.** `Capsid --demo since-you-left` (and `--step card`): a made-up
+return of 2 hours 14 minutes with a question, three finished sessions with
+pictures and files, and a stop, drawn by the real sheet in a window sized as
+the sheet is. Nothing is read.
 
 ## 1.0 spikes (2026-10-22, read-only)
 

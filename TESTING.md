@@ -323,6 +323,34 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-22, Capsid 1.0 M5: Since You Left (board 2)
+
+Built by a Sonnet agent on `g/m-m5`, merged on `g/reference` (d0684c7);
+follow-ups b72793f.
+
+- ✅ `AwayRuleTests`, `SinceYouLeftSummaryTests`, `SinceYouLeftModelTests`,
+  `SinceYouLeftStateTests`, `PhoneSinceTests`: idle stretches, a screen that
+  goes off, a sleep with no word, the new-day floor; grouping by each session's
+  latest event; the sheet, the card, the focus and presenting holds, Done,
+  replacement and the 12-hour expiry; at most six reads, each once, none while
+  away or with the content setting off (and hidden again when it is turned off
+  later); the phone's `since` and its reasons.
+- ❌→✅ **The sheet showed no rows.** `--demo since-you-left` captured by window
+  ID was 177 points tall: the header and the foot only, because the window
+  follows the sheet's size and a scroll view asks for none. The offscreen
+  snapshot (laid out at 1,200 first) had hidden it. Now the rows' scroll view
+  is as tall as they are, up to the screen; the capture is 744 points with
+  every row, matching board 2.
+- ✅ Settings → Alerts → When you're back, "Show what changed while you were
+  away", captured (`--demo alerts`); the page is 940 tall and scrolls on a
+  13-inch screen.
+- ✅ Installed (M5 at 22:57, CDHash f4c2c09f; follow-ups at 23:20); the log
+  shows only the launch-time 401 before sign-in.
+- ⏳ **Live:** a real return after 30 minutes (the sheet over the main window,
+  or the card when another app is in front), a real question answered from
+  the sheet, Add to Shelf from a finished row, the phone's section, the 5-hour
+  line against a real reading.
+
 ## 2026-10-22, the Shelf (Sam's priority #1, boards 10 and 11)
 
 Built by two Sonnet agents against a contract written first (`Kept/Shelf.swift`
