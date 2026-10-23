@@ -2185,7 +2185,11 @@ struct ShelfSaveTimeoutTests {
         #expect(summary.saved == 0 && summary.failed == 4 && summary.tooBig == 0)
         #expect(summary.line == "Nothing was saved. 4 couldn't be saved.")
         let downloads = rig.reader.started.filter { if case .download = $0 { true } else { false } }
-        #expect(downloads == [download(1), download(2)], "the files after the first two were never downloaded")
+        // The two in hand are child tasks that reach the queue on their own, so which
+        // of them starts first is up to the scheduler (and flips on a loaded machine):
+        // the test asks which were downloaded, each once, not in what order.
+        #expect(downloads.count == 2 && Set(downloads) == [download(1), download(2)],
+                "the files after the first two were never downloaded, and none twice")
         // One of the two in hand timed out; the other, and the rest, were refused.
         #expect(Set([shelf.fileProblems["v-1"], shelf.fileProblems["v-2"]]) == [Self.silent, Self.stillSilent])
         #expect(shelf.fileProblems["v-3"] == Self.stillSilent && shelf.fileProblems["v-4"] == Self.stillSilent)
