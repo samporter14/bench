@@ -48,6 +48,8 @@ private final class Rig {
         deps.closeSheet = { holder.rig.closed += 1 }
         deps.canRead = { holder.rig.readable }
         deps.readsContent = { holder.rig.mayRead }
+        // The shared typing gate is other tests' too: a key one of them noted would make a read here wait.
+        deps.loadFiles = { finished, session in await finished.load(session) }
         deps.fullReason = { holder.rig.knownReasons[$0].map { "Full: \($0)" } }
         deps.readAnswer = { id in holder.rig.answered.append(id); return "Answer for \(id)." }
         deps.readReason = { id in holder.rig.reasoned.append(id); return "Reason for \(id)." }
@@ -56,7 +58,6 @@ private final class Rig {
         rebuilt.attach()
         lab.holdsFinishes = { holder.rig.holds }
         lab.isQuiet = { holder.rig.quiet }
-        lab.lifetimeScale = 0.01
     }
 
     /// The model built with this rig's closures.

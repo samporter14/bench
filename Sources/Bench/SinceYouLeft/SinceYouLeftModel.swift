@@ -84,6 +84,10 @@ struct SinceYouLeftDependencies {
     var canRead: @MainActor () -> Bool = { Demo.mode == nil && WebContainer.shared.status == .ready }
     /// Claude's last words in a finished session, as a couple of plain lines.
     var readAnswer: @MainActor (String) async -> String? = { await SinceYouLeftReads.answer(for: $0) }
+    /// A finished row's files and pictures, read in the typing gate's turn.
+    var loadFiles: @MainActor (FinishedResults, SessionStatus) async -> Void = { finished, session in
+        _ = try? await ReadingGate.shared.perform { await finished.load(session) }
+    }
     /// Why a stopped session stopped, its first line.
     var readReason: @MainActor (String) async -> String? = { await SinceYouLeftReads.reason(for: $0) }
     /// A reason already read for a failure card: no read needed.
@@ -419,8 +423,7 @@ final class SinceYouLeftModel: ObservableObject {
                     self.details[row.id, default: .init()].answer = answer
                     // The pictures: the list of its files, then up to three thumbnails, in the typing gate's turn
                     // like the answer above (the panel's own reader: one read at a time).
-                    let finished = self.finished, session = row.session
-                    _ = try? await ReadingGate.shared.perform { await finished.load(session) }
+                    await self.dependencies.loadFiles(self.finished, row.session)
                 }
             }
             self.loading = nil
