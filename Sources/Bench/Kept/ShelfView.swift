@@ -239,7 +239,7 @@ struct ShelfView: View {
         ShelfDetail(item: item, model: model, thumbnails: thumbnails, quickLook: quickLook,
                     keep: { keepWithDataAndCode(item) },
                     // A search that also looks in the sessions leaves them more of the window.
-                    maxHeight: model.finder.isWanted ? max(180, size.height * 0.34) : max(220, size.height * 0.56))
+                    maxHeight: model.finder.isWanted ? max(220, size.height * 0.34) : max(220, size.height * 0.56))
     }
 
     private func keepWithDataAndCode(_ item: ShelfItem) {
@@ -656,13 +656,18 @@ struct ShelfPaper: View {
         }
         .clipShape(.rect(cornerRadius: max(3, inset - 2)))
         .padding(inset)
-        .onAppear {
-            if store.usesPeek(url) { store.wantPeek(url) } else { store.want(url, side: side, scale: scale, cropped: kind != .figure) }
-        }
+        .onAppear { request() }
+        // The detail card keeps its picture's view when the selection moves, so
+        // the new file's picture is asked for here, not only when it appears.
+        .onChange(of: url) { request() }
         // A file that wasn't text after all goes to Quick Look.
         .onChange(of: store.usesPeek(url)) { _, uses in
             if !uses { store.want(url, side: side, scale: scale, cropped: kind != .figure) }
         }
+    }
+
+    private func request() {
+        if store.usesPeek(url) { store.wantPeek(url) } else { store.want(url, side: side, scale: scale, cropped: kind != .figure) }
     }
 
     static func symbol(_ kind: ShelfKind) -> String {

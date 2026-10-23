@@ -137,6 +137,51 @@ struct FindSnapshotTests {
         try await draw(window(stateWindow), size: size, name: "find-states", to: directory, settle: 10)
     }
 
+    /// The window is up with the first card selected, and then the search is typed, which moves the
+    /// selection: the detail card must show the new file's picture (it keeps its view, so the picture is
+    /// asked for when the file changes, not only when the view appears).
+    @Test func theDetailShowsThePictureOfTheFileASearchSelectsWhenAsked() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("find-snapshot-move-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let disk = KeptDisk(root: { root })
+        await KeptDemo.seed(disk)
+        let index = KeptIndex(disk: disk, root: { root })
+        let shelf = KeptDemo.shelf(index: index, root: root)
+        index.refresh()
+        for _ in 0..<100 where index.results.isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
+        let model = ShelfModel(shelf: shelf)
+        model.finder = FindDemo.finder(shelf: shelf, root: root)
+        let size = NSSize(width: 880, height: 820)
+        let host = NSHostingView(rootView: Window(model: model, content: ShelfView(model: model, thumbnails: thumbnails, quickLook: KeptQuickLook())))
+        host.appearance = NSAppearance(named: .aqua)
+        host.frame = CGRect(origin: .zero, size: size)
+        for _ in 0..<15 {
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+        }
+        let first = model.selection
+        model.search = "heatmap"
+        for _ in 0..<25 {
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded()
+        }
+        #expect(model.selection != first && model.selection != nil)
+        let rep = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        rep.size = size
+        host.cacheDisplay(in: host.bounds, to: rep)
+        try #require(rep.representation(using: .png, properties: [:])).write(to: directory.appendingPathComponent("find-selection-moves-light.png"))
+        // The detail's picture is in the store at the detail's size.
+        let selected = try #require(model.selected)
+        #expect(thumbnails.image(for: selected.fileURL, side: 280) != nil)
+    }
+
     @Test func quickOpenGroupIsDrawnToPNGsWhenAsked() async throws {
         guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
         let directory = URL(fileURLWithPath: path, isDirectory: true)
