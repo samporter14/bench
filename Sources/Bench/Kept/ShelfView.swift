@@ -237,7 +237,9 @@ struct ShelfView: View {
 
     private func detail(_ item: ShelfItem) -> some View {
         ShelfDetail(item: item, model: model, thumbnails: thumbnails, quickLook: quickLook,
-                    keep: { keepWithDataAndCode(item) }, maxHeight: max(220, size.height * 0.56))
+                    keep: { keepWithDataAndCode(item) },
+                    // A search that also looks in the sessions leaves them more of the window.
+                    maxHeight: model.finder.isWanted ? max(180, size.height * 0.34) : max(220, size.height * 0.56))
     }
 
     private func keepWithDataAndCode(_ item: ShelfItem) {

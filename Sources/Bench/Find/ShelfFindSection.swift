@@ -59,7 +59,7 @@ struct ShelfFindSection: View {
 
     private var heading: some View {
         HStack(spacing: 8) {
-            Text("In your sessions \u{00B7} \(finder.countText)")
+            Text(finder.visible.isEmpty ? "In your sessions" : "In your sessions \u{00B7} \(finder.countText)")
                 .font(.system(size: Solanum.captionSize, weight: .semibold))
                 .foregroundStyle(Solanum.muted)
             if search.isSearching {

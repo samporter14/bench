@@ -115,6 +115,26 @@ struct FindSnapshotTests {
         let none = ShelfFinder(search: nothing, actions: FindDemo.finder(shelf: shelf, root: root).actions,
                                thumbnails: ShelfThumbnails(), requestThumbnail: { _ in })
         try await draw(window(shelfWindow("zebrafish", finder: none)), size: size, name: "find-nothing", to: directory, settle: 6)
+
+        // Rows in each of their states: one being added, one added from this search, one that couldn't be.
+        let files = FindDemo.files(now: Date())
+        let spinning = files[2].version, landed = files[3].version, refused = files[4].version
+        let base = FindDemo.finder(shelf: shelf, root: root)
+        let actions = FindActions(
+            isAvailable: true,
+            add: { file in
+                file.version == landed
+                    ? .added(ShelfPlacement(folder: root.appendingPathComponent("x"), name: file.name, collection: file.projectName))
+                    : .failed("Capsid couldn\u{2019}t add \(file.name). Claude Science didn\u{2019}t answer.")
+            },
+            show: { _ in }, results: { _ in },
+            onShelf: { shelf.contains(version: $0) }, isAdding: { $0 == spinning })
+        let states = ShelfFinder(search: base.search, actions: actions, thumbnails: base.thumbnails, requestThumbnail: { _ in })
+        let stateWindow = shelfWindow("heatmap", finder: states, on: emptyShelf)
+        try await Task.sleep(for: .milliseconds(600))
+        states.add(files.first { $0.version == landed }!)
+        states.add(files.first { $0.version == refused }!)
+        try await draw(window(stateWindow), size: size, name: "find-states", to: directory, settle: 10)
     }
 
     @Test func quickOpenGroupIsDrawnToPNGsWhenAsked() async throws {
