@@ -108,7 +108,7 @@ enum FakeFigurePage {
 
     // ---- Mutation observers (records are delivered by __flush)
     var __observers = [];
-    function MutationObserver(callback) { this.callback = callback; this.targets = []; this.records = []; this.active = false; __observers.push(this); }
+    function MutationObserver(callback) { this.callback = callback; this.targets = []; this.records = []; this.active = false; this.deliveries = 0; __observers.push(this); }
     MutationObserver.prototype.observe = function (node, options) { this.targets.push({ node: node, options: options || {} }); this.active = true; };
     MutationObserver.prototype.disconnect = function () { this.active = false; this.targets = []; this.records = []; };
     MutationObserver.prototype.takeRecords = function () { var r = this.records; this.records = []; return r; };
@@ -116,7 +116,7 @@ enum FakeFigurePage {
       for (var guard = 0; guard < 50; guard++) {
         var pending = __observers.filter(function (o) { return o.active && o.records.length; });
         if (pending.length === 0) { return; }
-        pending.forEach(function (o) { var r = o.records; o.records = []; o.callback(r, o); });
+        pending.forEach(function (o) { var r = o.records; o.records = []; o.deliveries++; o.callback(r, o); });
       }
       throw new Error("observers never settled");
     }
@@ -230,6 +230,7 @@ enum FakeFigurePage {
       getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; }
       hasAttribute(name) { return this.getAttribute(name) !== null; }
       get children() { return this.childNodes.filter(function (n) { return n.nodeType === 1; }); }
+      get lastElementChild() { var kids = this.children; return kids[kids.length - 1] || null; }
       get textContent() {
         if (this.__guard) { throw new Error("read the text of the page's own menu"); }
         return this.childNodes.map(function (n) { return n.textContent; }).join("");

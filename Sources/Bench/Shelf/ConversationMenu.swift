@@ -261,7 +261,7 @@ final class ConversationMenu {
     /// put in, so the page shows exactly the words the Mac's menu does.
     nonisolated static let script: String = {
         let entries = ConversationAction.allCases.map { ["action": $0.rawValue, "title": $0.title] }
-        let data = (try? JSONSerialization.data(withJSONObject: entries, options: [.withoutEscapingSlashes])) ?? Data("[]".utf8)
+        let data = (try? JSONSerialization.data(withJSONObject: entries, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("[]".utf8)
         return template.replacingOccurrences(of: "__ENTRIES__", with: String(decoding: data, as: UTF8.self))
     }()
 
@@ -480,13 +480,24 @@ final class ConversationMenu {
         view.hold = setTimeout(() => { if (watch === view) stopWatch(); }, HOLD_MS);
         nodes.forEach((node) => menu.appendChild(node));
         fit(menu);
-        view.observer.takeRecords();
+        // From here the page's whole body is not watched: only the menu, what
+        // it sits in and what that sits in, one level each (the menu's items
+        // dropped, the menu drawn again or taken away).
+        view.observer.disconnect();
+        view.observer.observe(menu, { childList: true });
+        const holder = menu.parentNode;
+        if (holder) {
+          view.observer.observe(holder, { childList: true });
+          if (holder.parentNode) view.observer.observe(holder.parentNode, { childList: true });
+        }
       }
 
-      // React drew the menu again and left the items out: put them back.
+      // React drew the menu again and left the items out, or added an item of
+      // its own after them: put the group back, last.
       function restore(view) {
         const menu = view.menu;
-        if (!view.nodes.some((node) => node.parentNode !== menu)) return;
+        const last = view.nodes[view.nodes.length - 1];
+        if (!view.nodes.some((node) => node.parentNode !== menu) && menu.lastElementChild === last) return;
         view.nodes.forEach((node) => menu.appendChild(node));
         fit(menu);
         view.observer.takeRecords();

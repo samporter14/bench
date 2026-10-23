@@ -416,6 +416,32 @@ struct FigureMenuScriptTests {
         #expect(posted(script).last?["action"] as? String == "keep")
     }
 
+    @Test func anItemTheRedrawAddsAfterOursPutsTheGroupBackLast() {
+        let script = page()
+        script.evaluate("__rightClick(__tileImg)")
+        script.evaluate("__openMenu()")
+        script.evaluate("__guarded(__item(__menu, 'Late item')); __flush();")
+        #expect(shape(script) == ["page:Copy image", "page:Open in split view", "page:Late item", "rule"] + Self.words.map { "ours:" + $0 })
+        script.evaluate("__click(__ours()[3])")
+        #expect(posted(script).last?["action"] as? String == "openAsReference")
+    }
+
+    @Test func onceTheItemsAreInOnlyTheMenuAndWhatItSitsInAreWatched() {
+        let script = page()
+        script.evaluate("__rightClick(__tileImg)")
+        // Looking for the menu, the whole page is watched; each mutation anywhere is looked at.
+        #expect(script.evaluate("String(__observers.filter(function (o) { return o.active; })[0].targets[0].options.subtree)") == "true")
+        script.evaluate("__openMenu()")
+        #expect(watching(script) == 1)
+        // Then three places, one level each: no mutation elsewhere in the conversation is looked at.
+        #expect(script.evaluate("String(__observers.filter(function (o) { return o.active; })[0].targets.length)") == "3")
+        #expect(script.evaluate("String(__observers.filter(function (o) { return o.active; })[0].targets.every(function (t) { return !t.options.subtree; }))") == "true")
+        let before = script.evaluate("String(__observers.filter(function (o) { return o.active; })[0].deliveries)")
+        script.evaluate("el('span', {}, __page); el('span', {}, __paragraph); __flush();")
+        #expect(script.evaluate("String(__observers.filter(function (o) { return o.active; })[0].deliveries)") == before)
+        #expect(shape(script) == Self.grouped)
+    }
+
     @Test func whenTheMenuClosesTheWatchEndsAndALaterMenuGetsNothing() {
         let script = page()
         script.evaluate("__rightClick(__tileImg)")
