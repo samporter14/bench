@@ -372,6 +372,66 @@ struct ReferenceRefreshTests {
     }
 }
 
+// MARK: Two items on one row
+
+@MainActor
+struct ReferenceSharedRowTests {
+    typealias Made = ReferenceModelTests
+
+    /// As the page projects a message of words and then a tool call: two items on one row.
+    private static let rows: [HistoryItem] = [
+        .turn(i: 0, role: .you, at: nil, text: "Plot it.", cut: false, files: []),
+        .turn(i: 1, role: .claude, at: nil, text: "Let me look first.", cut: false, files: []),
+        .steps(i: 1, line: "Ran a command", failed: false, files: [Made.figure(1)]),
+        .turn(i: 3, role: .claude, at: nil, text: "Done.", cut: false, files: []),
+    ]
+
+    @Test func aRowOfWordsAndAToolCallKeepsBothItems() async throws {
+        let (_, model) = Made.make(Self.rows)
+        model.open()
+        await Made.settle(model)
+        // The words before the call were lost: the second item on the row replaced the first.
+        #expect(model.current?.text == "Let me look first.\n\nDone.")
+        #expect(model.current?.figures == [Made.figure(1)])
+    }
+
+    @Test func twoMessagesToTheUserInOneRowAreEachReadWhole() async throws {
+        let whole = String(repeating: "Plate 7 has an edge effect in column 12. ", count: 120).trimmingCharacters(in: .whitespaces)
+        let rows: [HistoryItem] = [
+            .turn(i: 0, role: .you, at: nil, text: "Run the QC.", cut: false, files: []),
+            .toYou(i: 1, text: "First, short.", files: [], cut: false),
+            .toYou(i: 1, text: String(whole.prefix(1999)) + "\u{2026}", files: [], cut: true),
+            .turn(i: 3, role: .claude, at: nil, text: "Done.", cut: false, files: []),
+        ]
+        let (fake, model) = Made.make(rows)
+        fake.wholeNotes[1] = ["First, short.", whole]
+        model.open()
+        await Made.settle(model)
+        for _ in 0..<400 where fake.turnReads.isEmpty || model.readingRest { try await Task.sleep(for: .milliseconds(5)) }
+        // Through the model, not just the rules: the second message is the one read whole, the first is itself.
+        #expect(model.current?.parts.map(\.text) == ["First, short.", whole, "Done."])
+        #expect(model.current?.cutRows.isEmpty == true)
+        #expect(fake.turnReads == [1])
+    }
+
+    @Test func aRowReadAgainReplacesItsItemsAndDoesntDoubleThem() async throws {
+        let (fake, model) = Made.make(Self.rows)
+        let clock = MadeClock()
+        model.clock = { clock.now }
+        model.open()
+        await Made.settle(model)
+        fake.rows = Self.rows + [.turn(i: 4, role: .you, at: nil, text: "And a table?", cut: false, files: []),
+                                 .turn(i: 5, role: .claude, at: nil, text: "Here.", cut: false, files: [])]
+        fake.total = 6
+        clock.pass(10)
+        model.refresh()
+        for _ in 0..<400 where model.answers.count < 2 { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(model.answers.count == 2)
+        #expect(model.answers.first?.text == "Let me look first.\n\nDone.")
+        #expect(model.answers.last?.text == "Here.")
+    }
+}
+
 // MARK: A long message to the user
 
 @MainActor

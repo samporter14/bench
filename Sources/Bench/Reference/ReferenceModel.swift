@@ -176,7 +176,9 @@ enum ReferenceRules {
                         notes: [Int: [String]] = [:]) -> [ReferenceAnswer] {
         var groups: [[HistoryItem]] = []
         var current: [HistoryItem] = []
-        for item in items.sorted(by: { $0.index < $1.index }) {
+        // By row, and within a row (a message of words then a tool call is two items on one row) as they came.
+        let ordered = items.enumerated().sorted { ($0.element.index, $0.offset) < ($1.element.index, $1.offset) }.map(\.element)
+        for item in ordered {
             if isUsersTurn(item), !current.isEmpty {
                 groups.append(current)
                 current = []
@@ -378,8 +380,10 @@ final class ReferenceModel: ObservableObject {
     private var landingStart = 0
     /// Where each version this window put on the shelf landed.
     private var placements: [String: URL] = [:]
-    /// The rows read, as items, by their index.
-    private var items: [Int: HistoryItem] = [:]
+    /// The rows read, as items, by their row: a message of words and then a tool
+    /// call (or a message to the user) is two items on one row, in the order the
+    /// page gave them.
+    private var items: [Int: [HistoryItem]] = [:]
     /// Turns read whole since their page cut them.
     private var whole: [Int: String] = [:]
     /// The messages sent to the user mid-run in a row, read whole with it.
@@ -733,7 +737,7 @@ final class ReferenceModel: ObservableObject {
     /// its id.
     private func merge(_ page: HistoryPage) {
         pageCount += 1
-        for item in page.items { items[item.index] = item }
+        store(page.items)
         if let from, page.from >= from {
             // A page that didn't move back (a shape the page shouldn't give): stop here.
             reachedStart = true
@@ -745,7 +749,13 @@ final class ReferenceModel: ObservableObject {
     }
 
     private func rebuild() {
-        answers = ReferenceRules.answers(items: Array(items.values), reachedStart: reachedStart, whole: whole, notes: wholeNotes)
+        answers = ReferenceRules.answers(items: Array(items.values.joined()), reachedStart: reachedStart, whole: whole,
+                                         notes: wholeNotes)
+    }
+
+    /// Takes a page's items in: each row read replaces what was held for it.
+    private func store(_ read: [HistoryItem]) {
+        for (row, group) in Dictionary(grouping: read, by: \.index) { items[row] = group }
     }
 
     // MARK: Refreshing
@@ -840,9 +850,7 @@ final class ReferenceModel: ObservableObject {
         } else {
             items = items.filter { $0.key < low }
         }
-        for page in pages {
-            for item in page.items { items[item.index] = item }
-        }
+        for page in pages { store(page.items) }
         from = Swift.min(from ?? low, low)
         if low == 0 { reachedStart = true }
         rebuild()
