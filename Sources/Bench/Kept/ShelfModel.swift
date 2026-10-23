@@ -50,6 +50,11 @@ final class ShelfModel: ObservableObject {
     /// put its error where the Undo was.
     private(set) var removing: Set<String> = []
 
+    /// The legend fields on screen, by item id, held weakly: the card owns each editor (`ShelfExtras`). A PDF waits
+    /// for the ones of the items it is made from, so a legend typed a moment ago is in it (ShelfPicking.swift).
+    private var legendEditors: [String: LegendEditorHandle] = [:]
+    private struct LegendEditorHandle { weak var editor: ShelfLegendEditor? }
+
     private var subscription: AnyCancellable?
     private var noteTask: Task<Void, Never>?
     private var pending: (folder: URL, until: Date)?
@@ -74,6 +79,31 @@ final class ShelfModel: ObservableObject {
             }
         }
         reconcile()
+    }
+
+    // MARK: The legend fields
+
+    /// The card's legend editor for item `id`, once it is on screen.
+    func track(legend editor: ShelfLegendEditor, for id: String) {
+        legendEditors = legendEditors.filter { $0.value.editor != nil }
+        legendEditors[id] = LegendEditorHandle(editor: editor)
+    }
+
+    /// `items` as the disk has them now: the legends typed in their fields written first (and a save that was
+    /// already under way finished), then each README read again, so a PDF is made from what is saved, not from the
+    /// words the shelf held when the command was given. An item whose README can't be read stays as it was.
+    func latest(of items: [ShelfItem]) async -> [ShelfItem] {
+        for item in items { await legendEditors[item.id]?.editor?.settle() }
+        var fresh: [ShelfItem] = []
+        for item in items {
+            guard let read = try? await index.disk.readme(at: item.folder) else {
+                fresh.append(item)
+                continue
+            }
+            let result = KeptResult(folder: item.folder, collection: item.collection, record: read.record, text: read.text)
+            fresh.append(ShelfItem(result: result, others: item.others))
+        }
+        return fresh
     }
 
     // MARK: What is shown

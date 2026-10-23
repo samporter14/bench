@@ -254,6 +254,8 @@ struct ShelfLegendTests {
         let extras = try #require(view.range(of: "struct ShelfExtras: View"))
         let body = String(view[extras.lowerBound...].prefix(upTo: view.range(of: "// MARK: Pieces")!.lowerBound))
         #expect(body.contains(".onDisappear { editor.flush() }"))
+        // The model knows the field, so a PDF made right after typing waits for what was typed (ShelfPDFFreshTests).
+        #expect(body.contains("model.track(legend: editor, for: item.id)"))
         #expect(!body.contains("saveTask"), "the pending save is no longer cancelled")
         #expect(body.contains(".disabled(!editor.canEdit)"))
         #expect(body.contains("@StateObject private var editor: ShelfLegendEditor"))

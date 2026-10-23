@@ -576,7 +576,11 @@ struct ShelfExtras: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task { await editor.load() }
+        // The model is told of the field, so a PDF made right after typing waits for what was typed to be saved.
+        .task {
+            model.track(legend: editor, for: item.id)
+            await editor.load()
+        }
         // Another item chosen, or the window closed: what was typed in the last second is saved now, not dropped.
         .onDisappear { editor.flush() }
     }

@@ -101,20 +101,26 @@ extension ShelfModel {
 
     // MARK: Make PDF…
 
-    /// Make PDF… on what is picked.
-    func makePDF() {
+    /// Make PDF… on what is picked. The task is the command's, for a test to wait for.
+    ///
+    /// The pages are decided after the save panel is answered, from the README of each picked item as it is then
+    /// (`latest(of:)`): a legend typed in the last second, or one saved while the panel was up, is in the PDF.
+    @discardableResult
+    func makePDF() -> Task<Void, Never> {
         let items = pickedItems
-        guard !items.isEmpty else { return }
-        Task { [weak self] in
+        guard !items.isEmpty else { return Task {} }
+        return Task { [weak self] in
             guard let self else { return }
-            await pdf.make(items, tell: { [weak self] in self?.say($0) })
+            await pdf.make(items, latest: { [weak self] in await self?.latest(of: $0) ?? $0 },
+                           tell: { [weak self] in self?.say($0) })
         }
     }
 
     /// Make PDF… from a card's menu: on the picks when that card is one of them, else on that card alone.
-    func makePDF(from item: ShelfItem) {
+    @discardableResult
+    func makePDF(from item: ShelfItem) -> Task<Void, Never> {
         if !picked.contains(item.id) { pick(item.id, .only) }
-        makePDF()
+        return makePDF()
     }
 }
 

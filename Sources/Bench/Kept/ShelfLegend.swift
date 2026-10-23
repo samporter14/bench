@@ -106,6 +106,14 @@ final class ShelfLegendEditor: ObservableObject {
         return Task { await self.save() }
     }
 
+    /// Everything typed is written, or has failed, or was stopped by a change made in another app (the field says so),
+    /// and every save under way is over: whoever reads the README after this reads what the field holds. A PDF made
+    /// from the shelf waits for it. Nothing is ever forced; a README changed elsewhere stays as it is.
+    func settle() async {
+        await flush().value
+        await lastSave?.value
+    }
+
     /// Writes the field's text, after any save already under way.
     func save() async { await enqueue(force: false) }
 
