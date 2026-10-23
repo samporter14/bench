@@ -585,7 +585,9 @@ final class RemoteSessions {
     /// Bumped when an action may have changed the session: a read started
     /// before it isn't kept, nor handed out after the action.
     private var generation: [String: Int] = [:]
-    private var acting: [String: Task<Void, Never>] = [:]
+    /// The last turn in each session's queue: the next one waits for its
+    /// task, and it is let go only once that task has ended (`runSerially`).
+    private var acting: [String: (turn: SessionTurn, task: Task<Void, Never>)] = [:]
     private var limiter = ActionLimiter()
     private var sweep: Task<Void, Never>?
     /// Phase 3 browse: sessions found by id or just started, by id.
@@ -989,12 +991,19 @@ extension RemoteSessions {
     /// it waits its turn never has one; once `work` has begun, the cancellation
     /// reaches it as `Task.isCancelled`, to stop at its next step, and the turn
     /// is waited for: what it has sent can't be taken back.
+    ///
+    /// The caller and the queue are let go separately. A caller cancelled
+    /// while it waits is answered at once, but its turn keeps its place, still
+    /// waiting for the one before it, and ends (writing nothing) only after
+    /// that one; so the turn behind it still waits for everything ahead. The
+    /// queue forgets a turn only when its own task has ended.
     func runSerially(on id: String, limit: Duration,
                      _ work: @escaping @MainActor () async -> RemoteActionReply) async -> TurnEnd {
-        let previous = acting[id]
+        let previous = acting[id]?.task
         let turn = SessionTurn()
         let wait = dependencies.wait
         let task = Task { @MainActor [weak self] in
+            defer { self?.ended(turn, on: id) }
             _ = await previous?.value
             guard !Task.isCancelled else {
                 turn.settle(.cancelled)
@@ -1010,15 +1019,19 @@ extension RemoteSessions {
             }
             self?.forget(id)
         }
-        acting[id] = task
-        let end = await withTaskCancellationHandler {
+        acting[id] = (turn, task)
+        return await withTaskCancellationHandler {
             await turn.wait()
         } onCancel: {
             task.cancel()
             Task { @MainActor in turn.giveUpWaiting() }
         }
-        if acting[id] == task { acting[id] = nil }
-        return end
+    }
+
+    /// A turn's task has ended: the queue lets it go, unless another has
+    /// joined behind it since (that one is the tail now, and waits on it).
+    private func ended(_ turn: SessionTurn, on id: String) {
+        if acting[id]?.turn === turn { acting[id] = nil }
     }
 }
 

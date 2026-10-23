@@ -459,6 +459,36 @@ struct SessionQueueDeadlineTests {
         #expect(rig.reads.count == 1)
     }
 
+    @Test func aTurnCancelledInTheQueueStillHoldsTheNextBehindTheOneInFlight() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-1")
+        rig.reply = RemoteWriteResult(status: 200, bodyStatus: "accepted")
+        rig.firstWriteHangs = true
+        let sessions = rig.sessions()
+        // A is sending: its write is out and hasn't answered.
+        let a = Task { @MainActor in await sessions.respond(approve, session: root) }
+        await waitUntil { rig.isParked }
+        #expect(rig.clock.waiting() == 1, "A's turn deadline")
+        // B queues behind A and is cancelled while it waits: its caller hears at once.
+        let b = Task { @MainActor in await sessions.respond(approve, session: root) }
+        for _ in 0..<20 { await Task.yield() }
+        b.cancel()
+        #expect(await b.value == .unavailable)
+        // C comes while A is still out. It must not begin before A is done.
+        let c = Task { @MainActor in await sessions.respond(approve, session: root) }
+        for _ in 0..<400 { await Task.yield() }
+        #expect(rig.reads.count == 1, "only A has read: C waits")
+        #expect(rig.writes.count == 1, "only A has written")
+        #expect(rig.clock.waiting() == 1, "C's turn hasn't begun, so it has no deadline yet")
+        // A comes back; then C has its turn.
+        rig.release()
+        #expect(await a.value.result == .approved)
+        #expect(await c.value.result == .approved)
+        // B never read or wrote; A and C each did once, A first.
+        #expect(rig.reads.count == 2)
+        #expect(rig.writes.count == 2)
+    }
+
     @Test func turnsOfOneSessionRunOneAtATimeInOrder() async {
         rig.before = projection("awaiting_plan_approval", version: "ver-1")
         rig.after = projection("awaiting_plan_approval", version: "ver-1")
