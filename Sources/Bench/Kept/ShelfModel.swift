@@ -26,9 +26,11 @@ final class ShelfModel: ObservableObject {
     let pdf: ShelfPDFMaker
 
     @Published private(set) var items: [ShelfItem] = []
-    @Published var project: String? { didSet { if project != oldValue { reconcile() } } }
-    @Published var kind: ShelfKind? { didSet { if kind != oldValue { reconcile() } } }
-    @Published var search = "" { didSet { if search != oldValue { reconcile() } } }
+    @Published var project: String? { didSet { if project != oldValue { reconcile(); findScopeChanged() } } }
+    @Published var kind: ShelfKind? { didSet { if kind != oldValue { reconcile(); findScopeChanged() } } }
+    @Published var search = "" { didSet { if search != oldValue { reconcile(); findScopeChanged() } } }
+    /// "In your sessions": what the search finds beyond the shelf (Find/ShelfFinder.swift).
+    @Published var finder: ShelfFinder
     /// The selected item's id (`ShelfItem.id`): the one the detail shows and the arrows move from.
     /// Choosing it alone goes back to one pick (ShelfPicking.swift).
     @Published var selection: String? {
@@ -56,6 +58,8 @@ final class ShelfModel: ObservableObject {
         self.pdf = pdf ?? .live(disk: shelf.index.disk)
         self.now = now
         self.noteLifetime = noteLifetime
+        finder = ShelfFinder(actions: .live(shelf: shelf), changes: shelf.objectWillChange.map { _ in () }.eraseToAnyPublisher())
+        finder.selectFolder = { [weak self] in self?.select(folder: $0) }
         items = ShelfRules.items(from: shelf.index.results)
         subscription = shelf.index.$results.sink { [weak self] results in
             MainActor.assumeIsolated {

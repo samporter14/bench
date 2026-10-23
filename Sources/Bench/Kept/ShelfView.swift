@@ -77,7 +77,8 @@ struct ShelfView: View {
     private var content: some View {
         VStack(spacing: 0) {
             if model.isEmpty {
-                nothingOnTheShelf
+                // Nothing on the shelf, but a search worth a look in the sessions.
+                if model.finder.isWanted { ShelfFindPage(model: model) } else { nothingOnTheShelf }
             } else {
                 chips
                 if let selected = model.selected {
@@ -87,6 +88,8 @@ struct ShelfView: View {
                     } else {
                         detail(selected)
                     }
+                } else if model.finder.isWanted {
+                    ShelfFindPage(model: model)
                 } else {
                     empty
                 }
@@ -118,6 +121,7 @@ struct ShelfView: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top), count: ShelfModel.columns)
         return ScrollViewReader { proxy in
             ScrollView {
+                VStack(spacing: 0) {
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
                     ForEach(model.shown) { item in
                         card(item)
@@ -125,6 +129,11 @@ struct ShelfView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
+                    // Below the shelf's own matches: the same words, in every session.
+                    if model.finder.isWanted {
+                        ShelfFindSection(finder: model.finder, nothingMatches: "Nothing else in your sessions matches.")
+                    }
+                }
             }
             .scrollBounceBehavior(.basedOnSize)
             .onChange(of: model.selection) { _, id in
@@ -244,7 +253,9 @@ struct ShelfView: View {
 
     private func detail(_ item: ShelfItem) -> some View {
         ShelfDetail(item: item, model: model, thumbnails: thumbnails, quickLook: quickLook,
-                    keep: { keepWithDataAndCode(item) }, maxHeight: max(220, size.height * 0.56))
+                    keep: { keepWithDataAndCode(item) },
+                    // A search that also looks in the sessions leaves them more of the window.
+                    maxHeight: model.finder.isWanted ? max(220, size.height * 0.34) : max(220, size.height * 0.56))
     }
 
     private func keepWithDataAndCode(_ item: ShelfItem) {
@@ -661,13 +672,18 @@ struct ShelfPaper: View {
         }
         .clipShape(.rect(cornerRadius: max(3, inset - 2)))
         .padding(inset)
-        .onAppear {
-            if store.usesPeek(url) { store.wantPeek(url) } else { store.want(url, side: side, scale: scale, cropped: kind != .figure) }
-        }
+        .onAppear { request() }
+        // The detail card keeps its picture's view when the selection moves, so
+        // the new file's picture is asked for here, not only when it appears.
+        .onChange(of: url) { request() }
         // A file that wasn't text after all goes to Quick Look.
         .onChange(of: store.usesPeek(url)) { _, uses in
             if !uses { store.want(url, side: side, scale: scale, cropped: kind != .figure) }
         }
+    }
+
+    private func request() {
+        if store.usesPeek(url) { store.wantPeek(url) } else { store.want(url, side: side, scale: scale, cropped: kind != .figure) }
     }
 
     static func symbol(_ kind: ShelfKind) -> String {

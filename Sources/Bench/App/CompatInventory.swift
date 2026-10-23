@@ -59,6 +59,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
     case handover
     case keep
     case planProgress, reviewer, notes
+    case find
     /// Not a feature: the checks Capsid makes once when Claude Science's
     /// version changes (App/CompatWatch.swift), so "Last problem" can name them.
     case update
@@ -87,6 +88,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .planProgress: "Step n of m under a running session"
         case .reviewer: "The reviewer's findings on a finished card"
         case .notes: "Claude's messages to you, on a card"
+        case .find: "Find a figure or file from any session, in the Shelf and in Quick Open"
         case .update: "The checks after a Claude Science update"
         }
     }
@@ -131,6 +133,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .planProgress: "step progress"
         case .reviewer: "reviewer findings"
         case .notes: "Claude's messages on a card"
+        case .find: "finding files"
         case .update: "the checks after an update"
         }
     }
@@ -345,8 +348,9 @@ extension CompatInventory {
     // MARK: Database
 
     private static func column(_ table: String, _ name: String, _ feature: CompatFeature,
-                               optional: Bool = false) -> CompatDependency {
-        CompatDependency(kind: .schema, token: "\(table).\(name)", detail: optional ? "used when it is there" : "read by the session queries",
+                               optional: Bool = false, detail: String? = nil) -> CompatDependency {
+        CompatDependency(kind: .schema, token: "\(table).\(name)",
+                         detail: detail ?? (optional ? "used when it is there" : "read by the session queries"),
                          feature: feature, file: "Shared/Core/SQLiteSource.swift", check: .live, optional: optional)
     }
 
@@ -386,6 +390,22 @@ extension CompatInventory {
         column("frame_blobs", "body", .sessions),
         column("frame_messages", "frame_id", .activity),
         column("frame_messages", "msg_json", .activity),
+        // Find a figure or file (Find/, since 1.0): the files of every session,
+        // one row for each artifact, with its latest version.
+        column("artifacts", "id", .find, detail: "read by Find"),
+        column("artifacts", "project_id", .find, detail: "read by Find"),
+        column("artifacts", "root_frame_id", .find, detail: "read by Find: the session a file belongs to"),
+        column("artifacts", "filename", .find, detail: "read by Find"),
+        column("artifacts", "latest_version_id", .find, detail: "read by Find: the version a file is listed by"),
+        column("artifacts", "is_user_upload", .find, detail: "read by Find: uploads are not files Claude made"),
+        column("artifacts", "is_ephemeral", .find, detail: "read by Find"),
+        column("artifacts", "priority", .find, detail: "read by Find"),
+        column("artifact_versions", "id", .find, detail: "read by Find"),
+        column("artifact_versions", "content_type", .find, detail: "read by Find"),
+        column("artifact_versions", "size_bytes", .find, detail: "read by Find"),
+        column("artifact_versions", "created_at", .find, detail: "read by Find: the date a file shows and is found by"),
+        column("artifact_versions", "version_number", .find, detail: "read by Find"),
+        column("artifact_versions", "is_intermediate", .find, detail: "read by Find: intermediates are left out"),
 
         stored("frames.status (values)", "processing, awaiting_user_response, awaiting_plan_approval, completed, success, cancelled, replaced, failed", .sessions),
         stored("frames.conversation_type (uploads)", "uploads marks a project's hidden uploads frame", .sessions),
@@ -395,6 +415,10 @@ extension CompatInventory {
         stored("output_data.pending_input_requests", "a list of pending requests, each with a kind", .sessions),
         stored("msg_json._ts, role, _intent_id, _tokens", "when, who, the intent id, and input and output tokens of a message", .activity),
         stored("input_data._intent_id", "finds the session a lost reply made", .browse),
+        stored("artifacts.priority (user_hidden)", "a file the user hid in Claude Science's list is hidden from Find too", .find),
+        stored("artifacts.filename (plan, goal)", "plan*.json and goal_*.html are the planner's own files, which Claude Science's list hides; Find does too", .find),
+        stored("ix_frames_bench_name_search", "the compact index Claude Science's own ⌘K search reads session titles from; Find asks for it by name only when the database has it, else it reads the wide frames rows", .find),
+        stored("ix_artifact_versions_slim_covering", "the covering index of a version's facts; Find asks for it by name only when the database has it", .find),
     ]
 
     // MARK: Derived

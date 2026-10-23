@@ -120,6 +120,10 @@ enum Demo {
         /// The Shelf window (Kept/ShelfPDF*.swift) on the made-up shelf with two figures picked; the
         /// PDF Make PDF… would make from them is written into a temporary folder (its path is printed).
         case shelfPdf = "shelf-pdf"
+        /// Find any figure (Find/FindDemo.swift): the Shelf window with a search
+        /// typed in it (`--query "<words>"`, "heatmap" when missing), so the shelf's
+        /// own matches and "In your sessions" both show, from made-up files.
+        case find
     }
 
     /// `--step` with `--demo since-you-left`; `sheet` when missing.
@@ -331,6 +335,8 @@ enum Demo {
             CompanionDemo.show(quiet: isQuiet)
         case .shelfPdf?:
             ShelfPDFDemo.show()
+        case .find?:
+            FindDemo.show(quiet: isQuiet)
         case nil:
             break
         }
