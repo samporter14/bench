@@ -323,6 +323,60 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23, README follow-ups: words under the title, Windows line ends, the byte order mark, the fine print
+
+The owner's rule for a kept folder's README.md: never lose or hide what a person wrote in it. The earlier fix (Try Again
+updates only Capsid's parts) left three follow-ups, each fixed on `g/readme-robust2` with tests that were red on the old
+code first. Everything ran on temporary folders and made-up content ("Plate reader QC", "z_prime.png"); the real Kept
+folder was never read or written, and nothing was launched or installed.
+
+- ✅ **Words under the title hid the folder.** Cause: `KeptReadme.parse` took the lines between the title and the first
+  "##" heading as a place only blank lines may be, so a note there made it answer nil: the folder left the Shelf and the
+  Kept window, and Try Again could never update it. Now those lines are passed over as the person's own (like a heading of
+  theirs between sections) and neither `updating` nor `replacingLegend` changes a byte of them. Red before the fix on the
+  parser, both writes, the disk (scan, read, legend save, Try Again's rewrite) and a real `ShelfModel` (the item left
+  the model's `items`); green after, and the item's legend still saves under the words. The lines
+  `KeepRules.leftOut` adds under "Where it came from" (upload, pending, data and code left out) were always read and now
+  have a test through the parser and both writes.
+- ✅ **The other shapes, each decided.** An extra blank line in the text (after the front matter, after the title, between
+  sections, before or after the divider, after the fine print) and a missing final newline were already read: pinned, and
+  both writes leave them where they are. The legend's own section is the exception (its lines, blank ones included, are
+  rewritten with the legend), pinned. A blank line inside the front matter stays refused (the record is read in the shape
+  Capsid writes it, and the writes find its rows by their places), pinned. Windows line ends were not read at all (every
+  structural line carried a carriage return): a file whose first line break is CRLF is now read as the same file with plain
+  ones, and `replacingLegend` and `updating` write Windows line ends back, new lines and a pasted legend included, byte
+  order mark and a missing final line end too. A Windows file with a plain line end among them is read but not changed
+  (they could not be put back as they were): `updating` answers nil (Try Again's existing "has a form Capsid can't update
+  safely" sentence) and the legend save says "README.md has a form Capsid can't edit safely, so it was left alone." instead
+  of the old, untrue "has no Your legend section". A plain file with Windows line ends only inside a person's words is
+  not a Windows file (`lineEndsInTheLegendComeBackAsWritten` and the Try Again test with a Windows-edited section still
+  pass untouched).
+- ✅ **A legend save in a README with a byte order mark** always said "changed in another app" (and Use Mine too):
+  `KeptDisk.replaceLegend` compared the file's bytes with the text the field was made from, and decoding the bytes had
+  dropped the mark from the one. Now it compares without the mark, writes it back, and answers the README as text without
+  it (two saves in a row, emptied again, a change made elsewhere with and without the mark, a README without a mark
+  written without one; and `ShelfLegendEditor` through two saves, a change elsewhere and Use Mine). README text is decoded
+  without the mark explicitly rather than by what Foundation does.
+- ✅ **The fine print.** New READMEs end with "Capsid updates the file lists, “Not copied”, “Checksums” and “Your legend”
+  here; everything else in this file is yours." The parser never read the line's words, so READMEs with the old line (and
+  with a person's own) still read; neither write rewrites it (pinned). The contract's README and the anchors in the
+  Try Again tests (`KeptReadmeTests`, `KeepModelTests`) use the new line.
+- Break-and-see: for each item the new tests were run against the code before the fix and failed, then passed with it.
+  Fine print: seven (the contract's README to the byte, the new wording, three Try Again tests whose anchor is the line,
+  the old-line pin, and the footer test, which crashed on its force-unwrapped anchor). Byte order mark: the disk test
+  (`.changedOutside`) and the editor test (eight issues, Use Mine among them). The words and the line ends: nine of the
+  twelve tests then in `KeptReadmeShapeTests` failed (the other three were pins that already held: no final newline, a
+  blank line in the front matter, extra blank lines in the text); and with `KeptReadme.swift` put back to the commit
+  before the fix, the four new tests on the disk and on a real `ShelfModel` failed too (the item left the model's
+  `items`). The test for the legend's own section keeping its blank lines was added after the fix, as a pin.
+- The whole suite: 3,851 tests in 501 suites pass (21 new). One run, earlier, had `SinceYouLeftModelTests.lessThanThirtyMinutesAwayShowsNothing`
+  failing, alone as well as in the suite: its rig starts at the real time minus 3 hours and the test counts 18 minutes, so
+  in the window when that crosses midnight UTC (here 10:42 to 11:00 pm EDT) the away stretch spans two days and the card
+  appears. Nothing to do with Kept; it passed in the next run, outside that window.
+- ⏳ **Live**: not tried on a real README. No window was opened and the real Kept folder was not touched; what remains is
+  to put a sentence under the title of one real kept folder and save its legend, and to open a folder saved by a Windows
+  editor.
+
 ## 2026-10-23, Ask Another Model (off by default; a side door to another model, with your own key)
 
 - ✅ **Finished from a checkpoint.** An earlier run (d626bef) was stopped three times by API overloads before it built or
