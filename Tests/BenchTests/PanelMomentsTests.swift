@@ -425,6 +425,14 @@ struct PanelSoundTests {
         for name in names { #expect(NSSound(named: name) != nil, "\(name)") }
     }
 
+    @Test func theTestNotificationChimesWithCapsidsOwnQuestionSound() throws {
+        // Settings' Send a Test Notification plays what a real one would: the panel's question sound, not the Mac's Glass by name.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Bench/Lab/MacNotifications.swift"), encoding: .utf8)
+        #expect(source.contains("if benchSounds { PanelSound.play(.question) }"))
+        #expect(!source.contains("NSSound(named:"))
+    }
+
     @Test func eachKindOfEventHasCapsidsOwnSoundAndTheAppCarriesThem() throws {
         // Capsid's own four (since 1.0.1): a .caf each in Resources/Sounds, short, and copied into the app.
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

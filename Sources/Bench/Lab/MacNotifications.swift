@@ -613,8 +613,9 @@ final class MacNotifications: NSObject, ObservableObject {
     /// of the user's, and it shows even with Bench in front.
     func sendTest() {
         let benchSounds = UserDefaults.standard.bool(forKey: SettingsKey.soundOnNeedsInput)
-        // The panel's chime would come with a real one.
-        if benchSounds { NSSound(named: "Glass")?.play() }
+        // The panel's chime would come with a real one: Capsid's own question sound
+        // (the Mac's Glass only where the bundle has none, as for any chime).
+        if benchSounds { PanelSound.play(.question) }
         add(NotificationRules.Content(id: Self.testID, title: "Test notification",
                                       body: "This is how Capsid tells you a session needs you.",
                                       sound: !benchSounds, sessionID: nil, link: nil))
