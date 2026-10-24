@@ -73,7 +73,7 @@ struct SessionWriterBuildTests {
             .answer(frame: root, toolID: String(repeating: "t", count: 201), answers: ["Q?": "A"]),
             .message(frame: root, agent: "", projectID: nil, text: "x", intentID: intent),
             .message(frame: root, agent: "a", projectID: nil, text: "", intentID: intent),
-            .message(frame: root, agent: "a", projectID: nil, text: String(repeating: "a", count: 4001), intentID: intent),
+            .message(frame: root, agent: "a", projectID: nil, text: String(repeating: "a", count: 32_001), intentID: intent),
             .message(frame: root, agent: "a", projectID: nil, text: "x", intentID: "1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
             .message(frame: root, agent: "a", projectID: nil, text: "x", intentID: intent.uppercased()),
             .message(frame: root, agent: "a", projectID: "", text: "x", intentID: intent),

@@ -323,6 +323,66 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-24, messages made on the Mac may be 32,000 characters (the phone's stay at 4,000)
+
+Every message Capsid sends into a session shares one send path, and its cap (4,000 characters) was set for the
+phone's small request bodies; the Mac's own senders reused it, so a long message couldn't go from the Mac. On
+`g/longer-messages` (from ad0a315). Everything ran on made-up sessions, a fake page and fake writes: no daemon, no
+window, nothing read under `~/.claude-science`, nothing launched, installed or pushed.
+
+- ✅ **One limit for the Mac, one for the phone.** `RemoteActionRequest.macMessageLimit = 32_000` beside
+  `messageLimit = 4_000`. The Mac's: Ask Another Model's Send to Session (`AskRules.sendable`, its "Too long…"
+  sentence, `AskModel.message`), Quick Start (`QuickStartFlow.textLimit`, and so the panel, the menu bar's "Start a
+  session…" field, Services' selected text, Shortcuts, recipes and their Settings line) and the reply window's changes
+  to a plan (`checkedPlanFeedback`, `QuestionReplier.Sentence.feedbackProblem` under the field). The phone's, as they
+  were: `RemoteActionRequest.parse`, `NewSessionRequest.parse`, `PhotoRequest.textLimit`, the phone page's `maxlength`
+  and counter, and the 8 KB and 16 KB bodies. Since You Left's sheet sends a chosen answer (1,000 characters), not a
+  message, so it is unchanged; `FailureReason.fullLimit`, the reader's 4,000-character reply, the live text's
+  4,000 and the phone page's 4000 ms timer are not message limits.
+- ✅ **A second 4,000 sat in the page.** Raising the Swift caps alone would have changed nothing: every Mac write goes
+  through `benchBuildWrite`, whose `request()` refused plain text over 4,000, so a 4,001-character Mac send came
+  back as a write that wasn't made ("Couldn't send"). It takes 32,000 now, for a message, a new session, plan changes
+  and the words before Quick Start's file lines; a photo's text (`attachment: true`) stays at 4,000 there. It is not
+  what stops the phone, whose bodies are refused by their parsers before a write is built (tested below).
+- ✅ **Nothing else in the path assumed a length.** The write is `callAsyncJavaScript` arguments and a `fetch` body,
+  with the 20-second deadline unchanged; a sent message is matched by `_intent_id` first, whatever its length. The
+  words fallback sees only the reader's 2,000-character cut of a turn (ended "…"), so 4,001 and 32,000 characters
+  are alike to it: a lost write of a long message whose turn has no intent id settles "Not sure", never "sent" and never
+  "didn't go through" (`LongMessagePathTests`). A turn read whole is cut at 20,000, not refused. Claude Science's own
+  API may cap a message's length: not known, not looked into (its files stay unread).
+- ✅ **Tests** (`LongerMessagesTests.swift`, new, 19 tests, and 6 more at the end of `QuickStartFlowTests.swift`; others edited where they pinned 4,000 for a Mac sender):
+  - the two constants, and the phone's routes still refusing 4,001 (message, new session, photo text), also refusing
+    32,000, with their bodies and the phone page's `maxlength 4000` and counter as they were;
+  - the page builder, for a message, a new session, plan changes and the two file-line kinds: 4,001 and 32,000
+    build, 32,001 doesn't (characters, not bytes; an astral character is one; a reference is refused at any length);
+    a photo's text still 4,000; the very page script with a fake `fetch` posts all 32,000 characters to `/api/request`
+    and the project's request (and a 32,001 never leaves the page);
+  - the shared path with a fake write: `respond` hands the writer a 32,000-character message and plan change whole,
+    the phone's `act` takes 4,000 and answers 400 to 4,001 and 32,000 with nothing written;
+  - each Mac sender at 32,000 and 32,001: Ask (`sendable`, `unsendable`'s "32,031 characters; the most is 32,000",
+    `AskModel.message`, and the model end to end through `RemoteSessions`: the write carries all 32,000, one more
+    sends nothing), Quick Start (`check` for both targets, a new session, a message, with files, one over uploads
+    nothing; the menu bar field's request through the flow's check; recipes; Services' text cut at 32,000) and the
+    reply window (`checkedPlanFeedback`, the line under the field, the replier sends the whole text).
+- ✅ **Mutations** (break the fix, see the tests fail, restore):
+  - `macMessageLimit` back to 4,000: 19 tests fail across every Mac sender and the path tests (the listings were
+    first cut at 80 lines; both of these were run again whole);
+  - Ask's three uses, Quick Start's `textLimit` and `checkedPlanFeedback` back to `messageLimit`, with the phone's
+    `parse` and `NewSessionRequest.parse` widened to the Mac's, all at once: 21 tests fail, the Ask, Quick Start and
+    plan-change ones on their own tests, and the phone's 4,001 tests (`RemoteActionBodyTests`'s old one,
+    `aNewSessionsBody`'s old one, and `thePhonesRoutesStillRefuse…` and `thePhonesRouteTakes…` here: a 4,001-character
+    body would otherwise parse, write and answer 200);
+  - the page's 32000 back to 4000: five page-builder tests fail, and no sender-level test does, so the two layers are
+    pinned apart;
+  - a photo's room widened to 32,000, `PhotoRequest.textLimit` widened and the line under the field's limit back to
+    4,000: the photo, the phone and the reply-line tests fail.
+- ✅ **The whole suite**: 3,940 tests in 509 suites pass (3,909 in 505 before), `✔ Test run with 3940 tests in 509 suites
+  passed`. The first full run had one failure, `LabInsightsGateTests.bothOfTheFailureCardsSwitchesMustBeOn` (its two
+  switch expectations, nothing near a send), which passed alone and in the full run after it: a load flake, not this
+  change.
+- ⏳ **Live**: a real 32,000-character send to a real session (the daemon's own cap is unknown, and a row it holds too
+  big to send reads as a placeholder), and typing that much into the reply window's field.
+
 ## 2026-10-24, Capsid 1.0.3 released and installed
 
 - ✅ Released as v1.0.3 (tag on 9912039, "Capsid 1.0.3", by Sam with `gh release create`), marked Latest:

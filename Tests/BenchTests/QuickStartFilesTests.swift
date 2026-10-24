@@ -362,8 +362,10 @@ struct FileWriterRoomTests {
     }
 
     @Test func oneToEightLinesAfterTheTextAndABlankLine() {
-        let text = String(repeating: "界", count: 4000)
+        // The Mac's limit, 32,000 characters, of the words before the lines.
+        let text = String(repeating: "界", count: 32_000)
         for make in [message, newSession] {
+            #expect(builds(make(String(repeating: "界", count: 4_001) + "\n\n" + lines(2))))
             #expect(builds(make(line())))
             #expect(builds(make("Look at these.\n\n" + line())))
             #expect(builds(make("Look at these.\n\n" + lines(8))))

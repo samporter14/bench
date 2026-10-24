@@ -293,8 +293,18 @@ final class QuestionReplier: ObservableObject {
         static let planGone = RemoteDecide.Sentence.planGone
         static let planChanged = "The plan changed. Look at the new one in Capsid: what you wrote is still here to copy."
         static let feedbackFailed = "Couldn't send it. What you wrote is still here: try again, or open the session in Capsid."
-        static let feedbackTooLong = "At most 4,000 characters."
+        static let feedbackTooLong = "At most 32,000 characters."
         static let feedbackReference = "This reads like a file reference, which can't be sent from here. Reword it, or send it in Capsid."
+
+        /// What is wrong with the words typed for a plan's changes, in the line under the field: too many
+        /// characters for a message made on the Mac (`RemoteActionRequest.macMessageLimit`), or a file
+        /// reference the page would refuse. Nil when they can go.
+        static func feedbackProblem(_ typed: String) -> String? {
+            let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.unicodeScalars.count > RemoteActionRequest.macMessageLimit { return feedbackTooLong }
+            if PhotoText.hasReference(text) { return feedbackReference }
+            return nil
+        }
         // A write that got no answer, and what a fresh read of the session said of it.
         static let checking = RemoteDecide.Sentence.checking
         static let answerNotThere = "It didn't go through. Your answer is still here: try again."

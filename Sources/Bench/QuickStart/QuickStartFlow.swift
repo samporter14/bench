@@ -86,9 +86,10 @@ struct IntentLedger: Equatable, Sendable {
 final class QuickStartFlow: QuickStartSending {
     static let shared = QuickStartFlow(sessions: .shared, browser: .shared, dependencies: .live())
 
-    /// The most a request's text may be, as the phone's message and new-session
-    /// bodies have it.
-    nonisolated static let textLimit = RemoteActionRequest.messageLimit
+    /// The most a request's text may be: what a message made on the Mac may be
+    /// (`RemoteActionRequest.macMessageLimit`), not the phone's 4,000. The menu
+    /// bar's "Start a session…" field, Services and Shortcuts come through here.
+    nonisolated static let textLimit = RemoteActionRequest.macMessageLimit
 
     // MARK: What is asked and what comes back
 
@@ -161,7 +162,9 @@ final class QuickStartFlow: QuickStartSending {
         static let notReady = "Claude Science isn't ready yet. Wait for Capsid's window to finish loading, then try again."
         static let nothingToSend = "Write what Claude should do, or drop a file."
         static let needsProject = "Choose a project to start in."
-        static let tooLong = "That's over 4,000 characters. Shorten it, or put the rest in a file."
+        static let tooLong = "That's over 32,000 characters. Shorten it, or put the rest in a file."
+        /// Settings → Recipes, under a recipe's words.
+        static let recipeTooLong = "That's over 32,000 characters."
         static let reference = "Part of that text looks like one of Claude Science's own attachment tags, which can't be sent as text. "
             + "Take out the braces and try again."
         static let projectGone = "That project isn't in Claude Science any more. Choose another."

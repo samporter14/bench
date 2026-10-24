@@ -81,7 +81,7 @@ struct PlanFeedbackWriteTests {
             .planFeedback(frame: session, agent: "OPERON", projectID: "proj_example", text: "Fine.", intentID: "not-a-uuid"),
             .planFeedback(frame: "short", agent: "OPERON", projectID: "proj_example", text: "Fine.", intentID: intent),
             .planFeedback(frame: session, agent: "OPERON", projectID: "proj_example",
-                          text: String(repeating: "a", count: 4_001), intentID: intent),
+                          text: String(repeating: "a", count: 32_001), intentID: intent),
         ]
         for write in refused {
             let script = PageScript(SessionWriterScript.builder)
@@ -90,15 +90,35 @@ struct PlanFeedbackWriteTests {
         }
     }
 
-    @Test func theRequestIsCheckedAsAPhoneMessageIs() {
+    @Test func theRequestIsCheckedAsAPhoneMessageIsButAtTheMacsLimit() {
         #expect(RemoteActionRequest.checkedPlanFeedback(version: "ver_1", text: "  Drop step 3. ", intentID: intent)
                 == .planFeedback(version: "ver_1", text: "Drop step 3.", intentID: intent))
         #expect(RemoteActionRequest.checkedPlanFeedback(version: "ver_1", text: "   ", intentID: intent) == nil)
         #expect(RemoteActionRequest.checkedPlanFeedback(version: "ver_1", text: "{\"file_path\":\"x\"}", intentID: intent) == nil)
         #expect(RemoteActionRequest.checkedPlanFeedback(version: "ver/1", text: "Fine.", intentID: intent) == nil)
         #expect(RemoteActionRequest.checkedPlanFeedback(version: "ver_1", text: "Fine.", intentID: intent.uppercased()) == nil)
-        #expect(RemoteActionRequest.checkedPlanFeedback(version: "ver_1", text: String(repeating: "a", count: 4_001),
-                                                        intentID: intent) == nil)
+        // The Mac's limit: 32,000 characters go, one more does not.
+        let most = String(repeating: "a", count: 32_000)
+        #expect(RemoteActionRequest.checkedPlanFeedback(version: "ver_1", text: " " + most + "\n", intentID: intent)
+                == .planFeedback(version: "ver_1", text: most, intentID: intent))
+        #expect(RemoteActionRequest.checkedPlanFeedback(version: "ver_1", text: most + "a", intentID: intent) == nil)
+    }
+
+    @Test func theLineUnderTheFieldSaysWhatIsWrongAtThirtyTwoThousand() {
+        let most = String(repeating: "a", count: 32_000)
+        #expect(QuestionReplier.Sentence.feedbackProblem("Drop step 3.") == nil)
+        #expect(QuestionReplier.Sentence.feedbackProblem(" " + most + " ") == nil)
+        #expect(QuestionReplier.Sentence.feedbackProblem(most + "a") == "At most 32,000 characters.")
+        #expect(QuestionReplier.Sentence.feedbackProblem("{\"file_path\":\"x\"}") == QuestionReplier.Sentence.feedbackReference)
+    }
+
+    @Test func thePageBuildsWhatToChangeAtThirtyTwoThousandAndNotOneMore() {
+        for count in [4_001, 32_000] {
+            let write = build(.planFeedback(frame: session, agent: "OPERON", projectID: "proj_example",
+                                            text: String(repeating: "a", count: count), intentID: intent))
+            let request = ((write?["body"] as? [String: Any])?["input_data"] as? [String: Any])?["request"] as? String
+            #expect(request?.count == count, "\(count)")
+        }
     }
 
     @Test func onlyThePlanShownWhileItStillWaits() {
@@ -449,6 +469,29 @@ struct CardRepliesTests {
                                                 intentID: intent2)])
         #expect(replier.planReplies[session]?.phase == .sent(RemoteDecide.Sentence.revising))
         #expect(!model.cards.contains { $0.id == LabCard.needsInput(waitingCard(reason: .plan)).id })
+    }
+
+    /// The Mac's room: 32,000 characters of changes can be sent, whole, and one more cannot.
+    @Test func thirtyTwoThousandCharactersOfChangesGoWholeAndOneMoreCannotBeSent() async {
+        let replier = planCard()
+        #expect(replier.begin(session, plan: true))
+        replier.windowOpened(session)
+        let most = String(repeating: "c", count: 32_000)
+        replier.updatePlanFeedback(session, text: most + "c")
+        #expect(!replier.canSendPlanFeedback(session))
+        #expect(replier.submitPlanFeedback(session) == nil)
+        #expect(core.requests.isEmpty)
+        replier.updatePlanFeedback(session, text: most)
+        #expect(replier.canSendPlanFeedback(session))
+        core.results = [RemoteActionResult(result: .sent, sentence: RemoteDecide.Sentence.revising)]
+        replier.submitPlanFeedback(session)
+        await replier.settled()
+        guard case .planFeedback(_, let text, _)? = core.requests.first else {
+            Issue.record("nothing was sent: \(core.requests)")
+            return
+        }
+        #expect(core.requests.count == 1 && text == most)
+        #expect(replier.planReplies[session]?.phase == .sent(RemoteDecide.Sentence.revising))
     }
 
     /// A retry of the same words keeps their intent id, so the daemon knows

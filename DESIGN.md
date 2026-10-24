@@ -1770,6 +1770,30 @@ phone keeps the words. A photo's turn that runs out of time stops at its next
 step: one given up on while it reads the session uploads nothing, and an upload
 never starts for a caller already given up on.
 
+**How long a message may be.** Two limits, by who is sending
+(`RemoteActionRequest`). A message made on the Mac may be **32,000 characters**
+(`macMessageLimit`): Ask Another Model's Send to Session, Quick
+Start (its panel, the menu bar's "Start a session…" field, Services, Shortcuts
+and a recipe's words) and the reply window's changes to a plan. The phone's stay
+at **4,000** (`messageLimit`): `parse` for a message, `NewSessionRequest.parse`
+for a new session, the photo's text and the phone page's own boxes (`maxlength`
+4000 and its counter), each of which refuses before any write is built; their
+bodies are kept small (8 KB, 16 KB for `/message` and a new session). The in-page writer
+(`benchBuildWrite`) is the one place both pass, so it takes 32,000 for plain
+text, and for the text before Quick Start's file lines; it is not what stops the
+phone, and a photo's text stays at 4,000 there too. Nothing else in the path
+assumed a length: the write is the page's arguments and a `fetch` body, not the
+phone's HTTP, and a message is found by its intent id whatever its length. The
+words fallback only ever sees the opening of a long turn, because the session
+reader cuts a turn at 2,000 characters and ends it "…" (4,001 characters and
+32,000 look alike to it): an unknown write of a long message with no intent id on
+its turn is "Not sure", never "sent" and never "didn't go through". A turn read
+whole (the reference reader, Ask Another Model's context) is cut at 20,000.
+Whether Claude Science's own API caps a message's length is not known (the
+daemon's limits are not read, and a row it holds too big to send comes back as a
+placeholder, `_oversized_bytes`): an answer from the daemon that refuses a long
+message shows as a send that didn't go, with the words kept.
+
 ### Answering from the card (Lab/QuestionReply.swift, Lab/ReplyWindow.swift, since 0.7.0)
 
 A session's question, a permission request, or what to change in a plan can be
@@ -1911,8 +1935,10 @@ has **Request changes…** beside Show steps. It opens the window ("Request
 Changes"): the plan's summary and steps line, and "What should change?" (a
 text field, focused). **Send** (⌘↩) sends it through `respond` as
 `RemoteActionRequest.planFeedback(version:text:intentID:)`, checked as a phone
-message is (trimmed, 1 to 4,000 characters, none of the UI's reference
-prefixes) and made only by this window; the phone has no route for it. The
+message is but at the Mac's limit (trimmed, 1 to 32,000 characters, none of the
+UI's reference prefixes; the line under the field says "At most 32,000
+characters." past it) and made only by this window; the phone has no route for
+it. The
 check (`RemoteDecide.planFeedback`): the root still `awaiting_plan_approval`,
 not approved, at the very version the card showed, with an agent and a
 project; then `POST /api/request` `{target_agent, root_frame_id, project_id,
@@ -4247,7 +4273,9 @@ unexpected status, 404/405, unknown 4xx `code` or non-JSON reply is
   allows exactly `/frames/<36>/approve-plan` (`{}`),
   `/frames/<36>/resolve-input` and `/request`, and builds each body in the page
   from typed arguments (never string interpolation), checking the shape again
-  there.
+  there. Its room for plain text is the Mac's 32,000 characters (Bounded writes,
+  How long a message may be); the phone's messages are stopped at 4,000 by the
+  body checks below before a write is built.
 - **Limits**: at most 6 actions a minute per device (429 after), within the
   device's budget for every route (Budgets, below). Settings →
   Phone has "Let paired devices answer, approve and send messages"
@@ -5193,10 +5221,11 @@ same code.
   request is the text, a blank line and the attachment line, written key by
   key (`type`, `id`, `version_id`, `filename`, `artifact_ref`,
   `content_type`, `size_bytes`; never a dictionary); a photo alone is the line
-  alone. The in-page writer allows that one strictly shaped line after 4,000
-  characters of text only when the write says it is a photo's
-  (`attachment: true`, passed by the photo flow alone), and nothing longer for
-  plain text; every other message or new session refuses an attachment line and
+  alone. The in-page writer allows that one strictly shaped line after at most
+  4,000 characters of text, and only when the write says it is a photo's
+  (`attachment: true`, passed by the photo flow alone); a photo's text is never
+  longer. Plain text, which the Mac's own messages use, may be 32,000 (Bounded
+  writes), but every other message or new session refuses an attachment line and
   the seven reference prefixes there too. Answers as the
   message route: `sent`, `queued`, `resumed`, `blocked`.
 - **A project**: the new-session route's list, `plan_mode` from `planFirst`
@@ -6144,6 +6173,13 @@ turn if Claude is busy." Errors say what happened in one line and keep the
 text; files already uploaded stay in the project and a retry reuses them for
 ten minutes.
 
+**How much it may say.** 32,000 characters of words (what a message made on the
+Mac may be, `RemoteActionRequest.macMessageLimit`), not the 4,000 of the phone's
+writer it reuses; the same for the menu bar's "Start a session…" field, for
+Services' selected text (cut to it), for Shortcuts and for a recipe's words. Past
+it: "That's over 32,000 characters. Shorten it, or put the rest in a file."
+(Settings → Recipes: "That's over 32,000 characters.") and nothing is sent.
+
 **Files.** Any file of a kind Capsid knows (documents, tables, images, text,
 code, common lab data; about 60 extensions), up to 20 MiB each, 8 at a time,
 40 MiB in all, uploaded to the project before the request: the phone's
@@ -6411,9 +6447,11 @@ It goes by the bounded path every write to a session takes
 session's own queue, a fresh read of the session first, the message rule (a
 session waiting on a question takes no message: "Answer its question first."), a deadline per write, an unknown outcome settled by one more read
 that looks for the message's `_intent_id`, and never a second send on its own.
-The message is checked as the phone's is: 4,000 characters at most, none of the
-page's reference prefixes; an answer that can't go says why under the pills and
-Copy still works. The intent id is kept while the words are the same, so a press
+The message is checked as the phone's is, but at the Mac's limit: 32,000 characters
+at most (the model's line and the answer together; the question has the same
+32,000), none of the page's reference prefixes; an answer that can't go says why
+under the pills ("Too long to send as a message (32,031 characters; the most is
+32,000). Copy it instead.") and Copy still works. The intent id is kept while the words are the same, so a press
 after "Not sure that went through" is the daemon's own repeat of the same
 message, not a second one. A press while it goes, and after it went, does
 nothing; it says "Sent to the session." (or the queued and resumed sentences),

@@ -126,7 +126,18 @@ enum RemoteActionRequest: Equatable, Sendable {
     case planFeedback(version: String, text: String, intentID: String)
 
     static let answerLimit = 1_000
+    /// The most a message may be when it comes from the phone: `parse`'s, the
+    /// new-session and photo bodies' (`NewSessionRequest`, `PhotoRequest`) and
+    /// the phone page's own text boxes. The phone's request bodies are kept
+    /// small (DESIGN.md, Actions), and this is what they allow for.
     static let messageLimit = 4_000
+    /// The most a message may be when it is made on the Mac, where the person
+    /// is at a keyboard and no small body is waiting: Ask Another Model's Send
+    /// to Session, Quick Start (and the menu bar's field, and Shortcuts), and
+    /// the reply window's changes to a plan. The in-page writer allows the
+    /// same (`SessionWriterScript.builder`); the phone's routes never get more
+    /// than `messageLimit`, because `parse` and its kin refuse first.
+    static let macMessageLimit = 32_000
 
     static func parse(_ action: RemoteAction, body: Data) -> RemoteActionRequest? {
         guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { return nil }
@@ -180,12 +191,12 @@ enum RemoteActionRequest: Equatable, Sendable {
     }
 
     /// What to change in a plan, from the Mac's reply window: the text
-    /// trimmed, 1 to 4,000 characters with none of the UI's reference
-    /// prefixes (as a phone message), the plan's version and a uuid v4 intent
-    /// id. Nil for anything else.
+    /// trimmed, 1 to 32,000 characters (`macMessageLimit`) with none of the
+    /// UI's reference prefixes (as a phone message), the plan's version and a
+    /// uuid v4 intent id. Nil for anything else.
     static func checkedPlanFeedback(version: String, text: String, intentID: String) -> RemoteActionRequest? {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard PlanCheck.isVersionID(version), !text.isEmpty, text.unicodeScalars.count <= messageLimit,
+        guard PlanCheck.isVersionID(version), !text.isEmpty, text.unicodeScalars.count <= macMessageLimit,
               !PhotoText.hasReference(text), isUUIDv4(intentID) else { return nil }
         return .planFeedback(version: version, text: text, intentID: intentID)
     }
