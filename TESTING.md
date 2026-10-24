@@ -389,6 +389,18 @@ yet checked live: a real failed session, and a real notification close.
   in the real Application Support folder at 0600 and Remove deleting it; the paste into the secure field with Save; and
   Settings' height (1,190) on a real display.
 
+## 2026-10-23, Capsid 1.0.2 released and installed
+
+- ✅ Released as v1.0.2 (tag on 585c1f9, "Capsid 1.0.2", by Sam with `gh release create`), marked Latest:
+  `Bench.zip` with Capsid.app 1.0.2 (48) inside, 17,971,623 bytes, sha256 0ddc07904add050b…. GitHub's asset
+  digest matches the file built from that commit.
+- ✅ Installed from that same build before the release (CDHash 460b5a7e; the unzipped copy's signature checks and
+  its CDHash is the same). "Signing in: with a code from claude-science url", and the usage read answered 4 s
+  after launch.
+- The whole suite before the push: 3,829 tests in 500 suites pass.
+- ⏳ **Live**: Ask Another Model with Sam's own Abliteration.ai key (the model list's names, a real answer, Send to
+  Session).
+
 ## 2026-10-23, Capsid 1.0.1 released and installed
 
 - ✅ Released as v1.0.1 (tag on 9229072, "Capsid 1.0.1", by Sam with `gh release create`), marked Latest:
