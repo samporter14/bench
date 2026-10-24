@@ -275,3 +275,66 @@ struct AskEntryPointTests {
         #expect(menu.items.isEmpty)
     }
 }
+
+// MARK: Source checks
+
+/// What the AskModel folder's code does with the key, read from its text (comments left out): the checks that a
+/// run can't make, since a line that logs the key or reaches the Keychain would only show when it ran.
+struct AskSourceTests {
+    private static let folder = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Sources/Bench/AskModel")
+
+    /// Each file's code lines, by name.
+    private static func code() -> [String: String] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return Dictionary(uniqueKeysWithValues: names.filter { $0.hasSuffix(".swift") }.map { name in
+            let text = (try? String(contentsOf: folder.appendingPathComponent(name), encoding: .utf8)) ?? ""
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            return (name, lines.joined(separator: "\n"))
+        })
+    }
+
+    @Test func theFolderIsThere() {
+        #expect(Set(Self.code().keys) == ["AnotherModel.swift", "AnotherModelClient.swift", "AskModel.swift",
+                                          "AskModelMenu.swift", "AskModelWindow.swift"])
+    }
+
+    @Test func nothingHereReachesTheKeychain() {
+        for (name, text) in Self.code() {
+            #expect(!text.contains("Keychain") && !text.contains("SecItem") && !text.contains("kSec"), "\(name)")
+        }
+    }
+
+    @Test func theKeyIsInOneHeaderOfOneFileAndNoOtherFileNamesIt() {
+        let named = Self.code().filter { $0.value.contains("Authorization") }.keys
+        #expect(Set(named) == ["AnotherModelClient.swift"])
+    }
+
+    @Test func onlyOneLoggerExistsAndItPrintsWhatItIsGiven() {
+        let code = Self.code()
+        for (name, text) in code {
+            #expect(!text.contains("print(") && !text.contains("NSLog(") && !text.contains("os_log(") && !text.contains("dump("), "\(name)")
+            // The one Logger, in the one file, with one call.
+            #expect(text.components(separatedBy: "Logger(").count - 1 == (name == "AnotherModel.swift" ? 1 : 0), "\(name)")
+        }
+        #expect(code["AnotherModel.swift"]?.components(separatedBy: "anotherModelLog.").count == 2)
+    }
+
+    @Test func theWindowAndTheRulesNeverHandTheKeyAnywhere() {
+        // The key is read in `AnotherModel` for a request and goes no further than the client.
+        for name in ["AskModel.swift", "AskModelWindow.swift", "AskModelMenu.swift"] {
+            let text = Self.code()[name] ?? ""
+            #expect(!text.contains("currentKey") && !text.contains("AnotherModelKey"), "\(name)")
+        }
+    }
+
+    @Test func theSelectionScriptReadsNoElementOfThePage() {
+        #expect(SelectionScript.read.contains("getSelection()"))
+        for hook in ["querySelector", "closest(", "getAttribute", "hasAttribute", "getElementById", "getElementsBy", "fetch(",
+                     "XMLHttpRequest", "innerHTML"] {
+            #expect(!SelectionScript.read.contains(hook), "\(hook)")
+        }
+    }
+}

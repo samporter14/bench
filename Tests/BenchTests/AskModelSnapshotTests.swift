@@ -70,7 +70,11 @@ struct AskModelSnapshotTests {
             host: { "api.abliteration.ai" },
             limit: .seconds(120),
             ask: { _ in
-                if hold { await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in } }
+                // Held: the ask waits until Cancel ends it, so nothing is left suspended.
+                if hold {
+                    try? await Task.sleep(for: .seconds(3600))
+                    return .failure(.cancelled)
+                }
                 now += .seconds(9)
                 return answer
             },
@@ -123,8 +127,9 @@ struct AskModelSnapshotTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let size = NSSize(width: AskModelWindowController.size.width, height: AskModelWindowController.size.height + 52)
         try await draw(Window(model: try await model(ask: false)), size: size, name: "ask-ready", to: directory)
-        try await draw(Window(model: try await model(hold: true, conversation: true, ask: true)), size: size,
-                       name: "ask-asking", to: directory)
+        let asking = try await model(hold: true, conversation: true, ask: true)
+        try await draw(Window(model: asking), size: size, name: "ask-asking", to: directory)
+        asking.cancel()
         try await draw(Window(model: try await model(conversation: true, ask: true)), size: size, name: "ask-answered", to: directory)
         try await draw(Window(model: try await model(answer: .failure(.timedOut), ask: true)), size: size,
                        name: "ask-failed", to: directory)
