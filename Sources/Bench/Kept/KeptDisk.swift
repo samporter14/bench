@@ -952,7 +952,8 @@ private enum KeptDiskWork {
             throw KeptDiskError.failed(notKept)
         }
         guard let replaced = KeptReadme.replacingLegend(in: text, with: legend) else {
-            throw KeptDiskError.failed("README.md has no “Your legend” section.")
+            // It read as Capsid's, so the heading is there: this is a README whose line ends can't be put back as they were.
+            throw KeptDiskError.failed("README.md has a form Capsid can\u{2019}t edit safely, so it was left alone.")
         }
         // The answer is the README as text, without the mark: the caller's next `lastRead`.
         try ((marked ? byteOrderMark : Data()) + Data(replaced.utf8)).write(to: url, options: .atomic)

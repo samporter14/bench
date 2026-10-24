@@ -3,9 +3,11 @@
 // exactly and its README is written last, that a name taken is never
 // overwritten, that an abandoned keep leaves nothing, what a look finds (and
 // passes over), the legend's round trip and its refusal after an outside edit
-// (and the README's, when it is replaced after Try Again, byte order mark and all),
-// what a folder that isn't there says, and what a folder that stops answering
-// says: held as a dropped volume would hold it, with a clock that never sleeps.
+// (and the README's, when it is replaced after Try Again; byte order mark and
+// all, as the legend's is too), a README a person has written in (words under
+// the title, Windows line ends), what a folder that isn't there says, and what
+// a folder that stops answering says: held as a dropped volume would hold it,
+// with a clock that never sleeps.
 // Nothing here touches a real folder: the root is under the temporary folder.
 import CryptoKit
 import Foundation
@@ -545,6 +547,88 @@ struct KeptDiskLookTests {
             let plain = try await disk.readme(at: folder)
             _ = try await disk.replaceLegend(at: folder, with: "plain", lastRead: plain.markdown)
             #expect(try Data(contentsOf: url) == Data(readme(legend: "plain").utf8))
+        }
+    }
+
+    // MARK: A README a person has written in
+
+    @Test func aReadmeWithWordsUnderItsTitleIsStillScannedReadAndWrittenAround() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk, missing: true, legend: "Plate 3 was re-run.")
+            let url = folder.appending(path: "README.md")
+            let words = "Draft for the plate 7 discussion.\nCheck the cutoff with Dana first."
+            let edited = readme(missing: true, legend: "Plate 3 was re-run.")
+                .replacingOccurrences(of: "# \(figureName)\n\n", with: "# \(figureName)\n\n\(words)\n\n")
+            #expect(edited.contains(words))
+            try Data(edited.utf8).write(to: url)
+
+            // The folder is still found, with its figure and its words.
+            let found = try await disk.scan()
+            #expect(found.count == 1)
+            #expect(found.first?.figureURL.lastPathComponent == "z_prime.png")
+            #expect(found.first?.record == made(missing: true).0)
+            #expect(found.first?.text.legend == "Plate 3 was re-run.")
+            #expect(found.first?.text.claudeSaid == "Z′ is above 0.5 for every plate.")
+
+            // Saving the legend leaves the words as they were.
+            let read = try await disk.readme(at: folder)
+            #expect(read.markdown == edited)
+            let saved = try await disk.replaceLegend(at: folder, with: "New legend.", lastRead: read.markdown)
+            #expect(saved == edited.replacingOccurrences(of: "\nPlate 3 was re-run.\n", with: "\nNew legend.\n"))
+            #expect(try Data(contentsOf: url) == Data(saved.utf8))
+
+            // So does Try Again's rewrite.
+            let now = try await disk.readme(at: folder)
+            var landed = made(missing: true).0.files
+            landed.append(KeptFile(path: "input/plate_reader.xlsx", role: .input, artifact: "art_4", version: "ver_1",
+                                   sha256: KeptDisk.sha256(of: sheet), bytes: sheet.count))
+            let updated = try #require(KeptReadme.updating(now.markdown, files: landed, missing: []))
+            try await disk.replaceReadme(at: folder, markdown: updated, lastRead: now.markdown)
+            let after = try String(contentsOf: url, encoding: .utf8)
+            #expect(after == updated && after.contains("# \(figureName)\n\n\(words)\n\n## Your legend"))
+            let again = try await disk.scan()
+            #expect(again.first?.record.files == landed && again.first?.record.missing.isEmpty == true)
+            #expect(again.first?.text.legend == "New legend.")
+        }
+    }
+
+    @Test func aReadmeWithWindowsLineEndsIsStillScannedAndItsLegendIsSavedWithThem() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk, legend: "Plate 3 was re-run.")
+            let url = folder.appending(path: "README.md")
+            let crlf = readme(legend: "Plate 3 was re-run.").replacingOccurrences(of: "\n", with: "\r\n")
+            try Data(crlf.utf8).write(to: url)
+
+            let found = try await disk.scan()
+            #expect(found.count == 1 && found.first?.record == made().0)
+            #expect(found.first?.text.legend == "Plate 3 was re-run.")
+            let read = try await disk.readme(at: folder)
+            #expect(read.markdown == crlf)
+            let saved = try await disk.replaceLegend(at: folder, with: "Two\nlines.", lastRead: read.markdown)
+            let expected = readme(legend: "Two\nlines.").replacingOccurrences(of: "\n", with: "\r\n")
+            #expect(try Data(contentsOf: url) == Data(expected.utf8))
+            #expect(saved == expected)
+            // And the next save is made from what the first wrote.
+            let next = try await disk.replaceLegend(at: folder, with: "Three.", lastRead: saved)
+            #expect(try Data(contentsOf: url) == Data(readme(legend: "Three.").replacingOccurrences(of: "\n", with: "\r\n").utf8))
+            #expect(next.hasSuffix("\r\n"))
+            #expect(try await disk.scan().first?.text.legend == "Three.")
+        }
+    }
+
+    @Test func aReadmeWithMixedLineEndsIsStillShownButItsLegendIsNotSavedOverIt() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk, legend: "Plate 3 was re-run.")
+            let url = folder.appending(path: "README.md")
+            let mixed = readme(legend: "Plate 3 was re-run.").replacingOccurrences(of: "\n", with: "\r\n") + "Added in another editor.\n"
+            try Data(mixed.utf8).write(to: url)
+            let found = try await disk.scan()
+            #expect(found.count == 1 && found.first?.text.legend == "Plate 3 was re-run.")
+            let read = try await disk.readme(at: folder)
+            await #expect(throws: KeptDiskError.failed("README.md has a form Capsid can\u{2019}t edit safely, so it was left alone.")) {
+                try await disk.replaceLegend(at: folder, with: "overwritten", lastRead: read.markdown)
+            }
+            #expect(try Data(contentsOf: url) == Data(mixed.utf8))
         }
     }
 

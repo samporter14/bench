@@ -18,6 +18,14 @@
 // shown and is never touched. `render` then `parse` then `render` gives the same
 // bytes, which `KeptReadmeTests` checks with names in every script.
 //
+// Strict about what Capsid writes, and no stricter about the rest. The front
+// matter, the title line, the order of Capsid's sections and the footer must be
+// as written. But a person's words, and what an editor does to a file, must
+// never hide a folder: words under the title, a heading of their own between
+// the sections, an extra blank line in the text, no final newline, a byte
+// order mark and Windows line ends are all read, and `replacingLegend` and
+// `updating` leave them as they found them.
+//
 // Ownership: the record owns the front matter, the title line, the "Not
 // copied" rows and the "Checksums" rows (one for each file whose bytes don't
 // match Claude Science's checksum). The four `KeptText` fields are the bodies of the sections and
@@ -364,9 +372,57 @@ enum KeptReadme {
     // MARK: Free text, written
 
     /// The lines of a text, split at line feeds alone (a "\r" stays at the end
-    /// of its line, so a file with Windows line ends is read back as written).
+    /// of its line, so a carriage return a person typed into their own words is
+    /// read back as written). A whole file with Windows line ends is made plain
+    /// before it is split (`plainLineEnds`).
     static func lines(_ text: String) -> [String] {
         text.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false).map { String(String.UnicodeScalarView($0)) }
+    }
+
+    // MARK: Windows line ends
+
+    /// Whether the file has Windows line ends: its first line break is a
+    /// carriage return and a line feed, as an editor on Windows saves it. A
+    /// file whose breaks are plain, with Windows ones only in a person's own
+    /// words (a legend pasted from a Windows document), is not one.
+    private static func hasWindowsLineEnds(_ markdown: String) -> Bool {
+        var previous: Unicode.Scalar?
+        for scalar in markdown.unicodeScalars {
+            if scalar == "\n" { return previous == "\r" }
+            previous = scalar
+        }
+        return false
+    }
+
+    /// Every "\r\n" as "\n". (By scalars: Swift counts "\r\n" as one character.)
+    private static func plainLineEnds(_ text: String) -> String {
+        var out = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            if scalar == "\n", out.last == "\r" { out.removeLast() }
+            out.append(scalar)
+        }
+        return String(out)
+    }
+
+    /// Every "\n" as "\r\n".
+    private static func windowsLineEnds(_ text: String) -> String {
+        var out = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            if scalar == "\n" { out.append("\r") }
+            out.append(scalar)
+        }
+        return String(out)
+    }
+
+    /// The README as plain lines, which is what is changed, and whether its
+    /// Windows line ends are to be put back after. Nil for a file with Windows
+    /// line ends that can't be put back exactly as they were (a plain break
+    /// among them, say a line a person added in another editor): it is read,
+    /// but not changed.
+    private static func editable(_ markdown: String) -> (plain: String, windows: Bool)? {
+        guard hasWindowsLineEnds(markdown) else { return (markdown, false) }
+        let plain = plainLineEnds(markdown)
+        return windowsLineEnds(plain) == markdown ? (plain, true) : nil
     }
 
     private static func isBlank(_ line: String) -> Bool {
@@ -411,8 +467,17 @@ enum KeptReadme {
     /// malformed row, a missing section or footer). Sections are read in
     /// order: "Your legend", "What Claude said", "Where it came from", then
     /// "Not copied" and "Checksums" when they are there; a heading of anyone else's between them
-    /// is passed over, so a person's own notes never hide a folder.
+    /// is passed over, so a person's own notes never hide a folder, and so are
+    /// words they wrote under the title, before the first heading. A byte order
+    /// mark is ignored, and so are Windows line ends (a file that has them is
+    /// read as the same file with plain ones). The front matter, the title
+    /// line and the footer stay as strict as they were.
     static func parse(_ markdown: String) -> (record: KeptRecord, text: KeptText)? {
+        parsePlain(hasWindowsLineEnds(markdown) ? plainLineEnds(markdown) : markdown)
+    }
+
+    /// `parse` of a README whose line ends are already plain.
+    private static func parsePlain(_ markdown: String) -> (record: KeptRecord, text: KeptText)? {
         var all = lines(markdown)
         if all.first?.hasPrefix("\u{FEFF}") == true { all[0].removeFirst() }
         guard let front = parseFrontMatter(all) else { return nil }
@@ -425,13 +490,12 @@ enum KeptReadme {
               rest[(divider + 1)...].contains(where: { !isBlank($0) }) else { return nil }
         let body = Array(rest[(title + 1)..<divider])
 
+        // Lines before the first heading are the person's own words under the title: passed over, and left alone.
         var sections: [(heading: String, lines: [String])] = []
         for line in body {
             if line.hasPrefix("## ") {
                 sections.append((line, []))
-            } else if sections.isEmpty {
-                guard isBlank(line) else { return nil }
-            } else {
+            } else if !sections.isEmpty {
                 sections[sections.count - 1].lines.append(line)
             }
         }
@@ -464,15 +528,22 @@ enum KeptReadme {
 
     /// The README with only the legend changed: the lines between "## Your
     /// legend" and the next "## " heading become the new legend (the comment
-    /// again when it is empty), and every other byte stays. Nil when either
-    /// heading isn't there.
+    /// again when it is empty), and every other byte stays, the words under the
+    /// title among them. (The blank lines inside the legend's own section are
+    /// the legend's: they are written again with it.) A file with Windows line
+    /// ends is written with Windows line ends, the new legend's too. Nil when
+    /// either heading isn't there, or when the file's line ends are Windows
+    /// ones with a plain one among them, which could not be put back as they
+    /// were.
     static func replacingLegend(in markdown: String, with legend: String) -> String? {
-        var all = lines(markdown)
+        guard let (plain, windows) = editable(markdown) else { return nil }
+        var all = lines(plain)
         guard let start = all.firstIndex(of: legendHeading),
               let end = all[(start + 1)...].firstIndex(where: { $0.hasPrefix("## ") }) else { return nil }
-        let body = block(legend)
+        let body = block(windows ? plainLineEnds(legend) : legend)
         all.replaceSubrange((start + 1)..<end, with: ["", body.isEmpty ? legendComment : body, ""].flatMap { lines($0) })
-        return all.joined(separator: "\n")
+        let result = all.joined(separator: "\n")
+        return windows ? windowsLineEnds(result) : result
     }
 
     /// The README with only what Capsid keeps in it changed: the `files:` and
@@ -484,20 +555,22 @@ enum KeptReadme {
     /// kept folder's README (`render` would write the whole file again, from
     /// the sections `parse` returns, and lose all of that). For a README
     /// `render` made and nobody touched, the answer is what `render` would
-    /// have written for the same record. Nil when the file isn't one `parse`
-    /// reads, or when the result wouldn't read back as asked (nothing is then
-    /// written).
+    /// have written for the same record. A file with Windows line ends comes
+    /// out with Windows line ends, the new lines too. Nil when the file isn't
+    /// one `parse` reads, when its Windows line ends have a plain one among
+    /// them (they could not be put back as they were), or when the result
+    /// wouldn't read back as asked (nothing is then written).
     ///
     /// A new "Not copied" goes where the "Where it came from" section ends,
     /// and a new "Checksums" after "Not copied" (else there), so Capsid's own
     /// sections stay together and a person's go on after them.
     static func updating(_ markdown: String, files: [KeptFile], missing: [KeptMissing]) -> String? {
-        guard let parsed = parse(markdown) else { return nil }
+        guard let (plain, windows) = editable(markdown), let parsed = parsePlain(plain) else { return nil }
         var record = parsed.record
         record.files = files
         record.missing = missing
 
-        var all = lines(markdown)
+        var all = lines(plain)
         let mark = all.first?.hasPrefix("\u{FEFF}") == true
         if mark { all[0].removeFirst() }
         guard let front = parseFrontMatter(all) else { return nil }
@@ -518,8 +591,8 @@ enum KeptReadme {
 
         let updated = (mark ? "\u{FEFF}" : "") + all.joined(separator: "\n")
         // Only a result that reads back as the record asked, with the person's sections as they were.
-        guard let back = parse(updated), back.record == record, back.text == parsed.text else { return nil }
-        return updated
+        guard let back = parsePlain(updated), back.record == record, back.text == parsed.text else { return nil }
+        return windows ? windowsLineEnds(updated) : updated
     }
 
     /// Where `key:` and its rows are in the front matter (the lines before `end`,

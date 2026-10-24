@@ -5,7 +5,10 @@
 // the parser refuses anything the renderer didn't write, and that replacing
 // the legend changes the legend and nothing else, and that updating what Try
 // Again changes (the file rows, "Not copied", "Checksums") changes nothing else
-// either. Nothing here touches the disk.
+// either, and that what a person or their editor does to the file (words under
+// the title, a blank line, no final newline, Windows line ends, the older fine
+// print) neither hides the folder nor is lost by either write. Nothing here
+// touches the disk.
 import Foundation
 import Testing
 @testable import Bench
@@ -721,5 +724,279 @@ struct KeptReadmeUpdateTests {
         // Nor one whose front matter is out of order.
         let swapped = rendered(record()).replacingOccurrences(of: "capsid_kept: 1\nname:", with: "name:")
         #expect(update(swapped, to: record()) == nil)
+    }
+}
+
+// MARK: What a person may do to the file and still have it read
+
+/// Harmless things a person, or their editor, does to a README: words under the
+/// title, an extra blank line, no final newline, Windows line ends. The folder
+/// stays on the Shelf, and what Capsid writes afterwards leaves every byte of
+/// what they did as it was.
+struct KeptReadmeShapeTests {
+    private static let words = "Draft for the plate 7 discussion.\nCheck the cutoff with Dana before it goes in."
+    private let base = render(record(), text(legend: "Plate 3 was re-run."))
+    private let title = "# Fig 2B · Z′ by plate\n\n"
+    private let landed = KeptFile(path: "input/plate_reader.xlsx", role: .input, artifact: "art_4", version: "ver_1",
+                                  sha256: "dddd", bytes: 9)
+
+    /// `markdown` with `words` between the title and the first section.
+    private func underTitle(_ words: String = Self.words, in markdown: String? = nil) -> String {
+        (markdown ?? base).replacingOccurrences(of: title, with: title + words + "\n\n")
+    }
+
+    /// The same file with Windows line ends, as an editor on Windows saves it.
+    private func windows(_ markdown: String) -> String {
+        markdown.replacingOccurrences(of: "\n", with: "\r\n")
+    }
+
+    private func hasCarriageReturn(_ text: String) -> Bool { text.unicodeScalars.contains("\r") }
+
+    /// Whether any line feed is not behind a carriage return.
+    private func hasPlainLineFeed(_ text: String) -> Bool {
+        var previous: Unicode.Scalar = " "
+        for scalar in text.unicodeScalars {
+            if scalar == "\n", previous != "\r" { return true }
+            previous = scalar
+        }
+        return false
+    }
+
+    /// The whole README for the record with `landed` listed and nothing missing.
+    private var landedRecord: KeptRecord {
+        var whole = record(missing: false)
+        whole.files.append(landed)
+        return whole
+    }
+
+    // MARK: Words under the title
+
+    @Test func wordsUnderTheTitleDoNotHideTheFolder() throws {
+        let shapes: [(String, String)] = [
+            ("two lines", Self.words),
+            ("a list", "- Bench 4\n- Lot 2207"),
+            ("a quote and a smaller heading", "> Ask Dana.\n\n### Open points\n\nPlate 7."),
+            ("a horizontal rule", "Draft.\n\n---\n\nStill draft."),
+            ("indented, with trailing spaces and a tab", "    Re-ran on 3 plates.   \n\tAnd one more.  "),
+            ("a backslash before a heading mark", "\\## not a section"),
+            ("Windows line ends inside", "First line.\r\nSecond line."),
+            ("every script", "Z′ · 日本語 · Ünïcode 🧪 \"quoted\" \\ back"),
+        ]
+        for (label, words) in shapes {
+            let parsed = try #require(KeptReadme.parse(underTitle(words)), "\(label)")
+            #expect(parsed.record == record(), "\(label)")
+            // The words are the person's: they are not folded into the legend or anything Capsid writes.
+            #expect(parsed.text.legend == "Plate 3 was re-run.", "\(label)")
+            #expect(parsed.text.claudeSaid == text().claudeSaid, "\(label)")
+            #expect(parsed.text.attribution == text().attribution, "\(label)")
+            #expect(parsed.text.origin == KeptReadme.origin(for: record(), timeZone: zone, locale: english), "\(label)")
+        }
+        // No blank line between the title and the words, and words ahead of a heading of the person's own.
+        #expect(KeptReadme.parse(base.replacingOccurrences(of: title, with: "# Fig 2B · Z′ by plate\nWords right under it.\n\n")) != nil)
+        #expect(KeptReadme.parse(underTitle("Words.\n\n## My notes\n\nMore words.")) != nil)
+        // The front matter above them is still the record's alone: words before the title are not a shape it reads.
+        #expect(KeptReadme.parse(base.replacingOccurrences(of: "---\n\n# Fig", with: "---\n\nWords first.\n\n# Fig")) == nil)
+    }
+
+    @Test func wordsUnderTheTitleStayByteForByteWhenTheLegendIsChanged() throws {
+        let edited = underTitle("    Odd   spacing, a tab\there.  \n\n\nAnd a second paragraph.")
+        let after = try #require(KeptReadme.replacingLegend(in: edited, with: "New legend."))
+        #expect(after == edited.replacingOccurrences(of: "\nPlate 3 was re-run.\n", with: "\nNew legend.\n"))
+        #expect(after.contains("# Fig 2B · Z′ by plate\n\n    Odd   spacing, a tab\there.  \n\n\nAnd a second paragraph.\n\n## Your legend"))
+        #expect(KeptReadme.parse(after)?.text.legend == "New legend.")
+        // And put back, it is the file it was.
+        #expect(KeptReadme.replacingLegend(in: after, with: "Plate 3 was re-run.") == edited)
+    }
+
+    @Test func wordsUnderTheTitleStayByteForByteWhenTryAgainUpdatesTheReadme() throws {
+        let edited = underTitle("    Odd   spacing, a tab\there.  \n\n\nAnd a second paragraph.")
+        let result = try #require(KeptReadme.updating(edited, files: landedRecord.files, missing: []))
+        let reason = "too big to keep here (over 8 MB)"
+        let expected = edited
+            .replacingOccurrences(of: "missing:\n  - { role: input, name: \"plate_reader.xlsx\", reason: \"\(reason)\" }\n", with: "missing: []\n")
+            .replacingOccurrences(of: "bytes: 2048 }\n", with: "bytes: 2048 }\n  - { path: \"input/plate_reader.xlsx\", role: input, artifact: \"art_4\", version: \"ver_1\", sha256: \"dddd\", bytes: 9 }\n")
+            .replacingOccurrences(of: "## Not copied\n\n- The raw input, plate_reader.xlsx: \(reason).\n\n", with: "")
+        #expect(result == expected)
+        #expect(result.contains("# Fig 2B · Z′ by plate\n\n    Odd   spacing, a tab\there.  \n\n\nAnd a second paragraph.\n\n## Your legend"))
+        // A section that was not there is made, and the words do not move.
+        var stale = record()
+        stale.files.append(KeptFile(path: "input/plate_layout.csv", role: .input, artifact: "art_5", version: "ver_2",
+                                    sha256: "eeee", bytes: 12, expectedSha256: "ffff0000"))
+        let withChecksums = try #require(KeptReadme.updating(edited, files: stale.files, missing: stale.missing))
+        #expect(withChecksums.contains("# Fig 2B · Z′ by plate\n\n    Odd   spacing, a tab\there.  \n\n\nAnd a second paragraph.\n\n## Your legend"))
+        #expect(withChecksums.contains("## Checksums"))
+        #expect(KeptReadme.parse(withChecksums)?.record.files == stale.files)
+    }
+
+    @Test func aFolderWithWordsUnderItsTitleSurvivesBothWritesInEitherOrder() throws {
+        let edited = underTitle()
+        let updated = try #require(KeptReadme.updating(edited, files: landedRecord.files, missing: []))
+        let legended = try #require(KeptReadme.replacingLegend(in: updated, with: "A legend."))
+        let back = try #require(KeptReadme.parse(legended))
+        #expect(back.record == landedRecord)
+        #expect(back.text.legend == "A legend.")
+        #expect(legended.contains("# Fig 2B · Z′ by plate\n\n\(Self.words)\n\n## Your legend"))
+        let other = try #require(KeptReadme.replacingLegend(in: edited, with: "A legend."))
+        let otherWay = try #require(KeptReadme.updating(other, files: landedRecord.files, missing: []))
+        #expect(otherWay == legended)
+    }
+
+    // MARK: The lines that say why there is no data or code
+
+    @Test func theLinesSayingWhyNothingWasKeptStillRead() throws {
+        let usual = KeptReadme.origin(for: record(missing: false), timeZone: zone, locale: english)
+        let endings: [(String, [String])] = [
+            ("an upload", [KeepRules.uploadSentence]),
+            ("inputs still pending", [KeepRules.pendingSentence]),
+            ("data and code left out", ["The data it was drawn from: not kept. No source data recorded.",
+                                        "The code that drew it: not kept. Left out when it was kept."]),
+        ]
+        for (label, lines) in endings {
+            var said = text()
+            said.origin = ([usual] + lines).joined(separator: "\n")
+            let first = render(record(missing: false), said)
+            let parsed = try #require(KeptReadme.parse(first), "\(label)")
+            #expect(parsed.text.origin == said.origin, "\(label)")
+            #expect(render(parsed.record, parsed.text) == first, "\(label)")
+            // Through both writes, with words under the title as well.
+            let edited = underTitle(in: first)
+            let legended = try #require(KeptReadme.replacingLegend(in: edited, with: "A legend."), "\(label)")
+            let updated = try #require(KeptReadme.updating(legended, files: record(missing: false).files, missing: []), "\(label)")
+            #expect(updated == legended, "\(label)")
+            #expect(KeptReadme.parse(updated)?.text.origin == said.origin, "\(label)")
+        }
+    }
+
+    // MARK: Blank lines
+
+    @Test func anExtraBlankLineInTheTextPartsOfTheFileIsHarmless() throws {
+        let doubled: [(String, String)] = [
+            ("after the front matter", base.replacingOccurrences(of: "capsid: \"1.0\"\n---\n\n", with: "capsid: \"1.0\"\n---\n\n\n")),
+            ("after the title", base.replacingOccurrences(of: title, with: title + "\n")),
+            ("between the sections", base.replacingOccurrences(of: "\n## Where it came from", with: "\n\n## Where it came from")),
+            ("before the divider", base.replacingOccurrences(of: "\n---\n\nCapsid", with: "\n\n\n---\n\nCapsid")),
+            ("after the divider", base.replacingOccurrences(of: "---\n\nCapsid", with: "---\n\n\n\nCapsid")),
+            ("after the fine print", base + "\n\n"),
+        ]
+        for (label, markdown) in doubled {
+            #expect(markdown != base, "\(label)")
+            let parsed = try #require(KeptReadme.parse(markdown), "\(label)")
+            #expect(parsed.record == record(), "\(label)")
+            #expect(parsed.text.legend == "Plate 3 was re-run.", "\(label)")
+            // Both writes leave the extra line where it is.
+            let legended = try #require(KeptReadme.replacingLegend(in: markdown, with: "New."), "\(label)")
+            #expect(legended == markdown.replacingOccurrences(of: "\nPlate 3 was re-run.\n", with: "\nNew.\n"), "\(label)")
+            let updated = try #require(KeptReadme.updating(markdown, files: record().files, missing: record().missing), "\(label)")
+            #expect(updated == markdown, "\(label)")
+        }
+    }
+
+    @Test func aBlankLineInsideTheLegendsOwnSectionIsTheLegendsAndIsWrittenAgainWithIt() throws {
+        // Between the legend and the next heading, the lines are the legend's: saved again, they are one blank line.
+        let spaced = base.replacingOccurrences(of: "\n## What Claude said", with: "\n\n\n## What Claude said")
+        #expect(KeptReadme.parse(spaced)?.text.legend == "Plate 3 was re-run.")
+        #expect(KeptReadme.replacingLegend(in: spaced, with: "Plate 3 was re-run.") == base)
+    }
+
+    @Test func aBlankLineInsideTheFrontMatterIsStillRefused() {
+        // The front matter is the record, in the shape Capsid writes it; the parser reads that shape and no other.
+        let cases = [("after the opening line", base.replacingOccurrences(of: "---\ncapsid_kept: 1", with: "---\n\ncapsid_kept: 1")),
+                     ("between the rows", base.replacingOccurrences(of: "files:\n  - { path: \"data/z_prime_by_plate.csv\"",
+                                                                      with: "files:\n\n  - { path: \"data/z_prime_by_plate.csv\"")),
+                     ("before the closing line", base.replacingOccurrences(of: "capsid: \"1.0\"\n---", with: "capsid: \"1.0\"\n\n---"))]
+        for (label, markdown) in cases {
+            #expect(markdown != base, "\(label)")
+            #expect(KeptReadme.parse(markdown) == nil, "\(label)")
+        }
+    }
+
+    // MARK: No final newline
+
+    @Test func aFileWithoutAFinalNewlineIsReadAndStaysWithout() throws {
+        let cut = String(base.dropLast())
+        #expect(cut.hasSuffix("is yours.") && base.hasSuffix("is yours.\n"))
+        let parsed = try #require(KeptReadme.parse(cut))
+        #expect(parsed.record == record())
+        #expect(parsed.text.legend == "Plate 3 was re-run.")
+        let legended = try #require(KeptReadme.replacingLegend(in: cut, with: "New."))
+        #expect(legended == cut.replacingOccurrences(of: "\nPlate 3 was re-run.\n", with: "\nNew.\n"))
+        #expect(!legended.hasSuffix("\n"))
+        let updated = try #require(KeptReadme.updating(cut, files: landedRecord.files, missing: []))
+        #expect(!updated.hasSuffix("\n") && updated.hasSuffix("is yours."))
+        #expect(KeptReadme.parse(updated)?.record == landedRecord)
+    }
+
+    // MARK: Windows line ends
+
+    @Test func aFileWithWindowsLineEndsIsReadAsTheSameReadme() throws {
+        let crlf = windows(base)
+        #expect(crlf.contains("---\r\ncapsid_kept: 1\r\n"))
+        let parsed = try #require(KeptReadme.parse(crlf))
+        #expect(parsed.record == record())
+        // The words come back as they were typed, with no carriage return in them.
+        #expect(parsed.text == KeptReadme.parse(base)?.text)
+        #expect(!hasCarriageReturn(parsed.text.legend) && !hasCarriageReturn(parsed.text.claudeSaid)
+            && !hasCarriageReturn(parsed.text.attribution) && !hasCarriageReturn(parsed.text.origin))
+        // A legend over several lines, with words under the title.
+        let many = windows(underTitle(in: render(record(), text(legend: "First line.\n\nSecond paragraph."))))
+        #expect(KeptReadme.parse(many)?.text.legend == "First line.\n\nSecond paragraph.")
+        // A byte order mark in front, and no line end at the very end.
+        #expect(KeptReadme.parse("\u{FEFF}" + crlf)?.record == record())
+        #expect(KeptReadme.parse(String(crlf.unicodeScalars.dropLast(2)))?.record == record())
+    }
+
+    @Test func aLegendIsReplacedInAWindowsFileAndItsLineEndsStay() throws {
+        let crlf = windows(underTitle())
+        let after = try #require(KeptReadme.replacingLegend(in: crlf, with: "First line.\nSecond line."))
+        // Every other byte is as it was, and every line end in it is still a Windows one.
+        #expect(after == crlf.replacingOccurrences(of: "\r\nPlate 3 was re-run.\r\n", with: "\r\nFirst line.\r\nSecond line.\r\n"))
+        #expect(!hasPlainLineFeed(after))
+        #expect(KeptReadme.parse(after)?.text.legend == "First line.\nSecond line.")
+        // The comment comes back when it is emptied, in the same line ends.
+        let emptied = try #require(KeptReadme.replacingLegend(in: after, with: ""))
+        #expect(emptied == crlf.replacingOccurrences(of: "Plate 3 was re-run.", with: KeptReadme.legendComment))
+        // A legend that came with Windows line ends of its own is not doubled.
+        let pasted = try #require(KeptReadme.replacingLegend(in: crlf, with: "One.\r\nTwo."))
+        #expect(pasted.contains("\r\nOne.\r\nTwo.\r\n") && !pasted.contains("\r\r"))
+        // With a byte order mark in front, and with no line end at the end.
+        let marked = try #require(KeptReadme.replacingLegend(in: "\u{FEFF}" + crlf, with: "New."))
+        #expect(marked == "\u{FEFF}" + crlf.replacingOccurrences(of: "Plate 3 was re-run.", with: "New."))
+        let cut = String(crlf.unicodeScalars.dropLast(2))
+        let cutAfter = try #require(KeptReadme.replacingLegend(in: cut, with: "New."))
+        #expect(cutAfter == cut.replacingOccurrences(of: "Plate 3 was re-run.", with: "New."))
+    }
+
+    @Test func tryAgainUpdatesAWindowsFileAndItsLineEndsStay() throws {
+        let crlf = windows(underTitle())
+        let result = try #require(KeptReadme.updating(crlf, files: landedRecord.files, missing: []))
+        let unix = try #require(KeptReadme.updating(underTitle(), files: landedRecord.files, missing: []))
+        #expect(result == windows(unix))
+        #expect(!hasPlainLineFeed(result))
+        // Sections that were not there are made, in the same line ends.
+        var stale = record()
+        stale.files.append(KeptFile(path: "input/plate_layout.csv", role: .input, artifact: "art_5", version: "ver_2",
+                                    sha256: "eeee", bytes: 12, expectedSha256: "ffff0000"))
+        let checksums = try #require(KeptReadme.updating(crlf, files: stale.files, missing: stale.missing))
+        #expect(!hasPlainLineFeed(checksums))
+        #expect(checksums.contains("\r\n## Checksums\r\n\r\n- input/plate_layout.csv doesn’t match"))
+        #expect(KeptReadme.parse(checksums)?.record.files == stale.files)
+        // With a byte order mark in front.
+        let marked = try #require(KeptReadme.updating("\u{FEFF}" + crlf, files: landedRecord.files, missing: []))
+        #expect(marked == "\u{FEFF}" + result)
+    }
+
+    @Test func aFileWhoseLineEndsAreMixedIsReadButNotWrittenOver() throws {
+        // Windows line ends, and a line a person added in an editor that wrote a plain one.
+        let mixed = windows(base) + "Added by hand.\n"
+        let parsed = try #require(KeptReadme.parse(mixed))
+        #expect(parsed.record == record())
+        #expect(parsed.text.legend == "Plate 3 was re-run.")
+        // The line ends could not be put back as they were, so neither write goes ahead.
+        #expect(KeptReadme.replacingLegend(in: mixed, with: "New.") == nil)
+        #expect(KeptReadme.updating(mixed, files: landedRecord.files, missing: []) == nil)
+        // A file with plain line ends and Windows ones in a person's own lines is not a Windows file: those stay as written.
+        let plain = base.replacingOccurrences(of: "## What Claude said", with: "## My notes\r\n\r\nWindows lines.\r\n\r\n## What Claude said")
+        #expect(KeptReadme.replacingLegend(in: plain, with: "New.") == plain.replacingOccurrences(of: "\nPlate 3 was re-run.\n", with: "\nNew.\n"))
+        #expect(KeptReadme.parse(plain)?.text.legend == "Plate 3 was re-run.")
     }
 }
