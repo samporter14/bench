@@ -365,11 +365,13 @@ window, nothing read under `~/.claude-science`, nothing launched, installed or p
     nothing; the menu bar field's request through the flow's check; recipes; Services' text cut at 32,000) and the
     reply window (`checkedPlanFeedback`, the line under the field, the replier sends the whole text).
 - ✅ **Mutations** (break the fix, see the tests fail, restore):
-  - `macMessageLimit` back to 4,000: 19 tests fail across every Mac sender and the path tests;
-  - Ask's three uses, Quick Start's `textLimit` and `checkedPlanFeedback` back to `messageLimit`: the Ask, Quick Start
-    and plan-change tests fail (each on its own tests);
-  - the phone's `parse` and `NewSessionRequest.parse` widened to the Mac's: the phone's 4,001 tests fail (one old,
-    one new for each);
+  - `macMessageLimit` back to 4,000: 19 tests fail across every Mac sender and the path tests (the listings were
+    first cut at 80 lines; both of these were run again whole);
+  - Ask's three uses, Quick Start's `textLimit` and `checkedPlanFeedback` back to `messageLimit`, with the phone's
+    `parse` and `NewSessionRequest.parse` widened to the Mac's, all at once: 21 tests fail, the Ask, Quick Start and
+    plan-change ones on their own tests, and the phone's 4,001 tests (`RemoteActionBodyTests`'s old one,
+    `aNewSessionsBody`'s old one, and `thePhonesRoutesStillRefuse…` and `thePhonesRouteTakes…` here: a 4,001-character
+    body would otherwise parse, write and answer 200);
   - the page's 32000 back to 4000: five page-builder tests fail, and no sender-level test does, so the two layers are
     pinned apart;
   - a photo's room widened to 32,000, `PhotoRequest.textLimit` widened and the line under the field's limit back to
