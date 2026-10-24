@@ -357,8 +357,7 @@ read, nothing was launched or installed, and the key was never entered.
   not the picker's, or the picker's with no list or no item, posts `{unplaced}` at two seconds and is left as it was;
   a node with the picker's `data-cds` that is not a menu is not the menu; nothing is watched until the picker is pressed
   and the watch is over at two seconds, at two minutes after the item went in, when the popup is pressed shut (and the
-  click that ends that press starts nothing: a first cut re-armed on it, which a review of the test found it didn't
-  send), or when another press comes first or one anywhere else before the popup did (so a menu that opens for another
+  click that ends that press starts nothing: the first cut re-armed on it, which the first test never sent), or when another press comes first or one anywhere else before the popup did (so a menu that opens for another
   press is not a miss of the picker's); a list drawn again, replaced, or with a late item of the page's after ours gets the group
   back last; the script does nothing off the daemon's pages or without its handler, and holds no `fetch`, `innerText`,
   `innerHTML`, `.click(` or write to the message box.
