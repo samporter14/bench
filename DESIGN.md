@@ -5390,6 +5390,44 @@ is left as it is, and the sheet says "The files landed, but README.md couldn't
 be updated to list them. README.md was changed in another app, so Capsid left it
 alone." Try Again then reads it as it is now.
 
+**What a person may do to the file and still have it read (since the second
+README review, after 1.0.2).** The parser is strict about what Capsid writes
+and no stricter about the rest, because a folder that fails to parse leaves the
+Shelf and the Kept window and Try Again can never update it. Each shape was
+tried against the parser and both writes (`KeptReadmeShapeTests`):
+- *Words under the title*, before the first heading: read, and passed over as a
+  person's own, like a heading of theirs between the sections; never folded
+  into the legend, never written by Capsid, and neither `updating` nor
+  `replacingLegend` changes a byte of them. (They used to make `parse` answer
+  nil.) The lines under "Where it came from" that say why there is no data or
+  code (`KeepRules.leftOut`, since 1.0.1) were always read and still are.
+- *An extra blank line* in the text part (after the title, between sections,
+  before or after the divider, after the fine print): read, and left where it
+  is. The legend's own section is the exception: its lines, blank ones
+  included, are the legend's and are written again with it. A blank line
+  *inside the front matter* is still refused: the front matter is the record,
+  in the shape Capsid writes it, and the writes find its rows by their places.
+- *No final newline*: read, and still without one afterwards.
+- *Windows line ends*: a file whose first line break is a carriage return and a
+  line feed is read as the same file with plain ones (no carriage return comes
+  through in the legend or any other text). `replacingLegend` and `updating`
+  work on the plain lines and put every Windows line end back, new lines
+  included, so every byte outside the change is as it was. A Windows file with
+  a plain line end among them (a line added in another editor) is read but not
+  changed: the line ends couldn't be put back as they were, so Try Again says
+  "README.md has a form Capsid can't update safely, so it was left alone." and
+  the legend field "Couldn't save the legend: README.md has a form Capsid can't
+  edit safely, so it was left alone." A file with plain line ends and Windows
+  ones only inside a person's own words is not a Windows file, and those stay
+  as written.
+- Still refused, as before: a changed or missing front matter, title line,
+  Capsid heading (the order of "Your legend", "What Claude said", "Where it came
+  from") or footer. A person who deletes the title line or the fine print hides
+  the folder; the shapes above are the ones an editor or a few added words
+  produce, not a promise that nothing hides it.
+- The fine print's words are not read: READMEs made before the new line (see
+  *On disk*) read the same, and no write rewrites it.
+
 **Recovery and the record (since a Codex review of M3).** A failure before
 anything landed says what Try Again will do (`KeepRetry`): if the sheet's
 first read failed, Try Again reads everything again from the start; if the
@@ -5481,11 +5519,16 @@ be read anywhere; the fallback says so); **Where it came from**, the session
 as a `bench://session?project=<id>&frame=<id>` link (`Router` now checks both
 ids before building an address from them), the project, "Version 3 of 4 of
 z_prime.png, kept on 22 October 2026 at 9:12 AM by Capsid 1.0, from Claude
-Science 0.1.70"; **Not copied**, only when something is; and one line of fine
-print: "Capsid changes only the “Your legend” section of this file, and only
-when you edit it in the Kept window." The parser is strict and fixed-shape:
-it reads what the renderer writes and nothing else, and a round trip is
-byte-identical. Every disk call runs off the main actor on one utility queue
+Science 0.1.70"; **Not copied**, only when something is; **Checksums**, only
+when a file's bytes don't match; and one line of fine print: "Capsid updates
+the file lists, “Not copied”, “Checksums” and “Your legend” here; everything
+else in this file is yours." (Until Try Again also updated the lists it said
+that Capsid changes only the legend, and only when you edit it in the Shelf
+window. READMEs made then keep that line: nothing rewrites it, and the parser
+does not read its words.) The parser is strict and fixed-shape about what the
+renderer writes (front matter, title line, Capsid's sections in order, footer)
+and passes over what a person adds (see *What a person may do to the file*
+above), and a round trip is byte-identical. Every disk call runs off the main actor on one utility queue
 within a time limit (15 s plus 1 s per MiB per write, 15 s per look), with
 the saved files' sentences for a folder that doesn't answer;
 `KeptDiskCallsTests` allows file-system calls in `KeptDisk.swift` alone (and
@@ -5530,8 +5573,14 @@ every row's sentence and availability, the plan from the choices with
 nothing guessed, unique safe file names, the script's rewrite, the
 destination and outcome sentences, the record naming the chosen version),
 `KeptReadmeTests` (round trips with "Z′", the strict parser, a legend edit
-leaving every other byte alone), `KeptDiskTests` (the layout, the dated
-collision, abandon, scan, the outside-change refusal, the disk-calls scan),
+leaving every other byte alone, the old and the new fine print, and
+`KeptReadmeShapeTests`: words under the title, blank lines, no final newline
+and Windows line ends through the parser and both writes), `KeptDiskTests`
+(the layout, the dated collision, abandon, scan, the outside-change refusal,
+a legend saved over a byte order mark, a README with words under its title or
+with Windows line ends, the disk-calls scan), `ShelfLegendTests` and
+`ShelfLegendKeptTests` (the field on a README with a byte order mark; an item
+whose README has words under its title staying on the Shelf),
 the reader tests for the three shapes and the showing op against a fake
 `fetch` (`RemoteArtifactsTests`, `HistoryReaderTests`), and the inventory's.
 
@@ -5789,7 +5838,12 @@ meanwhile; nothing about a picture is read or decoded on the main actor. The
 legend field (`ShelfLegendEditor`) saves a second after the last keystroke and
 at once when the card goes, so a legend typed just before moving on is kept;
 saves go one at a time, each from the README the last one wrote, and a README
-changed in another app is never written over. A README that can't be read
+changed in another app is never written over. A byte order mark, which an
+editor may have put on the README, is no part of the text the field was made
+from, so the disk compares without it and puts it back (`KeptDisk.replaceLegend`,
+as `replaceReadme` does for Try Again), and answers the README as text, without
+it, for the next save; before, every save to such a README said it had changed
+in another app, Use Mine too. A README that can't be read
 turns the field off: "Couldn't read the README, so the legend can't be edited
 here." and the disk's own sentence. The editor is the model's, not the card's
 (`ShelfModel.legendEditor(for:)`, by the item's folder), and is kept while it

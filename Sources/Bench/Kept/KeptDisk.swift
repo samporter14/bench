@@ -665,7 +665,7 @@ private enum KeptDiskWork {
     /// A folder's README when it is one Capsid wrote: nil for anything else, for
     /// whatever reason.
     private static func keptReadme(in folder: URL) -> (markdown: String, record: KeptRecord, text: KeptText)? {
-        guard let data = try? readmeData(in: folder), let markdown = String(data: data, encoding: .utf8),
+        guard let data = try? readmeData(in: folder), let markdown = readmeText(data),
               let parsed = KeptReadme.parse(markdown) else { return nil }
         return (markdown, parsed.record, parsed.text)
     }
@@ -906,10 +906,22 @@ private enum KeptDiskWork {
 
     // MARK: Changing READMEs
 
-    /// An editor's byte order mark: not in the text a README is read as (turning
-    /// its bytes into text drops it), so it is set aside to compare, and put
-    /// back when the file is written again.
+    /// An editor's byte order mark: not in the text a README is read as
+    /// (`readmeText` takes it off), so it is set aside to compare, and put back
+    /// when the file is written again, by the legend's save as by Try Again's.
     private static let byteOrderMark = Data([0xEF, 0xBB, 0xBF])
+
+    /// A README's bytes without a byte order mark, and whether it had one.
+    private static func withoutByteOrderMark(_ data: Data) -> (bytes: Data, marked: Bool) {
+        data.starts(with: byteOrderMark) ? (Data(data.dropFirst(byteOrderMark.count)), true) : (data, false)
+    }
+
+    /// A README's text: its bytes as UTF-8, never with the mark. This is the
+    /// text callers hold (`lastRead`) and compare against, whatever the
+    /// system's decoding does with a mark.
+    private static func readmeText(_ data: Data) -> String? {
+        String(data: withoutByteOrderMark(data).bytes, encoding: .utf8)
+    }
 
     static func replaceReadme(in folder: URL, with markdown: Data, lastRead: Data? = nil) throws {
         var written = markdown
@@ -917,12 +929,9 @@ private enum KeptDiskWork {
             guard look(folder.appending(path: KeptLayout.readmeName, directoryHint: .notDirectory)).exists else {
                 throw KeptDiskError.failed("There is no README.md in this folder.")
             }
-            let current = try readmeData(in: folder)
-            let marked = current.starts(with: byteOrderMark)
+            let (current, marked) = withoutByteOrderMark(try readmeData(in: folder))
             // Bytes, not characters: "é" typed two ways is two files.
-            guard Data(marked ? current.dropFirst(byteOrderMark.count) : current[...]) == lastRead else {
-                throw KeptDiskError.changedOutside
-            }
+            guard current == lastRead else { throw KeptDiskError.changedOutside }
             if marked { written = byteOrderMark + markdown }
         }
         guard keptReadme(in: folder) != nil else { throw KeptDiskError.failed(notKept) }
@@ -935,16 +944,19 @@ private enum KeptDiskWork {
     static func replaceLegend(in folder: URL, with legend: String, lastRead: Data) throws -> String {
         let url = folder.appending(path: KeptLayout.readmeName, directoryHint: .notDirectory)
         guard look(url).exists else { throw KeptDiskError.failed("There is no README.md in this folder.") }
-        let current = try readmeData(in: folder)
+        // An editor's byte order mark is no part of the text the caller read: compared without it, and put back.
+        let (current, marked) = withoutByteOrderMark(try readmeData(in: folder))
         // Bytes, not characters: "é" typed two ways is two files.
         guard current == lastRead else { throw KeptDiskError.changedOutside }
         guard let text = String(data: current, encoding: .utf8), KeptReadme.parse(text) != nil else {
             throw KeptDiskError.failed(notKept)
         }
         guard let replaced = KeptReadme.replacingLegend(in: text, with: legend) else {
-            throw KeptDiskError.failed("README.md has no “Your legend” section.")
+            // It read as Capsid's, so the heading is there: this is a README whose line ends can't be put back as they were.
+            throw KeptDiskError.failed("README.md has a form Capsid can\u{2019}t edit safely, so it was left alone.")
         }
-        try Data(replaced.utf8).write(to: url, options: .atomic)
+        // The answer is the README as text, without the mark: the caller's next `lastRead`.
+        try ((marked ? byteOrderMark : Data()) + Data(replaced.utf8)).write(to: url, options: .atomic)
         return replaced
     }
 }

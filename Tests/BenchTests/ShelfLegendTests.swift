@@ -84,6 +84,49 @@ struct ShelfLegendTests {
         KeptReadme.parse(try String(contentsOf: folder.appending(path: "README.md", directoryHint: .notDirectory), encoding: .utf8))?.text.legend
     }
 
+    // MARK: A README an editor put a byte order mark on
+
+    /// The case the second review found: the disk compared the README's bytes with the text the field was made from, and
+    /// the mark is in the one and not the other, so every save said "changed in another app".
+    @Test func aLegendIsSavedInAReadmeWithAByteOrderMarkAndNothingIsSaidAboutAChange() async throws {
+        try await editor { editor, folder, saves, _ in
+            let url = folder.appending(path: "README.md", directoryHint: .notDirectory)
+            let mark = Data([0xEF, 0xBB, 0xBF])
+            try (mark + Data(contentsOf: url)).write(to: url)
+            await editor.load()
+            #expect(editor.canEdit && editor.problem == nil)
+
+            editor.legend = "Z′ above 0.5; plate 3 re-run."
+            await editor.flush().value
+            #expect(!editor.changedOutside && editor.problem == nil && !editor.hasUnsavedText)
+            #expect(saves.count == 1)
+            var bytes = try Data(contentsOf: url)
+            #expect(bytes.starts(with: mark), "the mark stays")
+            #expect(try legend(in: folder) == "Z′ above 0.5; plate 3 re-run.")
+
+            // The next save is made from what the first wrote.
+            editor.legend = "Z′ above 0.5; plate 3 re-run with a new lot."
+            await editor.flush().value
+            #expect(!editor.changedOutside && editor.problem == nil && !editor.hasUnsavedText)
+            #expect(saves.count == 2)
+            bytes = try Data(contentsOf: url)
+            #expect(bytes.starts(with: mark) && !bytes.dropFirst(3).starts(with: mark))
+            #expect(try legend(in: folder) == "Z′ above 0.5; plate 3 re-run with a new lot.")
+
+            // A change made in another app is still never written over, and Use Mine keeps the mark too.
+            let theirs = KeptReadme.replacingLegend(in: String(decoding: bytes.dropFirst(3), as: UTF8.self), with: "Theirs.")!
+            try (mark + Data(theirs.utf8)).write(to: url)
+            editor.legend = "Mine."
+            await editor.save()
+            #expect(editor.changedOutside)
+            #expect(try legend(in: folder) == "Theirs.")
+            await editor.useMine()
+            #expect(!editor.changedOutside && editor.problem == nil)
+            #expect(try legend(in: folder) == "Mine.")
+            #expect(try Data(contentsOf: url).starts(with: mark))
+        }
+    }
+
     // MARK: Leaving the field
 
     /// The wait is a minute here, so only leaving can have saved it. This is the case the review found: a legend typed

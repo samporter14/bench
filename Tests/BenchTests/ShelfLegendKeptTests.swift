@@ -152,6 +152,42 @@ struct ShelfLegendKeptTests {
         }
     }
 
+    // MARK: A README a person has written in
+
+    /// Words written under the README's title used to make `parse` answer nil, and the item left the Shelf.
+    @Test func anItemWhoseReadmeHasWordsUnderItsTitleIsStillOnTheShelfWithItsFigureAndItsWords() async throws {
+        try await rig { model, item, other, _ in
+            let url = item.folder.appending(path: "README.md", directoryHint: .notDirectory)
+            let before = try String(contentsOf: url, encoding: .utf8)
+            let words = "Draft for the plate 7 discussion.\nCheck the cutoff with Dana first."
+            let heading = "# \(item.record.name)\n\n"
+            #expect(before.contains(heading))
+            try Data(before.replacingOccurrences(of: heading, with: heading + words + "\n\n").utf8).write(to: url)
+            let count = model.items.count
+            await model.index.refreshAndWait()
+
+            #expect(model.items.count == count)
+            let still = try #require(model.items.first { $0.id == item.id })
+            #expect(still.title == item.title && still.text.legend == item.text.legend && still.text.claudeSaid == item.text.claudeSaid)
+            #expect(still.record == item.record)
+            #expect(FileManager.default.fileExists(atPath: still.folder.appending(path: item.record.figure.path).path))
+            #expect(model.shown.contains { $0.id == item.id } && model.shown.contains { $0.id == other.id })
+
+            // The legend is edited in it, and the words stay.
+            let editor = model.legendEditor(for: still)
+            await editor.show()
+            #expect(editor.canEdit && editor.legend == item.text.legend)
+            editor.legend = "Edited under the words."
+            await editor.flush().value
+            #expect(!editor.changedOutside && editor.problem == nil)
+            let after = try String(contentsOf: url, encoding: .utf8)
+            #expect(after.contains(heading + words + "\n\n## Your legend"))
+            #expect(try await legendOnDisk(still, model) == "Edited under the words.")
+            await model.index.refreshAndWait()
+            #expect(model.items.first { $0.id == item.id }?.text.legend == "Edited under the words.")
+        }
+    }
+
     // MARK: Keeping and letting go
 
     @Test func aSavedDraftIsLetGoAndACleanFieldIsReadAgainEachTimeItIsShown() async throws {
