@@ -175,9 +175,52 @@ struct AnotherModelSettingTests {
         #expect(FakeModelProtocol.seen(rig.host).requests.isEmpty)
     }
 
+    @Test func aKeyKeptWhileTheSwitchIsOffSendsNothing() async {
+        let rig = Rig()
+        // A key saved while it is off is kept, and the address is not asked anything.
+        rig.model.saveKey(madeUpModelKey)
+        await rig.waitForList()
+        #expect(rig.model.hasKey)
+        #expect(rig.model.listing == .idle)
+        #expect(FakeModelProtocol.seen(rig.host).requests.isEmpty)
+        rig.model.setOn(true)
+        await rig.waitForList()
+        #expect(rig.model.listing == .listed(["abliterated-model", "abliterated-model-large"]))
+        let before = FakeModelProtocol.seen(rig.host).requests.count
+        rig.model.setOn(false)
+        #expect(rig.model.isAvailable == false)
+        #expect(await rig.model.ask([ChatTurn(role: .user, text: "Which buffer?")]) == .failure(.notSet(.switchedOff)))
+        #expect(FakeModelProtocol.seen(rig.host).requests.count == before)
+    }
+
+    @Test func editingTheAddressDropsTheListUntilItIsAskedForAgain() async {
+        let rig = Rig()
+        rig.model.setOn(true)
+        rig.model.saveKey(madeUpModelKey)
+        await rig.waitForList()
+        #expect(rig.model.listing == .listed(["abliterated-model", "abliterated-model-large"]))
+        let asked = FakeModelProtocol.seen(rig.host).requests.count
+        rig.model.addressEdited()
+        #expect(rig.model.listing == .idle)
+        // The model chosen stays; nothing was sent to the address as it was typed.
+        #expect(rig.model.model == "abliterated-model")
+        #expect(FakeModelProtocol.seen(rig.host).requests.count == asked)
+        // Return asks again.
+        rig.model.listModels()
+        await rig.waitForList()
+        #expect(rig.model.listing == .listed(["abliterated-model", "abliterated-model-large"]))
+        // With no key there is no list to drop.
+        rig.model.removeKey()
+        rig.model.addressEdited()
+        #expect(rig.model.listing == .idle)
+    }
+
     @Test func askingWithoutAKeyOrAModelSaysWhichIsMissing() async {
         let rig = Rig(answer: { _ in .reply(500, "{}") })
         let turns = [ChatTurn(role: .user, text: "Which buffer?")]
+        // Off: nothing is sent, even to a window left open, and the sentence says why.
+        #expect(await rig.model.ask(turns) == .failure(.notSet(.switchedOff)))
+        rig.model.setOn(true)
         #expect(await rig.model.ask(turns) == .failure(.notSet(.key)))
         rig.model.saveKey(madeUpModelKey)
         await rig.waitForList()

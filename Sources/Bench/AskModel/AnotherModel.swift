@@ -89,6 +89,14 @@ final class AnotherModel: ObservableObject {
         return name
     }
 
+    /// The address was edited: the list belongs to the address it came from,
+    /// so it is dropped until it is asked for again (Return, or List Models).
+    /// Nothing is sent to an address while it is being typed.
+    func addressEdited() {
+        listTask?.cancel()
+        if hasKey { listing = .idle }
+    }
+
     func choose(_ model: String) {
         defaults.set(model, forKey: SettingsKey.anotherModelName)
         objectWillChange.send()
@@ -146,6 +154,11 @@ final class AnotherModel: ObservableObject {
     /// the chosen one gone from the list, the first is chosen.
     func listModels() {
         listTask?.cancel()
+        // Off: nothing is asked of the address, not even the list.
+        guard isOn else {
+            listing = .idle
+            return
+        }
         guard let url = addressURL else {
             listing = .failed(AnotherModelFailure.notSet(.address).sentence(host: host, limit: client.listLimit))
             return
@@ -172,8 +185,10 @@ final class AnotherModel: ObservableObject {
         }
     }
 
-    /// Asks the chosen model, with the key read from its file now.
+    /// Asks the chosen model, with the key read from its file now. Nothing is
+    /// sent while the switch is off, even from a window left open.
     func ask(_ turns: [ChatTurn]) async -> Result<String, AnotherModelFailure> {
+        guard isOn else { return .failure(.notSet(.switchedOff)) }
         guard let url = addressURL else { return .failure(.notSet(.address)) }
         guard let key = currentKey() else { return .failure(.notSet(.key)) }
         guard let model else { return .failure(.notSet(.model)) }
@@ -217,6 +232,7 @@ struct AnotherModelSection: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 250)
                         .onSubmit { model.listModels() }
+                        .onChange(of: address) { model.addressEdited() }
                 } label: {
                     Text("Address")
                     Text(AnotherModelAddress.url(address) == nil

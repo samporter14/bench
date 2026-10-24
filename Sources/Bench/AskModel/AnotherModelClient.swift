@@ -93,7 +93,7 @@ enum AnotherModelFailure: Error, Equatable, Sendable {
     /// Something Settings has to say first.
     case notSet(Missing)
 
-    enum Missing: Sendable { case key, model, address }
+    enum Missing: Sendable { case switchedOff, key, model, address }
 
     /// The sentence the window or Settings shows. `host` names the address;
     /// `limit` is the deadline that ran out.
@@ -107,6 +107,7 @@ enum AnotherModelFailure: Error, Equatable, Sendable {
         case .cancelled: "Cancelled."
         case .status(let code): "\(host) answered with an error (\(code)). Try again in a moment."
         case .unreadable: "\(host) sent back something that isn\u{2019}t an answer."
+        case .notSet(.switchedOff): "Ask another model is off. Turn it on in Settings \u{2192} General first."
         case .notSet(.key): "Paste your key in Settings \u{2192} General first."
         case .notSet(.model): "Choose a model in Settings \u{2192} General first."
         case .notSet(.address): "The address in Settings \u{2192} General isn\u{2019}t an https address."
@@ -124,6 +125,7 @@ enum AnotherModelFailure: Error, Equatable, Sendable {
         case .cancelled: "cancelled"
         case .status(let code): "status \(code)"
         case .unreadable: "unreadable answer"
+        case .notSet(.switchedOff): "switched off"
         case .notSet(.key): "no key"
         case .notSet(.model): "no model"
         case .notSet(.address): "no address"

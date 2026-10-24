@@ -362,7 +362,7 @@ struct AskModelFailureTests {
 
     @Test func everyFailureHasAPlainSentenceAndAFixedWord() {
         let all: [AnotherModelFailure] = [.keyRefused, .tooMany, .timedOut, .offline, .unreachable, .cancelled, .status(502),
-                                          .unreadable, .notSet(.key), .notSet(.model), .notSet(.address)]
+                                          .unreadable, .notSet(.switchedOff), .notSet(.key), .notSet(.model), .notSet(.address)]
         for failure in all {
             let sentence = failure.sentence(host: "api.abliteration.ai", limit: .seconds(120))
             #expect(sentence.hasSuffix("."), "\(failure)")
