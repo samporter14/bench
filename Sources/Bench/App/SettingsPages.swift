@@ -128,6 +128,9 @@ struct GeneralSettingsView: View {
                 .onChange(of: shareTaskWithNidus) { NidusTaskContext.shared.refresh() }
             }
 
+            // Ask Another Model: off, one switch; on, the key, the address and the model (AskModel/AnotherModel.swift).
+            AnotherModelSection()
+
             Section("Help") {
                 LabeledContent {
                     Button("Diagnostics…") { DiagnosticsWindowController.shared.show() }
@@ -137,7 +140,7 @@ struct GeneralSettingsView: View {
                 }
             }
         }
-        .settingsPage(height: 1100)
+        .settingsPage(height: 1190)
         .onChange(of: appearance) { BenchAppearance.apply() }
         .onChange(of: appIcon) { AppIconDock.shared.apply() }
     }

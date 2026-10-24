@@ -201,13 +201,18 @@ private final class WeakTabMenuHandler: NSObject, WKScriptMessageHandler {
 /// The main window's web view, a plain `WKWebView` that adds the tab items to
 /// its context menu when the right-click was on a tab, and the Shelf items
 /// (Shelf/ConversationMenu.swift) when it was on a figure or a file link.
+/// Anywhere else in a session, with Ask Another Model on, it adds that item
+/// (AskModel/AskModelMenu.swift).
 final class TabMenuWebView: WKWebView {
     var tabMenu: TabContextMenu?
     var shelfMenu: ConversationMenu?
+    /// Adds Ask Another Model… to a menu with neither group in it.
+    var askMenu: (@MainActor (NSMenu) -> Void)?
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
         tabMenu?.addItems(to: menu)
         shelfMenu?.addItems(to: menu)
+        askMenu?(menu)
     }
 }
