@@ -505,6 +505,49 @@ struct KeptDiskLookTests {
         }
     }
 
+    @Test func aLegendIsSavedInAReadmeWithAByteOrderMarkAndTheMarkStays() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk, legend: "mine")
+            let url = folder.appending(path: "README.md")
+            let mark = Data([0xEF, 0xBB, 0xBF])
+            try (mark + Data(readme(legend: "mine").utf8)).write(to: url)
+            // Reading it as text drops the mark, so the README is still the one that was read.
+            let read = try await disk.readme(at: folder)
+            #expect(!read.markdown.hasPrefix("\u{FEFF}") && read.text.legend == "mine")
+
+            let first = try await disk.replaceLegend(at: folder, with: "first", lastRead: read.markdown)
+            #expect(try Data(contentsOf: url) == mark + Data(readme(legend: "first").utf8))
+            // What it answers is the README as text, without the mark: the next save is made from it.
+            #expect(first == readme(legend: "first"))
+            let second = try await disk.replaceLegend(at: folder, with: "second", lastRead: first)
+            #expect(try Data(contentsOf: url) == mark + Data(readme(legend: "second").utf8))
+            #expect(Array(second.utf8) == Array(readme(legend: "second").utf8))
+
+            // Emptied again, it is the file it was, mark and all.
+            let emptied = try await disk.replaceLegend(at: folder, with: "", lastRead: second)
+            #expect(try Data(contentsOf: url) == mark + Data(readme().utf8))
+            #expect(emptied == readme())
+
+            // Still never written over a change made in another app, mark or no mark.
+            let theirs = mark + Data(readme(legend: "theirs").utf8)
+            try theirs.write(to: url)
+            await #expect(throws: KeptDiskError.changedOutside) {
+                try await disk.replaceLegend(at: folder, with: "overwritten", lastRead: emptied)
+            }
+            #expect(try Data(contentsOf: url) == theirs)
+            try Data(readme(legend: "theirs").utf8).write(to: url)
+            await #expect(throws: KeptDiskError.changedOutside) {
+                try await disk.replaceLegend(at: folder, with: "overwritten", lastRead: emptied)
+            }
+            #expect(try Data(contentsOf: url) == Data(readme(legend: "theirs").utf8))
+
+            // And a README with no mark is written without one.
+            let plain = try await disk.readme(at: folder)
+            _ = try await disk.replaceLegend(at: folder, with: "plain", lastRead: plain.markdown)
+            #expect(try Data(contentsOf: url) == Data(readme(legend: "plain").utf8))
+        }
+    }
+
     @Test func aChangeOnlyInHowACharacterIsWrittenCountsAsAChange() async throws {
         try await inScratch { _, _, disk in
             let composed = "Caf\u{E9} plate"          // é as one character

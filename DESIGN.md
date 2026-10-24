@@ -5793,7 +5793,12 @@ meanwhile; nothing about a picture is read or decoded on the main actor. The
 legend field (`ShelfLegendEditor`) saves a second after the last keystroke and
 at once when the card goes, so a legend typed just before moving on is kept;
 saves go one at a time, each from the README the last one wrote, and a README
-changed in another app is never written over. A README that can't be read
+changed in another app is never written over. A byte order mark, which an
+editor may have put on the README, is no part of the text the field was made
+from, so the disk compares without it and puts it back (`KeptDisk.replaceLegend`,
+as `replaceReadme` does for Try Again), and answers the README as text, without
+it, for the next save; before, every save to such a README said it had changed
+in another app, Use Mine too. A README that can't be read
 turns the field off: "Couldn't read the README, so the legend can't be edited
 here." and the disk's own sentence. The editor is the model's, not the card's
 (`ShelfModel.legendEditor(for:)`, by the item's folder), and is kept while it
