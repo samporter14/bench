@@ -120,6 +120,8 @@ clay-text (Look).
     check);
   - the **Lab status capsule** (only while something works or waits);
   - **Usage** (see Usage);
+  - **Ask Another Model**, a glyph beside Results and the Shelf, only while that
+    feature is on with a key (see Ask another model → Where it appears);
   - **Scenes**, a split button. Its click toggles the scenes panel. It shows
     a clay `flask.fill` and "Scenes" when on, and a secondary `flask` and
     "Scenes off" when off, always as title and icon. Its menu has:
@@ -3110,7 +3112,7 @@ on it, and whether Diagnostics can check it now:
 
 The tests hold the list to the code both ways (`CompatInventoryTests`), so a new dependency can't be added
 silently and a stale one can't stay: every selector in the page scripts (`PageTabs`, `TabContextMenu`, the
-sign-in script) is in the list and every scripted entry is in a script; every read path the allowlists let
+figure menu's and the model menu's scripts, the sign-in script) is in the list and every scripted entry is in a script; every read path the allowlists let
 through, and every write the builders make, is in the list and passes the real gate; every key the status
 parser takes is listed; no other file reads the page's markup or runs a script in it, and no other `/api/`
 resource is named, without a test failing; and a made-up database holding exactly the listed columns runs
@@ -3145,8 +3147,8 @@ probe starts the same sign-in recovery as any read.
 write (they change things), and the phone's reads (they return what was said or made: `messages`, the
 artifact list and files, `trace-shallow`, `streaming`; `apiGET` has no path for messages, the list,
 `trace-shallow` or `streaming`), Keep's lineage (reading it can start a code reconstruction) and its showing
-read (what was said), the page's notifications, previews, the tab right-click, the `?nonce=`
-sign-in, `/api/csrf`, `claude-science url` and `serve`. Each line says why. Their first real use is the check, and a failure there leaves a breadcrumb where it can be told from
+read (what was said), the page's notifications, previews, the tab right-click, the item in the model menu,
+the `?nonce=` sign-in, `/api/csrf`, `claude-science url` and `serve`. Each line says why. Their first real use is the check, and a failure there leaves a breadcrumb where it can be told from
 an ordinary state.
 
 **Last problem** (`CompatBreadcrumbs`). Where a feature looks for something in Claude Science and finds it
@@ -3414,8 +3416,10 @@ Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, L
 Sources/Bench/Results/    ResultsShelf and ResultsWindow: the results shelf (Results)
 Sources/Bench/AskModel/   AnotherModel (the switch, the key's file, the model list, Settings → Another model), AnotherModelClient
                           (the two requests, the address and key rules, the failures' sentences), AskModel (the window's
-                          rules and model, Send to Session), AskModelMenu (File's item and the right-click item),
-                          AskModelWindow (Ask another model)
+                          rules and model, Send to Session), AskModelMenu (File's item, the toolbar button's state and the
+                          reference window's right-click item), AskToolbarButton (the toolbar's button), ModelPickerMenu
+                          (the item in Claude Science's model menu, its script and message handler), AskModelWindow
+                          (Ask another model)
 Sources/Bench/Shared/     The specimens (scenes) and ScienceCore, Capsid's own since 1.0: they began
                           as copies of the Science Status droplet's, and Droplets were retired in
                           October 2026, so `Scripts/sync-shared.sh` went with them. Edit them here.
@@ -3469,7 +3473,7 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] activity list: with six waiting, one put off with Later, and two working, Later is its own group at the bottom of Needs you, Working shows whole with its clocks, and the Dock menu has the same order; on a short screen "N more" appears and opens in place
 - [ ] acting from the list: hover a question's row, Reply… opens the reply window; hover a plan's row, Approve approves it (a throwaway session) and the row says Approved; hover a read-only tool's request, Allow Once and Deny; Tab to a row with full keyboard access on and the same buttons appear; with "Show plans, questions and requests on the card" off, no buttons and the row only opens; a Later row has only its bells
 - [ ] reopen where you were: open a session, ⌘Q, launch: that session; go to the home page, ⌘Q, launch: the home page; `kill -9` Capsid while in a session, launch: that session; launch from a `bench://session?…` link of another session: that one, not the remembered; the remembered session gone (deleted, or another org active): the home page; sign out and back in on a remembered session: still on it
-- [ ] Ask another model (off by default; needs a real key, Sam's own): Settings → General → Another model off shows no File item and no right-click item; on with no key still none; paste the key and Save: the model list fills and the first model is chosen; File → Ask Another Model… in a session opens the window with the session's last question; Include the conversation so far lists the turns before it; Ask answers with Markdown and "Answered in N s"; Cancel (Esc) while it asks; a wrong key says "didn't accept your key"; a right-click on selected text in a session starts from the selection, and on a figure or a tab shows only Capsid's own items; the reference window's right-click on Claude's words has it; Send to Session posts "Another model (…) answered:" and the answer into the session as the next message, once; the key file is 0600 in Application Support/Bench and Remove deletes it; the log (`another-model`) has counts and no words; Settings → off closes nothing but the open window then refuses to send
+- [ ] Ask another model (off by default; needs a real key, Sam's own): Settings → General → Another model off shows no toolbar button, no File item and no item in Claude Science's model menu; on with no key still none; paste the key and Save: the model list fills and the first model is chosen; the toolbar button (beside Results and the Shelf) appears, dim with no session in the main window and on in one, and a click opens the window with the session's last question; File → Ask Another Model… does the same; the page's model menu (the picker beside the message box) ends with a rule and "Ask Another Model…", in the menu's own look, lit under the pointer, and choosing it opens the window with what is typed in the message box (and with the session's last question when the box is empty), and the page's menu closes; Include the conversation so far lists the turns before it; Ask answers with Markdown and "Answered in N s"; Cancel (Esc) while it asks; a wrong key says "didn't accept your key"; the main window's right-click has no Ask item (on selected text, a figure or a tab); the reference window's right-click on Claude's words has it; Send to Session posts "Another model (…) answered:" and the answer into the session as the next message, once; the key file is 0600 in Application Support/Bench and Remove deletes it; the log (`another-model`) has counts and no words (and "Model menu: armed → … → placed" for each press of the picker); Settings → off closes nothing but the open window then refuses to send
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Capsid settings already stored; Help → Welcome to Capsid shows it again; Return and Esc work; the updates switch stays off until turned on
 
 ## Results (Results/, since 0.7.0)
@@ -6210,8 +6214,9 @@ route.
 
 **Off by default, and only with the user's own key.** Settings → General →
 Another model has one switch, "Ask another model", off. While it is off, or on
-with no key saved, none of the feature shows: no menu item, no right-click
-item, no window, and nothing is asked of the address, not even the model list
+with no key saved, none of the feature shows: no toolbar button, no menu item,
+no item in Claude Science's model menu, no window, and nothing is asked of the
+address, not even the model list
 (`AnotherModel.isAvailable`). A window left open when the switch goes off says
 "Ask another model is off. Turn it on in Settings → General first." and sends
 nothing. Capsid is public and ships this to everyone, off. It never enters or
@@ -6228,7 +6233,7 @@ most 300 characters; anything else is never sent a key. The user accepted this
 under the section says so in one line: "What you send goes to
 api.abliteration.ai. Capsid sends only what you see in the window." (the host
 is the address's own). Nothing is read from the page for it except the
-selection's text (below), and nothing is sent that the window doesn't show.
+message box's draft (below), and nothing is sent that the window doesn't show.
 
 **The key.** Pasted in a secure field, saved with Save, and kept in one file,
 `~/Library/Application Support/Bench/another-model-key` (`FileDeviceStore`, the
@@ -6260,22 +6265,89 @@ not listed now stays in the pop-up as "… (not listed)". The choice is kept as
 the string the address gave (`anotherModelName`, not registered: absent means
 none chosen, and the window says so and keeps Ask off).
 
-**Where it appears** (`AskMenu`, `AskCommands`), only while it is available:
+**Where it appears** (`AskMenu`, `AskCommands`, `AskToolbarButton`, `ModelPickerMenu`), only while it is
+available. Sam's first cut had it in File and at the top of the Mac's right-click menu on the conversation; he turned
+it on and couldn't find it (he looked among the models in Claude Science's own model menu) and found the right-click
+item odd, so he chose two other places and the right-click item went (2026-10-24):
+- **A toolbar button** in the main window's title bar, one glyph (`bubble.left.and.bubble.right`) in a glass capsule
+  of its own, drawn as Results' tray is (`ReadoutButtonStyle`, a symbol, a help line "Ask Another Model: put a
+  question to a model at another provider", VoiceOver "Ask Another Model"). It is there only while the feature is on
+  with a key, and the condition wraps the `ToolbarItem` itself (an item with nothing in it still gets a capsule, as
+  the Update button's note says). It comes first of the three (Ask, Results, the Shelf, then Specimens), so adding or
+  taking it away moves nothing to its right. It is on while a session is in the main window and dim otherwise, and
+  in a demo (`AskMenu.fileItem`, the one rule File's item shares); the readout style draws a disabled button as an
+  enabled one, so the glyph dims itself (35%). One click opens the window for the session in the main window, with
+  its last question.
 - **File → Ask Another Model…**, among the session commands (Quick Start,
-  Open Session…, Next Waiting Session, Results…, the Shelf). On while a session
-  is in the main window, dim otherwise and in a demo. No shortcut: no letter is
+  Open Session…, Next Waiting Session, Results…, the Shelf). The same rule as the button. No shortcut: no letter is
   safe from the page, and the keys left on the arrows and ⌥⌘ are awkward.
-- **"Ask Another Model…" at the top of the Mac's right-click menu** on a
-  session's page (`TabMenuWebView.askMenu`, one separator under it), starting
-  from the text selected there, if any. It is added only to a menu that has
-  neither Capsid's tab items nor its figure and link items (`TabContextMenu`,
-  `ConversationMenu`), which keep their own. The selection is read when the
-  item is chosen, by one script (`SelectionScript`: `window.getSelection()`,
-  cut at 32,000 characters, two seconds to answer; no element, no selector, no
-  fetch), so it adds no hook to the compatibility inventory.
+- **"Ask Another Model…" at the end of Claude Science's own model menu**, the one the picker beside the message box
+  opens (`ModelPickerMenu`, below), a rule and one item, starting from what is typed in the message box, or from the
+  session's last question when it is empty.
 - **The same item in the reference window's right-click menu on Claude's words**
   (`ReferenceTextView`'s delegate), starting from the selection, or from the
   question that reply answers.
+The Mac's right-click menu on the main window's page has no Ask item any more (`TabMenuWebView.askMenu`, the script
+that read the selection (`SelectionScript`) and `askFromPage` are gone); its tab and figure items are as they were.
+Settings' line under the switch says where it is: "Ask a model at another provider, with your own key: from the
+toolbar, the File menu or Claude Science's model menu."
+
+**In Claude Science's model menu** (`AskModel/ModelPickerMenu.swift`, since the move). Claude Science 0.1.70 draws
+the picker's menu itself, with its design system's Base UI menu: a popup (`role="menu"`) drawn in a layer of its own
+when the picker opens. There are two pickers in the bundle's composer, and the script matches both popups: the one
+served from the catalog (`data-cds="ModelSelector"`, in `index-DhEuR7nq.js` at the component `M0e`, which its
+button carries too, hence `[role="menu"]` with it) and the plain list's (`data-testid="model-selector-popup"`,
+`toe`). Both hold the same shape: the popup, one element with `data-cds-sheet-scroll` that holds its items (it
+scrolls), in it a `role="group"` of the models (each `role="menuitemradio"`, a div with the design system's item
+classes, its description on a second line and its check trailing), a `role="separator"` rule, the "More models"
+and effort rows (`role="menuitem"` with `aria-haspopup`) and, in the catalog's, a closing note. The effort and
+"More models" submenus are popups of their own without the picker's `data-cds`, so they are left alone.
+- **The script** (a user script in its own content world, `capsid-ask`, document start, main frame only, on the
+  daemon's own page, its handler `capsidAskMenu`) listens, in the capture phase of the document, for a real
+  pointer-down (not a right-button one), Enter, Space or an arrow, or a click with nothing watched, on
+  `[data-testid="model-selector"]` (the picker's button, or the wrapper round it: the same test id is on every
+  composer's picker). A press posts `{armed: true}` and the page waits for Swift's answer, `{show: true}`, which is
+  File's rule (the feature on with a key, a session in the main window, no demo) and nothing else; on no, the watch
+  ends at once and nothing is said. Meanwhile, for two seconds, a `MutationObserver` on the body looks for the
+  picker's popup among the nodes added. With the popup and a yes, in whichever order they come, it takes the
+  popup's first item (`[role="menuitemradio"], [role="menuitem"]`), copies its tag and its classes less the page's
+  extra padding for an item with a second line (a class starting `pb-[calc(`), and the rule's classes from the
+  popup's own `[role="separator"]` (the page's usual ones when it has none), and adds the rule and the item at the
+  end of the list. The item is a `div` with the words "Ask Another Model…" (`AskMenu.title`) and no icon, as the
+  models have none; it lights under the pointer with `data-highlighted`, which the page's own list sets only on the
+  items it knows; the page's arrow keys do not reach it (the list is the page's own, not a query of the DOM), so
+  the toolbar button and File's item are the way in from the keyboard. Nothing is read of the page's own words.
+  From then on only that popup is watched (children and subtree), to put the group back last if the page draws
+  the list again or replaces the list element (a popup header that came or went), and the watch ends when the
+  popup is gone or two minutes after. Pressing the picker again while its popup is open closes it and starts
+  nothing. A real click on the item posts `{ask: true, draft}`, stops the watch and closes the popup with Escape
+  sent from inside it (which the list and the document both hear, as a key press with the menu focused), then, if the
+  popup is still there 80 ms later, a pointer-down on the body. Only the main web view's main frame on the daemon's
+  origin is heard (the rule the tab and figure menus share); from anyone else the answer is no and nothing happens.
+  Swift asks again whether the item is still wanted when it is chosen, and opens the window (`askFromModelMenu`);
+  a window already open for that session takes the draft as its new question unless it is asking.
+- **The draft** (a new page hook): the text of the message box (`[role="textbox"]`, a contenteditable div) of the
+  composer (`[data-testid="composer"]`) the pressed picker sits in, read when the item is chosen, never written to.
+  Text nodes as they are, a line break for each `<br>` and for each block after the first, a mention chip as it
+  shows, and without a dictation not yet kept (`data-voice-ghost`) or an upload's chip (`data-upload-status`); cut at
+  32,000 characters (the question's own limit), trimmed, and nothing when empty. It goes to the Ask window's question
+  field and nowhere else; it is not logged, and the window shows exactly what is sent when Ask is pressed, as for
+  any seed.
+- **If it can't be matched** the item simply isn't there. When the picker was pressed and a menu opened that is not
+  the picker's (the page changed its markers), or the picker's popup has no list or no item to copy, the script
+  posts `{unplaced: true}` once the two seconds are up, and Capsid leaves a breadcrumb (`modelMenuNotUnderstood`,
+  "the model menu didn't look as Capsid expects", feature `modelMenu`): Diagnostics' "Last problem". No menu in two
+  seconds (a disabled picker, a loading list) is not a miss. Every selector is in the compatibility inventory,
+  checked only when used.
+- **The step trace.** As the figure menu's, one line in the `another-model` log per press once it is done with, for
+  example "Model menu: armed → allowed → menu-matched → placed", in the script's fixed words (`ModelMenuStep`: `armed`,
+  `allowed`, `refused`, `menu-matched`, `menu-other`, `menu-none`, `placed`, `unplaced`, `interrupted`,
+  `no-observer`); Swift drops any other word. A press the answer was no to logs nothing.
+- **What only a live click can say.** That the real popup carries these markers in 0.1.70's served build; that
+  Base UI's list closes on the Escape sent from inside it (else the pointer-down 80 ms later does); that the popup
+  grows to hold the item and stays where it should (its position is the page's own and follows its size);
+  whether the page's list takes the pointer off its own highlighted item when it moves to ours; and the path the
+  error card's "Switch models" button takes, which opens the picker without a press on it, and gets no item.
 
 **The window** (`AskModelWindow.swift`), on the 1.0 windows' Solanum surfaces
 as the reference window is (the page's own band for a title bar, "Ask Another
@@ -6288,7 +6360,9 @@ Top to bottom:
   session's last message of the user's, read with the reference window's history
   reader (`Remote/HistoryReader.swift`, through the reading gate: one page of the
   session's newest rows, and the whole row when the page cut it; no new page
-  hook), or with the selection or reply the window was opened from. What the user
+  hook), or with the draft or reply the window was opened from (the text typed in
+  the page's message box, from the model menu's item; the reply's question, from
+  the reference window). What the user
   types is never overwritten by a read that lands late. At most 32,000
   characters: a longer seed is cut there, and a longer question leaves Ask off.
 - **"Include the conversation so far"**, a switch, off, in clay when on, with
