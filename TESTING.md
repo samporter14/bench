@@ -323,6 +323,18 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-24, Capsid 1.0.3 released and installed
+
+- ✅ Released as v1.0.3 (tag on 9912039, "Capsid 1.0.3", by Sam with `gh release create`), marked Latest:
+  `Bench.zip` with Capsid.app 1.0.3 (49) inside, 17,979,550 bytes, sha256 df8b74c03de216ab…. GitHub's asset
+  digest matches the file built from that commit.
+- ✅ Installed from that same build before the release (CDHash 477f0fdb; the unzipped copy's signature checks and
+  its CDHash is the same). "Signing in: with a code from claude-science url", and the usage read answered 4 s
+  after launch.
+- The whole suite before the push: 3,909 tests in 505 suites pass.
+- ⏳ **Live**: Ask Another Model's item in the real model menu, the toolbar button opening the window, and the title
+  bar at 900 points with an update on offer.
+
 ## 2026-10-24, Ask Another Model moves: a toolbar button and an item in Claude Science's model menu; the right-click item goes
 
 Sam turned the feature on and couldn't find it: he looked among the models in Claude Science's own model menu, and
