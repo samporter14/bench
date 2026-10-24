@@ -149,6 +149,18 @@ enum SettingsKey {
     /// Quick Start's recipes, as JSON (`Recipe`): user-written and
     /// settings-sized. Not registered: absent means none.
     static let recipes = "recipes"
+    // Ask Another Model (AskModel/)
+    /// Ask another model: File → Ask Another Model…, the right-click items
+    /// and the window, with the user's own key. Off unless turned on in
+    /// Settings → General; off, none of it shows. The key itself is never a
+    /// setting (`AnotherModelKey`).
+    static let askAnotherModel = "askAnotherModel"
+    /// The OpenAI-compatible address it asks, https only
+    /// (`AnotherModelAddress.usual`).
+    static let anotherModelAddress = "anotherModelAddress"
+    /// The model chosen from the address's own list (`GET /models`), as
+    /// that list names it. Not registered: absent means none chosen yet.
+    static let anotherModelName = "anotherModelName"
 
     static func register() {
         let defaults = UserDefaults.standard
@@ -187,6 +199,8 @@ enum SettingsKey {
             quickStartKey: "controlOptionCommandSpace",
             replyKey: "controlOptionCommandR",
             shortcutsMayAct: false,
+            askAnotherModel: false,
+            anotherModelAddress: AnotherModelAddress.usual,
         ])
     }
 }

@@ -323,6 +323,72 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-23, Ask Another Model (off by default; a side door to another model, with your own key)
+
+- ✅ **Finished from a checkpoint.** An earlier run (d626bef) was stopped three times by API overloads before it built or
+  tested anything. It compiled as it stood and its 69 tests passed, so what was left was review and finishing:
+  the snapshot's held ask waited on a continuation nothing resumed (the runtime said so; it now waits on a sleep Cancel
+  ends); nothing asked the address while the switch was off, but a window left open still could, and a key saved while
+  it was off listed the models; an edited address kept showing the old address's models; and Settings' own model row
+  sent the person "to Settings → General" from Settings → General. All four fixed, each with a test.
+- ✅ **Off hides every way in** (`AskEntryPointTests`, `AnotherModelSettingTests`): the switch is off and registered off;
+  File's item is not there off, or on with no key, and is dim with no session in the main window or in a demo; the
+  right-click item is added only while available, once, and never to a tab's or a figure's menu (which keep Capsid's
+  own); the reference window's text menu has it only with a handler and only while available, starting from the
+  selection; the window does not open. With the switch off a key can be saved and removed, and nothing is asked of
+  the address, not even the model list; a window left open answers "Ask another model is off." and sends nothing.
+- ✅ **The key is a file and nowhere else.** 0600 in a 0700 folder, trimmed, nothing else in the folder (no temporary
+  copy), found again at the next launch, deleted by Remove with its list; a paste that is no key (a space, a line break,
+  too short or long, not ASCII) writes nothing and the sentence names nothing of it. In no `UserDefaults` value (the
+  suite's own or the app's) and in no log line, after a save, a list, an ask and a remove. Source checks: no
+  Keychain, `SecItem` or `kSec` in the folder, `Authorization` in one file only, one `Logger` with one call, no
+  `print`/`NSLog`, and the window, the rules and the menu never reach the key.
+- ✅ **The requests**, against a fake `URLProtocol` with a made-up host each (nothing leaves the process): `GET /models`
+  and `POST /chat/completions` with `{"model", "messages", "stream": false}` and nothing more; the key only in the
+  `Authorization` header, not in the address, the body or any other header; no cookies, cache or credentials; a
+  redirect is refused and the other host is never reached; 401 and 403, 429, 500, a 200 that is no answer, an answer
+  over 4 MiB, no network, an unreachable host, each as its sentence; the deadline (120 s for an ask, 20 s for the list,
+  on a manual clock) ends the request itself, and so does Cancel; asked once, never again on its own. The address:
+  https only, no user, password, query or fragment.
+- ✅ **The window's rules and model** (`AskRulesTests`, `AskModelQuestionTests`, `AskModelAskingTests`): the session's
+  last message is the question (whole when the page cut it; never over what was typed while the read was out); a
+  selection is the question and nothing is read for it; the conversation is the text turns before that message (the
+  mid-run messages count as Claude's), 10 at most and 12,000 characters at most, an older turn never without the newer,
+  only with the switch on, and exactly what is listed is sent; no model chosen means no Ask; Cancel and closing the
+  window end the ask and nothing more comes; Copy gives the answer as it came; the log is counts and fixed words, and
+  none of the made-up question, answer, session or project names is in a line.
+- ✅ **Send to Session goes by the bounded path** (`AskModelSendTests`, `AskModelBoundedSendTests`, the second through
+  `RemoteSessions` itself with a made-up page behind it): one message write carrying a UUIDv4 `_intent_id`, the model's
+  name on its first line; a session waiting on a question takes none ("Answer its question first.") and nothing is
+  written; a write with no answer is settled by one more read, found by its intent (sent) or not found ("That didn't
+  go through. Try again.", and no second write on its own); a second press while it goes or after it went does nothing,
+  and a press after a failure keeps the same intent, so a lost reply is the daemon's own repeat; an answer over 4,000
+  characters or holding a file reference says so and writes nothing.
+- ✅ **No new page hook.** The selection is read by one script (`window.getSelection()`; a test checks it names no
+  element, selector or fetch), the question by the existing history reader. The Compat suites pass: 193 tests in 24
+  suites.
+- ✅ **Offscreen renders**, light and dark, in `shots-ask/` beside the worktree (the
+  harness draws the SwiftUI content with `cacheDisplay`, as the Reference and Shelf ones do; nothing opens): the window
+  ready, asking (the conversation listed, Cancel in Ask's place), answered (the Markdown, "Answered in 9 s", Copy and
+  Send to Session) and failed (the deadline's sentence in clay text); Settings with the switch off, on with no key, on
+  with a key and the models listed, and on with a key the address refused. Looked at against "gorgeous and minimal":
+  one clay action in every state; the question card, one switch with its count, the quiet model name; the answer on
+  the page with nothing around it; the failure a single centred sentence and no dialog; Settings one switch off and
+  four rows on. Kept as they are: the two-line description under the switch (where the feature appears is the only
+  trace of it while it is off) and the question card's height (room to edit). The pills' edges show a thin vertical
+  stroke at their ends in these renders; the Reference window's captures have it too, so it is the harness, not the
+  button. No real window was opened, so none shows Capsid's glass title bar, and no menu or popover was opened.
+- The whole suite: 3,829 tests in 500 suites pass (3,749 before; 80 new, 78 of them checks and 2 that draw PNGs only when
+  `CAPSID_SNAPSHOT_DIR` is set). No flakes. The continuation warnings in the log are other suites' (`browser`,
+  `forever()`, `sessions(turnLimit:…)`), none of this feature's.
+- ⏳ **Live, with Sam's own key** (nothing here has met a real Abliteration.ai): the real `GET /models` shape and
+  whether its names carry the `abliteration-ai/` prefix; that `/chat/completions` takes the body as built and how long a
+  real answer takes (the 120 s deadline); the three doors on real surfaces (File → Ask Another Model…, a right-click on
+  selected text and on none, and the reference window's menu on Claude's words); the question prefilled from a real
+  session's last message and the conversation list; a real Send to Session and its `_intent_id`; the key file landing
+  in the real Application Support folder at 0600 and Remove deleting it; the paste into the secure field with Save; and
+  Settings' height (1,190) on a real display.
+
 ## 2026-10-23, Capsid 1.0.1 released and installed
 
 - ✅ Released as v1.0.1 (tag on 9229072, "Capsid 1.0.1", by Sam with `gh release create`), marked Latest:

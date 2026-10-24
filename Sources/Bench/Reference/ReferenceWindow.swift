@@ -372,7 +372,8 @@ struct ReferenceView: View {
                             }
                         }
                         if !answer.parts.isEmpty {
-                            ReferenceTextView(text: model.rendered(answer), selection: selection)
+                            ReferenceTextView(text: model.rendered(answer), selection: selection,
+                                              ask: { selected in askAnotherModel(selected ?? answer.question) })
                         }
                         if model.readingRest || model.restMissing {
                             Text(model.readingRest ? "Reading the rest\u{2026}" : "Part of this answer couldn\u{2019}t be read.")
@@ -553,6 +554,14 @@ struct ReferenceView: View {
         Task { await model.addToShelf(file) }
     }
 
+    /// Ask Another Model… from Claude's words: the selection, or what was
+    /// asked in this reply (AskModel/).
+    private func askAnotherModel(_ seed: String?) {
+        let session = model.session
+        AskModelWindowController.shared.show(AskSubject(sessionID: session.id, title: session.displayTitle,
+                                                        projectName: session.projectName, seed: seed))
+    }
+
     /// Copy with Source and Open Conversation, as the mock-up's foot has them.
     private var footer: some View {
         HStack(spacing: 8) {
@@ -706,14 +715,35 @@ extension AnswerStyle {
 struct ReferenceTextView: NSViewRepresentable {
     let text: NSAttributedString
     let selection: ReferenceSelection
+    /// Ask Another Model… in the text's right-click menu, while that feature
+    /// is on with a key (AskModel/AskModelMenu.swift): called with the
+    /// selected text, or nil. Nil here: no item.
+    var ask: (@MainActor (String?) -> Void)? = nil
 
-    final class Coordinator {
+    final class Coordinator: NSObject, NSTextViewDelegate {
         /// The text last put in, by identity: the model renders once per text.
         var shown: NSAttributedString?
         /// The height last measured, for the text shown at that width: a
         /// document of 2 MiB takes a second to lay out, and SwiftUI asks again
         /// at the same width.
         var measured: (text: NSAttributedString, width: CGFloat, height: CGFloat)?
+        var ask: (@MainActor (String?) -> Void)?
+        /// Whether Ask Another Model is on with a key, asked as the menu opens.
+        var available: @MainActor () -> Bool = { AnotherModel.shared.isAvailable }
+
+        func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+            MainActor.assumeIsolated { addAsk(to: menu, in: view) }
+            return menu
+        }
+
+        /// The item, at the top of the text's own menu, starting from the selection.
+        @MainActor
+        func addAsk(to menu: NSMenu, in view: NSTextView) {
+            guard let ask else { return }
+            let range = view.selectedRange()
+            let selected = range.length > 0 ? (view.string as NSString).substring(with: range) : nil
+            AskMenu.insert(into: menu, available: available()) { ask(selected) }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -740,11 +770,13 @@ struct ReferenceTextView: NSViewRepresentable {
             .underlineColor: NSColor(Theme.clay), .cursor: NSCursor.pointingHand,
         ]
         textView.setAccessibilityLabel("Claude\u{2019}s answer")
+        textView.delegate = context.coordinator
         selection.textView = textView
         return textView
     }
 
     func updateNSView(_ textView: NSTextView, context: Context) {
+        context.coordinator.ask = ask
         guard context.coordinator.shown !== text else { return }
         context.coordinator.shown = text
         textView.textStorage?.setAttributedString(text)

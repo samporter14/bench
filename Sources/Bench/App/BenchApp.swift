@@ -300,6 +300,8 @@ struct BenchCommands: Commands {
     @ObservedObject private var shelfCommands = ShelfCommands.shared
     /// The key reference window, for Keep on Top (Reference/ReferenceWindow.swift).
     @ObservedObject private var reference = ReferenceCommands.shared
+    /// Ask Another Model…: there only while it is on with a key (AskModel/AskModelMenu.swift).
+    @ObservedObject private var ask = AskCommands.shared
     /// The key shown beside Quick Start… (QuickStart/GlobalHotKey.swift).
     @AppStorage(SettingsKey.quickStartKey) private var quickStartKey = GlobalHotKey.Slot.quickStart.fallback.rawValue
 
@@ -332,6 +334,12 @@ struct BenchCommands: Commands {
             Button(NextWaiting.title) { NextWaiting.shared.openNext() }
                 .keyboardShortcut(.downArrow, modifiers: [.command, .option])
                 .disabled(Demo.mode != nil || !NextWaiting.shared.isEnabled)
+            // The session in the main window, asked of another model. Only while
+            // the feature is on with a key; no shortcut (none is clearly free of the page).
+            if ask.isShown {
+                Button(AskMenu.title) { ask.ask() }
+                    .disabled(!ask.isEnabled)
+            }
             // The files sessions made (Results/ResultsWindow.swift).
             Button("Results…") { ResultsWindowController.shared.show() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])

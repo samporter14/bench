@@ -2849,7 +2849,8 @@ than the screen it is on (Page sizes, below):
 
 - **General** (`general`): Capsid's name and version, a banner when it can't see
   your sessions, Appearance (the theme, and App icon since 0.9.5), Updates
-  (since 0.3.6), Nidus (since 0.7.3) and Help → Diagnostics.
+  (since 0.3.6), Nidus (since 0.7.3), Another model (off; see Ask another model)
+  and Help → Diagnostics.
 - **Panel** (`panel`): the specimen while a session works (show it, name it,
   the menu bar), where the panel sits (corner, screen, while Capsid is in
   front), and a way to the Specimens tab.
@@ -2926,6 +2927,9 @@ before.
 | Show the Lab panel while Capsid is in front | on |
 | Name the specimen that's playing, in the panel (`showSpecimenCaption`) | off |
 | Check for updates once a day (`checkForUpdates`, since 0.3.6; on since 0.9.7; see Update check) | on |
+| Ask another model (`askAnotherModel`; see Ask another model) | off |
+| Another model's address (`anotherModelAddress`; https only) | https://api.abliteration.ai/v1 |
+| Another model's name (`anotherModelName`; the address's own list, none until one is listed) | none |
 | Use Capsid from your phone (`remoteEnabled`, since 0.4.0; see Capsid on your phone) | off |
 | Skip "Put Tailscale on your phone" (`remotePhoneSkipped`; see Settings → Phone) | off |
 
@@ -3408,6 +3412,10 @@ Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, L
                           changes answered from its card), FailureReason (why a session stopped, on its
                           failure card)   (lab agent)
 Sources/Bench/Results/    ResultsShelf and ResultsWindow: the results shelf (Results)
+Sources/Bench/AskModel/   AnotherModel (the switch, the key's file, the model list, Settings → Another model), AnotherModelClient
+                          (the two requests, the address and key rules, the failures' sentences), AskModel (the window's
+                          rules and model, Send to Session), AskModelMenu (File's item and the right-click item),
+                          AskModelWindow (Ask another model)
 Sources/Bench/Shared/     The specimens (scenes) and ScienceCore, Capsid's own since 1.0: they began
                           as copies of the Science Status droplet's, and Droplets were retired in
                           October 2026, so `Scripts/sync-shared.sh` went with them. Edit them here.
@@ -3461,6 +3469,7 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] activity list: with six waiting, one put off with Later, and two working, Later is its own group at the bottom of Needs you, Working shows whole with its clocks, and the Dock menu has the same order; on a short screen "N more" appears and opens in place
 - [ ] acting from the list: hover a question's row, Reply… opens the reply window; hover a plan's row, Approve approves it (a throwaway session) and the row says Approved; hover a read-only tool's request, Allow Once and Deny; Tab to a row with full keyboard access on and the same buttons appear; with "Show plans, questions and requests on the card" off, no buttons and the row only opens; a Later row has only its bells
 - [ ] reopen where you were: open a session, ⌘Q, launch: that session; go to the home page, ⌘Q, launch: the home page; `kill -9` Capsid while in a session, launch: that session; launch from a `bench://session?…` link of another session: that one, not the remembered; the remembered session gone (deleted, or another org active): the home page; sign out and back in on a remembered session: still on it
+- [ ] Ask another model (off by default; needs a real key, Sam's own): Settings → General → Another model off shows no File item and no right-click item; on with no key still none; paste the key and Save: the model list fills and the first model is chosen; File → Ask Another Model… in a session opens the window with the session's last question; Include the conversation so far lists the turns before it; Ask answers with Markdown and "Answered in N s"; Cancel (Esc) while it asks; a wrong key says "didn't accept your key"; a right-click on selected text in a session starts from the selection, and on a figure or a tab shows only Capsid's own items; the reference window's right-click on Claude's words has it; Send to Session posts "Another model (…) answered:" and the answer into the session as the next message, once; the key file is 0600 in Application Support/Bench and Remove deletes it; the log (`another-model`) has counts and no words; Settings → off closes nothing but the open window then refuses to send
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Capsid settings already stored; Help → Welcome to Capsid shows it again; Return and Esc work; the updates switch stays off until turned on
 
 ## Results (Results/, since 0.7.0)
@@ -6122,6 +6131,184 @@ project chip, a dropped file or a × change nothing, ↩ sends nothing a second
 time, and a Service's text waits. The global key brings the panel forward and
 never hides it mid-send. If a send ends while the panel is hidden, its sentence
 and request are there at the next opening.
+
+## Ask another model (AskModel/, after 1.0.1, not released yet)
+
+Claude sometimes won't answer. This is a side door for that day: one action,
+chosen reply by reply, that puts the same question to another model and shows
+what it says. The model is Abliteration.ai's, over an OpenAI-compatible API
+(`https://api.abliteration.ai/v1`, `POST /chat/completions`, a bearer key). It
+does not change the model Claude Science itself uses, and Capsid can't: that
+is set inside Claude Science, and nothing here reads or writes its settings, its
+sessions' models or its daemon. The other model's answer is only text in a
+Capsid window until the user sends it into the session, where Claude reads it
+like any other message of theirs.
+
+**Off by default, and only with the user's own key.** Settings → General →
+Another model has one switch, "Ask another model", off. While it is off, or on
+with no key saved, none of the feature shows: no menu item, no right-click
+item, no window, and nothing is asked of the address, not even the model list
+(`AnotherModel.isAvailable`). A window left open when the switch goes off says
+"Ask another model is off. Turn it on in Settings → General first." and sends
+nothing. Capsid is public and ships this to everyone, off. It never enters or
+suggests a key: the user pastes their own.
+
+**What leaves the Mac, and where.** The question as it stands in the window's
+field and, with "Include the conversation so far" on, the turns listed under it
+(below), to the address in Settings and to nothing else: the requests carry no
+cookies, keep no cache or credentials, and follow no redirect (a 302 ends the
+request with its own status, so the key can't be carried to another host).
+The address must be https with a host, no user, password, query or fragment, at
+most 300 characters; anything else is never sent a key. The user accepted this
+(Sam, 2026-10-23): text leaves for `api.abliteration.ai`, and the fine print
+under the section says so in one line: "What you send goes to
+api.abliteration.ai. Capsid sends only what you see in the window." (the host
+is the address's own). Nothing is read from the page for it except the
+selection's text (below), and nothing is sent that the window doesn't show.
+
+**The key.** Pasted in a secure field, saved with Save, and kept in one file,
+`~/Library/Application Support/Bench/another-model-key` (`FileDeviceStore`, the
+phone's own kind of store: the folder 0700, the file 0600, written to a
+temporary file and renamed). It is never in the Keychain (Capsid is signed
+without a Team ID, so every update would ask for the login password and leave
+the app stuck), never in `UserDefaults` and never in the log. It is read from
+its file for each request and is not kept in memory beyond one, and it is sent
+only in the `Authorization` header of a request to the address. Pasted text is
+trimmed and must be 8 to 512 printable ASCII characters with no space (it goes
+in a header line); anything else says "That doesn't look like a key. Paste it
+again, all of it." and writes nothing. Remove deletes the file and the model
+list; the model chosen stays for the next key. Source checks in the tests keep
+the Keychain out of the folder, the word `Authorization` in one file, and one
+`Logger` with one call.
+
+**The address and the model.** Both are in Settings, under the key: the address
+prefilled with Abliteration.ai's, and "Model", a pop-up filled from `GET
+/models` once a key is saved (asked when a key is saved, when the switch goes
+on with a key, when Settings opens on one, on Return in the address field, and
+from "List Models" or "Try Again"; never while the address is being typed: any
+edit drops the old list until it is asked for again). Model names differ
+between sources (`abliterated-model`, `abliterated-model-large`, with or
+without an `abliteration-ai/` prefix), so Capsid takes the address's own
+list: `{"data": [{"id"}]}`, `{"models": […]}` or a bare array, each name once,
+200 at most, each 1 to 200 characters with no control character. With none
+chosen yet, or the chosen one gone from the list, the first is chosen; a model chosen before and
+not listed now stays in the pop-up as "… (not listed)". The choice is kept as
+the string the address gave (`anotherModelName`, not registered: absent means
+none chosen, and the window says so and keeps Ask off).
+
+**Where it appears** (`AskMenu`, `AskCommands`), only while it is available:
+- **File → Ask Another Model…**, among the session commands (Quick Start,
+  Open Session…, Next Waiting Session, Results…, the Shelf). On while a session
+  is in the main window, dim otherwise and in a demo. No shortcut: no letter is
+  safe from the page, and the keys left on the arrows and ⌥⌘ are awkward.
+- **"Ask Another Model…" at the top of the Mac's right-click menu** on a
+  session's page (`TabMenuWebView.askMenu`, one separator under it), starting
+  from the text selected there, if any. It is added only to a menu that has
+  neither Capsid's tab items nor its figure and link items (`TabContextMenu`,
+  `ConversationMenu`), which keep their own. The selection is read when the
+  item is chosen, by one script (`SelectionScript`: `window.getSelection()`,
+  cut at 32,000 characters, two seconds to answer; no element, no selector, no
+  fetch), so it adds no hook to the compatibility inventory.
+- **The same item in the reference window's right-click menu on Claude's words**
+  (`ReferenceTextView`'s delegate), starting from the selection, or from the
+  question that reply answers.
+
+**The window** (`AskModelWindow.swift`), on the 1.0 windows' Solanum surfaces
+as the reference window is (the page's own band for a title bar, "Ask Another
+Model" over the session and its project; ivory, slate in the dark; hairlines;
+no glass). 520 by 640 at first, no smaller than 420 × 420, its frame remembered
+under one name (`CapsidAskModel`); one window per session, and opening it again
+brings it forward with a new selection in the field unless it is asking.
+Top to bottom:
+- **The question**, a white card with an editable field, prefilled with the
+  session's last message of the user's, read with the reference window's history
+  reader (`Remote/HistoryReader.swift`, through the reading gate: one page of the
+  session's newest rows, and the whole row when the page cut it; no new page
+  hook), or with the selection or reply the window was opened from. What the user
+  types is never overwritten by a read that lands late. At most 32,000
+  characters: a longer seed is cut there, and a longer question leaves Ask off.
+- **"Include the conversation so far"**, a switch, off, in clay when on, with
+  "2 turns · 136 characters" beside it and the turns themselves listed in a quiet
+  well under it: exactly what is sent, text only (the user's messages, Claude's
+  turns and what it sent mid-run; steps, plans, questions and files are left out),
+  the newest 10 turns and 12,000 characters at most, a turn that doesn't fit
+  whole ending the list (an older turn is never sent without the newer ones).
+  They are the turns before the session's last message of the user's: Claude's
+  reply to it, a refusal, is never sent, so the other model isn't shown the
+  refusal. Read when the switch goes on, never before.
+- **The model's name**, quiet, at the left; and at the right the one clay
+  action, **Ask** (⌘↩; the Return key writes a new line). While it asks, Cancel
+  (Esc) takes its place: one button at a time.
+- **The answer**, under a hairline, drawn with the reference window's Markdown
+  reading view (`AnswerMarkdown`, `.reference`: 14 on 21, selectable) with a
+  line saying "Answered in 9 s" (and the model's name when the choice changed in
+  Settings since). Before it, centred and quiet: "Your question goes to
+  api.abliteration.ai, not to Claude. The answer shows here."; while it asks, a
+  spinner and "Asking abliterated-model…"; a failure is one sentence in clay
+  text; Cancel says "Cancelled."
+- **The foot**, once there is an answer: **Copy** (the answer as it came, not as
+  drawn; the pill then reads "Copied") and **Send to Session**, quiet pills, and the
+  line between them when there is one to say.
+
+**The request** (`AnotherModelClient`): an ephemeral `URLSession`; `GET /models`
+(20 seconds) and `POST /chat/completions` with `{"model", "messages":
+[{"role", "content"}], "stream": false}` and nothing more (120 seconds); the
+deadline is a race against the request (`WriteDeadline.race`), not only the
+session's own timeout, so Cancel and the deadline both end the request itself at
+once; nothing is ever tried again on its own, and an answer over 4 MiB is not
+read. Not streamed: the answer comes whole, which keeps Cancel, the deadline and
+the failures to one path each; an answer that takes a minute shows a spinner
+and not words arriving. Failures are plain sentences (`AnotherModelFailure`):
+- 401 or 403: "api.abliteration.ai didn't accept your key. Check it in Settings → General.";
+- 429: "Too many requests to api.abliteration.ai just now. Wait a minute, then ask again.";
+- the deadline: "No answer came within 2 minutes. Ask again, or ask something shorter.";
+- no network: "This Mac isn't connected to the internet."; the host not reached: "Couldn't reach api.abliteration.ai. Check the address in Settings → General.";
+- anything else (a 500, a redirect): "api.abliteration.ai answered with an error (500). Try again in a moment."; a 2xx that holds no answer: "… sent back something that isn't an answer.".
+
+**Send to Session** posts the answer into that session as the user's next
+message: "Another model (abliterated-model) answered:", a blank line, the answer.
+It goes by the bounded path every write to a session takes
+(`RemoteSessions.respond`, the one the Reply window uses; Bounded writes): the
+session's own queue, a fresh read of the session first, the message rule (a
+session waiting on a question takes no message: "Answer its question first."), a deadline per write, an unknown outcome settled by one more read
+that looks for the message's `_intent_id`, and never a second send on its own.
+The message is checked as the phone's is: 4,000 characters at most, none of the
+page's reference prefixes; an answer that can't go says why under the pills and
+Copy still works. The intent id is kept while the words are the same, so a press
+after "Not sure that went through" is the daemon's own repeat of the same
+message, not a second one. A press while it goes, and after it went, does
+nothing; it says "Sent to the session." (or the queued and resumed sentences),
+and the pill reads "Sent ✓".
+
+**The log** (`another-model`, one of Capsid's log categories under `local.sam.bench`): fixed words
+and counts only, public-safe: "Another model: asked, 812 characters, with 6
+turns, answered in 9 s", "… failed after 120 s, timed out", "… cancelled after
+3 s", "Another model: listed 2 models", "Another model: key saved", "key
+removed", "listing models failed, key not accepted", "sent the answer to the
+session, sent". Never the question, the answer, the conversation, a model's
+name, the host or the key; tests look for each in every line.
+
+**Settings** (General → Another model, between Nidus and Help; the page is 90
+points taller for it, `settingsPage(height: 1190)`): the switch with one line
+under it; with it on, the key (a secure field and Save; once saved, eight dots
+and Remove), the address (a bordered field, https only; it says so while it
+isn't), the model pop-up (a spinner while it lists, the failure's sentence and
+Try Again, "The address lists no models."), and the fine print. A key that was
+refused keeps its file: the person may have pasted the right one for another
+address.
+
+**What only a live run with a real key settles:** the real `/models` reply's
+shape and whether its names carry the `abliteration-ai/` prefix; that
+`/chat/completions` accepts the body as built (no `max_tokens`, `stream:
+false`) and how long a real answer takes; the three doors on real surfaces
+(File, a right-click with and without a selection, the reference window's
+menu); a real Send to Session with its `_intent_id` and the daemon's repeat of a
+lost reply; the key file landing in the real Application Support folder at 0600;
+and the paste-into-the-secure-field flow with Save.
+
+`--demo` has no step for it (a demo has no key, and the window takes a field's
+focus when it opens): the window and Settings section are drawn offscreen by
+`AskModelSnapshotTests`.
 
 ## The panel's moments and what it knows (Lab/, since 1.0)
 
