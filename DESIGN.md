@@ -5481,9 +5481,13 @@ be read anywhere; the fallback says so); **Where it came from**, the session
 as a `bench://session?project=<id>&frame=<id>` link (`Router` now checks both
 ids before building an address from them), the project, "Version 3 of 4 of
 z_prime.png, kept on 22 October 2026 at 9:12 AM by Capsid 1.0, from Claude
-Science 0.1.70"; **Not copied**, only when something is; and one line of fine
-print: "Capsid changes only the “Your legend” section of this file, and only
-when you edit it in the Kept window." The parser is strict and fixed-shape:
+Science 0.1.70"; **Not copied**, only when something is; **Checksums**, only
+when a file's bytes don't match; and one line of fine print: "Capsid updates
+the file lists, “Not copied”, “Checksums” and “Your legend” here; everything
+else in this file is yours." (Until Try Again also updated the lists it said
+that Capsid changes only the legend, and only when you edit it in the Shelf
+window. READMEs made then keep that line: nothing rewrites it, and the parser
+does not read its words.) The parser is strict and fixed-shape:
 it reads what the renderer writes and nothing else, and a round trip is
 byte-identical. Every disk call runs off the main actor on one utility queue
 within a time limit (15 s plus 1 s per MiB per write, 15 s per look), with

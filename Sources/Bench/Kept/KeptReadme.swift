@@ -119,7 +119,13 @@ enum KeptReadme {
     static let legendComment = "<!-- Write the legend here, or in Capsid’s Shelf window. -->"
     /// What the comment said while the window was called Kept: read as an empty legend all the same.
     static let legacyLegendComment = "<!-- Write the legend here, or in Capsid’s Kept window. -->"
-    static let finePrint = "Capsid changes only the “Your legend” section of this file, and only when you edit it in the Shelf window."
+    /// The last line of every README made now. Try Again also updates the file
+    /// lists and the two sections that follow from them, so it says so, and
+    /// that the rest is the person's. READMEs made before it said "Capsid
+    /// changes only the “Your legend” section of this file, and only when you
+    /// edit it in the Shelf window."; they are read the same and never
+    /// rewritten for it (the parser does not look at the line's words).
+    static let finePrint = "Capsid updates the file lists, “Not copied”, “Checksums” and “Your legend” here; everything else in this file is yours."
     /// The optional lines of the front matter, right after `figure:`, in this order.
     static let answerShowsKey = "answer_shows_version"
     static let sourceRowKey = "source_row"

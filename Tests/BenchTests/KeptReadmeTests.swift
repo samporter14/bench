@@ -99,7 +99,7 @@ Version 3 of 4 of z_prime.png, kept on 22 October 2026 at 9:12 AM by Capsid 1.0,
 
 ---
 
-Capsid changes only the “Your legend” section of this file, and only when you edit it in the Shelf window.
+Capsid updates the file lists, “Not copied”, “Checksums” and “Your legend” here; everything else in this file is yours.
 
 """
 
@@ -108,6 +108,16 @@ Capsid changes only the “Your legend” section of this file, and only when yo
 struct KeptReadmeTests {
     @Test func theRendererWritesTheContractsReadmeToTheByte() {
         #expect(render(record(), text()) == contractReadme)
+    }
+
+    @Test func theFinePrintSaysWhatCapsidUpdatesAndThatTheRestIsTheirs() {
+        #expect(KeptReadme.finePrint
+            == "Capsid updates the file lists, “Not copied”, “Checksums” and “Your legend” here; everything else in this file is yours.")
+        // Every README ends with it, after the divider, and with nothing else on the line.
+        #expect(render(record(), text()).hasSuffix("\n---\n\n\(KeptReadme.finePrint)\n"))
+        #expect(render(shelved(), text(legend: "Plate 3 was re-run.")).hasSuffix("\n---\n\n\(KeptReadme.finePrint)\n"))
+        // It no longer says the legend is all Capsid changes, nor that it only changes when you edit it in the Shelf.
+        #expect(!render(record(), text()).contains("changes only"))
     }
 
     @Test func theCommentIsThereOnlyWhileTheLegendIsEmpty() {
@@ -125,7 +135,7 @@ struct KeptReadmeTests {
         let whole = render(record(missing: false), text())
         #expect(!whole.contains("## Not copied"))
         #expect(whole.contains("\nmissing: []\n"))
-        #expect(whole.contains("\n---\n\nCapsid changes only"))
+        #expect(whole.contains("\n---\n\nCapsid updates the file lists"))
     }
 
     @Test func emptyListsAndNilKeysAreWrittenTheSameWayEveryTime() {
@@ -328,8 +338,8 @@ struct KeptReadmeRefusalTests {
             .replacingOccurrences(of: "## Where it came from\n", with: "## What Claude said\n")
         #expect(KeptReadme.parse(order) == nil)
         // The divider and the fine print.
-        #expect(KeptReadme.parse(good.replacingOccurrences(of: "\n---\n\nCapsid changes", with: "\n\nCapsid changes")) == nil)
-        #expect(KeptReadme.parse(String(good[..<good.range(of: "---\n\nCapsid changes")!.lowerBound])) == nil)
+        #expect(KeptReadme.parse(good.replacingOccurrences(of: "\n---\n\nCapsid updates", with: "\n\nCapsid updates")) == nil)
+        #expect(KeptReadme.parse(String(good[..<good.range(of: "---\n\nCapsid updates")!.lowerBound])) == nil)
         // The title line.
         #expect(KeptReadme.parse(good.replacingOccurrences(of: "# Fig 2B · Z′ by plate\n\n", with: "")) == nil)
     }
@@ -600,7 +610,7 @@ struct KeptReadmeUpdateTests {
         let edited = original
             .replacingOccurrences(of: "## Your legend", with: "## Lab notes\n\nBench 4, lot 2207.\n\n## Your legend")
             .replacingOccurrences(of: "## Where it came from", with: "## Reviewer\r\n\r\n  Check plate 7.   \r\n\r\n\r\n## Where it came from")
-            .replacingOccurrences(of: "---\n\nCapsid changes", with: "## Follow-ups\n\n- Re-run plate 7\n\n---\n\nCapsid changes")
+            .replacingOccurrences(of: "---\n\nCapsid updates", with: "## Follow-ups\n\n- Re-run plate 7\n\n---\n\nCapsid updates")
             + "\nAdded by hand.\r\n"
         #expect(KeptReadme.parse(edited) != nil)
 
@@ -630,14 +640,14 @@ struct KeptReadmeUpdateTests {
 
     @Test func aNewSectionOfCapsidsGoesBesideItsOwnAndAPersonsGoOnAfter() throws {
         let original = rendered(record(missing: false))
-        let edited = original.replacingOccurrences(of: "---\n\nCapsid changes", with: "## Follow-ups\n\nRe-run plate 7.\n\n---\n\nCapsid changes")
+        let edited = original.replacingOccurrences(of: "---\n\nCapsid updates", with: "## Follow-ups\n\nRe-run plate 7.\n\n---\n\nCapsid updates")
         var after = record()
         after.files.append(stale)
         let result = try #require(update(edited, to: after))
-        let order = ["## Where it came from", "## Not copied", "## Checksums", "## Follow-ups", "\n---\n\nCapsid changes"]
+        let order = ["## Where it came from", "## Not copied", "## Checksums", "## Follow-ups", "\n---\n\nCapsid updates"]
         let places = try order.map { try #require(result.range(of: $0)?.lowerBound) }
         #expect(places == places.sorted())
-        #expect(result.contains("## Follow-ups\n\nRe-run plate 7.\n\n---\n\nCapsid changes"))
+        #expect(result.contains("## Follow-ups\n\nRe-run plate 7.\n\n---\n\nCapsid updates"))
         let back = try #require(KeptReadme.parse(result))
         #expect(back.record.missing == after.missing)
         #expect(KeptReadme.mismatched(back.record).map(\.path) == ["input/plate_layout.csv"])
@@ -672,6 +682,29 @@ struct KeptReadmeUpdateTests {
         let emptied = original.replacingOccurrences(of: "- The raw input, plate_reader.xlsx: too big to keep here (over 8 MB).\n", with: "")
         #expect(emptied != original)
         #expect(update(emptied, to: record()) == original)
+    }
+
+    /// What every README said before Try Again also updated the file lists and two sections.
+    private let oldFinePrint = "Capsid changes only the “Your legend” section of this file, and only when you edit it in the Shelf window."
+
+    @Test func aReadmeWithTheOldFinePrintIsStillReadAndIsNotRewritten() throws {
+        let old = rendered(record(), legend: "Plate 3 was re-run.").replacingOccurrences(of: KeptReadme.finePrint, with: oldFinePrint)
+        #expect(old.hasSuffix("\n---\n\n\(oldFinePrint)\n"))
+        let parsed = try #require(KeptReadme.parse(old))
+        #expect(parsed.record == record())
+        #expect(parsed.text.legend == "Plate 3 was re-run.")
+        // Neither write touches the line: only a README made now says the new thing.
+        let legended = try #require(KeptReadme.replacingLegend(in: old, with: "Other."))
+        #expect(legended.hasSuffix("\n---\n\n\(oldFinePrint)\n"))
+        var whole = record(missing: false)
+        whole.files.append(landed)
+        let updated = try #require(update(old, to: whole))
+        #expect(updated.hasSuffix("\n---\n\n\(oldFinePrint)\n"))
+        #expect(!updated.contains(KeptReadme.finePrint))
+        // Nor does the parser mind words of a person's own there.
+        let own = rendered(record()).replacingOccurrences(of: KeptReadme.finePrint, with: "Mine now.")
+        #expect(KeptReadme.parse(own)?.record == record())
+        #expect(update(own, to: whole)?.hasSuffix("\n---\n\nMine now.\n") == true)
     }
 
     @Test func aByteOrderMarkStays() throws {

@@ -1220,7 +1220,7 @@ struct KeepRetryReadmeTests {
         // Notes before the legend and after the last section, a line after the fine print, and a legend.
         let edited = original
             .replacingOccurrences(of: "## Your legend", with: "## Lab notes\n\nPlate 7 re-run on the 22nd.\n\n## Your legend")
-            .replacingOccurrences(of: "---\n\nCapsid changes", with: "## Follow-ups\n\n- Ask about column 12\n\n---\n\nCapsid changes")
+            .replacingOccurrences(of: "---\n\nCapsid updates", with: "## Follow-ups\n\n- Ask about column 12\n\n---\n\nCapsid updates")
             + "Added by hand.\n"
         #expect(edited != original)
         try Data(edited.utf8).write(to: readme)
@@ -1232,7 +1232,7 @@ struct KeepRetryReadmeTests {
         // The README a person edited, with the table listed and nothing missing: not one byte more.
         #expect(after == landed(edited, reason: reason))
         #expect(after.contains("## Lab notes\n\nPlate 7 re-run on the 22nd.\n\n## Your legend"))
-        #expect(after.contains("## Follow-ups\n\n- Ask about column 12\n\n---\n\nCapsid changes"))
+        #expect(after.contains("## Follow-ups\n\n- Ask about column 12\n\n---\n\nCapsid updates"))
         #expect(after.hasSuffix("Added by hand.\n"))
         let back = try await rig.disk.readme(at: first.folder)
         #expect(back.record.files.map(\.path) == ["code/z_prime.py", "data/z_prime_by_plate.csv"])
@@ -1253,14 +1253,14 @@ struct KeepRetryReadmeTests {
         let first = try #require(model.partialOutcome)
         let readme = first.folder.appending(path: "README.md", directoryHint: .notDirectory)
         let edited = try String(contentsOf: readme, encoding: .utf8)
-            .replacingOccurrences(of: "---\n\nCapsid changes", with: "## Follow-ups\n\nRe-download the table.\n\n---\n\nCapsid changes")
+            .replacingOccurrences(of: "---\n\nCapsid updates", with: "## Follow-ups\n\nRe-download the table.\n\n---\n\nCapsid updates")
         try Data(edited.utf8).write(to: readme)
 
         model.retry()
         try await until("it is kept") { model.keptOutcome != nil }
         let after = try String(contentsOf: readme, encoding: .utf8)
         #expect(after.contains("## Checksums\n\n- data/z_prime_by_plate.csv doesn\u{2019}t match"))
-        #expect(after.contains("Re-download the table.\n\n---\n\nCapsid changes"))
+        #expect(after.contains("Re-download the table.\n\n---\n\nCapsid updates"))
         let order = ["## Where it came from", "## Checksums", "## Follow-ups"]
         let places = try order.map { try #require(after.range(of: $0)?.lowerBound) }
         #expect(places == places.sorted())
