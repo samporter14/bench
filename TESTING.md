@@ -371,8 +371,9 @@ folder was never read or written, and nothing was launched or installed.
   `items`). The test for the legend's own section keeping its blank lines was added after the fix, as a pin.
 - The whole suite: 3,851 tests in 501 suites pass (21 new). One run, earlier, had `SinceYouLeftModelTests.lessThanThirtyMinutesAwayShowsNothing`
   failing, alone as well as in the suite: its rig starts at the real time minus 3 hours and the test counts 18 minutes, so
-  in the window when that crosses midnight UTC (here 10:42 to 11:00 pm EDT) the away stretch spans two days and the card
-  appears. Nothing to do with Kept; it passed in the next run, outside that window.
+  when that start falls in the 18 minutes before midnight UTC the away stretch spans two days (its calendar is UTC) and the
+  card appears. Nothing to do with Kept, and not a load flake; it passed in the next run, outside that window. (The
+  baseline before this work was 3,829 at 1.0.2 and one test more in 05ebc4b.)
 - ⏳ **Live**: not tried on a real README. No window was opened and the real Kept folder was not touched; what remains is
   to put a sentence under the title of one real kept folder and save its legend, and to open a folder saved by a Windows
   editor.
