@@ -222,7 +222,7 @@ struct AnotherModelSection: View {
         Section("Another model") {
             Toggle(isOn: Binding(get: { model.isOn }, set: { model.setOn($0) })) {
                 Text("Ask another model")
-                Text("When Claude won\u{2019}t answer, ask a model at Abliteration.ai instead, with your own key: from the File menu or a right-click on the conversation.")
+                Text("Ask a model at another provider, with your own key: from the File menu or a right-click on the conversation.")
             }
             if model.isOn {
                 keyRow

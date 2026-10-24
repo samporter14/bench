@@ -6132,7 +6132,7 @@ time, and a Service's text waits. The global key brings the panel forward and
 never hides it mid-send. If a send ends while the panel is hidden, its sentence
 and request are there at the next opening.
 
-## Ask another model (AskModel/, after 1.0.1, not released yet)
+## Ask another model (AskModel/, since 1.0.2)
 
 Claude sometimes won't answer. This is a side door for that day: one action,
 chosen reply by reply, that puts the same question to another model and shows
@@ -6143,6 +6143,16 @@ is set inside Claude Science, and nothing here reads or writes its settings, its
 sessions' models or its daemon. The other model's answer is only text in a
 Capsid window until the user sends it into the session, where Claude reads it
 like any other message of theirs.
+
+Settings words it neutrally, "Ask a model at another provider, with your own
+key", Sam's call for the public release. That followed a reading of Anthropic's
+Usage Policy (the page dated Nov 12, 2026). The policy says nothing about putting
+your own question to another company's model. It does forbid bypassing
+guardrails within Anthropic's own products (jailbreaking, prompt injection).
+Send to Session is the part nearest that line, since the answer becomes the
+user's own input to Claude, under the same rules. The policy also names a Life
+Sciences Verification Program for adjusted safeguards, which is the official
+route.
 
 **Off by default, and only with the user's own key.** Settings → General →
 Another model has one switch, "Ask another model", off. While it is off, or on
