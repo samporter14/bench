@@ -5,6 +5,7 @@
 // none of the ways in shows. A made-up key, a throwaway settings suite, a
 // temporary folder and the fake URLProtocol; nothing leaves the process.
 import AppKit
+import Combine
 import Foundation
 import Testing
 @testable import Bench
@@ -246,7 +247,7 @@ struct AskEntryPointTests {
         #expect(AskMenu.fileItem(available: true, session: session, demo: true) == (true, false))
     }
 
-    @Test func theRightClickItemIsAddedOnlyWhileItIsOnWithAKey() {
+    @Test func theReferenceWindowsRightClickItemIsAddedOnlyWhileItIsOnWithAKey() {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Copy", action: nil, keyEquivalent: ""))
         #expect(AskMenu.insert(into: menu, available: false) {} == false)
@@ -260,15 +261,118 @@ struct AskEntryPointTests {
         #expect(menu.items.filter { $0.title == "Ask Another Model\u{2026}" }.count == 1)
     }
 
-    @Test func aTabOrAFiguresMenuKeepsItsOwnItemsOnly() {
-        for id in [TabContextMenu.itemID, ConversationMenu.itemID] {
-            let menu = NSMenu()
-            let item = NSMenuItem(title: "Capsid's", action: nil, keyEquivalent: "")
-            item.identifier = id
-            menu.addItem(item)
-            #expect(AskMenu.insert(into: menu, available: true) {} == false)
-            #expect(menu.items.count == 1)
+    // MARK: The toolbar button and File's item
+
+    private static let session = "0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5"
+
+    /// Lets the main queue run: the commands hear their model and the page's address a turn later.
+    private func settle() async {
+        try? await Task.sleep(for: .milliseconds(30))
+    }
+
+    @Test func theToolbarButtonAndFilesItemAreThereOnlyWhileItIsOnWithAKeyAndOnWithASession() async {
+        let rig = Rig()
+        let frames = CurrentValueSubject<String?, Never>(nil)
+        var opened = 0
+        let commands = AskCommands(model: rig.model, frames: frames, demo: false, open: { opened += 1 })
+        await settle()
+        // Off: neither shows.
+        #expect(commands.isShown == false)
+        #expect(commands.isEnabled == false)
+        // On with no key: still neither.
+        rig.model.setOn(true)
+        await settle()
+        #expect(commands.isShown == false)
+        // A key: there, and dim with no session in the main window.
+        rig.model.saveKey(madeUpModelKey)
+        await rig.waitForList()
+        await settle()
+        #expect(commands.isShown)
+        #expect(commands.isEnabled == false)
+        // A session: on. A page that is not a session's: dim again.
+        frames.send(Self.session)
+        await settle()
+        #expect(commands.isShown)
+        #expect(commands.isEnabled)
+        frames.send("not-a-frame")
+        await settle()
+        #expect(commands.isShown)
+        #expect(commands.isEnabled == false)
+        frames.send(Self.session)
+        await settle()
+        #expect(commands.isEnabled)
+        // One click opens the window for the session in the main window.
+        commands.ask()
+        #expect(opened == 1)
+        // Switched off, or the key removed: gone.
+        rig.model.setOn(false)
+        await settle()
+        #expect(commands.isShown == false)
+        #expect(commands.isEnabled == false)
+        rig.model.setOn(true)
+        await settle()
+        #expect(commands.isShown && commands.isEnabled)
+        rig.model.removeKey()
+        await settle()
+        #expect(commands.isShown == false)
+        #expect(commands.isEnabled == false)
+    }
+
+    @Test func aDemoShowsTheButtonDimAndOpensNothing() async {
+        let rig = Rig()
+        rig.model.setOn(true)
+        rig.model.saveKey(madeUpModelKey)
+        await rig.waitForList()
+        let commands = AskCommands(model: rig.model, frames: CurrentValueSubject<String?, Never>(Self.session), demo: true, open: {})
+        await settle()
+        #expect(commands.isShown)
+        #expect(commands.isEnabled == false)
+    }
+
+    @Test func theToolbarButtonIsDrawnLikeResultsIsAndNamedForVoiceOver() {
+        #expect(AskToolbar.label == "Ask Another Model")
+        #expect(AskToolbar.help.hasPrefix(AskToolbar.label))
+        // Results' help is a name, a colon and what it is for; so is this.
+        #expect(AskToolbar.help.contains(": "))
+        #expect(NSImage(systemSymbolName: AskToolbar.symbol, accessibilityDescription: nil) != nil, "\(AskToolbar.symbol)")
+        let source = Self.source("AskModel/AskToolbarButton.swift")
+        #expect(source.contains(".buttonStyle(ReadoutButtonStyle())"))
+        #expect(source.contains(".accessibilityLabel(AskToolbar.label)"))
+        #expect(source.contains(".help(AskToolbar.help)"))
+        #expect(source.contains(".disabled(!isEnabled)"))
+    }
+
+    @Test func theToolbarHoldsTheButtonFirstOfTheThreeAndWrapsTheItemInItsCondition() {
+        // The condition wraps the item itself (an item with nothing in it still gets a glass capsule), and the button
+        // comes before Results, so Results, the Shelf and Specimens stay where they are when it comes and goes.
+        let toolbar = Self.source("App/BenchApp.swift")
+        let ask = toolbar.range(of: "if ask.isShown {")
+        let button = toolbar.range(of: "AskToolbarButton(isEnabled: ask.isEnabled)")
+        let results = toolbar.range(of: "ResultsToolbarButton()")
+        let spacer = toolbar.range(of: "ToolbarSpacer(.fixed)")
+        #expect(ask != nil && button != nil && results != nil && spacer != nil)
+        if let spacer, let ask, let button, let results {
+            #expect(spacer.lowerBound < ask.lowerBound)
+            #expect(ask.lowerBound < button.lowerBound)
+            #expect(button.lowerBound < results.lowerBound)
         }
+        #expect(toolbar.contains("ToolbarItem {\n                        AskToolbarButton("))
+    }
+
+    @Test func theMainWindowsRightClickMenuHasNoAskItemAnyMore() {
+        for file in ["Web/WebContainer.swift", "Web/TabContextMenu.swift", "AskModel/AskModelWindow.swift"] {
+            let text = Self.source(file)
+            for gone in ["askMenu", "AskMenu.insert", "askFromPage", "SelectionScript", "selectedText(limit"] {
+                #expect(!text.contains(gone), "\(file): \(gone)")
+            }
+        }
+        // The reference window's right-click keeps it.
+        #expect(Self.source("Reference/ReferenceWindow.swift").contains("AskMenu.insert(into: menu"))
+    }
+
+    private static func source(_ relative: String) -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return (try? String(contentsOf: root.appendingPathComponent("Sources/Bench/\(relative)"), encoding: .utf8)) ?? ""
     }
 
     @Test func theItemDoesWhatItSays() throws {
@@ -342,7 +446,8 @@ struct AskSourceTests {
 
     @Test func theFolderIsThere() {
         #expect(Set(Self.code().keys) == ["AnotherModel.swift", "AnotherModelClient.swift", "AskModel.swift",
-                                          "AskModelMenu.swift", "AskModelWindow.swift"])
+                                          "AskModelMenu.swift", "AskModelWindow.swift", "AskToolbarButton.swift",
+                                          "ModelPickerMenu.swift"])
     }
 
     @Test func nothingHereReachesTheKeychain() {
@@ -368,17 +473,9 @@ struct AskSourceTests {
 
     @Test func theWindowAndTheRulesNeverHandTheKeyAnywhere() {
         // The key is read in `AnotherModel` for a request and goes no further than the client.
-        for name in ["AskModel.swift", "AskModelWindow.swift", "AskModelMenu.swift"] {
+        for name in ["AskModel.swift", "AskModelWindow.swift", "AskModelMenu.swift", "AskToolbarButton.swift", "ModelPickerMenu.swift"] {
             let text = Self.code()[name] ?? ""
             #expect(!text.contains("currentKey") && !text.contains("AnotherModelKey"), "\(name)")
-        }
-    }
-
-    @Test func theSelectionScriptReadsNoElementOfThePage() {
-        #expect(SelectionScript.read.contains("getSelection()"))
-        for hook in ["querySelector", "closest(", "getAttribute", "hasAttribute", "getElementById", "getElementsBy", "fetch(",
-                     "XMLHttpRequest", "innerHTML"] {
-            #expect(!SelectionScript.read.contains(hook), "\(hook)")
         }
     }
 }

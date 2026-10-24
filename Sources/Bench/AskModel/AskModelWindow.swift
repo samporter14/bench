@@ -75,13 +75,13 @@ final class AskModelWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// The right-click on the conversation: the session in the main window,
-    /// starting from the text selected in the page, if any.
-    func askFromPage() {
+    /// The item in Claude Science's model menu: the session in the main window,
+    /// starting from what is typed in the page's message box (`draft`); with
+    /// nothing typed, from the session's last question, as File's item does.
+    func askFromModelMenu(draft: String?) {
         Task { @MainActor in
             guard available(), let viewed = await QuickStartProjects.viewedSession() else { return }
-            let selected = await WebContainer.shared.selectedText(limit: AskRules.maxQuestion)
-            show(Self.subject(viewed, seed: selected))
+            show(Self.subject(viewed, seed: draft))
         }
     }
 

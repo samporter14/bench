@@ -236,6 +236,8 @@ struct BenchToolbar: ViewModifier {
     @ObservedObject private var lab = LabModel.shared
     /// Whether an update is on offer, for the Update button.
     @ObservedObject private var updates = UpdateChecker.shared
+    /// Whether Ask Another Model is on with a key, and a session is showing.
+    @ObservedObject private var ask = AskCommands.shared
 
     func body(content: Content) -> some View {
         content
@@ -265,6 +267,15 @@ struct BenchToolbar: ViewModifier {
                     TitleBarReadouts()
                 }
                 ToolbarSpacer(.fixed)
+                // Ask Another Model, only while it is on with a key (AskModel/
+                // AskToolbarButton.swift), and first of the three, so Results,
+                // the Shelf and Specimens stay where they are. The condition
+                // wraps the item itself, as the Update button's does.
+                if ask.isShown {
+                    ToolbarItem {
+                        AskToolbarButton(isEnabled: ask.isEnabled) { ask.ask() }
+                    }
+                }
                 ToolbarItem {
                     ResultsToolbarButton()
                 }

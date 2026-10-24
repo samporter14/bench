@@ -79,6 +79,8 @@ final class WebContainer: ObservableObject, WebPageWindow {
     private let uiDelegate = WebUIDelegate(role: .main)
     private let notifications: NotificationBridge
     private let handoverWatch: HandoverWatch
+    /// Ask Another Model… in the page's model menu; the controller holds its handler weakly.
+    private let modelMenu: ModelPickerMenu
 
     /// The start in progress, if any.
     private var startTask: Task<Void, Never>?
@@ -141,19 +143,18 @@ final class WebContainer: ObservableObject, WebPageWindow {
             Task { await ConversationShelf.shared.run(action, on: pick) }
         })
         shelfMenu.install(on: configuration.userContentController)
+        // And Ask Another Model… at the end of the page's model menu, with the message box's draft (AskModel/ModelPickerMenu.swift).
+        let modelMenu = ModelPickerMenu(daemonPort: { WebContainer.shared.port }, mayOffer: { ModelPickerMenu.isWanted() },
+                                        run: { draft in AskModelWindowController.shared.askFromModelMenu(draft: draft) })
+        modelMenu.install(on: configuration.userContentController)
+        self.modelMenu = modelMenu
 
         let view = TabMenuWebView(frame: .zero, configuration: configuration)
         view.tabMenu = tabMenu
         tabMenu.webView = view
         view.shelfMenu = shelfMenu
         shelfMenu.webView = view
-        // Ask Another Model…, on a session's page while it is on with a key (AskModel/AskModelMenu.swift).
-        view.askMenu = { menu in
-            guard WebContainer.shared.currentFrameID.map(PlanCheck.isFrameID) == true else { return }
-            AskMenu.insert(into: menu, available: AnotherModel.shared.isAvailable) {
-                AskModelWindowController.shared.askFromPage()
-            }
-        }
+        modelMenu.webView = view
         webView = view
         WebSetup.finish(webView)
         finder = PageFinder(webView: webView)
@@ -482,23 +483,6 @@ final class WebContainer: ObservableObject, WebPageWindow {
         return (value as? Bool) == true
     }
 
-    /// The text selected in the page, for Ask Another Model… (AskModel/): the
-    /// selection's own words (`getSelection()`), at most `limit` characters,
-    /// or nil when nothing is selected, the page isn't up, or it doesn't
-    /// answer within two seconds. It reads no element and no selector of the
-    /// page, and nothing of it is logged.
-    func selectedText(limit: Int) async -> String? {
-        guard status == .ready, limit > 0 else { return nil }
-        let view = webView
-        let text = try? await WriteDeadline.bridge(.seconds(2)) { () async throws -> String in
-            let value = try await view.callAsyncJavaScript(SelectionScript.read, arguments: ["limit": limit], in: nil,
-                                                           contentWorld: .defaultClient)
-            return (value as? String) ?? ""
-        }
-        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return String(text.prefix(limit))
-    }
-
     /// The first daemon page to finish loading means we are in.
     func mainFrameFinished(at url: URL?) {
         guard WebRoute.classify(url, daemonPort: port) == .daemon else { return }
@@ -605,15 +589,5 @@ enum SignInScript {
     static let look = finder + #"""
 
     return benchFindSignIn() !== null;
-    """#
-}
-
-/// Ask Another Model's one look at the page: the selection's text, cut at
-/// `limit` characters. No element, no selector, no fetch.
-enum SelectionScript {
-    static let read = #"""
-    const selection = window.getSelection();
-    const text = selection ? String(selection) : "";
-    return Array.from(text).slice(0, Math.max(0, limit)).join("");
     """#
 }

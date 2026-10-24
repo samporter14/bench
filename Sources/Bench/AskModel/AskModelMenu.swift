@@ -1,17 +1,21 @@
 // AskModelMenu.swift — the ways into Ask Another Model (DESIGN.md, Ask another
 // model), each shown only while the feature is on with a key saved:
-// - File → Ask Another Model…, for the session in the main window (no
-//   shortcut: no letter is safe from the page, and the keys left are awkward);
-// - "Ask Another Model…" at the top of the Mac's right-click menu on the
-//   conversation's text, starting from the selection when there is one (not on
-//   a tab or a figure, which have Capsid's own items);
-// - the same item in the reference window's right-click menu on Claude's
-//   words, starting from the selection or the reply's question.
+// - a button in the main window's toolbar (AskToolbarButton.swift), beside
+//   Results and the Shelf, on while a session is in the main window;
+// - File → Ask Another Model…, the same rule (no shortcut: no letter is safe
+//   from the page, and the keys left are awkward);
+// - "Ask Another Model…" at the end of Claude Science's own model menu, in the
+//   page, starting from what is typed in the message box (ModelPickerMenu.swift);
+// - "Ask Another Model…" in the reference window's right-click menu on
+//   Claude's words, starting from the selection or the reply's question.
+// The Mac's right-click menu on the conversation had it first; it was found
+// odd, and these two places replaced it.
 import AppKit
 import Combine
 
-/// File → Ask Another Model…: shown while the feature is on with a key, and on
-/// while a session is in the main window.
+/// The toolbar button's and File's item: shown while the feature is on with a
+/// key, and on while a session is in the main window. One rule for both
+/// (`AskMenu.fileItem`).
 @MainActor
 final class AskCommands: ObservableObject {
     static let shared = AskCommands()
@@ -19,22 +23,32 @@ final class AskCommands: ObservableObject {
     @Published private(set) var isShown = false
     @Published private(set) var isEnabled = false
     private var watch: AnyCancellable?
+    private let open: @MainActor () -> Void
 
-    private init() {
-        let model = AnotherModel.shared
+    /// `model` says whether the feature is available, `frames` is the session
+    /// the main window shows (nil: none), `demo` whether this is a demo run and
+    /// `open` what the button and the item do.
+    init(model: AnotherModel, frames: some Publisher<String?, Never>, demo: Bool,
+         open: @escaping @MainActor () -> Void) {
+        self.open = open
         watch = model.objectWillChange.prepend(())
-            .combineLatest(WebContainer.shared.$currentFrameID)
+            .combineLatest(frames)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _, frame in
                 MainActor.assumeIsolated {
-                    let state = AskMenu.fileItem(available: model.isAvailable, session: frame, demo: Demo.mode != nil)
+                    let state = AskMenu.fileItem(available: model.isAvailable, session: frame, demo: demo)
                     self?.isShown = state.shown
                     self?.isEnabled = state.enabled
                 }
             }
     }
 
-    func ask() { AskModelWindowController.shared.askAboutViewedSession() }
+    private convenience init() {
+        self.init(model: .shared, frames: WebContainer.shared.$currentFrameID, demo: Demo.mode != nil,
+                  open: { AskModelWindowController.shared.askAboutViewedSession() })
+    }
+
+    func ask() { open() }
 }
 
 enum AskMenu {
@@ -49,15 +63,12 @@ enum AskMenu {
     }
 
     /// The item at the top of a right-click menu, and a separator under it,
-    /// while the feature is available. Not added twice, and not to a menu
-    /// that already has Capsid's tab or Shelf items (a tab or a figure).
-    /// True when it was added.
+    /// while the feature is available (the reference window's text menu).
+    /// Not added twice. True when it was added.
     @MainActor
     @discardableResult
     static func insert(into menu: NSMenu, available: Bool, action: @escaping @MainActor () -> Void) -> Bool {
-        guard available,
-              !menu.items.contains(where: { [itemID, TabContextMenu.itemID, ConversationMenu.itemID].contains($0.identifier) })
-        else { return false }
+        guard available, !menu.items.contains(where: { $0.identifier == itemID }) else { return false }
         let handler = AskMenuAction(run: action)
         let item = NSMenuItem(title: title, action: #selector(AskMenuAction.fire(_:)), keyEquivalent: "")
         item.target = handler

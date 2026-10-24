@@ -135,8 +135,8 @@ struct CompatInventoryShapeTests {
 struct CompatPageHookTests {
     /// Every page script that looks at Claude Science's markup.
     private var scripts: [String] {
-        [PageTabsScript.body, PageTabsScript.probe, TabContextMenu.script, ConversationMenu.script, SignInScript.press,
-         SignInScript.look, HandoverWatch.script]
+        [PageTabsScript.body, PageTabsScript.probe, TabContextMenu.script, ConversationMenu.script, ModelPickerMenu.script,
+         SignInScript.press, SignInScript.look, HandoverWatch.script]
     }
 
     private var literalTokens: Set<String> {
@@ -175,6 +175,11 @@ struct CompatPageHookTests {
             "img, a[href]", #"[data-testid="turn-tray-card"]"#, "img", #"[role="menu"]"#, #"[role="menu"][aria-label="Artifact actions"]"#,
             #"[role="menuitem"]"#, #"[data-cds="Icon"]"#,
         ])
+        #expect(ScriptLiterals.selectors(in: ModelPickerMenu.script) == [
+            #"[role="menu"][data-cds="ModelSelector"], [role="menu"][data-testid="model-selector-popup"]"#, #"[role="menu"]"#,
+            #"[data-testid="model-selector"]"#, #"[data-testid="composer"]"#, #"[role="menuitemradio"], [role="menuitem"]"#,
+            "[data-cds-sheet-scroll]", #"[role="separator"]"#, #"[role="textbox"]"#, "data-voice-ghost", "data-upload-status",
+        ])
         #expect(ScriptLiterals.texts(in: SignInScript.press) == ["Sign in"])
         // And a made-up new hook is seen.
         #expect(ScriptLiterals.selectors(in: #"x.querySelector('[data-new]'); y.getAttribute("data-newer");"#) == ["[data-new]", "data-newer"])
@@ -182,16 +187,16 @@ struct CompatPageHookTests {
 
     @Test func noOtherFileReadsTheMarkupOfThePage() {
         // Capsid's own phone page (RemoteWebApp) is its own markup.
-        let known: Set<String> = ["Remote/RemoteWebApp.swift", "Shelf/ConversationMenu.swift", "Web/HandoverWatch.swift",
-                                  "Web/PageTabs.swift", "Web/TabContextMenu.swift", "Web/WebContainer.swift"]
+        let known: Set<String> = ["AskModel/ModelPickerMenu.swift", "Remote/RemoteWebApp.swift", "Shelf/ConversationMenu.swift",
+                                  "Web/HandoverWatch.swift", "Web/PageTabs.swift", "Web/TabContextMenu.swift", "Web/WebContainer.swift"]
         let found = Repo.files(matching: #"querySelector|\.closest\(|getElementById|getElementsBy"#)
         #expect(found == known, "now: \(found.sorted())")
     }
 
     @Test func noOtherFileRunsAScriptInThePage() {
         let known: Set<String> = [
-            "Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/InsightReader.swift", "Remote/RemoteLive.swift",
-            "Remote/RemotePhotoUpload.swift", "Remote/SessionReader.swift", "Remote/SessionWriter.swift",
+            "AskModel/ModelPickerMenu.swift", "Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/InsightReader.swift",
+            "Remote/RemoteLive.swift", "Remote/RemotePhotoUpload.swift", "Remote/SessionReader.swift", "Remote/SessionWriter.swift",
             "Shelf/ConversationMenu.swift", "Web/HandoverWatch.swift", "Web/NotificationBridge.swift", "Web/PageTabs.swift",
             "Web/TabContextMenu.swift", "Web/WebAPI.swift", "Web/WebContainer.swift",
         ]

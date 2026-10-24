@@ -53,7 +53,7 @@ enum CompatKind: String, CaseIterable, Sendable {
 /// The Capsid features that lean on Claude Science, in the words the rest of
 /// the app uses for them. Also what a breadcrumb names (CompatBreadcrumbs).
 enum CompatFeature: String, CaseIterable, Sendable {
-    case closeTabs, tabMenu, shelfMenu, signIn, notifications, sessionAddress, previews
+    case closeTabs, tabMenu, shelfMenu, modelMenu, signIn, notifications, sessionAddress, previews
     case usage, context, planCard, approve, errorCard, phone
     case start, sessions, activity, browse
     case handover
@@ -69,6 +69,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .closeTabs: "Close Other Tabs and Close All Tabs"
         case .tabMenu: "The tab right-click menu"
         case .shelfMenu: "Add to Shelf from a figure or a file link in the conversation"
+        case .modelMenu: "Ask Another Model in Claude Science's model menu"
         case .signIn: "Signing back in"
         case .notifications: "Needs-input cards from the page's notifications"
         case .sessionAddress: "Open on a card, Quick Open, reopening where you were and the context ring"
@@ -114,6 +115,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .closeTabs: "Close Other Tabs"
         case .tabMenu: "the tab right-click menu"
         case .shelfMenu: "Add to Shelf from the conversation"
+        case .modelMenu: "Ask Another Model in the model menu"
         case .signIn: "signing back in"
         case .notifications: "needs-input cards from the page"
         case .sessionAddress: "Open on a card"
@@ -217,7 +219,7 @@ extension CompatInventory {
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click"), literal: true),
         hook("a picture beside what was clicked", "the page lays a transparent layer (its annotation layer) over a figure it draws, in the side pane, in a tab or inline in a reply, so a right-click lands on the layer and the picture is its sibling; Capsid takes the picture under the pointer that shares a parent with what was clicked, or with what that is in, never as far out as the body",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click")),
-        hook(#"[role="menu"]"#, "any menu the page draws, named or not: only for the step trace's menu-other (a menu came after a right-click on a figure, but not the figure's), never touched",
+        hook(#"[role="menu"]"#, "any menu the page draws, named or not: only for the step traces' menu-other (a menu came after a right-click on a figure, or after the model picker was pressed, but not that one's), never touched; the model menu's watch also uses it, and posts a breadcrumb for it",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click"), literal: true),
         hook(#"[role="menu"][aria-label="Artifact actions"]"#, "the page's own menu for a figure or a file (one component for a tile, an inline picture, a Generated card and the side pane's image), drawn in a wrapper at the end of the body when the page takes the right-click, which it does by cancelling the Mac's menu; Capsid adds a rule and four items at its end (above the red Delete item and its rule, when there is one) within two seconds of a right-click on a figure whose address names a version, and posts a breadcrumb when the menu opens and has no item to copy",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click"), literal: true),
@@ -227,6 +229,26 @@ extension CompatInventory {
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click"), literal: true),
         hook("Escape on the document", "the page closes its figure menu on a keydown Escape in the capture phase of the document (else on a pointer-down outside the menu); after one of Capsid's items is chosen Capsid sends Escape, and a pointer-down on the body if the menu is still there 80 ms later",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only when an item of Capsid's is chosen")),
+        hook(#"[data-testid="model-selector"]"#, "the model picker beside the message box (its button, or the wrapper round the button): a real pointer-down, Enter, Space or an arrow on it starts a two-second watch for its menu; the same test id is on every composer's picker, so the draft is read from the composer the pressed one sits in",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the model picker is pressed"), literal: true),
+        hook(#"[role="menu"][data-cds="ModelSelector"], [role="menu"][data-testid="model-selector-popup"]"#, "the picker's own menu, a popup the page draws in a layer of its own when the picker opens: the catalog picker's has data-cds=\"ModelSelector\" (its button has it too, hence role=\"menu\" with it), the plain picker's has data-testid=\"model-selector-popup\"; the effort and \"More models\" submenus are other popups and are left alone. Capsid adds a rule and one item at the end of its list within two seconds of a press on the picker, and posts a breadcrumb when a menu opens that is not this one, or this one has no list or item to copy",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the model picker is pressed"), literal: true),
+        hook("[data-cds-sheet-scroll]", "the element in that menu that holds its list of items (the page's design system marks it, and it scrolls when the menu is tall); Capsid puts its rule and item last in it, and puts them back if the page draws the list again",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the model picker is pressed"), literal: true),
+        hook(#"[role="menuitemradio"], [role="menuitem"]"#, "an item of that menu (a model is a menuitemradio, the \"More models\" row a menuitem), a div: Capsid copies the tag and the classes of the first one, less the page's extra padding for an item with a second line (a class starting pb-[calc( ), never its words",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the model picker is pressed"), literal: true),
+        hook(#"[role="separator"]"#, "the page's rule between groups in that menu: Capsid copies its classes for its own rule, and uses the page's usual ones when the menu has none",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the model picker is pressed"), literal: true),
+        hook("Escape in the model menu", "the page closes its model menu on a keydown Escape that reaches its list or the document, as a key press with the menu focused does; after Capsid's item is chosen Capsid sends that Escape from inside the menu, and a pointer-down on the body if the menu is still there 80 ms later",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the item of Capsid's is chosen")),
+        hook(#"[data-testid="composer"]"#, "the box round the message box and the picker (also the aside's composer), which the picker pressed sits in",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the item of Capsid's is chosen"), literal: true),
+        hook(#"[role="textbox"]"#, "the message box in it, a contenteditable div: Capsid reads its text when the item is chosen (a line break for each <br> and each block after the first, mentions as they show), cut at 32,000 characters, as the seed of the question; it never writes to it",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the item of Capsid's is chosen"), literal: true),
+        hook("data-voice-ghost", "the span of dictation not yet kept, which the draft leaves out",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the item of Capsid's is chosen"), literal: true),
+        hook("data-upload-status", "an upload's chip in the message box, which the draft leaves out",
+             .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the item of Capsid's is chosen"), literal: true),
         hook("button, a", "the elements searched for the sign-in button",
              .signIn, "Web/WebContainer.swift", literal: true),
         hook("Sign in", #"a visible button or link reading exactly "Sign in": the page's "You've been signed out" banner (shown when the account login is stale) and its account menu have one; Capsid presses the first visible one"#,
