@@ -38,9 +38,11 @@ final class FakeModelProtocol: URLProtocol, @unchecked Sendable {
 
     private static let table = Mutex<[String: Entry]>([:])
 
-    /// A host of its own for a test, answered by `answer`.
-    static func host(_ answer: @escaping @Sendable (URLRequest) -> Answer) -> String {
-        let host = "t-\(UUID().uuidString.lowercased()).example"
+    /// A host of its own for a test, answered by `answer`; or `named`, for a
+    /// capture that shows the address's real name (nothing reaches it: the
+    /// session only has this protocol).
+    static func host(named: String? = nil, _ answer: @escaping @Sendable (URLRequest) -> Answer) -> String {
+        let host = named ?? "t-\(UUID().uuidString.lowercased()).example"
         table.withLock { $0[host] = Entry(answer: answer) }
         return host
     }
@@ -266,6 +268,19 @@ struct AskModelFailureTests {
         #expect(await ask(.reply(403, "{}")) == .failure(.keyRefused))
         #expect(AnotherModelFailure.keyRefused.sentence(host: "api.abliteration.ai", limit: .seconds(120))
             == "api.abliteration.ai didn\u{2019}t accept your key. Check it in Settings \u{2192} General.")
+    }
+
+    @Test func inSettingsTheSentencesDontSendYouToSettings() {
+        let host = "api.abliteration.ai"
+        let kinds: [AnotherModelFailure] = [.keyRefused, .tooMany, .timedOut, .offline, .unreachable, .status(500), .unreadable,
+                                            .notSet(.address)]
+        for failure in kinds {
+            let sentence = failure.sentence(host: host, limit: .seconds(20), inSettings: true)
+            #expect(!sentence.contains("Settings"), "\(failure): \(sentence)")
+            #expect(sentence.hasSuffix("."))
+        }
+        // Where the window says it, it names Settings.
+        #expect(AnotherModelFailure.keyRefused.sentence(host: host, limit: .seconds(20)).contains("Settings"))
     }
 
     @Test func tooManyRequestsIsItsOwnSentence() async {

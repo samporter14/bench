@@ -3,8 +3,8 @@
 // answer) and its Settings section into it as PNGs, light and dark, so they can
 // be looked at without opening a window: ready, asking, answered (with the
 // conversation listed) and a failure; Settings on (a key saved, the models
-// listed) and off. Without it the test does nothing. The title bar belongs to
-// the window; a stand-in for it is drawn here.
+// listed, or a key the address refused) and off. Without it the test does
+// nothing. The title bar belongs to the window; a stand-in for it is drawn here.
 import AppKit
 import SwiftUI
 import Testing
@@ -143,10 +143,11 @@ struct AskModelSnapshotTests {
         defer { defaults.discard() }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ask-snapshot-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let host = FakeModelProtocol.host { _ in
+        // The usual address, answered by the fake: nothing leaves the process, and the sentences name the real host.
+        _ = FakeModelProtocol.host(named: "api.abliteration.ai") { _ in
             .reply(200, #"{"data":[{"id":"abliterated-model"},{"id":"abliterated-model-large"}]}"#)
         }
-        defaults.defaults.set("https://api.abliteration.ai/v1", forKey: SettingsKey.anotherModelAddress)
+        defaults.defaults.set(AnotherModelAddress.usual, forKey: SettingsKey.anotherModelAddress)
         let model = AnotherModel(store: MemoryDeviceStore(), defaults: defaults.defaults,
                                  client: AnotherModelClient(configuration: FakeModelProtocol.configuration()), log: { _ in })
         // Off: the switch alone.
@@ -157,12 +158,20 @@ struct AskModelSnapshotTests {
         model.setOn(true)
         try await draw(off.frame(width: 600, height: 300).background(Color(nsColor: .windowBackgroundColor)),
                        size: NSSize(width: 600, height: 300), name: "settings-ask-on-no-key", to: directory)
-        // On, a key saved, the models listed (from the made-up host, under the usual address's name).
-        defaults.defaults.set("https://\(host)/v1", forKey: SettingsKey.anotherModelAddress)
+        // On, a key saved, the models listed.
         model.saveKey(madeUpModelKey)
         for _ in 0..<300 where model.listing == .loading { try await Task.sleep(for: .milliseconds(10)) }
-        defaults.defaults.set("https://api.abliteration.ai/v1", forKey: SettingsKey.anotherModelAddress)
         try await draw(off.frame(width: 600, height: 340).background(Color(nsColor: .windowBackgroundColor)),
                        size: NSSize(width: 600, height: 340), name: "settings-ask-on", to: directory)
+        // On, a key the address refused: the list's failure in its own words, and Try Again.
+        _ = FakeModelProtocol.host(named: "api.abliteration.ai") { _ in .reply(401, "{}") }
+        let second = AnotherModel(store: MemoryDeviceStore(), defaults: defaults.defaults,
+                                  client: AnotherModelClient(configuration: FakeModelProtocol.configuration()), log: { _ in })
+        second.setOn(true)
+        second.saveKey(madeUpModelKey)
+        for _ in 0..<300 where second.listing == .loading { try await Task.sleep(for: .milliseconds(10)) }
+        let failed = Form { AnotherModelSection(model: second) }.formStyle(.grouped).toggleStyle(.switch).tint(Theme.clay)
+        try await draw(failed.frame(width: 600, height: 340).background(Color(nsColor: .windowBackgroundColor)),
+                       size: NSSize(width: 600, height: 340), name: "settings-ask-on-refused", to: directory)
     }
 }

@@ -96,9 +96,13 @@ enum AnotherModelFailure: Error, Equatable, Sendable {
     enum Missing: Sendable { case switchedOff, key, model, address }
 
     /// The sentence the window or Settings shows. `host` names the address;
-    /// `limit` is the deadline that ran out.
-    func sentence(host: String, limit: Duration) -> String {
+    /// `limit` is the deadline that ran out; `inSettings` is Settings' own
+    /// model row, where "in Settings" would send the person to where they are.
+    func sentence(host: String, limit: Duration, inSettings: Bool = false) -> String {
         switch self {
+        case .keyRefused where inSettings: "\(host) didn\u{2019}t accept your key. Remove it, then paste another."
+        case .unreachable where inSettings: "Couldn\u{2019}t reach \(host). Check the address above."
+        case .notSet(.address) where inSettings: "That isn\u{2019}t an https address."
         case .keyRefused: "\(host) didn\u{2019}t accept your key. Check it in Settings \u{2192} General."
         case .tooMany: "Too many requests to \(host) just now. Wait a minute, then ask again."
         case .timedOut: "No answer came within \(Self.words(limit)). Ask again, or ask something shorter."

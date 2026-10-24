@@ -160,7 +160,7 @@ final class AnotherModel: ObservableObject {
             return
         }
         guard let url = addressURL else {
-            listing = .failed(AnotherModelFailure.notSet(.address).sentence(host: host, limit: client.listLimit))
+            listing = .failed(AnotherModelFailure.notSet(.address).sentence(host: host, limit: client.listLimit, inSettings: true))
             return
         }
         guard let key = currentKey() else {
@@ -179,7 +179,7 @@ final class AnotherModel: ObservableObject {
                 if let first = names.first, !names.contains(model ?? "") { choose(first) }
                 log("Another model: listed \(names.count) models")
             case .failure(let failure):
-                listing = .failed(failure.sentence(host: host, limit: limit))
+                listing = .failed(failure.sentence(host: host, limit: limit, inSettings: true))
                 log("Another model: listing models failed, \(failure.word)")
             }
         }

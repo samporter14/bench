@@ -158,7 +158,8 @@ struct AnotherModelSettingTests {
             Issue.record("not failed: \(rig.model.listing)")
             return
         }
-        #expect(sentence == "\(rig.host) didn\u{2019}t accept your key. Check it in Settings \u{2192} General.")
+        // In Settings' own model row, where "Settings" is where the person already is.
+        #expect(sentence == "\(rig.host) didn\u{2019}t accept your key. Remove it, then paste another.")
         // The key stays: the person may have pasted the right one for another address.
         #expect(rig.model.hasKey)
         #expect(rig.lines.contains("Another model: listing models failed, key not accepted"))
@@ -170,7 +171,7 @@ struct AnotherModelSettingTests {
         rig.model.setOn(true)
         rig.model.saveKey(madeUpModelKey)
         await rig.waitForList()
-        #expect(rig.model.listing == .failed("The address in Settings \u{2192} General isn\u{2019}t an https address."))
+        #expect(rig.model.listing == .failed("That isn\u{2019}t an https address."))
         #expect(await rig.model.ask([ChatTurn(role: .user, text: "Which buffer?")]) == .failure(.notSet(.address)))
         #expect(FakeModelProtocol.seen(rig.host).requests.isEmpty)
     }
