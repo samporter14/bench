@@ -22,11 +22,11 @@ enum FakeFigurePage {
     static let dangerClass = "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-danger-000 hover:bg-danger-900 transition-colors text-left"
     static let ruleClass = "my-1 h-px bg-border-300 mx-1"
 
-    /// Evaluated first. `__V` is the version every address in the page names,
-    /// set before this runs.
-    static let source = #"""
-    var __V = __VERSION;
-    var __log = [];
+    /// The small DOM on its own: timers on a virtual clock, URL, events,
+    /// mutation observers, a selector engine, nodes and a document (also what
+    /// FakeModelPage is built on). Evaluated first; a page then defines its own
+    /// `window` and `location` and builds what it needs.
+    static let dom = #"""
     var __posted = [];
 
     // ---- Timers on a virtual clock
@@ -227,6 +227,7 @@ enum FakeFigurePage {
       get title() { return this.attrs.title || ""; }
       get download() { return this.attrs.download || ""; }
       setAttribute(name, value) { this.attrs[name] = String(value); }
+      removeAttribute(name) { delete this.attrs[name]; }
       getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; }
       hasAttribute(name) { return this.getAttribute(name) !== null; }
       get children() { return this.childNodes.filter(function (n) { return n.nodeType === 1; }); }
@@ -288,12 +289,8 @@ enum FakeFigurePage {
       querySelector(selector) { return this.documentElement.querySelector(selector); }
     }
     var document = new FDocument();
-    var window = { webkit: { messageHandlers: { capsidShelfMenu: { postMessage: function (m) { __posted.push(JSON.parse(JSON.stringify(m))); } } } },
-                   innerWidth: 1000, innerHeight: 700 };
-    document.defaultView = window;
-    var location = { protocol: "http:", hostname: "localhost", origin: "http://localhost:8123", href: "http://localhost:8123/" };
 
-    // ---- Building the conversation
+    // ---- Building a page
     function el(tag, attrs, parent) {
       var e = new FElement(tag);
       for (var key in (attrs || {})) { e.attrs[key] = attrs[key]; }
@@ -301,6 +298,19 @@ enum FakeFigurePage {
       return e;
     }
     function text(parent, words) { var t = new FText(words); parent.appendChild(t); return t; }
+    """#
+
+    /// Evaluated first. `__V` is the version every address in the page names,
+    /// set before this runs.
+    static let source = dom + #"""
+    var __V = __VERSION;
+    var __log = [];
+    var window = { webkit: { messageHandlers: { capsidShelfMenu: { postMessage: function (m) { __posted.push(JSON.parse(JSON.stringify(m))); } } } },
+                   innerWidth: 1000, innerHeight: 700 };
+    document.defaultView = window;
+    var location = { protocol: "http:", hostname: "localhost", origin: "http://localhost:8123", href: "http://localhost:8123/" };
+
+    // ---- Building the conversation
     function __address(tail) { return "http://localhost:8123/api/artifacts/versions/" + __V + (tail || ""); }
 
     // A paragraph and a link to a file with no version in its address.

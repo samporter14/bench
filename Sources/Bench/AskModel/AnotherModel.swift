@@ -10,8 +10,8 @@
 // time it is sent, and sent only in the Authorization header to the address in
 // Settings. It is never in the Keychain (Capsid is signed without a Team ID, so
 // every update would ask for the password), never in UserDefaults and never in
-// the log. Off, or with no key, nothing of the feature shows: no menu item, no
-// right-click item, no window.
+// the log. Off, or with no key, nothing of the feature shows: no toolbar button,
+// no menu item, no window.
 //
 // The log (`another-model`) says what happened in fixed words and counts:
 // "Another model: asked, 812 characters, answered in 9 s". Never the question,
@@ -222,7 +222,7 @@ struct AnotherModelSection: View {
         Section("Another model") {
             Toggle(isOn: Binding(get: { model.isOn }, set: { model.setOn($0) })) {
                 Text("Ask another model")
-                Text("Ask a model at another provider, with your own key: from the File menu or a right-click on the conversation.")
+                Text("Ask a model at another provider, with your own key: from the toolbar, the File menu or Claude Science\u{2019}s model menu.")
             }
             if model.isOn {
                 keyRow

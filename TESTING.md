@@ -323,6 +323,116 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-24, Ask Another Model moves: a toolbar button and an item in Claude Science's model menu; the right-click item goes
+
+Sam turned the feature on and couldn't find it: he looked among the models in Claude Science's own model menu, and
+found the Mac's right-click item on the conversation odd. Two new places, the right-click item removed (File's item and
+the reference window's right-click as they were), on `g/ask-place`. Everything ran on made-up pages, a made-up key
+folder and made-up sessions; no daemon, no real key and nothing under `~/.claude-science` but the web bundle's files was
+read, nothing was launched or installed, and the key was never entered.
+
+- ✅ **The model menu's markup, read from the 0.1.70 bundle** (`web-dist/assets/index-DhEuR7nq.js`, with
+  `EffortControl-BLxh4RvT.js` only the effort control beside it, and `index-rmOZ0wut.css` for the look). The picker beside
+  the message box is `toe` (the plain list, its popup `data-testid="model-selector-popup"`) or, with the catalog served,
+  `M0e` (`ModelSelector`, its popup `data-cds="ModelSelector"`, which its button carries too, so the script matches
+  `[role="menu"]` with it). Both are the design system's Base UI menu: a `role="menu"` popup, in it the `Ame` wrapper's
+  scrolling list (`data-cds-sheet-scroll`), in it a `role="group"` of models (`menuitemradio`, a div with the item
+  classes, `pR`), a `role="separator"` and the "More models" and effort rows (`menuitem`). The composer is
+  `[data-testid="composer"]` round a `[role="textbox"]` contenteditable (`z9`) and the picker's test id. The effort and
+  "More models" submenus are `ut.Popup` with the default `data-cds`, so they are left alone.
+- ✅ **The item in the model menu, against a made-up page** (`ModelMenuScriptTests`, 35 tests, `FakeModelPage` on
+  `FakeFigurePage`'s small DOM, now shared as `FakeFigurePage.dom`): a real pointer-down, Enter, Space or an arrow on the
+  picker (the button, or the wrapper round it, or something inside) starts one two-second watch; the answer "may I?" and
+  the popup come in either order; the rule and one item go last in the list of every shape the bundle draws (the plain
+  popup, the catalog's, with a header above the list, with a closing note, with one model and no rule); the item is a
+  div with `role="menuitem"` and the first item's classes less the page's second-line padding (the "More models" row's,
+  when there is no model), the page's own rule's classes (its usual ones when it has none), and nothing of the page's
+  words (the fake throws on a read of an item's text, as the figure menu's does); it lights under the pointer; a click
+  posts the draft, stops the watch and the page's own Escape closes the popup, with the pointer-down outside it 80 ms
+  later when Escape is ignored; the draft is the message box's text (a line break for a `<br>` and for a block after
+  the first, a mention chip as it shows, not a dictation not yet kept or an upload's chip, trimmed, cut at 32,000,
+  empty when there is none) of the composer the pressed picker sits in; made-up (untrusted) presses and clicks are
+  ignored; a no from Swift, or an error, leaves the popup alone, ends the watch and says nothing; no answer at all
+  leaves it alone and says "refused" once; no popup in two seconds is "menu-none" and no breadcrumb; a menu that is
+  not the picker's, or the picker's with no list or no item, posts `{unplaced}` at two seconds and is left as it was;
+  a node with the picker's `data-cds` that is not a menu is not the menu; nothing is watched until the picker is pressed
+  and the watch is over at two seconds, at two minutes after the item went in, when the popup is pressed shut (and the
+  click that ends that press starts nothing: the first cut re-armed on it, which the first test never sent), or when another press comes first or one anywhere else before the popup did (so a menu that opens for another
+  press is not a miss of the picker's); a list drawn again, replaced, or with a late item of the page's after ours gets the group
+  back last; the script does nothing off the daemon's pages or without its handler, and holds no `fetch`, `innerText`,
+  `innerHTML`, `.click(` or write to the message box.
+- ✅ **The Swift side and its sender checks** (`ModelPickerMenuTests`, 14 tests): each message's shape (`armed`, `ask` with
+  a draft, `unplaced`, `trace`), a draft trimmed, cut at the question's limit and nil when blank; a trace's words
+  kept to the script's own and every word the script can say is a step; only the main web view's main frame on the
+  daemon's origin (and port, over http) is heard, and the handler's wiring (`isMainFrame`, `message.webView === webView`,
+  `isDaemonOrigin`, a reply even from a proxy that lost its menu) is read from the source; a message from anyone else is
+  nothing and the answer is no; the answer to a press is whether the item is wanted now, and a choice opens the window
+  only while it still is; `{unplaced}` leaves one breadcrumb (`modelMenuNotUnderstood`, feature `modelMenu`) and its
+  fixed line; no draft reaches a log line; and the container keeps the menu (below).
+- ✅ **A bug the real-WebKit run found.** The message handler's proxy holds the menu weakly (as the tab and figure
+  menus' do), and the first cut of `WebContainer` let go of its `ModelPickerMenu` at the end of `init`: every press was
+  answered no, and no test of the script could say so. The container keeps it (`private let modelMenu`), and a
+  source check says so.
+- ✅ **The toolbar button** (`AskEntryPointTests`, +5 and one removed): the button and File's item are there only while the
+  switch is on with a key (off, or on with no key: neither), on only with a session in the main window (dim with none,
+  with a page that is not a session's, and in a demo), one click opens the window once, and switching off or removing the
+  key takes it away, in one `AskCommands` (made from a made-up model and a made-up stream of addresses); the button is
+  drawn like Results' (`ReadoutButtonStyle`, a symbol that exists, a help line that starts with its name and a colon,
+  the label "Ask Another Model" for VoiceOver); the toolbar holds the condition around the item, after the fixed
+  spacer and before Results. The readout style draws a disabled button as it does an enabled one, which showed in the
+  first render, so the glyph dims itself (35%).
+- ✅ **The right-click item is gone**: no `askMenu` hook in the main window's web view or its menu subclass, no
+  `askFromPage`, no selection script (and its test), and the reference window still has its item
+  (`AskMenu.insert` stays, without its check for a tab's or a figure's menu, which only the main window had).
+- ✅ **The Compat suites pass** with the new script, its ten inventory entries (the picker, the popup, the list,
+  the items, the rule, the composer, the message box, the two chips and Escape), the new files in both lists of files
+  that read the page's markup and run a script in it, and `[role="menu"]`'s entry saying the model menu's watch uses it too.
+- ✅ **Real WebKit, when asked** (`ModelMenuSnapshotTests`, `CAPSID_SNAPSHOT_DIR`; offscreen, borderless, never shown): the
+  real script (only the two trust checks lifted) and the real `ModelPickerMenu` handler in a `WKWebView` on a made-up
+  page with the bundle's classes and the stylesheet's values, light and dark: the press, the question and its answer
+  through the real reply handler, the item in the popup, the pointer on it, a click and the draft reaching `run`, the
+  page's Escape closing the popup; a no from Swift leaves the popup as it is; a second web view that shares the controller
+  (as a pop-up does) is not the main one and gets no item, while the main one beside it does.
+- ✅ **Offscreen renders**, light and dark, in `shots-askplace/` beside the worktree (the title bar by `cacheDisplay` of a
+  stand-in with the real Ask, Results and Shelf buttons on a stand-in for the glass, which an unshown view leaves blank;
+  the menu by a real WebKit snapshot): `titlebar-with-ask`, `titlebar-ask-dim`, `titlebar-without-ask`, `titlebar-close`,
+  `symbols` (the glyphs it was chosen from), `model-menu` and `model-menu-hover`. Looked at against "gorgeous and
+  minimal": the button is one glyph in the capsule Results has, the same height, nothing added to say what it is; the
+  dim state is the same glyph at 35% so the bar doesn't change shape; the menu's item is one line in the menu's own type
+  and padding under the page's rule, no icon (the models have none), no accent (the check is the only colour in the
+  menu), lit on the pointer as the others are, so the menu reads as one more row and not a second menu; it is in the
+  stand-in of the real classes, so what is certain is the structure and the classes, not the pixel. Kept as they are: the
+  two-bubble glyph (`bubble.left.and.bubble.right`, another voice in the conversation; the question mark reads as help,
+  a single bubble as Messages, the branch as a fork) a few points wider than Results' tray (43 against 39), and the item
+  last in the menu after "More models" and the page's note, as asked.
+- ✅ **The title bar at the narrowest main window** (900 points), an estimate and not a look at the real glass bar, which
+  AppKit lays out. The items' own widths (`toolbar-widths.txt`, points, the real buttons where they could be drawn and
+  stand-ins of the same labels where not: Ask 43, Results 39, Shelf with 120 items 102, Specimens 136 or 156 "off",
+  Update 84, the Lab capsule 83 "Recent", 133 "Working · 12:34" or 157 "Paused · usage limit", the readouts 277 with a
+  42% ring and a week limit with its reset, a usage label alone 198 ("5h") or 248 ("Sonnet week")), the gaps between
+  capsules (about 8.5) and each capsule's own 2 points either side, both as `docs/toolbar.png` has them, and the fixed
+  spacer (taken as 8), against 900 less the window's three buttons and a margin (about 82): a quiet bar (Recent, 42%, a
+  week limit, Shelf 12, Specimens on) needs about 755 of 818 with the button and 699 without, so it fits with about 60
+  to spare; with an update on offer it needs about 851 with the button and 796 without, so there the button is what
+  tips it over; with a long Lab word, Specimens off and an update it needs about 945 (889 without), which overflows
+  today. Nothing was changed for it: the button is icon-only (as Results is) and first of the three, so the others stay
+  where they are, and AppKit's overflow menu takes what doesn't fit. A live look at 900 points, with and without an
+  update on offer, is still to do.
+- The whole suite: 3,909 tests in 505 suites pass (58 net new: 35 for the script, 14 for the Swift side, 4 more in
+  `AskEntryPointTests`, one fewer in `AskSourceTests`, 6 snapshot tests, of which 5 draw or drive WebKit only when
+  `CAPSID_SNAPSHOT_DIR` is set). No flakes. The continuation warnings in the log are other suites' (`browser`, `forever()`,
+  `dependencies(postLimit:…)`, `sessions(turnLimit:…)`), none of this feature's.
+- ⏳ **Live, on the real page and the real bar** (nothing here has met a real Claude Science page): that the served 0.1.70
+  popup carries those markers (which of the two pickers a session shows); that Base UI opens its menu on the pointer-down
+  the script listens for (and on Enter, Space, the arrows); that the item arrives and is not lost as the page draws the
+  popup, and the popup grows to hold it and stays where it was put (its position follows its size); that the Escape sent
+  from inside the popup closes it, and if not the pointer-down 80 ms later does; whether the page's own highlighted row
+  lets go when the pointer moves to the item; that the draft is what is typed (a line break, a mention chip, with an
+  upload on its way), from the main composer and from the aside's; that "Ask Another Model" is not offered on the
+  project's own page, where no session is shown; the error card's "Switch models", which opens the picker without a
+  press on it and gets no item; the glass toolbar's real width at 900 points with and without an update on offer; and a
+  click on the button opening the window for the session in the main window.
+
 ## 2026-10-23, README follow-ups: words under the title, Windows line ends, the byte order mark, the fine print
 
 The owner's rule for a kept folder's README.md: never lose or hide what a person wrote in it. The earlier fix (Try Again
