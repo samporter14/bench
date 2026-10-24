@@ -39,9 +39,17 @@ private final class FileReadLog {
 /// One return's whole scene, with the clock and the switches in hand.
 @MainActor
 private final class Rig {
-    /// A made-up time: a day's worth before the real now, so the events a lab
-    /// makes (stamped by the real clock) fall inside the stretch.
-    var now = Date().addingTimeInterval(-3 * 3600)
+    /// A made-up time: three hours before the real now, so the events a lab
+    /// makes (stamped by the real clock) come after the leaving. And never later
+    /// than 19:00 UTC: a stretch that crossed midnight in the rig's UTC calendar
+    /// would be a new day, where a shorter absence counts, so a test of a short
+    /// one failed in the hours before midnight UTC.
+    var now: Date = {
+        let start = Date().addingTimeInterval(-3 * 3600)
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        return min(start, utc.date(bySettingHour: 19, minute: 0, second: 0, of: start) ?? start)
+    }()
     var idle: TimeInterval = 3
     var screenOff = false
     var cardsOn = true, sheetOn = true, windowKey = false, quiet = false, holds = false, readable = true, mayRead = true
