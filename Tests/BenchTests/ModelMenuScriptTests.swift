@@ -452,14 +452,37 @@ struct ModelMenuScriptTests {
         script.evaluate("__press(__picker)")
         script.evaluate("__openPopup()")
         script.evaluate("__press(__picker)")
+        // The click that ends the same press is not a new one.
+        script.evaluate("__press(__picker, { type: 'click' })")
         #expect(armed(script) == 1)
         #expect(watching(script) == 0)
+        #expect(timers(script) == 0)
+        #expect(traces(script) == [["armed", "allowed", "menu-matched", "placed"]], "nothing more is said of the close")
         #expect(script.evaluate("String(__popup === null)") == "true", "the page closed it on the press")
         // The next press is a new one.
         script.evaluate("__press(__picker)")
         script.evaluate("__openPopup()")
         #expect(armed(script) == 2)
         #expect(shape(script) == Self.after)
+    }
+
+    @Test func aPressSomewhereElseBeforeTheMenuCameEndsTheWatch() {
+        // The picker was pressed and nothing opened (it is disabled, or still loading); then the plus menu is pressed and
+        // opens: that menu is not a miss of the picker's.
+        let script = page()
+        script.evaluate("__press(__picker)")
+        script.evaluate("__press(__plus)")
+        #expect(watching(script) == 0)
+        script.evaluate("__openPopup({ cds: 'Menu' })")
+        script.evaluate("__advance(5000)")
+        #expect(posted(script).filter { $0["unplaced"] != nil }.isEmpty)
+        #expect(traces(script) == [["armed", "allowed", "interrupted"]])
+        // A press elsewhere once the item is in leaves it be: only closing the menu or the two minutes end that watch.
+        let placed = page()
+        placed.evaluate("__press(__picker)")
+        placed.evaluate("__openPopup()")
+        placed.evaluate("__press(__plus)")
+        #expect(watching(placed) == 1)
     }
 
     @Test func aPressBeforeTheLastOnesMenuCameEndsThatOnesTrace() {

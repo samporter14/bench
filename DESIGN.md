@@ -6320,7 +6320,8 @@ and effort rows (`role="menuitem"` with `aria-haspopup`) and, in the catalog's, 
   From then on only that popup is watched (children and subtree), to put the group back last if the page draws
   the list again or replaces the list element (a popup header that came or went), and the watch ends when the
   popup is gone or two minutes after. Pressing the picker again while its popup is open closes it and starts
-  nothing. A real click on the item posts `{ask: true, draft}`, stops the watch and closes the popup with Escape
+  nothing (nor does the click that ends that press); a press anywhere else before the popup came ends the watch,
+  so a menu that opens for another press is never taken for a miss of the picker's. A real click on the item posts `{ask: true, draft}`, stops the watch and closes the popup with Escape
   sent from inside it (which the list and the document both hear, as a key press with the menu focused), then, if the
   popup is still there 80 ms later, a pointer-down on the body. Only the main web view's main frame on the daemon's
   origin is heard (the rule the tab and figure menus share); from anyone else the answer is no and nothing happens.

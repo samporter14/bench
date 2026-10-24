@@ -340,7 +340,7 @@ read, nothing was launched or installed, and the key was never entered.
   classes, `pR`), a `role="separator"` and the "More models" and effort rows (`menuitem`). The composer is
   `[data-testid="composer"]` round a `[role="textbox"]` contenteditable (`z9`) and the picker's test id. The effort and
   "More models" submenus are `ut.Popup` with the default `data-cds`, so they are left alone.
-- ✅ **The item in the model menu, against a made-up page** (`ModelMenuScriptTests`, 34 tests, `FakeModelPage` on
+- ✅ **The item in the model menu, against a made-up page** (`ModelMenuScriptTests`, 35 tests, `FakeModelPage` on
   `FakeFigurePage`'s small DOM, now shared as `FakeFigurePage.dom`): a real pointer-down, Enter, Space or an arrow on the
   picker (the button, or the wrapper round it, or something inside) starts one two-second watch; the answer "may I?" and
   the popup come in either order; the rule and one item go last in the list of every shape the bundle draws (the plain
@@ -356,8 +356,10 @@ read, nothing was launched or installed, and the key was never entered.
   leaves it alone and says "refused" once; no popup in two seconds is "menu-none" and no breadcrumb; a menu that is
   not the picker's, or the picker's with no list or no item, posts `{unplaced}` at two seconds and is left as it was;
   a node with the picker's `data-cds` that is not a menu is not the menu; nothing is watched until the picker is pressed
-  and the watch is over at two seconds, at two minutes after the item went in, when the popup is pressed shut, or when
-  another press comes first; a list drawn again, replaced, or with a late item of the page's after ours gets the group
+  and the watch is over at two seconds, at two minutes after the item went in, when the popup is pressed shut (and the
+  click that ends that press starts nothing: a first cut re-armed on it, which a review of the test found it didn't
+  send), or when another press comes first or one anywhere else before the popup did (so a menu that opens for another
+  press is not a miss of the picker's); a list drawn again, replaced, or with a late item of the page's after ours gets the group
   back last; the script does nothing off the daemon's pages or without its handler, and holds no `fetch`, `innerText`,
   `innerHTML`, `.click(` or write to the message box.
 - ✅ **The Swift side and its sender checks** (`ModelPickerMenuTests`, 14 tests): each message's shape (`armed`, `ask` with
@@ -417,7 +419,7 @@ read, nothing was launched or installed, and the key was never entered.
   today. Nothing was changed for it: the button is icon-only (as Results is) and first of the three, so the others stay
   where they are, and AppKit's overflow menu takes what doesn't fit. A live look at 900 points, with and without an
   update on offer, is still to do.
-- The whole suite: 3,908 tests in 505 suites pass (57 net new: 34 for the script, 14 for the Swift side, 4 more in
+- The whole suite: 3,909 tests in 505 suites pass (58 net new: 35 for the script, 14 for the Swift side, 4 more in
   `AskEntryPointTests`, one fewer in `AskSourceTests`, 6 snapshot tests, of which 5 draw or drive WebKit only when
   `CAPSID_SNAPSHOT_DIR` is set). No flakes. The continuation warnings in the log are other suites' (`browser`, `forever()`,
   `dependencies(postLimit:…)`, `sessions(turnLimit:…)`), none of this feature's.

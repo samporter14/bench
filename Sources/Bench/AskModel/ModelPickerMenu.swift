@@ -253,6 +253,8 @@ final class ModelPickerMenu {
       }
 
       let watch = null;
+      // The click that follows a press which closed the open menu is the same press.
+      let swallowClick = false;
 
       function stopWatch() {
         const view = watch;
@@ -298,11 +300,22 @@ final class ModelPickerMenu {
         if (event.type === "keydown" && KEYS.indexOf(event.key) < 0) return;
         const element = elementOf(event.target);
         const picker = element && element.closest ? element.closest('[data-testid="model-selector"]') : null;
-        if (!picker) return;
+        if (!picker) {
+          // A press somewhere else, before the picker's menu came, means it is not coming for that press.
+          if (event.type === "pointerdown" && watch && !watch.menu) { report("interrupted"); stopWatch(); }
+          return;
+        }
         // The click after a pointer-down, or after Enter, is the same press.
-        if (event.type === "click" && watch) return;
-        // The picker pressed again while its menu is open closes it: nothing more to watch.
-        if (watch && watch.menu && watch.menu.isConnected) { stopWatch(); return; }
+        if (event.type === "click") {
+          const same = watch !== null || swallowClick;
+          swallowClick = false;
+          if (same) return;
+          arm(picker);
+          return;
+        }
+        swallowClick = false;
+        // The picker pressed again while its menu is open closes it: nothing more to watch, and not its click.
+        if (watch && watch.menu && watch.menu.isConnected) { stopWatch(); swallowClick = true; return; }
         arm(picker);
       }
 
