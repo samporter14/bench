@@ -265,6 +265,25 @@ struct CompanionStartTests {
         #expect(QuickStartFlow.check(request) == nil, "a request the flow takes as it takes Quick Start's")
     }
 
+    /// The field's words go to Quick Start's flow whole, and the flow takes up to 32,000 of them (the Mac's
+    /// limit), refusing one more in its own sentence.
+    @Test func thirtyTwoThousandCharactersInTheFieldReachTheFlowWholeAndItTakesThem() async throws {
+        let rig = StartRig()
+        rig.start.open()
+        await rig.settle()
+        rig.start.choose(id: "proj_screen")
+        let most = String(repeating: "界", count: 32_000)
+        rig.start.text = most
+        #expect(rig.start.start())
+        await rig.waitForSend()
+        let request = try #require(rig.sender.requests.first)
+        #expect(request.text == most)
+        #expect(QuickStartFlow.check(request) == nil)
+        var over = request
+        over.text = most + "界"
+        #expect(QuickStartFlow.check(over) == QuickStartFlow.Sentence.tooLong)
+    }
+
     @Test func nothingTypedSendsNothingAndASecondReturnWhileSendingSendsNothingTwice() async {
         let rig = StartRig()
         rig.start.open()

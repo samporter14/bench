@@ -107,12 +107,12 @@ enum AskRules {
         "Another model (\(model)) answered:\n\n" + answer.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Whether that message can go as a message: what the phone's route and
-    /// the writer accept (4,000 characters, none of the page's reference
-    /// prefixes).
+    /// Whether that message can go as a message: what the Mac's own sends and
+    /// the writer accept (32,000 characters, `RemoteActionRequest.macMessageLimit`,
+    /// none of the page's reference prefixes).
     enum SendCheck: Equatable {
         case ok(String)
-        /// Over the 4,000: its length.
+        /// Over the 32,000: its length.
         case tooLong(Int)
         /// It holds text Claude Science would read as a file or a session.
         case reference
@@ -121,7 +121,7 @@ enum AskRules {
     static func sendable(answer: String, model: String) -> SendCheck {
         let text = message(answer: answer, model: model)
         let count = text.unicodeScalars.count
-        if count > RemoteActionRequest.messageLimit { return .tooLong(count) }
+        if count > RemoteActionRequest.macMessageLimit { return .tooLong(count) }
         if PhotoText.hasReference(text) { return .reference }
         return .ok(text)
     }
@@ -131,7 +131,7 @@ enum AskRules {
         switch check {
         case .ok: nil
         case .tooLong(let count):
-            "Too long to send as a message (\(count.formatted()) characters; the most is \(RemoteActionRequest.messageLimit.formatted())). Copy it instead."
+            "Too long to send as a message (\(count.formatted()) characters; the most is \(RemoteActionRequest.macMessageLimit.formatted())). Copy it instead."
         case .reference: "It holds text Claude Science reads as a file reference, so it can\u{2019}t be sent. Copy it instead."
         }
     }
@@ -438,11 +438,11 @@ final class AskModel: ObservableObject {
         }
     }
 
-    /// The message request: the phone's own shape, the text checked as the
-    /// window checked it.
+    /// The message request: the phone's own shape (a message to `respond`), the
+    /// text checked as the window checked it, at the Mac's limit.
     static func message(text: String, intent: String) -> RemoteActionRequest? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.unicodeScalars.count <= RemoteActionRequest.messageLimit,
+        guard !trimmed.isEmpty, trimmed.unicodeScalars.count <= RemoteActionRequest.macMessageLimit,
               !PhotoText.hasReference(trimmed), RemoteActionRequest.isUUIDv4(intent) else { return nil }
         return .message(text: trimmed, intentID: intent)
     }

@@ -266,7 +266,8 @@ struct QuickStartNewSessionTests {
         let file = try rig.file("plate.csv")
         let cases: [(QuickStartFlow.Request, String)] = [
             (rig.newSession("  \n "), QuickStartFlow.Sentence.nothingToSend),
-            (rig.newSession(String(repeating: "界", count: 4001)), QuickStartFlow.Sentence.tooLong),
+            (rig.newSession(String(repeating: "界", count: 32_001)), QuickStartFlow.Sentence.tooLong),
+            (rig.message(String(repeating: "界", count: 32_001)), QuickStartFlow.Sentence.tooLong),
             (rig.newSession(#"see {"type":"attachment","id":"x"}"#), QuickStartFlow.Sentence.reference),
             (rig.newSession("see {{artifact:abc}}", files: [file]), QuickStartFlow.Sentence.reference),
             (rig.newSession(intent: "not-a-uuid"), QuickStartFlow.Sentence.badIntent),
@@ -451,7 +452,7 @@ struct QuickStartMessageTests {
     }
 
     @Test func aMessageIsCheckedLikeTheOtherRequests() async {
-        for text in ["", "  ", String(repeating: "界", count: 4001), #"{"file_path":"/x"}"#] {
+        for text in ["", "  ", String(repeating: "界", count: 32_001), #"{"file_path":"/x"}"#] {
             #expect(await rig.flow.perform(rig.message(text)).succeeded == false)
         }
         #expect(rig.log.isEmpty)
@@ -930,5 +931,66 @@ struct QuickStartPanelCancelTests {
         #expect(rig.writes.count == 2)
         #expect(rig.writes[0] == rig.writes[1], "the same request, the same intent id")
         await settle()
+    }
+}
+
+// MARK: Long requests (the Mac's 32,000, not the phone's 4,000)
+
+@MainActor
+struct QuickStartLongTextTests {
+    private let rig = FlowRig()
+    private let most = String(repeating: "界", count: 32_000)
+
+    @Test func theLimitIsTheMacsAndTheSentenceNamesIt() {
+        #expect(QuickStartFlow.textLimit == RemoteActionRequest.macMessageLimit)
+        #expect(QuickStartFlow.textLimit == 32_000)
+        #expect(QuickStartFlow.Sentence.tooLong == "That's over 32,000 characters. Shorten it, or put the rest in a file.")
+        #expect(QuickStartFlow.Sentence.tooLong.contains(QuickStartFlow.textLimit.formatted(.number.locale(Locale(identifier: "en_US")))))
+    }
+
+    @Test func thirtyTwoThousandPassTheChecksAndOneMoreIsRefusedForEitherTarget() {
+        #expect(QuickStartFlow.check(rig.newSession(most)) == nil)
+        #expect(QuickStartFlow.check(rig.message(most)) == nil)
+        #expect(QuickStartFlow.check(rig.newSession(most + "界")) == QuickStartFlow.Sentence.tooLong)
+        #expect(QuickStartFlow.check(rig.message(most + "界")) == QuickStartFlow.Sentence.tooLong)
+        // The trimmed words count: spaces round 32,000 are not over.
+        #expect(QuickStartFlow.check(rig.newSession("\n  " + most + "  \n")) == nil)
+        // The phone's old limit is no limit here.
+        #expect(QuickStartFlow.check(rig.newSession(String(repeating: "界", count: 4_001))) == nil)
+    }
+
+    @Test func aNewSessionCarriesAllOfIt() async {
+        let outcome = await rig.flow.perform(rig.newSession(most))
+        #expect(outcome == .started(sessionID: newID, sentence: "Started in Made-up."))
+        #expect(rig.writes == [.newSession(project: "proj-1", text: most, planMode: true, intentID: intent)])
+    }
+
+    @Test func aMessageCarriesAllOfIt() async {
+        let outcome = await rig.flow.perform(rig.message(most))
+        #expect(outcome == .sent(.sent, sentence: "Sent."))
+        #expect(rig.writes == [.message(frame: sessionID, agent: "made-up-agent", projectID: "proj-1", text: most, intentID: intent)])
+    }
+
+    @Test func withFilesTheLinesFollowAllOfIt() async throws {
+        let file = try rig.file("plate.csv")
+        _ = await rig.flow.perform(rig.newSession(most, files: [file]))
+        let upload = try #require(rig.uploads.first)
+        let expected = most + "\n\n" + rig.line(of: upload.file)
+        #expect(rig.writes == [.newSessionWithFiles(project: "proj-1", text: expected, planMode: true, intentID: intent)])
+        let again = FlowRig()
+        let second = try again.file("plate.csv")
+        _ = await again.flow.perform(again.message(most, files: [second]))
+        let sent = try #require(again.uploads.first)
+        #expect(again.writes == [.messageWithFiles(frame: sessionID, agent: "made-up-agent", projectID: "proj-1",
+                                                   text: most + "\n\n" + again.line(of: sent.file), intentID: intent)])
+    }
+
+    @Test func oneOverSendsNothingAndUploadsNothing() async throws {
+        let file = try rig.file("plate.csv")
+        let new = await rig.flow.perform(rig.newSession(most + "界", files: [file]))
+        let message = await rig.flow.perform(rig.message(most + "界", files: [file]))
+        #expect(new == .failed(sentence: QuickStartFlow.Sentence.tooLong))
+        #expect(message == .failed(sentence: QuickStartFlow.Sentence.tooLong))
+        #expect(rig.log.isEmpty && rig.writes.isEmpty && rig.uploads.isEmpty)
     }
 }

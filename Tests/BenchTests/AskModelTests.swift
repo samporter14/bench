@@ -102,16 +102,28 @@ struct AskRulesTests {
 
     @Test func anAnswerTooLongOrWithAReferenceCantGoAsAMessage() {
         #expect(AskRules.sendable(answer: "Use HEPES.", model: "m") == .ok("Another model (m) answered:\n\nUse HEPES."))
-        let long = String(repeating: "x", count: 4_000)
+        // The Mac's limit, 32,000 characters of the whole message (the line naming the model counts).
+        let header = "Another model (m) answered:\n\n".unicodeScalars.count
+        let most = String(repeating: "x", count: RemoteActionRequest.macMessageLimit - header)
+        #expect(AskRules.sendable(answer: most, model: "m") == .ok(AskRules.message(answer: most, model: "m")))
+        let long = most + "x"
         guard case .tooLong(let count) = AskRules.sendable(answer: long, model: "m") else {
             Issue.record("a long answer was taken")
             return
         }
-        #expect(count == 4_000 + "Another model (m) answered:\n\n".count)
-        #expect(AskRules.unsendable(.tooLong(4_031))
-            == "Too long to send as a message (4,031 characters; the most is 4,000). Copy it instead.")
+        #expect(count == 32_001)
+        #expect(AskRules.unsendable(.tooLong(32_031))
+            == "Too long to send as a message (32,031 characters; the most is 32,000). Copy it instead.")
         #expect(AskRules.sendable(answer: #"See {"type":"attachment","id":"x"}"#, model: "m") == .reference)
         #expect(AskRules.unsendable(.ok("x")) == nil)
+    }
+
+    @Test func theMacsLimitIsWiderThanThePhonesAndTheOnlyThingThatChanged() {
+        #expect(RemoteActionRequest.macMessageLimit == 32_000)
+        #expect(RemoteActionRequest.messageLimit == 4_000)
+        // 4,001 characters was refused before; it goes now.
+        let answer = String(repeating: "x", count: 4_001)
+        #expect(AskRules.sendable(answer: answer, model: "m") == .ok(AskRules.message(answer: answer, model: "m")))
     }
 
     @Test func theBoundedPathsAnswersReadInTheWindowsWords() {
@@ -453,7 +465,7 @@ struct AskModelSendTests {
 
     @Test func anAnswerTooLongToSendSaysSoAndSendsNothing() async {
         let rig = Rig()
-        rig.answer = .success(String(repeating: "Long answer. ", count: 400))
+        rig.answer = .success(String(repeating: "Long answer. ", count: 2_500))
         let model = await answered(rig)
         #expect(model.canSend == false)
         guard case .tooLong? = model.sendCheck else {
@@ -464,11 +476,13 @@ struct AskModelSendTests {
         #expect(rig.sent.isEmpty)
     }
 
-    @Test func theMessageRequestIsCheckedAsThePhonesIs() {
+    @Test func theMessageRequestIsCheckedAtTheMacsLimitAndOtherwiseAsThePhonesIs() {
         let intent = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
         #expect(AskModel.message(text: " Use HEPES. ", intent: intent) == .message(text: "Use HEPES.", intentID: intent))
         #expect(AskModel.message(text: "Use HEPES.", intent: "not-a-uuid") == nil)
-        #expect(AskModel.message(text: String(repeating: "x", count: 4_001), intent: intent) == nil)
+        let most = String(repeating: "x", count: 32_000)
+        #expect(AskModel.message(text: most, intent: intent) == .message(text: most, intentID: intent))
+        #expect(AskModel.message(text: most + "x", intent: intent) == nil)
         #expect(AskModel.message(text: #"{{artifact:abc}}"#, intent: intent) == nil)
         #expect(AskModel.message(text: "  ", intent: intent) == nil)
     }
@@ -543,6 +557,43 @@ struct AskModelBoundedSendTests {
         #expect(frame == session && agent == "made-up-agent" && project == "proj-made-up" && attachment == false)
         #expect(text.hasPrefix("Another model (abliterated-model) answered:\n\n"))
         #expect(RemoteActionRequest.isUUIDv4(intent))
+    }
+
+    @Test func anAnswerOfThirtyTwoThousandCharactersGoesWholeAndOneMoreDoesNot() async throws {
+        let header = "Another model (abliterated-model) answered:\n\n".unicodeScalars.count
+        // The most: the write carries every character of it.
+        let page = Page()
+        let rig = Rig()
+        rig.sessions = page.sessions()
+        rig.answer = .success(String(repeating: "x", count: 32_000 - header))
+        let model = rig.model(seed: "Which buffer?")
+        model.ask()
+        await settle { model.phase == .answered }
+        #expect(model.canSend)
+        model.sendToSession()
+        for _ in 0..<2_000 {
+            if case .done = model.sending { break }
+            await Task.yield()
+        }
+        #expect(model.sending == .done("Sent to the session."))
+        guard case .message(_, _, _, let text, _, _)? = page.writes.first else {
+            Issue.record("no write")
+            return
+        }
+        #expect(page.writes.count == 1 && text.unicodeScalars.count == 32_000)
+        // One more: the window says so and sends nothing.
+        let over = Page()
+        let overRig = Rig()
+        overRig.sessions = over.sessions()
+        overRig.answer = .success(String(repeating: "x", count: 32_001 - header))
+        let tooMuch = overRig.model(seed: "Which buffer?")
+        tooMuch.ask()
+        await settle { tooMuch.phase == .answered }
+        #expect(!tooMuch.canSend)
+        #expect(AskRules.unsendable(try #require(tooMuch.sendCheck))
+            == "Too long to send as a message (32,001 characters; the most is 32,000). Copy it instead.")
+        tooMuch.sendToSession()
+        #expect(over.writes.isEmpty)
     }
 
     @Test func aSessionWaitingOnAQuestionTakesNoMessage() async {

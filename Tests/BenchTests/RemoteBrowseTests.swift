@@ -179,7 +179,7 @@ struct NewSessionWriteTests {
             .newSession(project: "../usage", text: "x", planMode: false, intentID: intent),
             .newSession(project: String(repeating: "p", count: 65), text: "x", planMode: false, intentID: intent),
             .newSession(project: "p", text: "", planMode: false, intentID: intent),
-            .newSession(project: "p", text: String(repeating: "a", count: 4001), planMode: false, intentID: intent),
+            .newSession(project: "p", text: String(repeating: "a", count: 32_001), planMode: false, intentID: intent),
             .newSession(project: "p", text: "x", planMode: false, intentID: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"),
         ]
         for write in refused { #expect(build(write) == nil) }

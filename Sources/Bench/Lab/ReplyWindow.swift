@@ -511,11 +511,8 @@ struct ReplyView: View {
                     .disabled(!replier.canSendPlanFeedback(sessionID))
                     .help("Send it to Claude (⌘↩)")
             } status: {
-                let text = reply.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if text.unicodeScalars.count > RemoteActionRequest.messageLimit {
-                    line(QuestionReplier.Sentence.feedbackTooLong, symbol: "exclamationmark.triangle", tint: Theme.clay)
-                } else if PhotoText.hasReference(text) {
-                    line(QuestionReplier.Sentence.feedbackReference, symbol: "exclamationmark.triangle", tint: Theme.clay)
+                if let problem = QuestionReplier.Sentence.feedbackProblem(reply.text) {
+                    line(problem, symbol: "exclamationmark.triangle", tint: Theme.clay)
                 } else {
                     line("Claude revises the plan and asks for your approval again. ⌘↩ sends.",
                          symbol: nil, tint: .secondary)

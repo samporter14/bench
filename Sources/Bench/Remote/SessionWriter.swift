@@ -237,8 +237,12 @@ enum SessionWriterScript {
         if (isObject(a) && a.kind === "permission") { return benchBuildPermissionWrite(a); }
         // Phase 4 photos: a photo's request (`a.attachment`, from the photo flow alone) is the text (4,000
         // at most), a blank line and one attachment line of exactly the shape Bench writes, or the line
-        // alone. Every other request is plain text at 4,000, and refuses what the UI would read as a
-        // reference (the same seven prefixes `PhotoText` refuses, as they are or with their white space gone).
+        // alone, and a photo's text stays at 4,000 here whatever else is allowed. Every other request is
+        // plain text at 32,000 (`RemoteActionRequest.macMessageLimit`: what a message made on the Mac may be),
+        // and refuses what the UI would read as a reference (the same seven prefixes `PhotoText` refuses, as
+        // they are or with their white space gone). The phone's own messages and new sessions stop at 4,000
+        // before a write is built (`RemoteActionRequest.parse`, `NewSessionRequest.parse`), so the page is not
+        // their limit and does not pretend to be.
         const REFERENCES = ['{{artifact:', '{"type":"artifact"', '{"type":"attachment"', '{"type":"skill"',
                             '{"type":"session"', '{"artifact_ref":', '{"file_path":'];
         const hasReference = v => {
@@ -254,10 +258,11 @@ enum SessionWriterScript {
         const request = (v, attachment, files) => {
             if (typeof v !== "string") { return false; }
             if (attachment === true && files === true) { return false; }
+            const most = attachment === true ? 4000 : 32000;
             const found = attachment === true ? LINE.exec(v) : (files === true ? FILE_LINES.exec(v) : null);
-            if (found === null) { return text(v, 1, 4000) && !hasReference(v); }
+            if (found === null) { return text(v, 1, most) && !hasReference(v); }
             const head = v.slice(0, found.index);
-            return head === "" || (head.endsWith("\n\n") && text(head.slice(0, -2), 1, 4000) && !hasReference(head));
+            return head === "" || (head.endsWith("\n\n") && text(head.slice(0, -2), 1, most) && !hasReference(head));
         };
         // Phase 3 browse: a new session in a project, to the server's default agent.
         if (isObject(a) && a.kind === "newSession") {

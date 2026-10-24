@@ -146,7 +146,7 @@ struct RecipeEditor: View {
                         .accessibilityLabel("Request")
                 }
                 if recipe.text.unicodeScalars.count > Recipe.textLimit {
-                    Text("That's over 4,000 characters.").foregroundStyle(.secondary)
+                    Text(QuickStartFlow.Sentence.recipeTooLong).foregroundStyle(.secondary)
                 } else if PhotoText.hasReference(recipe.text) {
                     Text(QuickStartFlow.Sentence.reference).foregroundStyle(.secondary)
                 }
