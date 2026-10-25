@@ -13,6 +13,13 @@
 //
 // The stand-in menu is guarded: any read of `textContent` on the page's own
 // items throws, so a script that read an item's words would fail its tests.
+//
+// Files with no picture are drawn as the 0.1.70 bundle draws them: a card in
+// the Generated tray whose file-name label carries the name as its title
+// (index-DhEuR7nq.js, `NI`), and an open tile (ArtifactTile-DmtoiOPx.js) whose
+// header holds the name in its first span and the "More actions" button, over
+// a preview region. The selection is a variable (`__selected`) behind
+// `window.getSelection()`.
 import Foundation
 
 enum FakeFigurePage {
@@ -77,6 +84,8 @@ enum FakeFigurePage {
       this.code = init.code;
       this.clientX = init.clientX || 0;
       this.clientY = init.clientY || 0;
+      this.button = init.button || 0;
+      this.ctrlKey = !!init.ctrlKey;
       this.isTrusted = false;
       this.defaultPrevented = false;
       this.__stopped = false;
@@ -305,10 +314,14 @@ enum FakeFigurePage {
     static let source = dom + #"""
     var __V = __VERSION;
     var __log = [];
+    var __selected = "";
     var window = { webkit: { messageHandlers: { capsidShelfMenu: { postMessage: function (m) { __posted.push(JSON.parse(JSON.stringify(m))); } } } },
-                   innerWidth: 1000, innerHeight: 700 };
+                   innerWidth: 1000, innerHeight: 700,
+                   getSelection: function () { return { toString: function () { return __selected; } }; } };
     document.defaultView = window;
-    var location = { protocol: "http:", hostname: "localhost", origin: "http://localhost:8123", href: "http://localhost:8123/" };
+    // A session's page, as the daemon has it: /projects/<project>/frames/<session>.
+    var location = { protocol: "http:", hostname: "localhost", origin: "http://localhost:8123", href: "http://localhost:8123/",
+                     pathname: "/projects/p1/frames/" + __V };
 
     // ---- Building the conversation
     function __address(tail) { return "http://localhost:8123/api/artifacts/versions/" + __V + (tail || ""); }
@@ -329,7 +342,11 @@ enum FakeFigurePage {
     var __captionText = el("span", {}, __caption); text(__captionText, "z_prime.png");
     var __cardWrap2 = el("div", { "class": "group relative shrink-0 w-32" }, __tray);
     var __card2 = el("button", { "data-testid": "turn-tray-card" }, __cardWrap2);
-    var __captionText2 = el("span", {}, __card2); text(__captionText2, "notes.md");
+    var __preview2 = el("div", { "class": "min-h-0 flex-1 overflow-hidden" }, __card2);
+    var __previewText2 = el("p", {}, __preview2); text(__previewText2, "Plate 7 drifts.");
+    var __caption2 = el("div", { "class": "shrink-0 px-2 py-1" }, __card2);
+    var __label2 = el("span", { "data-testid": "middle-truncated-filename", "class": "flex min-w-0 overflow-hidden", title: "notes.md" }, __caption2);
+    var __captionText2 = el("span", { "class": "truncate" }, __label2); text(__captionText2, "notes.md");
 
     // A tile's picture, with the annotation layer over it.
     var __tile = el("div", { "class": "relative flex items-center justify-center h-full overflow-hidden" }, document.body);
@@ -348,6 +365,25 @@ enum FakeFigurePage {
     var __avatar = el("img", { src: "http://localhost:8123/static/avatar.png", alt: "Sam" }, __page);
     var __elsewhere = el("img", { src: "https://example.com/api/artifacts/versions/" + __V, alt: "remote" }, __page);
 
+    // An open tile of a file with no picture (Markdown), as the page's ArtifactTile draws it: a header with the
+    // file's name in its first span, a version stepper after it and the button for the tile's menu; under it the
+    // preview region with the file's words and a link in them.
+    var __docTile = el("div", { "class": "flex flex-col h-full" }, document.body);
+    var __docHeader = el("header", { "class": "flex items-center gap-2 px-3 h-11" }, __docTile);
+    var __docTitleBox = el("div", { "class": "flex items-center gap-1.5 flex-1 min-w-0" }, __docHeader);
+    var __docName = el("span", { "class": "text-sm font-medium text-text-000 truncate min-w-0" }, __docTitleBox); text(__docName, "plan_notes.md");
+    var __docStep = el("span", { "class": "text-xs" }, __docTitleBox); text(__docStep, "v2");
+    var __docActions = el("button", { "data-testid": "artifact-actions", "aria-label": "More actions", "aria-haspopup": "menu" }, __docHeader);
+    var __docRest = el("div", { "class": "relative flex-1 min-h-0 flex flex-col" }, __docTile);
+    var __docBody = el("div", { "data-testid": "artifact-preview-region", "class": "flex-1 min-h-0 overflow-auto relative" }, __docRest);
+    var __docText = el("p", {}, __docBody); text(__docText, "Plate 7 drifts.");
+    var __docLink = el("a", { href: "https://example.com/protocol" }, __docBody); text(__docLink, "the protocol");
+    var __docFileLink = el("a", { href: "http://localhost:8123/projects/p1/artifacts/a2?v=" + __V }, __docBody); text(__docFileLink, "qc_notes.md");
+
+    // A header of the page's own, with a span in it and no button for a tile's menu.
+    var __pageHeader = el("header", { "class": "page-top" }, document.body);
+    var __pageTitle = el("span", {}, __pageHeader); text(__pageTitle, "Plate reader QC");
+
     // A modal over the conversation, its text above the tile's picture.
     var __modal = el("div", { "class": "fixed inset-0" }, document.body);
     var __modalText = el("p", {}, __modal); text(__modalText, "A file's words");
@@ -357,6 +393,16 @@ enum FakeFigurePage {
     function __rightClick(target, options) {
       options = options || {};
       document.__stack = options.under || [];
+      // The button goes down first (a control-click on a Mac is a left button with the control key), with the
+      // selection as it is then; `down: false` is a menu opened by the keyboard, with no button at all.
+      if (options.down !== false) {
+        var down = new __Event("mousedown", { bubbles: true, cancelable: true, clientX: options.x || 40, clientY: options.y || 60,
+                                              button: options.control ? 0 : 2, ctrlKey: !!options.control });
+        down.isTrusted = options.trusted !== false;
+        __dispatch(target, down);
+      }
+      // WebKit selects the word under the pointer when the click is outside the selection, before the menu is asked for.
+      if (options.word !== undefined) { __selected = options.word; }
       var event = new __Event("contextmenu", { bubbles: true, cancelable: true, clientX: options.x || 40, clientY: options.y || 60 });
       event.isTrusted = options.trusted !== false;
       __dispatch(target, event);

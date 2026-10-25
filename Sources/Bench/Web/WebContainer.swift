@@ -139,9 +139,12 @@ final class WebContainer: ObservableObject, WebPageWindow {
         })
         tabMenu.install(on: configuration.userContentController)
         // And which figure or file link, for Add to Shelf and its neighbours (Shelf/ConversationMenu.swift).
-        let shelfMenu = ConversationMenu(daemonPort: { WebContainer.shared.port }, run: { action, pick in
-            Task { await ConversationShelf.shared.run(action, on: pick) }
-        })
+        let shelfMenu = ConversationMenu(
+            daemonPort: { WebContainer.shared.port },
+            isSession: { WebContainer.shared.currentFrameID.map(PlanCheck.isFrameID) == true },
+            shelveSelection: { Task { await ConversationShelf.shared.shelveSelection() } },
+            runDocument: { action, name in Task { await ConversationShelf.shared.run(action, named: name) } },
+            run: { action, pick in Task { await ConversationShelf.shared.run(action, on: pick) } })
         shelfMenu.install(on: configuration.userContentController)
         // And Ask Another Model… at the end of the page's model menu, with the message box's draft (AskModel/ModelPickerMenu.swift).
         let modelMenu = ModelPickerMenu(daemonPort: { WebContainer.shared.port }, mayOffer: { ModelPickerMenu.isWanted() },
@@ -481,6 +484,24 @@ final class WebContainer: ObservableObject, WebPageWindow {
         guard status == .ready else { throw WebAPIError.notReady }
         let value = try await webView.callAsyncJavaScript(SignInScript.look, arguments: [:], in: nil, contentWorld: .defaultClient)
         return (value as? Bool) == true
+    }
+
+    /// The words selected in the page, for Add Selection to Shelf
+    /// (Shelf/ConversationMenu.swift): `window.getSelection()` read in Capsid's
+    /// own content world, at most `limit` characters, or nil when nothing is
+    /// selected, the page isn't up, or it doesn't answer within two seconds.
+    /// It reads no element and no selector of the page; the words go to the
+    /// caller and nowhere else, and nothing of them is logged.
+    func selectedText(limit: Int) async -> String? {
+        guard status == .ready, limit > 0 else { return nil }
+        let view = webView
+        let text = try? await WriteDeadline.bridge(.seconds(2)) { () async throws -> String in
+            let value = try await view.callAsyncJavaScript(ShelfSelectionScript.read, arguments: ["limit": limit], in: nil,
+                                                           contentWorld: ConversationMenu.world)
+            return (value as? String) ?? ""
+        }
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return String(text.prefix(limit))
     }
 
     /// The first daemon page to finish loading means we are in.

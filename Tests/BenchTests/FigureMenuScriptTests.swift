@@ -386,7 +386,8 @@ struct FigureMenuScriptTests {
 
     @Test func aRightClickElsewhereAddsNothing() {
         let script = page()
-        for target in ["__paragraph", "__page", "__plainLink", "__avatar", "__elsewhere", "__card2", "__captionText2"] {
+        // Nor a header of the page's own: a tile's header is the one that holds the button for its menu.
+        for target in ["__paragraph", "__page", "__plainLink", "__avatar", "__elsewhere", "__pageHeader", "__pageTitle"] {
             script.evaluate("__rightClick(\(target))")
             #expect(watching(script) == 0, "\(target)")
             script.evaluate("__openMenu(['Copy image', 'Open in split view'])")
@@ -397,6 +398,7 @@ struct FigureMenuScriptTests {
         // Every one was heard, and the pictures and links among them said what they were.
         #expect(sent.count == 7)
         #expect(sent.filter { $0["kind"] is NSNull }.count == 4)
+        #expect(traces(script).allSatisfy { !$0.contains("figure-document") }, "no file was found under any of them")
         #expect(script.exception == nil, "\(script.exception ?? "")")
     }
 
@@ -408,7 +410,7 @@ struct FigureMenuScriptTests {
         #expect(watching(script) == 0)
         script.evaluate("__openMenu()")
         #expect(shape(script) == ["page:Copy image", "page:Open in split view"])
-        // A markdown tile has no picture of its own at all.
+        // A pop-up's words are not a tile's, whatever lies under them.
         let text = page()
         text.evaluate("__rightClick(__modalText, { under: [__modalText, __modal] })")
         text.evaluate("__openMenu()")
@@ -858,9 +860,11 @@ struct FigureMenuScriptTests {
         #expect(!text.contains("innerHTML"))
         #expect(!text.contains("outerHTML"))
         #expect(!text.contains("eval("))
-        // The only textContent it reads is a file link's own name; nothing of a menu item.
-        #expect(text.components(separatedBy: "textContent").count == 2)
+        // The only textContent it reads are a file link's own name and the name a tile shows in its header;
+        // nothing of a menu item.
+        #expect(text.components(separatedBy: "textContent").count == 3)
         #expect(text.contains("found.textContent"))
+        #expect(text.contains("label.textContent"))
         #expect(!text.contains("innerText"))
         // The four words are the ones the Mac's menu has.
         for word in Self.words { #expect(text.contains(word)) }
