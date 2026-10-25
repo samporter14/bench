@@ -2,7 +2,8 @@
 // AnotherModelClient.swift), against a fake `URLProtocol`: `GET /models` and
 // `POST /chat/completions`, their shape and their one header, the key nowhere
 // else, every failure as its sentence, the deadline, Cancel, and a redirect
-// that is refused before the key could follow it. Made-up hosts (each test its
+// that is refused before the key could follow it. The answer's stream, in
+// AskModelStreamTests.swift, uses the same fake. Made-up hosts (each test its
 // own) and a made-up key; nothing leaves the process.
 import Foundation
 import Synchronization
@@ -10,6 +11,30 @@ import Testing
 @testable import Bench
 
 // MARK: The fake
+
+/// The body of a streamed reply, piece by piece, as the test sends it: each
+/// piece is its own `didLoad`, and nothing comes until the test says.
+final class StreamFeed: Sendable {
+    enum Item: Sendable { case piece(Data), finish, fail(URLError.Code) }
+    let items: AsyncStream<Item>
+    private let continuation: AsyncStream<Item>.Continuation
+
+    init() {
+        (items, continuation) = AsyncStream.makeStream()
+    }
+
+    /// A feed with these pieces already in it, ended by `end`.
+    convenience init(_ pieces: [String], then end: Item? = .finish) {
+        self.init()
+        pieces.forEach { send($0) }
+        if let end { continuation.yield(end) }
+    }
+
+    func send(_ text: String) { continuation.yield(.piece(Data(text.utf8))) }
+    func send(_ data: Data) { continuation.yield(.piece(data)) }
+    func finish() { continuation.yield(.finish) }
+    func fail(_ code: URLError.Code) { continuation.yield(.fail(code)) }
+}
 
 /// Answers a request by its host, from a table each test fills for its own
 /// made-up host, and remembers what it was asked.
@@ -23,6 +48,8 @@ final class FakeModelProtocol: URLProtocol, @unchecked Sendable {
         case never
         /// A 302 to another address.
         case redirect(String)
+        /// A status and a content type at once, then the body as the feed gives it.
+        case stream(Int, String, StreamFeed)
     }
 
     struct Seen: Sendable {
@@ -85,6 +112,25 @@ final class FakeModelProtocol: URLProtocol, @unchecked Sendable {
             client.urlProtocol(self, didFailWithError: URLError(code))
         case .never?:
             break
+        case .stream(let status, let type, let feed)?:
+            let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1",
+                                           headerFields: ["Content-Type": type])!
+            client.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            let delivery = Delivery(owner: self, client: client)
+            feeding = Task {
+                for await item in feed.items {
+                    guard !Task.isCancelled else { return }
+                    switch item {
+                    case .piece(let data): delivery.client.urlProtocol(delivery.owner, didLoad: data)
+                    case .finish:
+                        delivery.client.urlProtocolDidFinishLoading(delivery.owner)
+                        return
+                    case .fail(let code):
+                        delivery.client.urlProtocol(delivery.owner, didFailWithError: URLError(code))
+                        return
+                    }
+                }
+            }
         case .redirect(let target)?:
             let response = HTTPURLResponse(url: url, statusCode: 302, httpVersion: "HTTP/1.1",
                                            headerFields: ["Location": target])!
@@ -96,7 +142,18 @@ final class FakeModelProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
+    /// The protocol and its client, handed to the task that delivers a feed.
+    private struct Delivery: @unchecked Sendable {
+        let owner: URLProtocol
+        let client: any URLProtocolClient
+    }
+
+    /// Delivers a feed's pieces until it ends or the request is stopped.
+    nonisolated(unsafe) private var feeding: Task<Void, Never>?
+
     override func stopLoading() {
+        feeding?.cancel()
+        feeding = nil
         let host = request.url?.host() ?? ""
         Self.table.withLock { table in table[host]?.seen.stops += 1 }
     }
@@ -152,13 +209,14 @@ struct AskModelRequestTests {
         #expect(request.httpShouldHandleCookies == false)
     }
 
-    @Test func anAskIsAPostOfTheModelAndTheTurnsAndNothingMore() async throws {
+    @Test func anAskIsAStreamedPostOfTheModelAndTheTurnsAndNothingMore() async throws {
+        // This server ignores `stream` and answers JSON, which is read as it always was.
         let host = FakeModelProtocol.host { _ in .reply(200, answerJSON) }
         let turns = [ChatTurn(role: .user, text: "Plate reader QC: which wells failed?"),
                      ChatTurn(role: .assistant, text: "Wells A3 and B7."),
                      ChatTurn(role: .user, text: "Which buffer should the rerun use?")]
         let result = await client().ask(address: address(host), key: madeUpModelKey, model: "abliteration-ai/abliterated-model",
-                                        turns: turns)
+                                        turns: turns).result
         #expect(result == .success("Use **HEPES** at 25 mM."))
         let seen = FakeModelProtocol.seen(host)
         let request = try #require(seen.requests.first)
@@ -166,11 +224,13 @@ struct AskModelRequestTests {
         #expect(request.url?.absoluteString == "https://\(host)/v1/chat/completions")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer \(madeUpModelKey)")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        // Asked to stream: server-sent events are wanted (the list still asks for JSON).
+        #expect(request.value(forHTTPHeaderField: "Accept") == "text/event-stream")
         let body = try #require(seen.bodies.first)
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
         #expect(Set(json.keys) == ["model", "messages", "stream"])
         #expect(json["model"] as? String == "abliteration-ai/abliterated-model")
-        #expect(json["stream"] as? Bool == false)
+        #expect(json["stream"] as? Bool == true)
         let messages = try #require(json["messages"] as? [[String: String]])
         #expect(messages == [["role": "user", "content": "Plate reader QC: which wells failed?"],
                              ["role": "assistant", "content": "Wells A3 and B7."],
@@ -260,7 +320,7 @@ struct AskModelFailureTests {
 
     private func ask(_ answer: FakeModelProtocol.Answer) async -> Result<String, AnotherModelFailure> {
         let host = FakeModelProtocol.host { _ in answer }
-        return await client().ask(address: address(host), key: madeUpModelKey, model: "abliterated-model", turns: turns)
+        return await client().ask(address: address(host), key: madeUpModelKey, model: "abliterated-model", turns: turns).result
     }
 
     @Test func aRefusedKeyIsSaidAsSuch() async {
@@ -273,7 +333,7 @@ struct AskModelFailureTests {
     @Test func inSettingsTheSentencesDontSendYouToSettings() {
         let host = "api.abliteration.ai"
         let kinds: [AnotherModelFailure] = [.keyRefused, .tooMany, .timedOut, .offline, .unreachable, .status(500), .unreadable,
-                                            .notSet(.address)]
+                                            .cutOff(.stalled), .cutOff(.overran), .cutOff(.closed), .cutOff(.errored), .notSet(.address)]
         for failure in kinds {
             let sentence = failure.sentence(host: host, limit: .seconds(20), inSettings: true)
             #expect(!sentence.contains("Settings"), "\(failure): \(sentence)")
@@ -311,7 +371,7 @@ struct AskModelFailureTests {
     @Test func aRedirectIsRefusedAndTheKeyNeverReachesTheOtherHost() async {
         let other = FakeModelProtocol.host { _ in .reply(200, answerJSON) }
         let host = FakeModelProtocol.host { _ in .redirect("https://\(other)/v1/chat/completions") }
-        let result = await client().ask(address: address(host), key: madeUpModelKey, model: "abliterated-model", turns: turns)
+        let result = await client().ask(address: address(host), key: madeUpModelKey, model: "abliterated-model", turns: turns).result
         #expect(result == .failure(.status(302)))
         #expect(FakeModelProtocol.seen(other).requests.isEmpty)
     }
@@ -325,8 +385,8 @@ struct AskModelFailureTests {
         }
         await clock.until(waiting: 1, AnotherModelClient.askLimit)
         #expect(clock.waiting(.seconds(120)) == 1)
-        clock.fire()
-        #expect(await task.value == .failure(.timedOut))
+        clock.fire(.seconds(120))
+        #expect(await task.value.result == .failure(.timedOut))
         // The request itself was ended, not left to run.
         for _ in 0..<200 where FakeModelProtocol.seen(host).stops == 0 { try? await Task.sleep(for: .milliseconds(10)) }
         #expect(FakeModelProtocol.seen(host).stops == 1)
@@ -356,7 +416,7 @@ struct AskModelFailureTests {
         await clock.until(waiting: 1)
         for _ in 0..<200 where FakeModelProtocol.seen(host).requests.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
         task.cancel()
-        #expect(await task.value == .failure(.cancelled))
+        #expect(await task.value.result == .failure(.cancelled))
         for _ in 0..<200 where FakeModelProtocol.seen(host).stops == 0 { try? await Task.sleep(for: .milliseconds(10)) }
         #expect(FakeModelProtocol.seen(host).stops == 1)
         // Asked once: nothing is tried again on its own.
@@ -377,7 +437,8 @@ struct AskModelFailureTests {
 
     @Test func everyFailureHasAPlainSentenceAndAFixedWord() {
         let all: [AnotherModelFailure] = [.keyRefused, .tooMany, .timedOut, .offline, .unreachable, .cancelled, .status(502),
-                                          .unreadable, .notSet(.switchedOff), .notSet(.key), .notSet(.model), .notSet(.address)]
+                                          .unreadable, .cutOff(.stalled), .cutOff(.overran), .cutOff(.closed), .cutOff(.errored),
+                                          .notSet(.switchedOff), .notSet(.key), .notSet(.model), .notSet(.address)]
         for failure in all {
             let sentence = failure.sentence(host: "api.abliteration.ai", limit: .seconds(120))
             #expect(sentence.hasSuffix("."), "\(failure)")

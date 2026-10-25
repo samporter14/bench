@@ -3,6 +3,12 @@
 // it was opened from), whether the conversation so far goes with it, the ask
 // itself with its deadline and Cancel, the answer, Copy, and Send to Session.
 //
+// The answer streams in: words arrive as the other model writes them, and the
+// Markdown is drawn again at most ten times a second (`AskRules.renderEvery`).
+// A stream that ends before its end (Cancel, a deadline, an error, a lost
+// connection) keeps its words on screen, marked, with Copy and without Send to
+// Session: only a finished answer is sent as "answered".
+//
 // The question and the conversation are read with the history reader the
 // reference window uses (Remote/HistoryReader.swift), through the reading gate,
 // one page of the session's newest rows: no new page hook. What is sent is what
@@ -116,6 +122,9 @@ enum AskRules {
         case tooLong(Int)
         /// It holds text Claude Science would read as a file or a session.
         case reference
+        /// The answer stopped before its end (Cancel, a deadline, an error):
+        /// only part of it came, and part of an answer isn't sent as one.
+        case partial
     }
 
     static func sendable(answer: String, model: String) -> SendCheck {
@@ -133,6 +142,7 @@ enum AskRules {
         case .tooLong(let count):
             "Too long to send as a message (\(count.formatted()) characters; the most is \(RemoteActionRequest.macMessageLimit.formatted())). Copy it instead."
         case .reference: "It holds text Claude Science reads as a file reference, so it can\u{2019}t be sent. Copy it instead."
+        case .partial: "Only part of the answer came, so it can\u{2019}t be sent."
         }
     }
 
@@ -163,13 +173,37 @@ enum AskRules {
         }
     }
 
-    /// "Another model: asked, 812 characters, with 6 turns, answered in 9 s".
-    /// Counts only: never the words, the model or the session.
-    static func logLine(characters: Int, turns: Int, seconds: Int, failure: AnotherModelFailure?) -> String {
+    /// Words are drawn again at most this often while an answer streams in.
+    static let renderEvery: Duration = .milliseconds(100)
+
+    /// The quiet line over the words, in the same place from the first word to
+    /// the last, so nothing moves when it ends: "Answering…", then "Answered in
+    /// 9 s", or "Stopped after 14 s", or "Cut off after 14 s". "Answered" names
+    /// the model only when it isn't the one named above (the choice changed in
+    /// Settings since).
+    static func caption(phase: AskModel.Phase, seconds: Int?, answeredBy: String?, model: String?) -> String {
+        let span = seconds.map { $0 < 1 ? "under a second" : "\($0) s" }
+        switch phase {
+        case .streaming: return "Answering\u{2026}"
+        case .cancelled: return "Stopped" + (span.map { " after \($0)" } ?? "")
+        case .failed: return "Cut off" + (span.map { " after \($0)" } ?? "")
+        default:
+            let time = span.map { " in \($0)" } ?? ""
+            guard let by = answeredBy, by != model else { return "Answered" + time }
+            return "\(by) answered" + time
+        }
+    }
+
+    /// "Another model: asked, 812 characters, with 6 turns, first word in 2 s,
+    /// answered in 9 s". Counts only: never the words, the model or the
+    /// session. The first word's time is there only when words arrived.
+    static func logLine(characters: Int, turns: Int, seconds: Int, firstWord: Int? = nil, failure: AnotherModelFailure?) -> String {
         let with = turns > 0 ? ", with \(turns) turns" : ""
-        guard let failure else { return "Another model: asked, \(characters) characters\(with), answered in \(seconds) s" }
-        if failure == .cancelled { return "Another model: asked, \(characters) characters\(with), cancelled after \(seconds) s" }
-        return "Another model: asked, \(characters) characters\(with), failed after \(seconds) s, \(failure.word)"
+        let first = firstWord.map { ", first word in \($0) s" } ?? ""
+        let head = "Another model: asked, \(characters) characters\(with)\(first)"
+        guard let failure else { return "\(head), answered in \(seconds) s" }
+        if failure == .cancelled { return "\(head), cancelled after \(seconds) s" }
+        return "\(head), failed after \(seconds) s, \(failure.word)"
     }
 }
 
@@ -187,8 +221,9 @@ struct AskDependencies {
     var host: @MainActor () -> String
     /// The deadline an ask has.
     var limit: Duration
-    /// Asks the chosen model.
-    var ask: @MainActor (_ chat: [ChatTurn]) async -> Result<String, AnotherModelFailure>
+    /// Asks the chosen model; `progress` hears the words as they arrive. The
+    /// answer is whole, or the words that came and why it stopped.
+    var ask: @MainActor (_ chat: [ChatTurn], _ progress: @escaping @MainActor (AskProgress) -> Void) async -> AnotherModelAnswer
     /// A message to the session, by the bounded path; `checking` is called
     /// while an unknown outcome is read for.
     var send: @MainActor (_ request: RemoteActionRequest, _ sessionID: String,
@@ -198,6 +233,8 @@ struct AskDependencies {
     /// The answer as the window draws it.
     var render: @MainActor (String) -> NSAttributedString
     var clock: @MainActor () -> ContinuousClock.Instant = { .now }
+    /// The wait that spaces the drawing of a streaming answer.
+    var wait: @MainActor (Duration) async -> Void = WriteDeadline.sleep
     var log: @MainActor (String) -> Void
 
     static func live() -> AskDependencies {
@@ -223,7 +260,7 @@ struct AskDependencies {
             modelName: { model.model },
             host: { model.host },
             limit: model.askLimit,
-            ask: { chat in await model.ask(chat) },
+            ask: { chat, progress in await model.ask(chat, progress: progress) },
             send: { request, id, checking in
                 guard Demo.mode == nil else { return .unavailable }
                 return await RemoteSessions.shared.respond(request, session: id, checking: checking)
@@ -242,9 +279,15 @@ struct AskDependencies {
 final class AskModel: ObservableObject {
     enum Phase: Equatable {
         case ready
+        /// Asked; nothing of the answer has come yet (the model may be thinking).
         case asking
+        /// Words are arriving.
+        case streaming
         case answered
+        /// It stopped before its end, or never began: the sentence says why.
+        /// Words that came before are kept (`isPartial`).
         case failed(String)
+        /// Cancel was pressed; words that came before are kept.
         case cancelled
     }
 
@@ -273,10 +316,13 @@ final class AskModel: ObservableObject {
     /// The turns sent with the switch on.
     @Published private(set) var conversation: [AskTurn] = []
     @Published private(set) var phase: Phase = .ready
-    /// The answer as it came, and drawn.
+    /// The answer as it came, and drawn. While it streams, the words so far as
+    /// of the last drawing; after a stop, the words that came.
     @Published private(set) var answer: String?
     @Published private(set) var rendered = NSAttributedString()
-    /// The model that answered, and how long it took.
+    /// Only reasoning has come so far: the model is thinking. Its words are never shown.
+    @Published private(set) var thinking = false
+    /// The model that answered, and how long it took (or ran before it stopped).
     @Published private(set) var answeredBy: String?
     @Published private(set) var seconds: Int?
     @Published private(set) var sending: Sending = .idle
@@ -290,6 +336,14 @@ final class AskModel: ObservableObject {
     private var askTask: Task<Void, Never>?
     private var sendTask: Task<Void, Never>?
     private var ledger = IntentLedger()
+    /// Every word that has arrived; `answer` and `rendered` follow it, a tenth of a second apart.
+    private var streamed = ""
+    private var lastDrawn: ContinuousClock.Instant?
+    /// How soon the next drawing may come: a tenth of a second, or longer when drawing took long.
+    private var drawEvery = AskRules.renderEvery
+    private var drawTask: Task<Void, Never>?
+    /// Seconds from the question to the first word, for the log.
+    private var firstWord: Int?
 
     init(subject: AskSubject, dependencies: AskDependencies) {
         self.subject = subject
@@ -306,7 +360,7 @@ final class AskModel: ObservableObject {
     /// A seed for a window already open (the same session, opened again from a
     /// selection): the field takes it, unless a question is being asked.
     func reseed(_ seed: String?) {
-        guard let seed, phase != .asking else { return }
+        guard let seed, !isAsking else { return }
         setQuestion(String(seed.prefix(AskRules.maxQuestion)))
         edited = true
     }
@@ -314,8 +368,19 @@ final class AskModel: ObservableObject {
     var modelName: String? { dependencies.modelName() }
     var host: String { dependencies.host() }
 
+    /// A question is out: nothing of the answer yet, or words arriving.
+    var isAsking: Bool { phase == .asking || phase == .streaming }
+
+    /// Words are on screen that are not a whole answer: it stopped, or failed, partway.
+    var isPartial: Bool {
+        switch phase {
+        case .failed, .cancelled: answer != nil
+        default: false
+        }
+    }
+
     var canAsk: Bool {
-        phase != .asking && AskRules.question(question) != nil && modelName != nil
+        !isAsking && AskRules.question(question) != nil && modelName != nil
             && !(includeConversation && reading == .reading)
     }
 
@@ -364,43 +429,130 @@ final class AskModel: ObservableObject {
         let model = modelName
         let started = dependencies.clock()
         phase = .asking
+        thinking = false
         sending = .idle
+        copied = false
+        answer = nil
+        answeredBy = nil
+        seconds = nil
+        rendered = NSAttributedString()
+        streamed = ""
+        firstWord = nil
+        lastDrawn = nil
+        drawEvery = AskRules.renderEvery
+        drawTask?.cancel()
+        drawTask = nil
         askTask = Task { [weak self] in
             guard let self else { return }
-            let result = await dependencies.ask(chat)
-            let seconds = Int((dependencies.clock() - started).components.seconds)
-            switch result {
-            case .success(let words):
-                answer = words
-                rendered = dependencies.render(words)
-                answeredBy = model
-                self.seconds = seconds
-                copied = false
-                phase = .answered
-                dependencies.log(AskRules.logLine(characters: characters(chat), turns: turns.count, seconds: seconds, failure: nil))
-            case .failure(let failure):
-                phase = failure == .cancelled ? .cancelled : .failed(failure.sentence(host: host, limit: dependencies.limit))
-                dependencies.log(AskRules.logLine(characters: characters(chat), turns: turns.count, seconds: seconds, failure: failure))
+            let result = await dependencies.ask(chat) { [weak self] progress in
+                self?.arrived(progress, since: started)
             }
+            let seconds = Int((dependencies.clock() - started).components.seconds)
+            ended(result, model: model, seconds: seconds, log: AskRules.logLine(
+                characters: characters(chat), turns: turns.count, seconds: seconds, firstWord: firstWord, failure: result.failure))
             askTask = nil
         }
     }
 
-    /// Ends the ask under way; nothing more comes from it.
+    /// Ends the ask under way (or the stream): the words that came stay.
     func cancel() {
         askTask?.cancel()
     }
 
+    // MARK: Words arriving
+
+    private func arrived(_ progress: AskProgress, since started: ContinuousClock.Instant) {
+        guard isAsking else { return }
+        switch progress {
+        case .thinking:
+            if phase == .asking { thinking = true }
+        case .words(let delta):
+            streamed += delta
+            if phase == .asking {
+                // White space alone is no answer yet.
+                guard streamed.contains(where: { !$0.isWhitespace }) else { return }
+                phase = .streaming
+                thinking = false
+                firstWord = Int((dependencies.clock() - started).components.seconds)
+            }
+            drawSoon()
+        }
+    }
+
+    /// Draws the words so far now, if a tenth of a second has passed since the
+    /// last time; else once it has. The first words are drawn at once.
+    private func drawSoon() {
+        guard drawTask == nil else { return }
+        let now = dependencies.clock()
+        if let lastDrawn, lastDrawn + drawEvery > now {
+            let remaining = lastDrawn + drawEvery - now
+            drawTask = Task { [weak self] in
+                guard let self else { return }
+                await dependencies.wait(remaining)
+                guard !Task.isCancelled else { return }
+                drawTask = nil
+                draw()
+            }
+        } else {
+            draw()
+        }
+    }
+
+    private func draw() {
+        let began = dependencies.clock()
+        answer = streamed
+        rendered = dependencies.render(streamed)
+        let done = dependencies.clock()
+        lastDrawn = done
+        // A very long answer takes longer to draw: the next drawing waits three times as long as this
+        // one took (a second at most), so drawing never takes the window over.
+        drawEvery = min(.seconds(1), max(AskRules.renderEvery, (done - began) * 3))
+    }
+
+    /// The ask is over, whole or in part. The words that came are drawn in
+    /// full before anything else is shown, so an ending never shows fewer
+    /// words than the answer holds.
+    private func ended(_ result: AnotherModelAnswer, model: String?, seconds: Int, log: String) {
+        drawTask?.cancel()
+        drawTask = nil
+        thinking = false
+        streamed = result.text
+        let hasWords = !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasWords {
+            draw()
+            answeredBy = model
+            self.seconds = seconds
+        } else {
+            answer = nil
+            rendered = NSAttributedString()
+        }
+        switch result.failure {
+        case nil where hasWords:
+            phase = .answered
+        case nil:
+            phase = .failed(AnotherModelFailure.unreadable.sentence(host: host, limit: dependencies.limit))
+        case .cancelled?:
+            phase = .cancelled
+        case let failure?:
+            phase = .failed(failure.sentence(host: host, limit: dependencies.limit))
+        }
+        dependencies.log(log)
+    }
+
     // MARK: The answer
 
+    /// Copies what came, as it came: the whole answer, or after a stop the
+    /// part that arrived (its words are on screen). Not while words arrive.
     func copy() {
-        guard let answer else { return }
+        guard let answer, !isAsking else { return }
         copied = dependencies.pasteboard(answer)
     }
 
     /// Whether the answer can go to the session, and if not, why.
     var sendCheck: AskRules.SendCheck? {
         guard let answer, let answeredBy else { return nil }
+        if isPartial { return .partial }
+        guard phase == .answered else { return nil }
         return AskRules.sendable(answer: answer, model: answeredBy)
     }
 
@@ -454,5 +606,6 @@ final class AskModel: ObservableObject {
     func close() {
         readTask?.cancel()
         askTask?.cancel()
+        drawTask?.cancel()
     }
 }

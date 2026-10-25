@@ -323,6 +323,95 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-24, Ask Another Model streams: the answer fills in as it is written
+
+The answer used to come whole, behind a spinner of up to two minutes. It now streams (`"stream": true`, server-sent
+events), on `g/ask-stream` (from 7492fdd). Everything ran on made-up sessions, a fake `URLProtocol` and a made-up key:
+no real network, no key entered, no daemon, nothing under `~/.claude-science` read, no window opened, nothing launched,
+installed, merged or pushed.
+
+- ✅ **The stream, cut every way** (`AskModelStreamTests`, a fake whose body the test feeds piece by piece, each its own
+  `didLoad`): the same made-up stream (a comment, a role chunk, reasoning under both `reasoning_content` and `reasoning`,
+  unknown fields `event:` `id:` `retry:`, words with a 2-, 3- and 4-byte character, a finish chunk, `[DONE]`) is read to
+  the same text from one byte at a time, every 3 and 11 bytes, every multi-byte character cut in two, with CRLF and with
+  lone CR line ends, and in one piece. The reasoning is told once, first, and is never in the text; words are heard
+  while the stream is still open (so `URLSession.bytes` does deliver in-process as it comes, not at the end).
+- ✅ **A bug found by a test, not by reading**: Foundation's `bytes.lines` (the first plan) also breaks at U+2028, U+2029,
+  U+0085, U+000B and U+000C, all valid raw inside a JSON string, so a chunk holding one was cut in two and lost without
+  an error. Replaced by `AskStreamLines`, which cuts at LF, CR and CRLF only (a probe confirmed the difference).
+- ✅ **Endings**: an `{"error": …}` chunk mid-stream is a failure with the words kept and none of the server's own words
+  shown; one before any word has no words; a stream that closes after `[DONE]` or a `finish_reason` is finished and one
+  that closes without either is cut off (words kept); a connection lost after a chunk is "closed the connection", at once
+  it is "no network"; reasoning and then `[DONE]` is no answer; an answer past 4 MiB stops with its words kept.
+- ✅ **A server that ignores `stream`** and answers JSON (`application/json`, with and without a charset) is read as it
+  always was and tells the window nothing piece by piece; JSON that is no answer is "not an answer"; a stream sent under
+  another content type is still read, whole. A status before any byte (401, 403, 429, 500, 404, 302) keeps its sentence,
+  and its body, which is built to read as an answer, is never read as one. The redirect test is unchanged and green.
+- ✅ **Deadlines** (on `ManualClock`, no real waits): the first chunk has 120 s and the whole ask 600 s from the start;
+  a reasoning chunk meets the first and starts the 60 s; a `:` keepalive before any chunk does neither; every chunk
+  (words, reasoning, a role or usage chunk with none) and, once one has come, every keepalive starts the 60 s over (a new
+  wait each time, the old one gone, one waiting); 60 s with none is "stopped coming" with the words kept; 600 s ends it
+  while chunks still come; after any end no deadline is left waiting and nothing is heard. Each ends the request itself
+  (`stops == 1`) and asks once.
+- ✅ **Cancel** mid-stream returns `.cancelled` with the words that came, stops the request, hears nothing after, and
+  leaves no deadline; before the first byte it returns at once with none; a task cancelled before it began does not hang.
+- ✅ **The window's model** (`AskModelStreamingWindowTests`, a scripted ask): asking → thinking (the flag, not the words)
+  → streaming → answered, with the caption, the seconds and the log; spaces alone are no answer yet; Copy and Send do
+  nothing while words arrive and both work on the finished answer; Cancel, each failure and each deadline keep their words
+  drawn in full, Copy works and Send is dim with its reason (`.partial`), "Stopped after 14 s" / "Cut off after 70 s"; a
+  failure with no word is one centred sentence; Ask again starts clean; closing the window ends the stream.
+- ✅ **The drawing**: the first words at once, then one drawing per tenth of a second (fifty words in one instant: one
+  drawing waits, then one draws them all; a hundred words over a virtual second: 9 to 12 drawings, none sooner than 100 ms
+  after the one before); a drawing that takes 80 ms makes the next wait 240 ms, capped at a second; the end draws every word
+  and cancels the drawing that was waiting.
+- ✅ **Following the end** (`AskScrollFollowTests`, the rule on its own: a window cannot be scrolled here): growth with the
+  reader's place unchanged is growth and not a scroll up (the trap); scrolling up stops following and growth then leaves
+  the reader alone; scrolling back to the end follows again; a wobble, a text drawn shorter at the end, and a foot that
+  shrinks the window below the text are not scrolls up; a text shorter than the window has nothing to follow.
+- ✅ **Offscreen renders**, light and dark, in `shots-stream/` beside the worktree (`CAPSID_SNAPSHOT_DIR`; the SwiftUI
+  content drawn with `cacheDisplay`, as before): ready, asking, **thinking**, **partway** (short, and longer than the
+  window), **stopped**, **cut off**, answered, and a streamed answer finished, failed. Looked at against "gorgeous and
+  minimal": one clay action in every state (Cancel while it comes, Ask when it ends); the line over the words reads
+  "Answering…", "Answered in 9 s", "Stopped after 14 s" or "Cut off after 70 s" in the same place, so nothing moves when it
+  ends; "Thinking…" is the asking stage with one word changed; no new control; a stopped answer's foot is Copy, one muted
+  line and a dim Send, as "too long to send" already is. Kept as they are: the two-line clay sentence after a cut-off
+  (it is the failure's own words), and the Cancel pill as it was. What the renders cannot show: the text running to the
+  foot of a long answer and the view following it (an offscreen scroll view stays at the top), and the title bar's glass.
+- ✅ **A selection stays while the text grows** (`AskStreamSelectionTests`, a hosting view drawn offscreen): a reader's
+  selection is where it was after a longer text is put in (`ReferenceTextView.keepsSelection`, on in this window), is
+  dropped when the new text doesn't reach it, and where the view doesn't ask for it a new text starts unselected as ever.
+- ✅ **Mutations** (break it, see the tests fail, restore; each run on the focused suites, 145 tests):
+  - the line splitter cut at Unicode line ends too, as `bytes.lines` does: 2 fail (the raw U+2028 stream and the line
+    rules);
+  - a chunk no longer starts the minute over: 3 fail (stalled, the reasoning chunk, every chunk), and the run waits out
+    URLSession's own 120 s;
+  - reasoning read as words: 5 fail (the cut stream, reasoning-only, reasoning's own rules, a stream under another type,
+    the reasoning chunk's deadline);
+  - no throttle on drawing: 5 fail (the first words, a second of words, the end, stopping, the slow drawing);
+  - a partial answer can be sent: 2 fail (stopped, failed);
+  - an error chunk ignored: 2 fail (with and without words before it);
+  - an error chunk dropping the words: 1 fail;
+  - Cancel dropping the words: 1 fail;
+  - growth with the reader's place unchanged read as a scroll up: 4 fail (the trap, and the three that follow from it);
+  - a clean close without `[DONE]` or a finish reason counted as finished: 1 fail;
+  - a keepalive meeting the first-chunk deadline: 1 fail;
+  - the request saying `stream: false`: 1 fail;
+  - the drawing never waiting longer for a long answer: 1 fail;
+  - no ten-minute cap: 1 fail;
+  - the selection not kept: 1 fail.
+  Each one restored; the tree was clean after (`git status`).
+- ✅ **The whole suite**: 4,003 tests in 520 suites pass (3,940 in 509 in the entry before: 63 new tests, 60 of them in the two stream
+  files and 3 for the selection, and 11 suites), `✔ Test run with 4003 tests in 520 suites passed`. No flake this run.
+  The `g/longer-messages` entry's one flake, `LabInsightsGateTests.bothOfTheFailureCardsSwitchesMustBeOn`, did not
+  recur. `--jobs 1`, one swift process at a time throughout.
+- ⏳ **Live, with Sam's own key** (nothing here has met a real Abliteration.ai): that it really streams (the first word in
+  seconds through `URLSession.bytes` and whatever sits between), and the exact chunk shape: `delta.content`, whether the
+  reasoning is `reasoning_content` or `reasoning` or absent, a role chunk or a usage chunk, `[DONE]` and a `finish_reason`
+  (a stream that closes after neither is shown as cut off, with its words), the `Content-Type`, what a mid-stream
+  `{"error": …}` looks like and whether a `:` keepalive is sent; the scroll following on a real trackpad and wheel (the
+  rule is tested, the scroll view is not), and that a selection survives the redrawing in a real window; and whether two
+  minutes to a first chunk, a minute between chunks and ten in all suit the real model.
+
 ## 2026-10-24, messages made on the Mac may be 32,000 characters (the phone's stay at 4,000)
 
 Every message Capsid sends into a session shares one send path, and its cap (4,000 characters) was set for the

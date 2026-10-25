@@ -1,9 +1,10 @@
 // AskModelSnapshotTests.swift — not a check: when `CAPSID_SNAPSHOT_DIR` names a
 // folder, draws the Ask Another Model window's content (made-up session, made-up
 // answer) and its Settings section into it as PNGs, light and dark, so they can
-// be looked at without opening a window: ready, asking, answered (with the
-// conversation listed) and a failure; Settings on (a key saved, the models
-// listed, or a key the address refused) and off. Without it the test does
+// be looked at without opening a window: ready, asking, thinking, an answer
+// partway through its stream (short, and longer than the window), answered (with
+// the conversation listed), stopped and cut off partway, and a failure; Settings
+// on (a key saved, the models listed, or a key the address refused) and off. Without it the test does
 // nothing. The title bar belongs to the window; a stand-in for it is drawn here.
 import AppKit
 import SwiftUI
@@ -69,14 +70,17 @@ struct AskModelSnapshotTests {
             modelName: { "abliterated-model" },
             host: { "api.abliteration.ai" },
             limit: .seconds(120),
-            ask: { _ in
+            ask: { _, _ in
                 // Held: the ask waits until Cancel ends it, so nothing is left suspended.
                 if hold {
                     try? await Task.sleep(for: .seconds(3600))
-                    return .failure(.cancelled)
+                    return .failed(.cancelled)
                 }
                 now += .seconds(9)
-                return answer
+                switch answer {
+                case .success(let text): return AnotherModelAnswer(text: text, failure: nil)
+                case .failure(let failure): return .failed(failure)
+                }
             },
             send: { _, _, _ in .unavailable },
             pasteboard: { _ in true },
@@ -99,6 +103,76 @@ struct AskModelSnapshotTests {
         }
         return model
     }
+
+    /// An answer partway through: reasoning first when `thinking`, then `words`, then it
+    /// holds until Cancel (`nil`) or ends as `end` after `seconds` (nil: whole).
+    private enum Stream { case holds, ends(AnotherModelFailure?, seconds: Int) }
+
+    private func streaming(words: String, thinking: Bool = false, _ stream: Stream = .holds) async throws -> AskModel {
+        var now = ContinuousClock.now
+        let dependencies = AskDependencies(
+            readPage: { _ in Self.page },
+            readTurn: { _, _ in nil },
+            modelName: { "abliterated-model" },
+            host: { "api.abliteration.ai" },
+            limit: .seconds(120),
+            ask: { _, progress in
+                if thinking { progress(.thinking) }
+                if !words.isEmpty { progress(.words(words)) }
+                switch stream {
+                case .holds:
+                    try? await Task.sleep(for: .seconds(3600))
+                    return AnotherModelAnswer(text: words, failure: .cancelled)
+                case .ends(let failure, let seconds):
+                    now += .seconds(seconds)
+                    return AnotherModelAnswer(text: words, failure: failure)
+                }
+            },
+            send: { _, _, _ in .unavailable },
+            pasteboard: { _ in true },
+            render: { AnswerMarkdown.render($0, style: .reference).text },
+            clock: { now },
+            log: { _ in })
+        let model = AskModel(subject: AskSubject(sessionID: "0b7c2f4e-1a2b-4c3d-8e9f-a0b1c2d3e4f5", title: "Plate reader QC",
+                                                 projectName: "Assay development", seed: nil),
+                             dependencies: dependencies)
+        model.open()
+        for _ in 0..<200 where model.reading != .read { try await Task.sleep(for: .milliseconds(5)) }
+        model.ask()
+        if case .holds = stream {
+            for _ in 0..<200 where model.phase == .asking && !thinking { try await Task.sleep(for: .milliseconds(5)) }
+        } else {
+            for _ in 0..<200 where model.isAsking { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        return model
+    }
+
+    /// The made-up answer, cut where a stream would be: after two bullets and part of a third.
+    private static let partway = """
+        For the rerun, use **HEPES at 25 mM, pH 7.4**.
+
+        - It holds pH better than Tris as the plate warms in the reader.
+        - Keep the DMSO under 0.5% so the Z\u{2032} stays above 0.5.
+        - Rerun A3 and B7 beside two fr
+        """
+
+    /// Longer than the window, to see the text run to the foot of it.
+    private static let longer = answer + """
+
+
+        **Why not Tris?** Its pKa falls by about 0.03 for each degree it warms, so a plate that sits at 37 \u{00B0}C in the \
+        reader drifts by more than a tenth of a pH unit over the run. HEPES moves about a third as much, which is why \
+        the Z\u{2032} holds.
+
+        1. Pre-warm the plate to 37 \u{00B0}C before the first read.
+        2. Read the controls first and last, so a lamp drift shows as a slope.
+        3. Flag any well whose last control read is more than 15% off its first.
+        4. Keep the buffer lot the same for the whole plate, and note it in the run sheet beside the plate barcode and \
+        the date.
+
+        If B7 still drifts after all of that, check the reader\u{2019}s lamp hours before the buffer: a lamp past 1,000 \
+        hours loses intensity unevenly across the plate, and the edge wells go first.
+        """
 
     private func draw<V: View>(_ view: V, size: NSSize, name: String, to directory: URL) async throws {
         for dark in [false, true] {
@@ -133,6 +207,23 @@ struct AskModelSnapshotTests {
         try await draw(Window(model: try await model(conversation: true, ask: true)), size: size, name: "ask-answered", to: directory)
         try await draw(Window(model: try await model(answer: .failure(.timedOut), ask: true)), size: size,
                        name: "ask-failed", to: directory)
+
+        // The stream: thinking, partway (short and long), stopped and cut off partway.
+        let thinking = try await streaming(words: "", thinking: true)
+        try await draw(Window(model: thinking), size: size, name: "ask-thinking", to: directory)
+        thinking.cancel()
+        let partway = try await streaming(words: Self.partway, thinking: true)
+        try await draw(Window(model: partway), size: size, name: "ask-streaming", to: directory)
+        partway.cancel()
+        let long = try await streaming(words: Self.longer)
+        try await draw(Window(model: long), size: size, name: "ask-streaming-long", to: directory)
+        long.cancel()
+        let stopped = try await streaming(words: Self.partway, .ends(.cancelled, seconds: 14))
+        try await draw(Window(model: stopped), size: size, name: "ask-stopped", to: directory)
+        let cutOff = try await streaming(words: Self.partway, .ends(.cutOff(.stalled), seconds: 70))
+        try await draw(Window(model: cutOff), size: size, name: "ask-cutoff", to: directory)
+        let wholeAfterStream = try await streaming(words: Self.answer, .ends(nil, seconds: 9))
+        try await draw(Window(model: wholeAfterStream), size: size, name: "ask-streamed-answered", to: directory)
     }
 
     @Test func theSettingsSectionIsDrawnToPNGsWhenAsked() async throws {

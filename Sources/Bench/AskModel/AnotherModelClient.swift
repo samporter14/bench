@@ -6,13 +6,13 @@
 // no redirect: a redirect could carry the key to another host. The key goes in
 // the Authorization header of a request to that address and nowhere else.
 //
-// Each request has a deadline (two minutes for an answer, 20 seconds for the
-// list); Cancel ends it at once; nothing is ever tried again on its own. A
-// failure is one plain sentence (`AnotherModelFailure.sentence`). Nothing here
-// logs: the callers log fixed words and counts (AnotherModel.swift).
-//
-// No streaming: the answer comes whole, which keeps Cancel, the deadline and
-// the failures one path each.
+// The list has a deadline (20 seconds). An answer is streamed (`"stream": true`,
+// AnotherModelStream.swift): two minutes for the first chunk, a minute with none
+// after that, ten minutes in all; a server that ignores `stream` and answers
+// JSON is read whole, as it was. Cancel ends either at once, keeping the words
+// that came; nothing is ever tried again on its own. A failure is one plain
+// sentence (`AnotherModelFailure.sentence`). Nothing here logs: the callers log
+// fixed words and counts (AnotherModel.swift).
 import Foundation
 
 // MARK: The address and the key
@@ -90,10 +90,16 @@ enum AnotherModelFailure: Error, Equatable, Sendable {
     case status(Int)
     /// A 2xx whose body isn't an answer (or a list): not JSON, empty, too big.
     case unreadable
+    /// The answer was coming and stopped; the words that came are kept.
+    case cutOff(Cut)
     /// Something Settings has to say first.
     case notSet(Missing)
 
     enum Missing: Sendable { case switchedOff, key, model, address }
+
+    /// How a stream that had begun ended: nothing for a minute, still going
+    /// after ten (or past 4 MiB), the connection closed or lost, an error chunk.
+    enum Cut: Sendable { case stalled, overran, closed, errored }
 
     /// The sentence the window or Settings shows. `host` names the address;
     /// `limit` is the deadline that ran out; `inSettings` is Settings' own
@@ -111,6 +117,10 @@ enum AnotherModelFailure: Error, Equatable, Sendable {
         case .cancelled: "Cancelled."
         case .status(let code): "\(host) answered with an error (\(code)). Try again in a moment."
         case .unreadable: "\(host) sent back something that isn\u{2019}t an answer."
+        case .cutOff(.stalled): "The answer stopped coming. Ask again, or ask something shorter."
+        case .cutOff(.overran): "The answer ran on for too long, so Capsid stopped it."
+        case .cutOff(.closed): "\(host) closed the connection before the answer was done. Ask again."
+        case .cutOff(.errored): "\(host) reported an error while it was answering. Try again in a moment."
         case .notSet(.switchedOff): "Ask another model is off. Turn it on in Settings \u{2192} General first."
         case .notSet(.key): "Paste your key in Settings \u{2192} General first."
         case .notSet(.model): "Choose a model in Settings \u{2192} General first."
@@ -129,6 +139,10 @@ enum AnotherModelFailure: Error, Equatable, Sendable {
         case .cancelled: "cancelled"
         case .status(let code): "status \(code)"
         case .unreadable: "unreadable answer"
+        case .cutOff(.stalled): "stalled"
+        case .cutOff(.overran): "ran too long"
+        case .cutOff(.closed): "connection closed"
+        case .cutOff(.errored): "error in the stream"
         case .notSet(.switchedOff): "switched off"
         case .notSet(.key): "no key"
         case .notSet(.model): "no model"
@@ -161,10 +175,13 @@ enum AnotherModelFailure: Error, Equatable, Sendable {
 final class AnotherModelClient {
     static let shared = AnotherModelClient()
 
-    /// An answer may take two minutes; the list, 20 seconds.
+    /// The first chunk of an answer may take two minutes; the list, 20 seconds.
     nonisolated static let askLimit: Duration = .seconds(120)
     nonisolated static let listLimit: Duration = .seconds(20)
-    /// A body over this (4 MiB) isn't read as an answer.
+    /// Once an answer has begun: a minute with no chunk ends it, and ten minutes in all.
+    nonisolated static let idleLimit: Duration = .seconds(60)
+    nonisolated static let overallLimit: Duration = .seconds(600)
+    /// A body over this (4 MiB), or an answer longer, isn't read as an answer.
     nonisolated static let maxBody = 4 * 1024 * 1024
     /// The most models a list gives, and the longest name taken.
     nonisolated static let maxModels = 200
@@ -172,6 +189,8 @@ final class AnotherModelClient {
 
     let askLimit: Duration
     let listLimit: Duration
+    let idleLimit: Duration
+    let overallLimit: Duration
     private let session: URLSession
     private let wait: @MainActor (Duration) async -> Void
 
@@ -179,10 +198,13 @@ final class AnotherModelClient {
     /// stands in for the clock, so a deadline can run out at once.
     init(configuration: URLSessionConfiguration = AnotherModelClient.configuration(),
          askLimit: Duration = AnotherModelClient.askLimit, listLimit: Duration = AnotherModelClient.listLimit,
+         idleLimit: Duration = AnotherModelClient.idleLimit, overallLimit: Duration = AnotherModelClient.overallLimit,
          wait: @escaping @MainActor (Duration) async -> Void = WriteDeadline.sleep) {
         session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
         self.askLimit = askLimit
         self.listLimit = listLimit
+        self.idleLimit = idleLimit
+        self.overallLimit = overallLimit
         self.wait = wait
     }
 
@@ -209,18 +231,16 @@ final class AnotherModelClient {
         }
     }
 
-    /// One question and the turns before it (`POST /chat/completions`); the
-    /// answer's text.
-    func ask(address: URL, key: String, model: String, turns: [ChatTurn]) async -> Result<String, AnotherModelFailure> {
+    /// One question and the turns before it (`POST /chat/completions`,
+    /// streamed): the answer's text, or the words that came and why it didn't
+    /// finish. `progress` hears the words as they arrive (AnotherModelStream.swift).
+    func ask(address: URL, key: String, model: String, turns: [ChatTurn],
+             progress: @escaping @MainActor (AskProgress) -> Void = { _ in }) async -> AnotherModelAnswer {
         guard let request = Self.askRequest(address: address, key: key, model: model, turns: turns, limit: askLimit) else {
-            return .failure(.unreadable)
+            return .failed(.unreadable)
         }
-        switch await perform(request, limit: askLimit) {
-        case .failure(let failure): return .failure(failure)
-        case .success(let data):
-            guard let answer = Self.answer(in: data) else { return .failure(.unreadable) }
-            return .success(answer)
-        }
+        let run = AskStreamRun(progress: progress, wait: wait, first: askLimit, idle: idleLimit, overall: overallLimit)
+        return await run.start(session: session, request: request)
     }
 
     /// The request, its deadline and its answer's status. Cancelling the
@@ -266,10 +286,11 @@ final class AnotherModelClient {
         return request
     }
 
-    /// `{"model", "messages": [{"role", "content"}], "stream": false}`.
+    /// `{"model", "messages": [{"role", "content"}], "stream": true}`, asking
+    /// for server-sent events.
     nonisolated static func askRequest(address: URL, key: String, model: String, turns: [ChatTurn], limit: Duration) -> URLRequest? {
         let messages = turns.map { ["role": $0.role.rawValue, "content": $0.text] }
-        let body: [String: Any] = ["model": model, "messages": messages, "stream": false]
+        let body: [String: Any] = ["model": model, "messages": messages, "stream": true]
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys, .withoutEscapingSlashes]) else {
             return nil
         }
@@ -278,6 +299,7 @@ final class AnotherModelClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = data
         prepare(&request, key: key, limit: limit)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         return request
     }
 

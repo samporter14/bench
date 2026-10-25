@@ -5,8 +5,12 @@
 // switch, "Include the conversation so far", with the turns it sends listed
 // under it while it is on; the model's name, quiet, and the one clay action,
 // Ask (⌘↩); then the answer, drawn by the reference window's Markdown reader,
-// with Copy and Send to Session at the foot. While it asks: a spinner and
-// Cancel (Esc). A failure is one sentence in clay-text.
+// with Copy and Send to Session at the foot. While it asks: a spinner (or a
+// quiet "Thinking…" while only reasoning arrives) and Cancel (Esc); then the
+// words as they arrive, the view following the end until the reader scrolls
+// up (AskScrollFollow), and Cancel still in Ask's place. A failure is one
+// sentence in clay-text; one that comes after some words keeps them on
+// screen, marked, with Copy and without Send to Session.
 //
 // One window per session; opening it again brings it forward (with the new
 // selection in the field, unless it is asking). Nothing in it is saved: the
@@ -121,7 +125,7 @@ struct AskModelView: View {
                 .padding(.bottom, 16)
             Solanum.hairline.frame(height: 1)
             answerPage
-            if model.phase == .answered { footer }
+            if model.phase == .answered || model.isPartial { footer }
         }
         .frame(minWidth: 420, minHeight: 420)
         .background { Solanum.page.ignoresSafeArea() }
@@ -166,11 +170,11 @@ struct AskModelView: View {
                     .help("The model chosen in Settings \u{2192} General")
                 Spacer(minLength: 8)
                 // While it asks, Cancel takes Ask's place: one button at a time.
-                if model.phase == .asking {
+                if model.isAsking {
                     Button("Cancel") { model.cancel() }
                         .buttonStyle(SolanumPillStyle(.regular))
                         .keyboardShortcut(.cancelAction)
-                        .help("Stop asking (Esc)")
+                        .help("Stop asking (Esc); what has come stays")
                 } else {
                     Button("Ask") { model.ask() }
                         .buttonStyle(SolanumPillStyle(.regular, prominent: true))
@@ -188,7 +192,7 @@ struct AskModelView: View {
             .foregroundStyle(Solanum.ink)
             .scrollContentBackground(.hidden)
             .focused($typing)
-            .disabled(model.phase == .asking)
+            .disabled(model.isAsking)
             .padding(.horizontal, 8)
             .padding(.vertical, 8)
             .frame(height: 112)
@@ -233,7 +237,7 @@ struct AskModelView: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .tint(Theme.clay)
-                .disabled(model.phase == .asking)
+                .disabled(model.isAsking)
         }
     }
 
@@ -279,61 +283,61 @@ struct AskModelView: View {
 
     // MARK: The answer
 
+    /// Every state that has words shows them in one view, so the reading
+    /// position survives the stream ending (a stop, a failure) and the foot
+    /// appearing.
     @ViewBuilder
     private var answerPage: some View {
-        switch model.phase {
-        case .answered:
-            ScrollView {
+        if model.phase == .streaming || model.phase == .answered || model.isPartial {
+            AskAnswerScroll {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(answerCaption)
                         .font(.system(size: Solanum.captionSize))
                         .foregroundStyle(Solanum.muted)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    ReferenceTextView(text: model.rendered, selection: ReferenceSelection())
+                    ReferenceTextView(text: model.rendered, selection: ReferenceSelection(), keepsSelection: true)
                 }
                 .padding(.horizontal, Self.side)
                 .padding(.vertical, 18)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .scrollContentBackground(.hidden)
-        case .asking:
-            centred {
-                ProgressView().controlSize(.small)
-                Text("Asking \(model.modelName ?? "the other model")\u{2026}")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Solanum.muted)
-            }
-        case .failed(let sentence):
-            centred {
-                Text(sentence)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.clayText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        case .cancelled:
-            centred {
-                Text("Cancelled.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Solanum.muted)
-            }
-        case .ready:
-            centred {
-                Text("Your question goes to \(model.host), not to Claude.\nThe answer shows here.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Solanum.muted)
-                    .multilineTextAlignment(.center)
+        } else {
+            switch model.phase {
+            case .asking:
+                centred {
+                    ProgressView().controlSize(.small)
+                    Text(model.thinking ? "Thinking\u{2026}" : "Asking \(model.modelName ?? "the other model")\u{2026}")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Solanum.muted)
+                }
+            case .failed(let sentence):
+                centred {
+                    Text(sentence)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.clayText)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            case .cancelled:
+                centred {
+                    Text("Cancelled.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Solanum.muted)
+                }
+            default:
+                centred {
+                    Text("Your question goes to \(model.host), not to Claude.\nThe answer shows here.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Solanum.muted)
+                        .multilineTextAlignment(.center)
+                }
             }
         }
     }
 
-    /// "Answered in 9 s", naming the model only when it isn't the one named
-    /// above (the choice changed in Settings since).
     private var answerCaption: String {
-        let time = model.seconds.map { $0 < 1 ? " in under a second" : " in \($0) s" } ?? ""
-        guard let by = model.answeredBy, by != model.modelName else { return "Answered" + time }
-        return "\(by) answered" + time
+        AskRules.caption(phase: model.phase, seconds: model.seconds, answeredBy: model.answeredBy, model: model.modelName)
     }
 
     private func centred<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -385,6 +389,8 @@ struct AskModelView: View {
         case .done(let sentence): return (sentence, false)
         case .failed(let sentence): return (sentence, true)
         case .idle:
+            // A failure that came after some words: its sentence leads, and Send is dim.
+            if case .failed(let sentence) = model.phase, model.isPartial { return (sentence, true) }
             if let check = model.sendCheck, let why = AskRules.unsendable(check) { return (why, false) }
             return nil
         }
@@ -409,4 +415,33 @@ struct AskModelTitle: View {
         .fixedSize()
         .accessibilityElement(children: .combine)
     }
+}
+
+/// The answer's scroll view. It goes to the end as words arrive, and stops
+/// when the reader scrolls up; it goes on again when they reach the end
+/// (`AskScrollFollow`). Short of a full page it is at the top, where reading
+/// begins.
+private struct AskAnswerScroll<Content: View>: View {
+    @ViewBuilder let content: Content
+    @State private var follow = AskScrollFollow()
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    content
+                    Color.clear.frame(height: 1).id(Self.end)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .onScrollGeometryChange(for: AskScrollMetrics.self) { geometry in
+                AskScrollMetrics(top: geometry.visibleRect.minY, bottom: geometry.visibleRect.maxY,
+                                 content: geometry.contentSize.height)
+            } action: { old, new in
+                if follow.update(from: old, to: new) { proxy.scrollTo(Self.end, anchor: .bottom) }
+            }
+        }
+    }
+
+    private static var end: String { "end" }
 }

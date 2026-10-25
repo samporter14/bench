@@ -187,7 +187,7 @@ private final class Rig {
             modelName: { self.model },
             host: { "api.abliteration.ai" },
             limit: .seconds(120),
-            ask: { chat in
+            ask: { chat, _ in
                 self.asked.append(chat)
                 if self.holdAsk {
                     await withTaskCancellationHandler {
@@ -195,10 +195,13 @@ private final class Rig {
                     } onCancel: {
                         Task { @MainActor in self.release() }
                     }
-                    if Task.isCancelled { return .failure(.cancelled) }
+                    if Task.isCancelled { return .failed(.cancelled) }
                 }
                 self.now += .seconds(9)
-                return self.answer
+                switch self.answer {
+                case .success(let text): return AnotherModelAnswer(text: text, failure: nil)
+                case .failure(let failure): return .failed(failure)
+                }
             },
             send: { request, id, checking in
                 self.sent.append(request)
