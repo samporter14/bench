@@ -323,6 +323,72 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-24, Claude's legend: the Shelf offers the legend file Claude made with a figure
+
+When Claude makes a figure, its answer often makes a legend file too (`FIGURE_LEGENDS_final.md`, or a `.md` with the figure's
+name). The detail card now offers it in one quiet line, **Use Claude's legend** · the file's name, and puts it in the legend
+field. On `g/shelf-legend` (from 7492fdd). Everything ran on made-up sessions, a fake history page, fake reads and a scratch Kept
+folder: no daemon, no window, nothing read under `~/.claude-science`, nothing launched, installed or pushed.
+
+- ✅ **Finding the file.** The files of the answer that showed the figure are read as the reference reader reads them (one page of
+  history around the README's `source_row`, `ReferenceRules.answers`, the files that aren't pictures). A candidate is an md,
+  markdown or txt file, not empty and under 1,000,000 bytes, other than the figure, whose name has "legend" in it (any case) or whose
+  stem is the figure's. Best first, at most six: stem match, a legend with the figure's stem or number in its name, a legend with no
+  number, a legend that names another figure. No `source_row` (a last answer standing in), a document and a table: no offer; a page
+  that can't be read is asked again, one that was read is asked once.
+- ✅ **The card's offer.** Empty legend: "Use Claude's legend"; written (or typed and not yet saved): "Replace with Claude's legend…",
+  which asks once and fetches nothing before the answer; several files: the name is a menu, best first; nothing while the field has a
+  save waiting on the person, and nothing while it holds exactly what Claude's legend put in. A figure shelved alone has no legend
+  field, so the line sits alone under a hairline there; after use the card shows its Files (the figure and Claude's file) and the field.
+- ✅ **Only this figure's part.** A heading or a bold label at the start of a line that names the file name, the stem or "Figure N" /
+  "Fig. N" for a number in the figure's name. "Figure 12", "Figure 20", "Figure 2A", and a supplementary "Figure S2" are not "Figure 2";
+  headings in a code fence aren't headings; a heading that only names the figure is left out, one with words of its own opens the text;
+  a bold label stays; a "**Figure 2.**" inside "## Figure 2" is one section; two equally plain sections mean none, and the whole file is
+  used. At most 3,000 characters, cut at a paragraph, a line or a word, with "[Cut here: the rest is in FILE.]" as the last line.
+- ✅ **Through the field's own save.** `ShelfLegendEditor.put` saves at once and takes the legend back whole if it can't (a README
+  changed in another app: "Couldn't put Claude's legend in. README.md was changed in another app. Nothing was changed."; no draft
+  left, the window's own line not added). `list` copies the file beside the figure and lists it (`KeptDisk.listFile`, role `legend`, new
+  in `KeptRole`) in the editor's queue of writes, once for a version, a number for other bytes under the same name, never over
+  another file, and the editor takes the new README as its base so the next edit isn't a false "changed in another app". The README
+  with words under its title, with Windows line ends, with a byte order mark, and with all three comes out as the same README with
+  only the legend and the file list changed (compared with `replacingLegend` then `updating` on the original, byte for byte).
+- ✅ **Undo is the Shelf's pill**, eight seconds: the legend goes back to what it was (empty, or the words that were there, line breaks
+  and all) unless it was edited since ("Your legend was edited since, so it was left as it is."). The copy of Claude's file stays,
+  listed: nothing in a kept folder is deleted. Using it again after Undo copies nothing twice.
+- ✅ **A legend file isn't data or code.** `KeptRecord.keepsDataOrCode`: Keep with Data and Code… stays in ⋯ after a legend file is
+  listed, and a legend-only folder never beats a real keep for the same figure in `ShelfRules.items`.
+- ✅ **Tests** (75, all new): `ShelfClaudeLegendRulesTests.swift` (39: candidates, numbers, figure references, parts, the cap, the
+  offer's states, sentences, the answer's files from a page), `ShelfClaudeLegendTests.swift` (35: look and its cache, the whole use on
+  each README shape, the pill, a written legend asked first, Undo three ways, the file once, a README changed elsewhere, a save waiting,
+  a file that can't be had, a second ask, `KeptDisk.listFile`, the role's round trip), `ShelfClaudeLegendSnapshotTests.swift` (captures).
+- ✅ **Mutations** (break the fix, see the tests fail, restore; each one alone, then `git checkout`):
+  1. a number match that ignores the number: 16 tests fail (the section ones, and every use that picks a section);
+  2. no question before replacing: `aWrittenLegendIsAskedAboutFirst…`, `wordsTypedButNotYetSavedCountAsWrittenToo`;
+  3. the README written from the record instead of by `updating`: the five-shape test (all five shapes, the plain one too) and the
+     editor-keeps-the-base test;
+  4. the editor not taking the new README as its base: five tests (a later edit saying "changed in another app");
+  5. Undo over an edited legend: `undoLeavesALegendThatWasEditedSince`;
+  6. candidates worst first: eight tests;
+  7. any file making a folder "kept with data and code": two tests;
+  8. no cap: four tests;
+  9. a put-in over a save waiting on the person: found missing (nothing failed), so `aSaveWaitingOnThePersonIsNeverTakenOverByClaudesLegend`
+     was added; with both of its guards removed it fails;
+  10. no reload after a put that failed: `aREADMEChangedInAnotherAppIsNeverWrittenOver…`;
+  11. a figure number not ended by a non-letter: `aFigureReferenceMatchesOnlyItsOwnNumber` and `aFigureReferenceIsFigureOrFigNumberAndNotAPanel`
+      (the first version of that test passed under mutation 1 as well, because two wrong sections made the same "whole file"; it
+      now has one wrong section at a time).
+- ✅ **Captures** (offscreen, light and dark, `ShelfClaudeLegendSnapshotTests` with `CAPSID_SNAPSHOT_DIR`): the offer for a figure
+  shelved alone, after use (the field, the Files, the pill with Undo), the offer to replace, and the several-files line. The open menu
+  and the question are the system's and can't be drawn off screen; the menu is a hand-drawn stand-in in the capture, the question isn't drawn.
+  The pill fits one line at 900 points. The Markdown marks in Claude's text (`**Edge effects.**`) show in the field as they are written.
+- ✅ **The whole suite**: 4,015 tests in 518 suites pass (3,940 in 509 before), `✔ Test run with 4015 tests in 518 suites passed`;
+  no failure in the run, no flake.
+- ⏳ **Live**, with a real answer, a real legend file and the real daemon: that a real answer's history page lists the legend file
+  under the reply that shows the figure (the offer depends on `_artifact_refs`, and on the row being on the page: a very long turn can
+  drop it from the page); that real legend files are headed and labelled in the ways the rules read ("**Figure 2 | Title.**",
+  "FIGURE 2", a table of contents first); the system's menu and question; the pill at the narrowest window; and that this Capsid's
+  README with `role: legend` is not read by Capsid 1.0.4 (its folder leaves that Shelf).
+
 ## 2026-10-24, messages made on the Mac may be 32,000 characters (the phone's stay at 4,000)
 
 Every message Capsid sends into a session shares one send path, and its cap (4,000 characters) was set for the
