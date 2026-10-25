@@ -142,7 +142,7 @@ enum AskRules {
         case .tooLong(let count):
             "Too long to send as a message (\(count.formatted()) characters; the most is \(RemoteActionRequest.macMessageLimit.formatted())). Copy it instead."
         case .reference: "It holds text Claude Science reads as a file reference, so it can\u{2019}t be sent. Copy it instead."
-        case .partial: "Only part of the answer came, so it can\u{2019}t be sent. Copy it instead."
+        case .partial: "Only part of the answer came, so it can\u{2019}t be sent."
         }
     }
 
@@ -339,6 +339,8 @@ final class AskModel: ObservableObject {
     /// Every word that has arrived; `answer` and `rendered` follow it, a tenth of a second apart.
     private var streamed = ""
     private var lastDrawn: ContinuousClock.Instant?
+    /// How soon the next drawing may come: a tenth of a second, or longer when drawing took long.
+    private var drawEvery = AskRules.renderEvery
     private var drawTask: Task<Void, Never>?
     /// Seconds from the question to the first word, for the log.
     private var firstWord: Int?
@@ -437,6 +439,7 @@ final class AskModel: ObservableObject {
         streamed = ""
         firstWord = nil
         lastDrawn = nil
+        drawEvery = AskRules.renderEvery
         drawTask?.cancel()
         drawTask = nil
         askTask = Task { [weak self] in
@@ -481,8 +484,8 @@ final class AskModel: ObservableObject {
     private func drawSoon() {
         guard drawTask == nil else { return }
         let now = dependencies.clock()
-        if let lastDrawn, lastDrawn + AskRules.renderEvery > now {
-            let remaining = lastDrawn + AskRules.renderEvery - now
+        if let lastDrawn, lastDrawn + drawEvery > now {
+            let remaining = lastDrawn + drawEvery - now
             drawTask = Task { [weak self] in
                 guard let self else { return }
                 await dependencies.wait(remaining)
@@ -496,9 +499,14 @@ final class AskModel: ObservableObject {
     }
 
     private func draw() {
+        let began = dependencies.clock()
         answer = streamed
         rendered = dependencies.render(streamed)
-        lastDrawn = dependencies.clock()
+        let done = dependencies.clock()
+        lastDrawn = done
+        // A very long answer takes longer to draw: the next drawing waits three times as long as this
+        // one took (a second at most), so drawing never takes the window over.
+        drawEvery = min(.seconds(1), max(AskRules.renderEvery, (done - began) * 3))
     }
 
     /// The ask is over, whole or in part. The words that came are drawn in

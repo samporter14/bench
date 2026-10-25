@@ -28,6 +28,8 @@ private final class StreamRig {
     var said = ""
     /// The wait that spaces the drawing.
     let drawClock = ManualClock()
+    /// How long drawing the words takes, as the clock sees it.
+    var renderTakes: Duration = .zero
     private var emit: (@MainActor (AskProgress) -> Void)?
     private var pending: CheckedContinuation<AnotherModelAnswer, Never>?
 
@@ -56,6 +58,7 @@ private final class StreamRig {
             render: { text in
                 self.drawn.append(text)
                 self.drawnAt.append(self.now)
+                self.now += self.renderTakes
                 return NSAttributedString(string: text)
             },
             clock: { self.now },
@@ -290,6 +293,27 @@ struct AskStreamDrawingTests {
         }
     }
 
+    @Test func aDrawingThatTakesLongMakesTheNextOnesWaitLonger() async {
+        let rig = StreamRig()
+        // A very long answer: each drawing takes 80 ms, so the next waits three times that.
+        rig.renderTakes = .milliseconds(80)
+        _ = await asked(rig)
+        rig.say("a")
+        #expect(rig.drawn == ["a"])
+        rig.say("b")
+        await rig.drawClock.until(waiting: 1)
+        #expect(rig.drawClock.waiting(.milliseconds(240)) == 1)
+        await rig.tick()
+        // Drawing took a whole second: the wait is capped at one second.
+        rig.renderTakes = .seconds(2)
+        rig.now += .seconds(1)
+        rig.say("c")
+        #expect(rig.drawn.count == 3)
+        rig.say("d")
+        await rig.drawClock.until(waiting: 1)
+        #expect(rig.drawClock.waiting(.seconds(1)) == 1)
+    }
+
     @Test func theEndDrawsEveryWordAtOnceAndLeavesNoDrawingWaiting() async {
         let rig = StreamRig()
         let model = await asked(rig)
@@ -356,7 +380,7 @@ struct AskStreamStoppedTests {
         await settle { model.isPartial }
         #expect(model.sendCheck == .partial)
         #expect(!model.canSend)
-        #expect(AskRules.unsendable(.partial) == "Only part of the answer came, so it can\u{2019}t be sent. Copy it instead.")
+        #expect(AskRules.unsendable(.partial) == "Only part of the answer came, so it can\u{2019}t be sent.")
         model.sendToSession()
         #expect(rig.sent.isEmpty && model.sending == .idle)
         model.copy()

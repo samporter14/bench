@@ -3499,7 +3499,7 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] activity list: with six waiting, one put off with Later, and two working, Later is its own group at the bottom of Needs you, Working shows whole with its clocks, and the Dock menu has the same order; on a short screen "N more" appears and opens in place
 - [ ] acting from the list: hover a question's row, Reply… opens the reply window; hover a plan's row, Approve approves it (a throwaway session) and the row says Approved; hover a read-only tool's request, Allow Once and Deny; Tab to a row with full keyboard access on and the same buttons appear; with "Show plans, questions and requests on the card" off, no buttons and the row only opens; a Later row has only its bells
 - [ ] reopen where you were: open a session, ⌘Q, launch: that session; go to the home page, ⌘Q, launch: the home page; `kill -9` Capsid while in a session, launch: that session; launch from a `bench://session?…` link of another session: that one, not the remembered; the remembered session gone (deleted, or another org active): the home page; sign out and back in on a remembered session: still on it
-- [ ] Ask another model (off by default; needs a real key, Sam's own): Settings → General → Another model off shows no toolbar button, no File item and no item in Claude Science's model menu; on with no key still none; paste the key and Save: the model list fills and the first model is chosen; the toolbar button (beside Results and the Shelf) appears, dim with no session in the main window and on in one, and a click opens the window with the session's last question; File → Ask Another Model… does the same; the page's model menu (the picker beside the message box) ends with a rule and "Ask Another Model…", in the menu's own look, lit under the pointer, and choosing it opens the window with what is typed in the message box (and with the session's last question when the box is empty), and the page's menu closes; Include the conversation so far lists the turns before it; Ask answers with Markdown and "Answered in N s"; Cancel (Esc) while it asks; a wrong key says "didn't accept your key"; the main window's right-click has no Ask item (on selected text, a figure or a tab); the reference window's right-click on Claude's words has it; Send to Session posts "Another model (…) answered:" and the answer into the session as the next message, once; the key file is 0600 in Application Support/Bench and Remove deletes it; the log (`another-model`) has counts and no words (and "Model menu: armed → … → placed" for each press of the picker); Settings → off closes nothing but the open window then refuses to send
+- [ ] Ask another model (off by default; needs a real key, Sam's own): Settings → General → Another model off shows no toolbar button, no File item and no item in Claude Science's model menu; on with no key still none; paste the key and Save: the model list fills and the first model is chosen; the toolbar button (beside Results and the Shelf) appears, dim with no session in the main window and on in one, and a click opens the window with the session's last question; File → Ask Another Model… does the same; the page's model menu (the picker beside the message box) ends with a rule and "Ask Another Model…", in the menu's own look, lit under the pointer, and choosing it opens the window with what is typed in the message box (and with the session's last question when the box is empty), and the page's menu closes; Include the conversation so far lists the turns before it; Ask streams the answer in with Markdown and "Answering…" over it, then "Answered in N s"; the view follows the end and stops when you scroll up; "Thinking…" shows while only reasoning has come; Cancel (Esc) while it asks or streams keeps the words ("Stopped after N s", Copy on, Send to Session dim); a wrong key says "didn't accept your key"; the main window's right-click has no Ask item (on selected text, a figure or a tab); the reference window's right-click on Claude's words has it; Send to Session posts "Another model (…) answered:" and the answer into the session as the next message, once; the key file is 0600 in Application Support/Bench and Remove deletes it; the log (`another-model`) has counts and no words (and "Model menu: armed → … → placed" for each press of the picker); Settings → off closes nothing but the open window then refuses to send
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Capsid settings already stored; Help → Welcome to Capsid shows it again; Return and Esc work; the updates switch stays off until turned on
 
 ## Results (Results/, since 0.7.0)
@@ -6412,33 +6412,89 @@ Top to bottom:
   reply to it, a refusal, is never sent, so the other model isn't shown the
   refusal. Read when the switch goes on, never before.
 - **The model's name**, quiet, at the left; and at the right the one clay
-  action, **Ask** (⌘↩; the Return key writes a new line). While it asks, Cancel
-  (Esc) takes its place: one button at a time.
-- **The answer**, under a hairline, drawn with the reference window's Markdown
-  reading view (`AnswerMarkdown`, `.reference`: 14 on 21, selectable) with a
-  line saying "Answered in 9 s" (and the model's name when the choice changed in
-  Settings since). Before it, centred and quiet: "Your question goes to
-  api.abliteration.ai, not to Claude. The answer shows here."; while it asks, a
-  spinner and "Asking abliterated-model…"; a failure is one sentence in clay
-  text; Cancel says "Cancelled."
-- **The foot**, once there is an answer: **Copy** (the answer as it came, not as
-  drawn; the pill then reads "Copied") and **Send to Session**, quiet pills, and the
-  line between them when there is one to say.
+  action, **Ask** (⌘↩; the Return key writes a new line). From the moment the
+  question is out until the last word, Cancel (Esc) takes its place: one button at
+  a time.
+- **The answer** streams in (2026-10-24), under a hairline, drawn with the reference window's Markdown
+  reading view (`AnswerMarkdown`, `.reference`: 14 on 21, selectable). Before it, centred and quiet:
+  "Your question goes to api.abliteration.ai, not to Claude. The answer shows here."
+  - **Asking:** a spinner and "Asking abliterated-model…". When only reasoning has come (some models
+    send their thinking as `reasoning_content`; it is never shown as the answer, and never kept), the
+    same spot reads "Thinking…" with the same spinner, and nothing else changes. No new control: the
+    words are the model's own and a live peek at them would be one more thing to read, so the window
+    only says that the model is at work.
+  - **Words arriving:** the answer area is the text, filling as it comes, over one quiet line that
+    says "Answering…". The Markdown is drawn again at most ten times a second
+    (`AskRules.renderEvery`, 100 ms; the first words at once, the last in full the moment it ends), and
+    never oftener than three times as long as the last drawing took (a second at most), so a very long
+    answer cannot take the window over. A selection the reader has made stays while the text grows
+    (`ReferenceTextView.keepsSelection`). The text is followed to its end while the reader has not
+    scrolled up, and not after they have, until they scroll back to the end (`AskScrollFollow`: a text
+    that grows with the reader's place unchanged is growth, not a scroll; only the top of the visible
+    part moving up, away from the end, stops it). Under a full page it sits at the top, where reading
+    begins.
+  - **The end:** the line over the text reads "Answered in 9 s" (and the model's name when the choice
+    changed in Settings since), in the same place, so nothing moves. The foot comes, and Ask, in clay, is back.
+  - **A failure** with no word yet is one sentence in clay text; Cancel with none says "Cancelled."
+  - **A stop partway** (Cancel, a deadline, an error, a lost connection) keeps every word that came on
+    screen, drawn in full: the line over it reads "Stopped after 14 s" (Cancel) or "Cut off after 70 s",
+    and the foot says why (below).
+- **The foot**, once the answer is whole, or stopped partway, and never while words arrive:
+  **Copy** (the answer as it came, not as drawn; the pill then reads "Copied") and **Send to Session**,
+  quiet pills, and the line between them when there is one to say.
+  - **Whole:** both work.
+  - **Partway:** Copy works (what came is already on screen and selectable, and nothing leaves the
+    Mac), and Send to Session is dim: half an answer is not posted into a session as the user's own
+    "another model answered:" message, where Claude would read it as complete. The line says so: after
+    Cancel, in muted words, "Only part of the answer came, so it can't be sent."; after a failure, the
+    failure's own sentence in clay (below).
 
-**The request** (`AnotherModelClient`): an ephemeral `URLSession`; `GET /models`
-(20 seconds) and `POST /chat/completions` with `{"model", "messages":
-[{"role", "content"}], "stream": false}` and nothing more (120 seconds); the
-deadline is a race against the request (`WriteDeadline.race`), not only the
-session's own timeout, so Cancel and the deadline both end the request itself at
-once; nothing is ever tried again on its own, and an answer over 4 MiB is not
-read. Not streamed: the answer comes whole, which keeps Cancel, the deadline and
-the failures to one path each; an answer that takes a minute shows a spinner
-and not words arriving. Failures are plain sentences (`AnotherModelFailure`):
+**The request** (`AnotherModelClient`, `AnotherModelStream.swift`): an ephemeral `URLSession`;
+`GET /models` (20 seconds) and `POST /chat/completions` with `{"model", "messages":
+[{"role", "content"}], "stream": true}` and nothing more, asking for `Accept: text/event-stream`.
+Nothing is ever tried again on its own; the request is one, never retried, whatever ends it.
+- **The stream** is server-sent events, read as bytes by `AskStreamLines`, which cuts a line at LF, CR
+  or CRLF and nowhere else (Foundation's own `bytes.lines` also breaks at U+2028, U+2029, U+0085, U+000B
+  and U+000C, which are valid raw inside a JSON string and would cut a chunk in two and lose it). A line
+  is decoded once whole, so a character that arrived in two reads is whole by then. Each `data: {…}`
+  line is a chunk: the words are `choices[0].delta.content` (a string, or a list of text parts; absent,
+  null or empty is no words); `data: [DONE]` ends the answer. Blank lines, `:` comment lines, fields
+  that aren't `data` (`event:`, `id:`, `retry:`, anything unknown) and a `data:` line that isn't a JSON
+  object are ignored; a chunk with no `choices`, an empty list, or no `delta` (a usage chunk, a role
+  chunk) is a chunk with no words. `reasoning_content` or `reasoning` in the delta is never the answer.
+  `{"error": …}` (non-null) is a failure whose words are never shown.
+- **Whole JSON**: the 2xx answer's `Content-Type` decides, read after the status and before any body: one
+  that starts `text/event-stream` (`; charset=utf-8` and the like follow it) is the stream; anything else
+  is read whole (4 MiB at most) as the same `choices[0].message.content` as before. A server that ignores
+  `stream` answers JSON, and that is that. A body of lines under another content type is read as the
+  stream, whole, after the JSON has failed to be an answer.
+- **A status is read first**: 401, 403, 429 and the rest keep their sentences, and the body is never
+  read as an answer (a 302 is refused as before, and the key never follows it).
+- **Three deadlines on one clock** (the tests' `ManualClock`), none retried:
+  - **the first chunk**, two minutes from the request (`.timedOut`, "No answer came within 2 minutes."
+    as before): it is met by any `data:` chunk that reads as one, reasoning or a role included, not by
+    a `:` keepalive line;
+  - **then a minute** with no chunk (`.cutOff(.stalled)`): each chunk starts it over, and a `:`
+    keepalive line starts it over too, once a chunk has come. The request's own timeout (two minutes of
+    no data) is only a backstop under it;
+  - **ten minutes in all** (`.cutOff(.overran)`), however the chunks keep coming. An answer past 4 MiB
+    ends the same way.
+  The run (`AskStreamRun`) ends exactly once, with the words that arrived whatever ended it, stops the
+  request, and delivers nothing after. Cancel ends it at once (`.cancelled`, the words kept); a Cancel
+  or a window close before the ask began cannot hang it.
+- **Ends that are not the end**: a stream that closes cleanly counts as finished only after `[DONE]` or
+  a `finish_reason`; one that doesn't is `.cutOff(.closed)`, words kept (a truncated answer is not sent
+  as a whole one). A connection lost after a chunk has come is `.cutOff(.closed)` too, not "This Mac
+  isn't connected to the internet." (a network that was down before any chunk still says that).
+- **No retry, ever**: one request per press of Ask.
+
+Failures are plain sentences (`AnotherModelFailure`):
 - 401 or 403: "api.abliteration.ai didn't accept your key. Check it in Settings → General.";
 - 429: "Too many requests to api.abliteration.ai just now. Wait a minute, then ask again.";
-- the deadline: "No answer came within 2 minutes. Ask again, or ask something shorter.";
+- no first chunk: "No answer came within 2 minutes. Ask again, or ask something shorter.";
 - no network: "This Mac isn't connected to the internet."; the host not reached: "Couldn't reach api.abliteration.ai. Check the address in Settings → General.";
-- anything else (a 500, a redirect): "api.abliteration.ai answered with an error (500). Try again in a moment."; a 2xx that holds no answer: "… sent back something that isn't an answer.".
+- anything else (a 500, a redirect): "api.abliteration.ai answered with an error (500). Try again in a moment."; a 2xx that holds no answer: "… sent back something that isn't an answer.";
+- after the answer began (`.cutOff`, the words kept): "The answer stopped coming. Ask again, or ask something shorter." (a minute with no chunk); "The answer ran on for too long, so Capsid stopped it." (ten minutes, or 4 MiB); "api.abliteration.ai closed the connection before the answer was done. Ask again."; "api.abliteration.ai reported an error while it was answering. Try again in a moment." (an `{"error": …}` chunk; its words are never shown).
 
 **Send to Session** posts the answer into that session as the user's next
 message: "Another model (abliterated-model) answered:", a blank line, the answer.
@@ -6459,7 +6515,10 @@ and the pill reads "Sent ✓".
 
 **The log** (`another-model`, one of Capsid's log categories under `local.sam.bench`): fixed words
 and counts only, public-safe: "Another model: asked, 812 characters, with 6
-turns, answered in 9 s", "… failed after 120 s, timed out", "… cancelled after
+turns, first word in 2 s, answered in 9 s" (the first word's time is there only when words
+arrived on their own; a whole JSON answer has none), "… failed after 120 s, timed out", "… first word
+in 2 s, failed after 70 s, stalled" (the words after "failed after N s" are `AnotherModelFailure.word`:
+"stalled", "ran too long", "connection closed", "error in the stream"), "… cancelled after
 3 s", "Another model: listed 2 models", "Another model: key saved", "key
 removed", "listing models failed, key not accepted", "sent the answer to the
 session, sent". Never the question, the answer, the conversation, a model's

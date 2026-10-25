@@ -296,7 +296,7 @@ struct AskModelView: View {
                         .foregroundStyle(Solanum.muted)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    ReferenceTextView(text: model.rendered, selection: ReferenceSelection(), keepsSelection: model.isAsking)
+                    ReferenceTextView(text: model.rendered, selection: ReferenceSelection(), keepsSelection: true)
                 }
                 .padding(.horizontal, Self.side)
                 .padding(.vertical, 18)
