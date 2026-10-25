@@ -57,6 +57,10 @@ struct ShelfDependencies {
     /// What the user asked in the exchange that includes history row `row`:
     /// the nearest message of theirs before it. Nil when it can't be read.
     var question: @MainActor (_ frameID: String, _ row: Int) async -> String?
+    /// The files of the answer that holds history row `row`, as the reference reader tells them (the ones that aren't
+    /// pictures): where Claude's legend file is looked for (ShelfClaudeLegend.swift). Nil when they can't be read;
+    /// empty when the page has no answer around that row.
+    var answerFiles: @MainActor (_ frameID: String, _ row: Int) async -> [HistoryFile]? = { _, _ in nil }
 
     @MainActor
     static func live(shelf: ResultsShelf = .shared) -> ShelfDependencies {
@@ -80,6 +84,15 @@ struct ShelfDependencies {
                     before = page.from
                 }
                 return nil
+            },
+            answerFiles: { frameID, row in
+                guard Demo.mode == nil else { return nil }
+                // The page that holds the row and a few rows after it: a reply's files sit under its last message.
+                let before = row + 1 + ShelfClaudeLegendRules.rowsAhead
+                guard let read = try? await WebContainer.shared.readHistory(frameID, before: before, rows: 50,
+                                                                            nonce: ArtifactReadAbort.makeNonce()),
+                      case .page(let page) = read else { return nil }
+                return ShelfClaudeLegendRules.files(ofAnswerAtRow: row, in: page)
             })
     }
 }
@@ -141,6 +154,9 @@ final class Shelf: ObservableObject {
         load()
         return versions.contains(version)
     }
+
+    /// The reads and the disk the detail card's offer of Claude's legend uses (ShelfClaudeLegend.swift).
+    var legendDependencies: ShelfDependencies { dependencies }
 
     /// Reads the shelf's folders once, off the main actor, when something first
     /// asks what is on it. Harmless to call again.

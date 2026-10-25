@@ -20,10 +20,17 @@ final class ShelfModel: ObservableObject {
         let id = UUID()
         let sentence: String
         let removal: ShelfRemoval?
+        /// Claude's legend went into an item's field: Undo puts the legend back (ShelfClaudeLegend.swift).
+        var legend: ShelfClaudeLegend.Undo? = nil
+
+        /// The pill offers Undo.
+        var hasUndo: Bool { removal != nil || legend != nil }
     }
 
     let shelf: Shelf
     var index: KeptIndex { shelf.index }
+    /// Claude's legend files for the items: what the detail card offers and what using one does (ShelfClaudeLegend.swift).
+    let claudeLegend: ShelfClaudeLegend
     /// Export Figure as PDF… (ShelfPDFCommand.swift).
     let pdf: ShelfPDFMaker
 
@@ -59,6 +66,7 @@ final class ShelfModel: ObservableObject {
     private let legendDelay: Duration
 
     private var subscription: AnyCancellable?
+    private var legendSubscription: AnyCancellable?
     private var noteTask: Task<Void, Never>?
     private var pending: (folder: URL, until: Date)?
     private let now: () -> Date
@@ -68,9 +76,10 @@ final class ShelfModel: ObservableObject {
     private let noteLifetime: Duration
 
     init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() }, calendar: Calendar = .current,
-         pdf: ShelfPDFMaker? = nil, legendDelay: Duration = .seconds(1)) {
+         pdf: ShelfPDFMaker? = nil, legendDelay: Duration = .seconds(1), claudeLegend: ShelfClaudeLegend? = nil) {
         self.shelf = shelf
         self.legendDelay = legendDelay
+        self.claudeLegend = claudeLegend ?? ShelfClaudeLegend(dependencies: { shelf.legendDependencies })
         self.pdf = pdf ?? .live(disk: shelf.index.disk)
         self.now = now
         self.calendar = calendar
@@ -78,6 +87,10 @@ final class ShelfModel: ObservableObject {
         finder = ShelfFinder(actions: .live(shelf: shelf), changes: shelf.objectWillChange.map { _ in () }.eraseToAnyPublisher())
         finder.selectFolder = { [weak self] in self?.select(folder: $0) }
         items = ShelfRules.items(from: shelf.index.results)
+        // The card is redrawn when a look at an item's legend files ends or one is put in.
+        legendSubscription = self.claudeLegend.objectWillChange.sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.objectWillChange.send() }
+        }
         subscription = shelf.index.$results.sink { [weak self] results in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -266,11 +279,11 @@ final class ShelfModel: ObservableObject {
         return at > 0 ? shown[at - 1].id : nil
     }
 
-    func say(_ sentence: String, removal: ShelfRemoval? = nil) {
-        let made = Note(sentence: sentence, removal: removal)
+    func say(_ sentence: String, removal: ShelfRemoval? = nil, legend: ShelfClaudeLegend.Undo? = nil) {
+        let made = Note(sentence: sentence, removal: removal, legend: legend)
         note = made
         noteTask?.cancel()
-        let lifetime = removal == nil ? noteLifetime * 2 : noteLifetime
+        let lifetime = made.hasUndo ? noteLifetime : noteLifetime * 2
         noteTask = Task { [weak self] in
             try? await Task.sleep(for: lifetime)
             guard !Task.isCancelled, let self else { return }

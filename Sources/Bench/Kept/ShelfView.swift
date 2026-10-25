@@ -196,7 +196,7 @@ struct ShelfView: View {
         .shelfPickingKeys(model)
         .overlay(alignment: .bottom) {
             if let note = model.note {
-                ShelfNote(note: note, undo: { model.undoRemoval() })
+                ShelfNote(note: note, undo: { model.undoNote() })
                     .padding(.bottom, 12)
                     .transition(.opacity)
             }
@@ -519,12 +519,20 @@ struct ShelfDetail: View {
                     ShelfExtras(item: item, model: model)
                         .id(item.id)
                         .padding(.top, 16)
+                } else if model.claudeLegend.offer(for: item, legend: item.text.legend) != nil {
+                    // A figure shelved alone has no legend field; Claude's own legend file, if the answer made one, is offered here.
+                    Solanum.hairline.frame(height: 1).padding(.top, 18)
+                    ShelfClaudeLegendLine(item: item, model: model)
+                        .id(item.id)
+                        .padding(.top, 14)
                 }
             }
             .padding(18)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         }
         .scrollBounceBehavior(.basedOnSize)
+        // Claude's legend file for this figure, if its answer made one (ShelfClaudeLegend.swift).
+        .task(id: item.id) { await model.claudeLegend.look(at: item) }
         .frame(height: min(contentHeight, maxHeight))
         .background(Solanum.raised, in: .rect(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(ShelfLook.detailEdge, lineWidth: 1))
@@ -719,6 +727,7 @@ struct ShelfExtras: View {
                     }
                     .buttonStyle(SolanumPillStyle(.small))
                 }
+                ShelfClaudeLegendLine(item: item, model: model)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -930,13 +939,13 @@ struct ShelfNote: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Color(red: 0xFA / 255, green: 0xF9 / 255, blue: 0xF5 / 255))
                 .lineLimit(2)
-            if note.removal != nil {
+            if note.hasUndo {
                 Button("Undo", action: undo)
                     .buttonStyle(ShelfNoteButtonStyle())
             }
         }
         .padding(.leading, 16)
-        .padding(.trailing, note.removal == nil ? 16 : 8)
+        .padding(.trailing, note.hasUndo ? 8 : 16)
         .frame(minHeight: 40)
         .background(Capsule().fill(Color(red: 28 / 255, green: 28 / 255, blue: 27 / 255).opacity(0.9)))
         .overlay(Capsule().strokeBorder(Color(red: 0xFA / 255, green: 0xF9 / 255, blue: 0xF5 / 255).opacity(0.18), lineWidth: 1))
