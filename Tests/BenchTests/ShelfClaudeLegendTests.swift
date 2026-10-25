@@ -585,6 +585,65 @@ struct ShelfClaudeLegendTests {
         #expect(editor.legend == "Theirs, from another app." && !editor.changedOutside && editor.problem == nil && !editor.holdsDraft)
     }
 
+    @Test func aSaveWaitingOnThePersonIsNeverTakenOverByClaudesLegend() async throws {
+        let rig = try ClaudeLegendRig()
+        defer { rig.tearDown() }
+        let item = try await rig.shelve()
+        let candidate = try await rig.look(item)
+        let editor = rig.model.legendEditor(for: item)
+        await editor.show()
+        editor.legend = "My own words, typed just now."
+        // Another app changes the README, and the save of those words meets it: the field holds a draft and a question.
+        let url = rig.readmeURL(item)
+        let theirs = try #require(KeptReadme.replacingLegend(in: try String(contentsOf: url, encoding: .utf8), with: "Theirs."))
+        try Data(theirs.utf8).write(to: url)
+        await editor.save()
+        #expect(editor.changedOutside && editor.legend == "My own words, typed just now.")
+
+        await rig.model.useClaudeLegend(candidate, for: item, confirmed: true)
+        #expect(rig.model.note?.sentence == "Couldn\u{2019}t put Claude\u{2019}s legend in. Your legend has a save waiting: README.md was changed in another app. Nothing was changed.")
+        // The draft, the question and the README are as they were.
+        #expect(editor.changedOutside && editor.legend == "My own words, typed just now.")
+        #expect(try rig.readmeBytes(item) == Data(theirs.utf8))
+        #expect(try rig.folderFiles(item) == ["README.md", ClaudeLegendMade.figureName])
+        #expect(!rig.science.downloads.contains(ClaudeLegendMade.legends), "refused before anything was fetched")
+    }
+
+    @Test func theWindowIsToldWhenALegendIsLookedAtOrPutInSoTheCardIsDrawnAgain() async throws {
+        let rig = try ClaudeLegendRig()
+        defer { rig.tearDown() }
+        let item = try await rig.shelve()
+        var told = 0
+        let subscription = rig.model.objectWillChange.sink { told += 1 }
+        defer { subscription.cancel() }
+        await rig.model.claudeLegend.look(at: item)
+        let afterLook = told
+        #expect(afterLook > 0)
+        let candidate = try #require(rig.model.claudeLegend.candidates(for: item).first)
+        await rig.model.useClaudeLegend(candidate, for: item, confirmed: false)
+        #expect(told > afterLook)
+    }
+
+    @Test func thePillWithUndoStaysAsLongAsARemovalsAndAFailureTwiceAsLong() async throws {
+        let rig = try ClaudeLegendRig()
+        defer { rig.tearDown() }
+        let item = try await rig.shelve()
+        let candidate = try await rig.look(item)
+        let model = ShelfModel(shelf: rig.shelf, noteLifetime: .seconds(1), pdf: ShelfPDFMaker(dependencies: .declining), legendDelay: .seconds(60),
+                               claudeLegend: rig.model.claudeLegend)
+        await model.useClaudeLegend(candidate, for: item, confirmed: false)
+        #expect(model.note?.hasUndo == true)
+        try await Task.sleep(for: .milliseconds(1_300))
+        #expect(model.note == nil, "an undoable line stays one lifetime")
+
+        let again = ShelfClaudeLegend.Candidate(file: ClaudeLegendMade.historyFile(ClaudeLegendMade.other, "gone.md"), match: .legend)
+        await model.useClaudeLegend(again, for: item, confirmed: true)
+        #expect(model.note?.hasUndo == false)
+        try await Task.sleep(for: .milliseconds(1_300))
+        #expect(model.note != nil, "a line that only says what went wrong stays twice as long")
+        try await until("the failure line to go") { model.note == nil }
+    }
+
     @Test func aREADMEThatCantBeReadStopsItBeforeAnythingIsFetched() async throws {
         let rig = try ClaudeLegendRig()
         defer { rig.tearDown() }

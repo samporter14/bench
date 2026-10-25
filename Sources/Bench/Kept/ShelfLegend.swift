@@ -216,6 +216,13 @@ final class ShelfLegendEditor: ObservableObject {
 
     // MARK: Claude's legend
 
+    /// A save that is waiting on the person (a README changed in another app, a disk that said no) is theirs to settle first,
+    /// with the field's Use Mine and Use Theirs: nothing of Claude's is put over it. The sentence, or nil.
+    var waitingOnThePerson: String? {
+        if changedOutside { return "Your legend has a save waiting: README.md was changed in another app." }
+        return problem
+    }
+
     /// What `put` came to.
     enum Put: Equatable, Sendable {
         /// The field held `before`, and now holds the new text, saved.
@@ -234,9 +241,7 @@ final class ShelfLegendEditor: ObservableObject {
         defer { putting = false }
         if !canEdit { await load() }
         guard canEdit else { return .failed(problem ?? Self.unreadable("")) }
-        // A save that is waiting on the person (a README changed in another app, a disk that said no) is theirs to settle first.
-        if changedOutside { return .failed("Your legend has a save waiting: README.md was changed in another app.") }
-        if let why = problem { return .failed(why) }
+        if let waiting = waitingOnThePerson { return .failed(waiting) }
         let before = legend
         guard before != text else { return .unchanged }
         failure = nil
@@ -295,8 +300,7 @@ final class ShelfLegendEditor: ObservableObject {
         defer { putting = false }
         if !canEdit { await load() }
         guard canEdit else { return .failed(problem ?? Self.unreadable("")) }
-        if changedOutside { return .failed("Your legend has a save waiting: README.md was changed in another app.") }
-        if let why = problem { return .failed(why) }
+        if let waiting = waitingOnThePerson { return .failed(waiting) }
         guard legend == put, !hasUnsavedText else { return .edited }
         failure = nil
         legend = before

@@ -134,11 +134,9 @@ enum ShelfClaudeLegendRules {
     /// The figures a heading or a bold label names: "Figure 2", "Fig. 2", "Figure S2", "Supplementary Figure 2". A
     /// number followed by a letter ("Figure 2A", a panel) or another digit is not one.
     static func figureReferences(in label: String) -> Set<Number> {
-        let pattern = #"(?i)(?:\b(supplementary|suppl\.?|extended\s+data)\s+)?\bfig(?:ure)?s?\.?\s*(s)?(\d{1,3})(?![0-9A-Za-z])"#
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
         let text = label as NSString
         var found: Set<Number> = []
-        for match in expression.matches(in: label, range: NSRange(location: 0, length: text.length)) {
+        for match in figureReference.matches(in: label, range: NSRange(location: 0, length: text.length)) {
             guard let n = Int(text.substring(with: match.range(at: 3))) else { continue }
             let supplementary = match.range(at: 1).location != NSNotFound || match.range(at: 2).location != NSNotFound
             found.insert(Number(n: n, supplementary: supplementary))
@@ -177,6 +175,8 @@ enum ShelfClaudeLegendRules {
         var rank = 0
     }
 
+    private static let figureReference = try! NSRegularExpression(
+        pattern: #"(?i)(?:\b(supplementary|suppl\.?|extended\s+data)\s+)?\bfig(?:ure)?s?\.?\s*(s)?(\d{1,3})(?![0-9A-Za-z])"#)
     private static let headingPattern = try! NSRegularExpression(pattern: #"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$"#)
     private static let boldPattern = try! NSRegularExpression(
         pattern: #"^[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+)?(\*\*|__)(?=\S)(.+?)(?<=\S)\1"#)
@@ -553,6 +553,7 @@ final class ShelfClaudeLegend: ObservableObject {
         // The README as it is now; one that can't be read ends it here, with the editor's own sentence.
         if !editor.canEdit { await editor.load() }
         guard editor.canEdit else { return .failed(editor.problem ?? Rules.notChanged("")) }
+        if let waiting = editor.waitingOnThePerson { return .failed(Rules.notChanged(waiting)) }
         if !confirmed, !editor.legend.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .needsConfirmation }
 
         // Claude's file: the bytes are the legend and the copy.

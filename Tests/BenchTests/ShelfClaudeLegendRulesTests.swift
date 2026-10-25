@@ -192,11 +192,18 @@ struct ShelfClaudeLegendPartTests {
     }
 
     @Test func aFigureReferenceMatchesOnlyItsOwnNumber() {
-        let file = "## Figure 12\n\nTwelve.\n\n## Figure 20\n\nTwenty.\n\n## Figure 2A\n\nPanel A.\n\n## Figure 2B\n\nPanel B."
-        let part = Rules.part(of: file, fromFile: "l.md", forFigure: "fig2_edge.png")
-        // None of those is plainly Figure 2: all of the file.
-        #expect(part.scope == .whole)
-        #expect(part.text == file)
+        // Each of these has one section that a loose reading of "2" would take, and none that is Figure 2.
+        for other in ["Figure 12", "Figure 20", "Figure 2A", "Figure 200", "Figure 22"] {
+            let file = "## \(other)\n\nNot this one.\n\n## Figure 3\n\nThird."
+            let part = Rules.part(of: file, fromFile: "l.md", forFigure: "fig2_edge.png")
+            #expect(part.scope == .whole && part.text == file, "\(other)")
+        }
+        // Panels of the figure are not the figure.
+        let panels = "## Figure 2A\n\nPanel A.\n\n## Figure 2B\n\nPanel B."
+        #expect(Rules.part(of: panels, fromFile: "l.md", forFigure: "fig2_edge.png").scope == .whole)
+        // And its own number is found among others, in any case.
+        let among = "## FIGURE 12\n\nTwelve.\n\n## fig. 2\n\nTwo.\n\n## Figure 20\n\nTwenty."
+        #expect(Rules.part(of: among, fromFile: "l.md", forFigure: "fig2_edge.png").text == "Two.")
     }
 
     @Test func aSupplementaryFigureAndAMainOneWithTheSameNumberAreTold() {
