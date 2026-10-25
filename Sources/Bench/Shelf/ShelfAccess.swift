@@ -19,6 +19,8 @@ final class ShelfAccess: ObservableObject {
     var count: @MainActor () -> Int
     /// Puts one file on the shelf.
     var add: @MainActor (ShelfSource) async -> ShelfAddOutcome
+    /// Puts words selected in a conversation on the shelf, as a note.
+    var addNote: @MainActor (ShelfSelectionNote) async -> ShelfAddOutcome
     /// Takes an add back: the folder goes to the Trash.
     var undo: @MainActor (ShelfPlacement) async -> Bool
     /// Shows the Shelf window, on an item when it is given.
@@ -35,6 +37,7 @@ final class ShelfAccess: ObservableObject {
          isAdding: @escaping @MainActor (String) -> Bool = ShelfAccess.notAdding,
          count: @escaping @MainActor () -> Int,
          add: @escaping @MainActor (ShelfSource) async -> ShelfAddOutcome,
+         addNote: @escaping @MainActor (ShelfSelectionNote) async -> ShelfAddOutcome = ShelfAccess.cannotAddNote,
          undo: @escaping @MainActor (ShelfPlacement) async -> Bool = ShelfAccess.cannotUndo,
          show: @escaping @MainActor (URL?) -> Void = ShelfAccess.cannotShow,
          prime: @escaping @MainActor () -> Void = ShelfAccess.nothingToPrime,
@@ -43,6 +46,7 @@ final class ShelfAccess: ObservableObject {
         self.isAdding = isAdding
         self.count = count
         self.add = add
+        self.addNote = addNote
         self.undo = undo
         self.show = show
         self.prime = prime
@@ -57,6 +61,7 @@ final class ShelfAccess: ObservableObject {
     // written as a default of a main-actor closure type does not compile
     // where the caller's isolation is not the same.)
     static func notAdding(_ version: String) -> Bool { false }
+    static func cannotAddNote(_ note: ShelfSelectionNote) async -> ShelfAddOutcome { .failed("A made-up shelf takes no notes.") }
     static func cannotUndo(_ placement: ShelfPlacement) async -> Bool { false }
     static func cannotShow(_ folder: URL?) {}
     static func nothingToPrime() {}
@@ -67,6 +72,7 @@ final class ShelfAccess: ObservableObject {
         isAdding: { Shelf.shared.adding.contains($0) },
         count: { Shelf.shared.count },
         add: { await Shelf.shared.add($0) },
+        addNote: { await Shelf.shared.addNote($0) },
         undo: { await Shelf.shared.undo($0) },
         show: { Shelf.shared.show(selecting: $0) },
         // The contract has no explicit load: `versions` is read lazily, on first use.

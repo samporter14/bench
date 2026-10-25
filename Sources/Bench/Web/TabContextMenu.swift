@@ -200,7 +200,9 @@ private final class WeakTabMenuHandler: NSObject, WKScriptMessageHandler {
 
 /// The main window's web view, a plain `WKWebView` that adds the tab items to
 /// its context menu when the right-click was on a tab, and the Shelf items
-/// (Shelf/ConversationMenu.swift) when it was on a figure or a file link.
+/// (Shelf/ConversationMenu.swift) when it was on a figure or a file link; on
+/// words the user selected, in a menu with neither, it adds Add Selection to
+/// Shelf.
 final class TabMenuWebView: WKWebView {
     var tabMenu: TabContextMenu?
     var shelfMenu: ConversationMenu?
@@ -209,5 +211,6 @@ final class TabMenuWebView: WKWebView {
         super.willOpenMenu(menu, with: event)
         tabMenu?.addItems(to: menu)
         shelfMenu?.addItems(to: menu)
+        shelfMenu?.addSelectionItem(to: menu)
     }
 }

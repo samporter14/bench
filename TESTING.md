@@ -323,6 +323,111 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-24, the Shelf's two new ways in: a Markdown tile by its name, and selected words as a note
+
+On `g/shelf-text` (from 7492fdd). Everything ran on a made-up page (JavaScriptCore, as the figure menu's tests do), made-up
+sessions, lists, shelves and toasts, and scratch Kept folders under the temporary folder: no daemon, no window shown, the real
+Kept folder untouched, nothing read under `~/.claude-science` but the served bundle's `web-dist` (to see what a tile shows),
+nothing launched, installed or pushed.
+
+- ✅ **What a tile with no picture shows, read in the 0.1.70 bundle** (`ArtifactTile-DmtoiOPx.js`, `index-DhEuR7nq.js`; read,
+  not run). The tile's wrapper has no attribute, no id and no data of its own; its right-click handler is on that wrapper. It
+  holds a `<header>` with the file name as the text of its first span (`Us(filename)`, no test id), the "More actions" button
+  (`data-testid="artifact-actions"`), and a body, `data-testid="artifact-preview-region"`. A card in the Generated tray
+  (`data-testid="turn-tray-card"`, its wrapper has the handler) has a preview and a label,
+  `data-testid="middle-truncated-filename"`, whose `title` is the whole sanitised name and whose text is cut in the middle.
+  Neither carries an artifact or version id. So the script reads the name.
+- ✅ **The script, for a file with no picture** (`DocumentTileScriptTests`, 25 tests, several with a case for each place): the right-click on a
+  tile's words, its preview region, its header's name, the version stepper after it, its More actions button, a link out in its
+  words, a card's words, its label and its preview each place Capsid's rule and four items in the page's menu, and a click on
+  each posts `{action, kind: "document", name}` with no `version` and no `url`; the name is the last part of a path, one line,
+  no control characters, cut at 300; a tile with a blank name, a card with no label, a header of the page's own, a tile's
+  header without its button, a preview region with no headered tile around it and a pop-up over a tile get nothing; so does
+  a made-up (untrusted) right-click and a made-up click on an item; and a page that is not `/projects/<p>/frames/<session>`
+  (six addresses) gets nothing. A link with a version in a tile still names its version; a figure still its version. The
+  trace says `figure-document` (and `figure-link → version-none → figure-document` for a link out in a tile) and every word
+  is one Swift reads. The old test that said a notes card gets nothing now says a header of the page's own gets nothing.
+- ✅ **Name to version** (`ShelfDocumentResolutionTests`): one match, none, an exact and whole name (another case, a part of a
+  name and a trailing blank are no match), one artifact at several versions (the latest time; no time is older; a tie goes to
+  the later in the list), and **two different artifacts of one name are `several`, whether listed with artifact ids or without**.
+  **Decision: refuse**, with "This conversation has more than one file called “notes.md”, so Capsid can’t tell which you
+  meant. Results lists them." Picking the newest would shelve the wrong file as often as the right one, and the toast has no
+  room to say which was taken. The daemon's list names an artifact once, by its latest version, so two files of one name are
+  two artifacts, and a tile stepped back to an older version of a file is added at the latest.
+- ✅ **Each action on the resolved version** (`ShelfDocumentActionTests`): Add to Shelf gets the listing's own entry (version,
+  artifact, type, size); Keep with Data and Code… the sheet with that version selected, and the daemon's facts when it has them;
+  Open as Reference that version; none, two, an unreadable list and a page that isn't a session's are a sentence and nothing
+  else; Show in Results needs only the session and asks for no list; the list asked for is the main window's session's.
+  `ShelfDocumentMessageTests`: the message's shapes and everything that is no choice, a document's message is no figure's and
+  the other way round, and the sender checks (main frame, main web view, the daemon's origin; anyone else's message runs
+  nothing).
+- ✅ **Add Selection to Shelf, the page's half** (in `DocumentTileScriptTests`): the right-click inside a selection adds
+  `selected: <characters>` to its message, a control-click too, with a figure's or a link's message as well; **the words are in
+  no message and no trace** (checked on the posted JSON); no count when the selection is empty or blanks, when the button
+  wasn't down (a menu from the keyboard), when the selection was made by the right-click itself (WebKit selects the word under
+  the pointer on a right-click outside the selection: the script keeps the selection at button-down and compares), when the
+  right-click is not trusted, or on a page that is not a session's. The word selected before and left alone counts.
+- ✅ **Add Selection to Shelf, Swift** (`ShelfSelectionMenuTests` and `ShelfSelectionActionTests`, 22): the count's reading and its second of freshness;
+  the item goes after WebKit's Copy, or at the end after a rule; it is not offered with no selection, a stale count, off a
+  session's page, from a message that isn't the main window's, beside a tab's, a figure's or its own item, or twice; choosing
+  it shelves; the wiring in `willOpenMenu` is after the tab and figure groups; and what choosing does: the words are asked for
+  at 32,000 characters, trimmed, cut (31,999 once the blank at the cut goes), a toast says adding, a duplicate or a failure is
+  the shelf's sentence, nothing selected any more is a sentence, a page not on a session reads nothing, and the toast holds the
+  title and not the rest of the words.
+- ✅ **The note** (`ShelfSelectionNoteRuleTests`, `ShelfSelectionNoteAddTests`, on the real `KeptDisk` in a scratch folder with a
+  stand-in Trash): the title is the first eight words of the first line with any (64 characters, marks off, "/" and ":" blank,
+  an ellipsis when the line goes on, "Note from <session>" for a passage with no words); **the README is pinned byte for byte**
+  (pinned zone and locale) and so is the folder on disk (`note.md` is the words and a line end, `README.md` is what the rules
+  make, nothing else in the folder); it parses and renders to the same bytes, and the disk reads it as any kept folder; the
+  Shelf makes it one document item with no version, its first lines as a card, no Keep with Data and Code…; the search finds
+  it by its first words, its session and its project and the Documents chip counts it; the PDF page is a document's, its words
+  as text; Undo (the folder is in the Trash, off the shelf and the count, through the toast's own Undo too); the same words
+  from the same session are "Already on your shelf"; two asks at once make one note; two notes that begin alike get a dated
+  folder; a Kept folder that isn't there is the disk's sentence naming the title and not the words; and a scan of the source
+  for any logging line that interpolates the words.
+- ✅ **Decisions.** *Duplicates*: refused, above. *The title*: the first words (not "Note from <session>", which the card's
+  caption already says and every note of a session would share, and the search finds the note by the first words);
+  "Note from <session>" only for a passage with no words. *The reply*: **not named**: the page does not say which reply holds a
+  selection, and the selected words are rendered text where the history has Markdown, so finding the reply would be a guess;
+  the README says the session and the time. *Search*: only the title, the session and the project, because the Shelf never
+  reads file bodies; the passage is not put in "What Claude said" to be searched, since it may be the user's own and the PDF
+  would then print it twice. *Show in Results* does not look up the file.
+- ✅ **Mutations** (break the fix, see the tests fail, restore; eleven at once in one build, each caught by its own tests):
+  exact name match widened to "contains" (`aNameIsMatchedWholeAndExactly`); the several-files refusal removed
+  (`twoDifferentFilesOfOneNameAreTwoAndNeitherIsPicked`, `twoFilesOfOneNameAreRefused…`, 5 expectations); the trust check
+  on the right-click removed (`aMadeUpRightClickStartsNothingAndEndsNothing`, `aRightClickTheBrowserDidNotMakeStartsNothing`,
+  `anotherRightClickBeforeTheMenuEndsTheFirstOnesTrace`); the selection compared with the one at button-down removed
+  (`theWordTheRightClickSelectedItselfIsNotAPassage`); the session test of the item removed (`notOnASessionsPageNoItem`,
+  `notTwiceAndNotInAMenuWithCapsidsItems`); a document's message allowed to carry a version (`aFiguresMessageIsNotADocuments`);
+  the session link taken out of the README (`theReadmeIsExactlyThis`, `aNoteIsAFolder…`); the duplicate check made to compare
+  nothing (`theSameWordsFromTheSameSessionAreOnTheShelfAlready`); the sender check on the message made always true (6 tests:
+  `aChoiceFromAnyoneElseIsNothing`, `aMessageFromAnyoneElseIsNothing`, `aCountFromAnAcceptedMessageIsCleared…`,
+  `theMessagesTheMacsMenuHearsAreStillHeard`, the trace and unplaced ones); the 32,000 cut made 32,001
+  (`aLongSelectionIsCutAtTheLimit`, `theWordsAreCutAtThe32000thCharacter`); Open as Reference given another version
+  (`openAsReferenceNamesTheVersionOfTheFileFound` and the figure's). 44 expectations failed in 25 tests; the sources were
+  restored from git and rebuilt.
+- ✅ **Captures**, offscreen, light and dark (`shots-shelftext/`): `shelf-note-*.png` (a note among the demo's cards with its
+  detail, the Documents chip with the shorter note selected, the narrowest window) and `doc-tile-menu-*.png`,
+  `doc-card-menu-*.png` (a tile's and a card's page menu with Capsid's group, in a real WebKit view with the real script in its
+  own world: the right-click, the group above the red Delete, a click on Keep with Data and Code… posting the name, the page's
+  own Escape closing the menu). Critique: the note card reads as a document card, the first words as its name, nothing set it
+  apart as a note, which is the point; the detail is sparse (name, session and project, three controls) and shows no time,
+  where the card's caption does. One thing is plain: the card's first lines run a bulleted list into one paragraph, as `ShelfPeek`
+  does for any Markdown, and a selection from the page's list has no bullets anyway.
+- ✅ **The whole suite**: 4,040 tests in 518 suites (3,940 in 509 before: 100 new in nine suites), `✔ Test run with 4040 tests in
+  518 suites passed`. The first full run had one failure, `AskEntryPointTests.theMainWindowsRightClickMenuHasNoAskItemAnyMore`:
+  it reads `WebContainer.swift` for the names of Ask Another Model's old selection read (`SelectionScript`,
+  `selectedText(limit`), which this change had reused for its own; renamed (`SelectedWordsScript`, `selectedWords(limit:)`), no
+  test touched. No load flake in either run.
+- ⏳ **Live, on the real page only** (nothing here ran in the real Claude Science): that a right-click in a Markdown tile's body
+  or on a Generated card of a Markdown file opens the page's "Artifact actions" menu and Capsid's group lands in it; that the
+  tile's header has the name as its first span when the tile is open as a tab or in the split view (the bundle's `_o` crumb,
+  drawn when a tile was opened from a folder, is a shape not read); that the right-click on a word in a reply lets WebKit's
+  Mac menu open with Copy and the new item after it, that the selection is the same at the menu as at the button-down inside
+  a selection and not outside it, and that the words are still selected when the item is chosen; that a tile stepped back to an
+  older version is added at the latest; and a real selection across a list or a table, as the page's own `getSelection()`
+  words it.
+
 ## 2026-10-24, Ask Another Model streams: the answer fills in as it is written
 
 The answer used to come whole, behind a spinner of up to two minutes. It now streams (`"stream": true`, server-sent

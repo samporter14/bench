@@ -10,7 +10,10 @@
 // with the script in its own content world as in the app (only the check that a
 // click is a real one is lifted, since no test can make one):
 // the right-click, the items appearing, a click on one and the message it
-// posts, the page's own Escape handling closing the menu. The page's icons
+// posts, the page's own Escape handling closing the menu. The same for a tile
+// and a card of a file with no picture (Markdown), which the script finds by the
+// name they show, drawn with the markup of the bundle's ArtifactTile and tray
+// card, on a page whose address is a session's. The page's icons
 // are drawn stand-ins (its icon font is not here), so the PNGs show how
 // Capsid's items sit among items of the same classes, not a match of glyphs.
 // Without the variable the test does nothing.
@@ -55,6 +58,17 @@ struct FigureMenuSnapshotTests {
         #card .thumb{height:70px;background:linear-gradient(135deg,#d97757 0%,#e8c4a0 55%,#6a9bcc 100%)}
         #card .name{font-size:10.5px;font-weight:500;padding:4px 8px;color:hsl(var(--text-100))}
         #tile{position:absolute;left:24px;top:140px;width:128px;height:96px}
+        #doctile{position:absolute;left:190px;top:24px;width:300px;height:230px;border-radius:12px;background:hsl(var(--bg-000));box-shadow:0 0 0 1px hsl(var(--border-300) / .15);overflow:hidden}
+        #doctile header{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 12px;border-bottom:1px solid hsl(var(--border-300) / .15)}
+        #doctile .name{font-size:14px;font-weight:500;color:hsl(var(--text-000))}
+        #doctile .step{margin-left:8px;font-size:11px;color:hsl(var(--text-400))}
+        #doctile .more{width:28px;height:28px;border-radius:8px;font-size:16px;line-height:1;color:hsl(var(--text-400))}
+        #doctile .region{padding:12px 14px;font-size:13px;line-height:19px;color:hsl(var(--text-100))}
+        #doctile h3{margin:0 0 6px;font-size:15px;font-weight:600}
+        #doctile p{margin:0 0 8px}
+        #doccard{position:absolute;left:24px;top:270px;width:128px;height:96px;border-radius:12px;background:hsl(var(--bg-000));box-shadow:0 0 0 1px hsl(var(--border-300) / .15);overflow:hidden}
+        #doccard .preview{height:70px;padding:8px;font-size:7px;line-height:9px;color:hsl(var(--text-400));overflow:hidden}
+        #doccard .label{display:flex;font-size:10.5px;font-weight:500;padding:4px 8px;color:hsl(var(--text-100))}
         </style></head><body>
         <div id="card"><div class="thumb"><img id="figure" alt="z_prime.png" style="width:100%;height:100%;opacity:0"
           src="http://localhost:8123/api/artifacts/versions/\(ShelfAddressTests.version)?thumbnail=400"></div><div class="name">z_prime.png</div></div>
@@ -63,6 +77,12 @@ struct FigureMenuSnapshotTests {
             src="http://localhost:8123/api/artifacts/versions/\(ShelfAddressTests.version)?v=\(ShelfAddressTests.version)">
           <div id="layer" style="position:absolute;top:0;right:0;bottom:0;left:0"></div>
         </div></div>
+        <div id="doctile"><header><div style="display:flex;align-items:center"><span class="name">plan_notes.md</span><span class="step">v2</span></div>
+          <button type="button" class="more" data-testid="artifact-actions" aria-label="More actions" aria-haspopup="menu">&#8943;</button></header>
+          <div class="region" data-testid="artifact-preview-region" id="docbody"><h3>Plate 7</h3>
+            <p>Drifts after the midpoint, and the edge wells run low.</p><p>The cutoff is 0.5; plate 7 sits at 0.41.</p></div></div>
+        <div id="doccard"><div data-testid="turn-tray-card" id="doccardbutton"><div class="preview" id="doccardpreview">Plate 7 drifts after the midpoint. The edge wells run low and the centre does not.</div>
+          <div class="label"><span data-testid="middle-truncated-filename" title="plan_notes.md" id="doclabel">plan_notes.md</span></div></div></div>
         <script>
         // Stand-in icons: drawn lines in the icon box, where the page has its icon font.
         var glyphs = {
@@ -103,8 +123,13 @@ struct FigureMenuSnapshotTests {
             menu.appendChild(b);
           }
           function rule() { var r = document.createElement('div'); r.className = RULE; menu.appendChild(r); }
-          item('copy', 'Copy image'); item('viewer', 'Open in Artifact Viewer'); rule();
-          item('split', 'Open in split view'); item('provenance', 'Provenance'); item('link', 'Copy link'); item('download', 'Download');
+          if (window.__docMenu === true) {
+            // What the page's menu holds for a file with no picture: no "Copy image".
+            item('split', 'Open in split view'); item('provenance', 'Provenance'); item('link', 'Copy link'); item('download', 'Download');
+          } else {
+            item('copy', 'Copy image'); item('viewer', 'Open in Artifact Viewer'); rule();
+            item('split', 'Open in split view'); item('provenance', 'Provenance'); item('link', 'Copy link'); item('download', 'Download');
+          }
           if (withDelete) { rule(); item('trash', 'Delete', DANGER); }
           wrapper.appendChild(menu);
           document.body.appendChild(wrapper);
@@ -112,7 +137,7 @@ struct FigureMenuSnapshotTests {
         }
         function closeMenu() { if (shown) { shown.remove(); shown = null; } }
         // The page's own hook: cancels the Mac's menu, opens its own; closes on Escape or a click outside it.
-        ['card', 'tile'].forEach(function (id) {
+        ['card', 'tile', 'doctile', 'doccard'].forEach(function (id) {
           document.getElementById(id).addEventListener('contextmenu', function (e) {
             e.preventDefault(); e.stopPropagation();
             openMenu(e.clientX, e.clientY, window.__withDelete === true);
@@ -132,6 +157,13 @@ struct FigureMenuSnapshotTests {
         };
         window.__rightClick = function () {
           document.getElementById('figure').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 80 }));
+        };
+        // A right-click in a tile of a file with no picture (its words), or on a card of one in the tray.
+        window.__rightClickDocTile = function () {
+          document.getElementById('docbody').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 250, clientY: 110 }));
+        };
+        window.__rightClickDocCard = function () {
+          document.getElementById('doccardpreview').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 300 }));
         };
         </script></body></html>
         """
@@ -163,7 +195,8 @@ struct FigureMenuSnapshotTests {
         // Real clicks can't be made here, so the trust check is lifted from this copy of the script and nothing else.
         let source = ConversationMenu.script
         let lifted = source.replacingOccurrences(of: "if (!event.isTrusted) return;", with: "")
-        try #require(source.components(separatedBy: "if (!event.isTrusted) return;").count == 3, "the script checks trust twice")
+        try #require(source.components(separatedBy: "if (!event.isTrusted) return;").count == 4,
+                     "the script checks trust three times: the button going down, the menu and a click on an item")
         // In the world the app gives it, apart from the page's own scripts, as in the app.
         configuration.userContentController.addUserScript(WKUserScript(
             source: lifted, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: ConversationMenu.world))
@@ -180,7 +213,8 @@ struct FigureMenuSnapshotTests {
         view.navigationDelegate = loaded
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             loaded.continuation = continuation
-            view.loadHTMLString(Self.html(dark: dark), baseURL: URL(string: "http://localhost:8123/"))
+            // A session's page, as the script wants for a file with no picture.
+            view.loadHTMLString(Self.html(dark: dark), baseURL: URL(string: "http://localhost:8123/projects/p1/frames/\(ShelfAddressTests.version)"))
         }
         return (view, window, loaded)
     }
@@ -245,6 +279,47 @@ struct FigureMenuSnapshotTests {
             #expect(chosen?["action"] as? String == "keep", "\(mode)")
             #expect(chosen?["name"] as? String == "plate_map.png", "\(mode)")
             #expect(chosen?["version"] as? String == ShelfAddressTests.version, "\(mode)")
+        }
+    }
+
+    /// A tile and a card of a Markdown file in a real WebKit view, with the script in its own world: the right-click, the
+    /// page's menu opening, Capsid's four items at its end (above a red Delete), a click on one and the message with the
+    /// file's name and no version, the page's own Escape closing it. PNGs show the menu as a tile's and a card's.
+    @Test func theMenuOfAFileWithNoPictureIsDrawnAndDrivenInARealPageWhenAsked() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let four = ["Add to Shelf", "Keep with Data and Code\u{2026}", "Open as Reference", "Show in Results"]
+        for dark in [false, true] {
+            let mode = dark ? "dark" : "light"
+            let posts = Posts()
+            let (view, window, _) = try await loadedPage(dark: dark, posts: posts)
+            defer { window.close() }
+            await settle()
+            // The tile of a Markdown file: no picture, no address; only its header's name.
+            await js(view, "window.__docMenu = true; window.__withDelete = true; window.__rightClickDocTile();")
+            await settle()
+            let shape = await js(view, "window.__shape()") as? [String]
+            #expect(shape == ["Open in split view", "Provenance", "Copy link", "Download", "-"] + four + ["-", "Delete"], "\(mode)")
+            #expect(posts.all.first?["kind"] is NSNull, "the Mac's menu has no pick for it: \(mode)")
+            try await snapshot(view, to: directory.appendingPathComponent("doc-tile-menu-\(mode).png"))
+            // Keep with Data and Code…: the file's name and no version.
+            let before = posts.all.count
+            await js(view, "document.querySelectorAll('[role=menu] [role=menuitem]')[5].click();")
+            await settle()
+            let chosen = posts.all.dropFirst(before).first { $0["action"] != nil }
+            #expect(chosen?["action"] as? String == "keep", "\(mode)")
+            #expect(chosen?["kind"] as? String == "document", "\(mode)")
+            #expect(chosen?["name"] as? String == "plan_notes.md", "\(mode)")
+            #expect(chosen?["version"] == nil, "\(mode)")
+            #expect(await js(view, "window.__menuOpen()") as? Bool == false, "the menu closed: \(mode)")
+            // The same file's card in the tray.
+            await js(view, "window.__withDelete = false; window.__rightClickDocCard();")
+            await settle()
+            #expect((await js(view, "window.__shape()") as? [String])?.suffix(5) == ["-"] + four, "\(mode)")
+            try await snapshot(view, to: directory.appendingPathComponent("doc-card-menu-\(mode).png"))
+            let traces = posts.all.compactMap { $0["trace"] as? [String] }
+            #expect(traces.last == ["contextmenu", "figure-document", "menu-matched", "placed"], "\(mode)")
         }
     }
 

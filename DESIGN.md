@@ -5707,10 +5707,44 @@ session's history. You asked: “…”"). The legend comment and fine print say
   put back in the same place; if the menu has nothing to copy, Last problem notes that the
   figure menu didn't look as Capsid expects (`figureMenuNotUnderstood`). Arrow
   keys reach the items, since the page re-queries its items on each key.
-  Tiles of files that show no picture (Markdown, CSV) carry no address in the
-  page and get no items; Results and the Shelf's search are the way in for
-  them. The menu's selectors are page hooks in the inventory, checked when
-  used.
+  The menu's selectors are page hooks in the inventory, checked when used.
+
+  **A file with no picture** (after 1.0.4; Markdown, CSV, text). Its tile and its
+  card in the Generated tray carry no address that names a version: they show
+  the file's name and nothing else. Before, they got no items, and Results and
+  the Shelf's search were the way in. So the script finds the name instead, on a
+  session's page only (`/projects/<project>/frames/<session>`, where there is a
+  conversation to add the file from). On a card it is the `title` of the
+  file-name label (`[data-testid="middle-truncated-filename"]`: the whole name,
+  where the text is cut in the middle). On an open tile (the side pane's, a
+  tab's) it is the text of the first span in the tile's header. The tile has no
+  attribute of its own, so it is found from the right-click by its body
+  (`[data-testid="artifact-preview-region"]`) or its header, and only a header
+  that holds the tile's "More actions" button
+  (`[data-testid="artifact-actions"]`) counts, so a header elsewhere on the
+  page is never taken for one. A link or a picture in a Markdown tile that names
+  no version falls through to the tile. The page's menu is waited for, and
+  Capsid's group placed, exactly as for a figure; a click posts
+  `{action, kind: "document", name}` with no version (the name cut to its last
+  path part, one line, 255 characters). Swift looks the name up among the files
+  of the session in the main window, the list Results reads
+  (`ShelfDocument.match`, exact and case-sensitive):
+  - one artifact by that name is the file, at its newest version (the list holds
+    an artifact once, by its latest, so a tile stepped back to an older version
+    of a file is added at the latest);
+  - none: "Capsid couldn’t find “notes.md” among this conversation’s files.";
+  - **two different files of one name are refused**, not guessed: “This
+    conversation has more than one file called “notes.md”, so Capsid can’t tell
+    which you meant. Results lists them.” The newest would be the wrong file as
+    often as the right one, and the toast has no room to say which was taken.
+
+  Then the action is the figure's: Add to Shelf (on the listing's own entry, so
+  its type and size are known), Keep with Data and Code…, Open as Reference.
+  Show in Results needs only the session, so it does not wait for the list.
+  Everything it reads is the page's own list; nothing is written to Claude
+  Science. The step is `figure-document`. A header that shows something other
+  than the name (the page's breadcrumb, if it draws one) gets "couldn’t find",
+  never a wrong file.
 
   **The step trace** (since 1.0.1). The first retry after the fix showed no
   items and logged nothing, so nobody could say which step stopped. Now each
@@ -5721,7 +5755,9 @@ session's history. You asked: “…”"). The legend comment and fine print say
   - the right-click heard;
   - how the figure was found (`figure-image`, `figure-link`, `figure-card`,
     `figure-beside`) or `figure-none`;
-  - `version-ok` or `version-none`;
+  - `version-ok` or `version-none`, and after `version-none` or `figure-none`,
+    `figure-document` when the tile or card of a file with no picture was found
+    by its name (it has no version to say);
   - `menu-matched`, `menu-other` (only another menu in the two seconds) or
     `menu-none`;
   - `placed` or `unplaced`;
@@ -5732,6 +5768,55 @@ session's history. You asked: “…”"). The legend comment and fine print say
   picture's trace comes before WebKit asks for the Mac's menu. Read it with
   `log show --last 5m --predicate 'subsystem == "local.sam.bench" AND category
   == "figure-menu"'`.
+- *Selected words* (after 1.0.4). Select a passage in a conversation and
+  right-click it: the Mac's menu has **Add Selection to Shelf**, right after
+  Copy. It is there only when the right-click left a selection alone, the main
+  window is on a session's page, and the menu is not a tab's, a figure's or a
+  file link's (those keep their items). WebKit selects the word under the pointer
+  when a right-click lands outside the selection, before the page hears the
+  click, so "there is a selection" is true on every right-click on a word; the
+  script (a capturing `mousedown` listener for the right button, or the control
+  key with the left) therefore keeps the selection as it is when the button goes
+  down, in the script only, and the `contextmenu` message carries `selected:
+  <characters>` only when the selection is the same then. The message has the
+  count and never the words, and is fresh for a second like a figure's pick. The
+  words are read only when the item is chosen: `window.getSelection()` in
+  Capsid's own content world (`capsid-shelf`), cut at 32,000 characters, trimmed,
+  with line breaks kept. They go to the note and nowhere else: the log says "Put a
+  note on the shelf, 812 characters", the toast says the title, and a test reads
+  the source for any logging line that names the words.
+
+  **The note** is a kept folder in the session's project collection like any
+  shelved file: the words as `note.md`, a document with no artifact and no
+  version, and a README.
+  - *Title*: the first eight words of the first line that has any, in at most 64
+    characters, the Markdown marks off, "/" and ":" blank, trailing punctuation
+    off, and "…" when the line goes on ("Plate 7 drifts after the midpoint, and
+    the…"). The first words, not "Note from <session>", because the card already
+    says the session under it and the search finds the note by them; "Note from
+    <session>" (or "Note") only for a passage with no words in it.
+  - *Where it came from* names the session, with its `bench://session` link, and
+    the time it was put on the shelf ("Selected in the conversation and put on
+    your shelf on 24 October 2026 at 9:12 AM by Capsid 1.0.5…"). The reply the
+    words came from is **not named**: the page does not say which reply holds a
+    selection, and the selected words are rendered text where the history has
+    Markdown, so matching them to a reply would be a guess, and a wrong reply is
+    worse than none. "Show Where It Came From" opens the session in the reference
+    reader at its newest reply, as for an item whose reply wasn't found. No
+    question, row or words of Claude's are written: the passage may be the
+    user's, or a tool's, and `note.md` has it.
+  - *On the Shelf* it is a document card with its first lines (`ShelfPeek` on
+    `note.md`), under its day like any other, and the detail has no Keep with Data
+    and Code… (no version to keep). The Shelf's search finds it by its title
+    (the first words), its session and its project; it does not search the rest
+    of the words, because the Shelf never reads file bodies. It exports to PDF as
+    a document does (the words as text). Undo on the toast and Remove move the
+    folder to the Trash. The same words from the same session are "Already on your
+    shelf"; two notes that begin alike get a dated folder, as any keep does.
+  Writing is by the disk's one queue (`KeptDisk.prepare`, `write`, `finish`), so
+  a note can't leave a half folder; a Kept folder that isn't there is a failed
+  add with the disk's sentence, naming the title and none of the words.
+
 - *The toast* (board 10): a dark glass pill at the bottom centre of the main
   window, 96 points above its foot: a clay check, "On your shelf: <name>",
   Undo and Show Shelf (ivory), about four seconds, held while the pointer is

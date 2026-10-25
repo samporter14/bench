@@ -174,6 +174,9 @@ struct CompatPageHookTests {
         #expect(ScriptLiterals.selectors(in: ConversationMenu.script) == [
             "img, a[href]", #"[data-testid="turn-tray-card"]"#, "img", #"[role="menu"]"#, #"[role="menu"][aria-label="Artifact actions"]"#,
             #"[role="menuitem"]"#, #"[data-cds="Icon"]"#,
+            // A file with no picture, by its name: the card's label, the tile's body, its header and the button in it.
+            #"[data-testid="middle-truncated-filename"]"#, #"[data-testid="artifact-preview-region"]"#, "header",
+            #"[data-testid="artifact-actions"]"#, "span",
         ])
         #expect(ScriptLiterals.selectors(in: ModelPickerMenu.script) == [
             #"[role="menu"][data-cds="ModelSelector"], [role="menu"][data-testid="model-selector-popup"]"#, #"[role="menu"]"#,

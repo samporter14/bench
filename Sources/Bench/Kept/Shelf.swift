@@ -37,7 +37,7 @@ struct ShelfSource: Equatable, Sendable {
 /// Where a shelved item landed.
 struct ShelfPlacement: Equatable, Sendable {
     let folder: URL
-    /// The file's name as shown ("z_prime_by_plate.png").
+    /// The file's name as shown ("z_prime_by_plate.png"); a note's title.
     let name: String
     let collection: String
 }
@@ -119,6 +119,8 @@ final class Shelf: ObservableObject {
     private let makeDependencies: @MainActor () -> ShelfDependencies
     private lazy var dependencies: ShelfDependencies = makeDependencies()
     private var running: [String: Task<ShelfAddOutcome, Never>] = [:]
+    /// Notes being added, by session and checksum of the words.
+    private var runningNotes: [String: Task<ShelfAddOutcome, Never>] = [:]
     private var placements: [String: ShelfPlacement] = [:]
     /// Landed, and not in a read of the folders yet.
     private var added: [String: ShelfPlacement] = [:]
@@ -271,6 +273,74 @@ final class Shelf: ObservableObject {
         sync(index.results)
         index.refresh()
         return .added(placement)
+    }
+
+    // MARK: Adding a note
+
+    /// Puts words selected in a conversation on the shelf (`ShelfSelectionNote`): a
+    /// kept folder with them as `note.md`, a document with no version, and a
+    /// README saying where they were selected. Nothing is read from Claude
+    /// Science, and the words go to the folder and nowhere else: the log says
+    /// only how many characters. The same words from the same session are on
+    /// the shelf already after the first add, and a second ask while the first
+    /// runs gets its outcome.
+    func addNote(_ note: ShelfSelectionNote) async -> ShelfAddOutcome {
+        let bytes = ShelfSelectionNote.data(for: note.text)
+        let sha = dependencies.keep.disk.sha256(of: bytes)
+        let key = note.session.id + "\n" + sha
+        if let first = runningNotes[key] { return await first.value }
+        let task = Task { @MainActor [self] in
+            let outcome = await performNote(note, bytes: bytes, sha: sha)
+            runningNotes[key] = nil
+            return outcome
+        }
+        runningNotes[key] = task
+        return await task.value
+    }
+
+    private func performNote(_ note: ShelfSelectionNote, bytes: Data, sha: String) async -> ShelfAddOutcome {
+        let d = dependencies
+        let session = note.session
+        requestedRead = true
+        await index.refreshAndWait()
+        if let same = index.results.first(where: {
+            $0.record.sessionID == session.id && $0.record.figure.version == nil && $0.record.figure.path == ShelfSelectionNote.fileName
+                && $0.record.figure.sha256 == sha
+        }) {
+            return .alreadyOnShelf(ShelfPlacement(folder: same.folder, name: ShelfRules.title(for: same.record), collection: same.collection))
+        }
+
+        let title = ShelfSelectionNote.title(for: note.text, session: session)
+        let keptAt = d.keep.now()
+        let collection = KeptSettings.collection(for: session.projectID, defaults: d.keep.defaults)
+            ?? (session.projectName.isEmpty ? "Shelf" : KeptName.sanitized(session.projectName))
+        let destination: KeptDestination
+        do {
+            destination = try await d.keep.disk.prepare(collection: collection, name: KeptName.sanitized(title), at: keptAt)
+        } catch {
+            return .failed(ShelfRules.couldntAdd(title, KeptDiskError.sentence(error)))
+        }
+        let file = KeptFile(path: ShelfSelectionNote.fileName, role: .figure, artifact: nil, version: nil, index: nil, of: nil,
+                            sha256: sha, bytes: bytes.count)
+        do {
+            try await d.keep.disk.write(bytes, to: ShelfSelectionNote.fileName, in: destination)
+        } catch {
+            await d.keep.disk.abandon(destination)
+            return .failed(ShelfRules.couldntAdd(title, KeptDiskError.sentence(error)))
+        }
+        let scienceVersion = await d.keep.scienceVersion()
+        let written = ShelfSelectionNote.readme(session: session, folderName: destination.name, file: file, keptAt: keptAt,
+                                       claudeScience: scienceVersion, capsid: d.keep.capsidVersion)
+        let folder: URL
+        do {
+            folder = try await d.keep.disk.finish(destination, readme: KeptReadme.render(written.record, text: written.text))
+        } catch {
+            await d.keep.disk.abandon(destination)
+            return .failed(ShelfRules.couldntAdd(title, KeptDiskError.sentence(error)))
+        }
+        log.notice("Put a note on the shelf, \(note.text.count) characters")
+        await index.refreshAndWait()
+        return .added(ShelfPlacement(folder: folder, name: title, collection: destination.collection))
     }
 
     // MARK: Taking off
