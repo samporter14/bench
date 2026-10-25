@@ -139,7 +139,7 @@ struct KeepItem: Equatable, Sendable {
 
     var relativePath: String {
         switch role {
-        case .figure: name
+        case .figure, .legend: name
         case .data: "data/\(name)"
         case .code: "code/\(name)"
         case .input: "input/\(name)"
@@ -627,6 +627,7 @@ enum KeepRules {
         case .data: "The data it was drawn from"
         case .code: "The code that drew it"
         case .input: "The raw input"
+        case .legend: "Claude\u{2019}s legend file"
         }
     }
 

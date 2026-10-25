@@ -47,9 +47,11 @@
 // Nothing here touches the disk.
 import Foundation
 
-/// What a kept file is for, and so where it goes (`KeptLayout`).
+/// What a kept file is for, and so where it goes (`KeptLayout`). `legend` is Claude's own legend file for the figure
+/// (the Shelf's "Use Claude's legend"), kept beside it. A Capsid from before it can't read a README that lists one, as
+/// before `source_row:` it couldn't read one with that line: the parser knows only the roles it was built with.
 enum KeptRole: String, Sendable, Equatable, CaseIterable {
-    case figure, data, code, input
+    case figure, data, code, input, legend
 }
 
 /// One file of a keep: the figure, or a file beside it.
@@ -102,6 +104,10 @@ struct KeptRecord: Equatable, Sendable {
     var question: String? = nil
     /// When the message that showed the figure was sent (`answer_at:`).
     var answerAt: Date? = nil
+
+    /// Kept with data or code, not only with a legend file of Claude's: what makes a folder the richer of two for the
+    /// same figure, and what Keep with Data and Code… is for.
+    var keepsDataOrCode: Bool { files.contains { $0.role != .legend } }
 }
 
 /// The readable sections.
@@ -263,6 +269,7 @@ enum KeptReadme {
         case .data: what = "The data file"
         case .code: what = "The script"
         case .input: what = "The raw input"
+        case .legend: what = "Claude\u{2019}s legend file"
         }
         return "\(what), \(oneLine(missing.name)): \(oneLine(missing.reason))."
     }

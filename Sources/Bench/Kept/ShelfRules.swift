@@ -74,8 +74,9 @@ struct ShelfItem: Identifiable, Equatable, Sendable {
     /// The name as a card and the detail draw it: the file's name and its extension apart, the extension in grey;
     /// a keep's own name whole.
     var nameParts: ShelfRules.NameParts { ShelfRules.nameParts(title: title, fileName: fileName) }
-    /// Keep with Data and Code… can be asked for: a version to keep, and not kept with its data and code already.
-    var canKeepWithDataAndCode: Bool { record.files.isEmpty && version != nil }
+    /// Keep with Data and Code… can be asked for: a version to keep, and not kept with its data and code already (a
+    /// legend file of Claude's beside the figure is neither).
+    var canKeepWithDataAndCode: Bool { !record.keepsDataOrCode && version != nil }
     /// Whether any of the folders is `folder`.
     func contains(folder url: URL) -> Bool { folders.contains { $0.path == url.path } }
 }
@@ -97,7 +98,7 @@ enum ShelfRules {
             guard let group = groups[key], !group.isEmpty else { return nil }
             // Kept with data and code first, then the newest, then by path, so the choice never wobbles.
             let ranked = group.sorted { a, b in
-                let (fa, fb) = (!a.record.files.isEmpty, !b.record.files.isEmpty)
+                let (fa, fb) = (a.record.keepsDataOrCode, b.record.keepsDataOrCode)
                 if fa != fb { return fa }
                 if a.record.keptAt != b.record.keptAt { return a.record.keptAt > b.record.keptAt }
                 return a.folder.path < b.folder.path

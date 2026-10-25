@@ -113,10 +113,11 @@ enum KeptLayout {
     static let inputFolder = "input"
 
     /// The subfolder a role's files go in; nil for the figure, which sits at
-    /// the top under its own file name.
+    /// the top under its own file name, and for Claude's legend file, which
+    /// sits beside it.
     static func folder(for role: KeptRole) -> String? {
         switch role {
-        case .figure: nil
+        case .figure, .legend: nil
         case .data: dataFolder
         case .code: codeFolder
         case .input: inputFolder

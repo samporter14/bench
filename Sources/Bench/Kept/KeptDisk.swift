@@ -126,6 +126,16 @@ struct KeptDestination: Sendable, Equatable {
     var keptAt: Date? = nil
 }
 
+/// A file listed in a kept folder's README by `KeptDisk.listFile`.
+struct KeptListing: Sendable, Equatable {
+    /// Where it is in the folder.
+    let path: String
+    /// The README as it is now, as text without a byte order mark: the next `lastRead`.
+    let markdown: String
+    /// It was listed already, so nothing was copied or changed.
+    let wasListed: Bool
+}
+
 /// A folder found by `scan`.
 struct KeptResult: Equatable, Sendable, Identifiable {
     var id: String { folder.path }
@@ -359,6 +369,19 @@ final class KeptDisk {
         let last = Data(markdown.utf8)
         return try await perform(.write, allowed: limit(last.count + legend.utf8.count)) { wanted in
             try KeptDiskWork.replaceLegend(in: folder, with: legend, lastRead: last)
+        }
+    }
+
+    /// Copies one more file into a kept folder, beside the figure, and lists it in the README (`files:`, through
+    /// `KeptReadme.updating`, so every other byte of the README stays). Refuses (`changedOutside`) when the README is no
+    /// longer, byte for byte, what the caller last read, and writes nothing then. The file is never written over another:
+    /// the same bytes already under that name are reused, other bytes under it get the next free number. A version that
+    /// is listed already (same role and version) is not copied again. Answers the path and the new README.
+    func listFile(_ data: Data, as file: KeptFile, in folder: URL, lastRead markdown: String) async throws -> KeptListing {
+        let root = rootURL()
+        let last = Data(markdown.utf8)
+        return try await perform(.write, allowed: limit(data.count + 2 * last.count)) { wanted in
+            try KeptDiskWork.listFile(in: folder, root: root, data: data, file: file, lastRead: last)
         }
     }
 
@@ -958,5 +981,42 @@ private enum KeptDiskWork {
         // The answer is the README as text, without the mark: the caller's next `lastRead`.
         try ((marked ? byteOrderMark : Data()) + Data(replaced.utf8)).write(to: url, options: .atomic)
         return replaced
+    }
+
+    /// The work of `KeptDisk.listFile`: the README is compared first and the new one made in memory, then the file is
+    /// written (never over another), and the README last, by `replaceReadme`, which compares and writes in one call.
+    static func listFile(in folder: URL, root: URL, data: Data, file: KeptFile, lastRead: Data) throws -> KeptListing {
+        let (current, _) = withoutByteOrderMark(try readmeData(in: folder))
+        // Bytes, not characters: "é" typed two ways is two files.
+        guard current == lastRead else { throw KeptDiskError.changedOutside }
+        guard let text = String(data: current, encoding: .utf8), let parsed = KeptReadme.parse(text) else {
+            throw KeptDiskError.failed(notKept)
+        }
+        if file.version != nil,
+           let listed = parsed.record.files.first(where: { $0.role == file.role && $0.version == file.version }) {
+            return KeptListing(path: listed.path, markdown: text, wasListed: true)
+        }
+        // The name asked for; if something else is there already, the next free number.
+        let clean = KeptLayout.fileName(file.path)
+        var path = clean
+        var present = false
+        var number = 2
+        while look(folder.appending(path: path, directoryHint: .notDirectory)).exists {
+            if bytes(of: folder.appending(path: path, directoryHint: .notDirectory), root: root, limit: data.count) == data {
+                present = true
+                break
+            }
+            guard number < 100 else { throw KeptDiskError.failed("No free name was left for this file.") }
+            path = ShelfFileName.numbered(clean, number)
+            number += 1
+        }
+        var listing = file
+        listing.path = path
+        guard let updated = KeptReadme.updating(text, files: parsed.record.files + [listing], missing: parsed.record.missing) else {
+            throw KeptDiskError.failed("README.md has a form Capsid can\u{2019}t update safely, so it was left alone.")
+        }
+        if !present { try writeFile(data, to: path, in: folder) }
+        try replaceReadme(in: folder, with: Data(updated.utf8), lastRead: lastRead)
+        return KeptListing(path: path, markdown: updated, wasListed: false)
     }
 }
