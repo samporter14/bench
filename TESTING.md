@@ -323,6 +323,19 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-24, Capsid 1.0.5 released and installed
+
+- ✅ Released as v1.0.5 (tag on 38522a8, "Capsid 1.0.5", by Sam with `gh release create`), marked Latest:
+  `Bench.zip` with Capsid.app 1.0.5 (51) inside, 18,143,530 bytes, sha256 e2d7163ee69e0aff…. GitHub's asset
+  digest matches the file built from that commit. 1.0.4 (7492fdd) was never published; its change is in 1.0.5's notes.
+- ✅ Installed from that same build before the release (CDHash cd9e3565; the unzipped copy's signature checks and
+  its CDHash is the same). "Signing in: with a code from claude-science url", and the usage read answered 4 s
+  after launch.
+- The whole suite before the push, with streaming, the Shelf's notes and document tiles and Claude's legend
+  together for the first time: 4,178 tests in 538 suites pass.
+- ⏳ **Live**: a real streamed answer, Add Selection to Shelf and a document tile's menu on the real page, and Use
+  Claude's legend on a real figure.
+
 ## 2026-10-24, Claude's legend: the Shelf offers the legend file Claude made with a figure
 
 When Claude makes a figure, its answer often makes a legend file too (`FIGURE_LEGENDS_final.md`, or a `.md` with the figure's
