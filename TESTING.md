@@ -380,14 +380,24 @@ folder: no daemon, no window, nothing read under `~/.claude-science`, nothing la
 - ✅ **Captures** (offscreen, light and dark, `ShelfClaudeLegendSnapshotTests` with `CAPSID_SNAPSHOT_DIR`): the offer for a figure
   shelved alone, after use (the field, the Files, the pill with Undo), the offer to replace, and the several-files line. The open menu
   and the question are the system's and can't be drawn off screen; the menu is a hand-drawn stand-in in the capture, the question isn't drawn.
-  The pill fits one line at 900 points. The Markdown marks in Claude's text (`**Edge effects.**`) show in the field as they are written.
+  The pill fits one line at 900 points (about 95 characters; at the narrowest window it takes two). Against "gorgeous and minimal":
+  the line reads as one quiet phrase in the card's own quiet-link register (muted, underlined, the source line's dots, a small muted
+  chevron for the menu), spends no clay, and nothing competes with Show Where It Came From. The one wart is the Markdown marks in
+  Claude's text (`**Edge effects.**`), which show in the plain field as they are written: a trade-off chosen, not an oversight (the field
+  is plain text, the README is Markdown, and stripping would drop Claude's emphasis from the file too); easy to change if Sam wants it.
 - ✅ **The whole suite**: 4,015 tests in 518 suites pass (3,940 in 509 before), `✔ Test run with 4015 tests in 518 suites passed`;
   no failure in the run, no flake.
+- ⏳ **The one time-sensitive test** is `thePillWithUndoStaysAsLongAsARemovalsAndAFailureTwiceAsLong` (a 1 s lifetime, margins of 0.3 s and 0.9 s).
 - ⏳ **Live**, with a real answer, a real legend file and the real daemon: that a real answer's history page lists the legend file
   under the reply that shows the figure (the offer depends on `_artifact_refs`, and on the row being on the page: a very long turn can
   drop it from the page); that real legend files are headed and labelled in the ways the rules read ("**Figure 2 | Title.**",
   "FIGURE 2", a table of contents first); the system's menu and question; the pill at the narrowest window; and that this Capsid's
-  README with `role: legend` is not read by Capsid 1.0.4 (its folder leaves that Shelf).
+  README with `role: legend` is not read by Capsid 1.0.4 (its folder leaves that Shelf); what browsing costs now (each figure with a
+  `source_row` reads one page of history, 50 rows at most, the first time its card is shown, then not again in that window: arrowing
+  through a shelf of hundreds); and whether the daemon, asked for rows `row - 24` to `row + 25` when the row is near the history's end,
+  answers with the `from` the reader checks (it has never been asked for a page that runs past the end). `ShelfLegendEditor.show()`
+  now waits for a write under way before it reads the README (so what it reads is what the write left); the older legend tests all
+  pass with it.
 
 ## 2026-10-24, messages made on the Mac may be 32,000 characters (the phone's stay at 4,000)
 

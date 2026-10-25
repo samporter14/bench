@@ -633,15 +633,18 @@ struct ShelfClaudeLegendTests {
                                claudeLegend: rig.model.claudeLegend)
         await model.useClaudeLegend(candidate, for: item, confirmed: false)
         #expect(model.note?.hasUndo == true)
-        try await Task.sleep(for: .milliseconds(1_300))
-        #expect(model.note == nil, "an undoable line stays one lifetime")
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(model.note != nil, "an undoable line stays its lifetime")
+        try await until("the undoable line to go") { model.note == nil }
 
         let again = ShelfClaudeLegend.Candidate(file: ClaudeLegendMade.historyFile(ClaudeLegendMade.other, "gone.md"), match: .legend)
         await model.useClaudeLegend(again, for: item, confirmed: true)
         #expect(model.note?.hasUndo == false)
-        try await Task.sleep(for: .milliseconds(1_300))
-        #expect(model.note != nil, "a line that only says what went wrong stays twice as long")
+        // The failure line outlasts the undoable one's whole lifetime (1 s) and goes by its own, at 2 s.
+        try await Task.sleep(for: .milliseconds(1_100))
+        let stillThere = model.note != nil
         try await until("the failure line to go") { model.note == nil }
+        #expect(stillThere, "a line that only says what went wrong stays twice as long")
     }
 
     @Test func aREADMEThatCantBeReadStopsItBeforeAnythingIsFetched() async throws {
