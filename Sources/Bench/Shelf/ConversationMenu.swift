@@ -1002,7 +1002,7 @@ private final class WeakConversationHandler: NSObject, WKScriptMessageHandler {
 /// Add Selection to Shelf's one look at the page, run in Capsid's own content
 /// world when the item is chosen: the selection's text, cut at `limit`
 /// characters. No element, no selector, no fetch; nothing is posted.
-enum ShelfSelectionScript {
+enum SelectedWordsScript {
     static let read = #"""
     const selection = window.getSelection();
     const text = selection ? String(selection) : "";
@@ -1090,7 +1090,7 @@ final class ConversationShelf {
                             .list(frame: frame), priority: .foreground, keepsOnClose: true) else { return nil }
                     return entries
                 },
-                selection: { limit in await WebContainer.shared.selectedText(limit: limit) })
+                selection: { limit in await WebContainer.shared.selectedWords(limit: limit) })
         }
     }
 

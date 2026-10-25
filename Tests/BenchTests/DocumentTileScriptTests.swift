@@ -367,7 +367,7 @@ struct DocumentTileScriptTests {
         #expect(!text.contains("selected: now") && !text.contains("selected: kept") && !text.contains("selected: selectedText"))
         #expect(text.contains("Array.from(now).length"))
         // The one place the words are read by Swift is a script of its own, run when the item is chosen, which posts nothing.
-        #expect(!ShelfSelectionScript.read.contains("postMessage"))
-        #expect(ShelfSelectionScript.read.contains("getSelection"))
+        #expect(!SelectedWordsScript.read.contains("postMessage"))
+        #expect(SelectedWordsScript.read.contains("getSelection"))
     }
 }

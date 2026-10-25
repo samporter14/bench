@@ -492,11 +492,11 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// selected, the page isn't up, or it doesn't answer within two seconds.
     /// It reads no element and no selector of the page; the words go to the
     /// caller and nowhere else, and nothing of them is logged.
-    func selectedText(limit: Int) async -> String? {
+    func selectedWords(limit: Int) async -> String? {
         guard status == .ready, limit > 0 else { return nil }
         let view = webView
         let text = try? await WriteDeadline.bridge(.seconds(2)) { () async throws -> String in
-            let value = try await view.callAsyncJavaScript(ShelfSelectionScript.read, arguments: ["limit": limit], in: nil,
+            let value = try await view.callAsyncJavaScript(SelectedWordsScript.read, arguments: ["limit": limit], in: nil,
                                                            contentWorld: ConversationMenu.world)
             return (value as? String) ?? ""
         }
