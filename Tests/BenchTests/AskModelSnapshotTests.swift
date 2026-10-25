@@ -69,14 +69,17 @@ struct AskModelSnapshotTests {
             modelName: { "abliterated-model" },
             host: { "api.abliteration.ai" },
             limit: .seconds(120),
-            ask: { _ in
+            ask: { _, _ in
                 // Held: the ask waits until Cancel ends it, so nothing is left suspended.
                 if hold {
                     try? await Task.sleep(for: .seconds(3600))
-                    return .failure(.cancelled)
+                    return .failed(.cancelled)
                 }
                 now += .seconds(9)
-                return answer
+                switch answer {
+                case .success(let text): return AnotherModelAnswer(text: text, failure: nil)
+                case .failure(let failure): return .failed(failure)
+                }
             },
             send: { _, _, _ in .unavailable },
             pasteboard: { _ in true },

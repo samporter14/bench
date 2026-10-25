@@ -185,14 +185,15 @@ final class AnotherModel: ObservableObject {
         }
     }
 
-    /// Asks the chosen model, with the key read from its file now. Nothing is
-    /// sent while the switch is off, even from a window left open.
-    func ask(_ turns: [ChatTurn]) async -> Result<String, AnotherModelFailure> {
-        guard isOn else { return .failure(.notSet(.switchedOff)) }
-        guard let url = addressURL else { return .failure(.notSet(.address)) }
-        guard let key = currentKey() else { return .failure(.notSet(.key)) }
-        guard let model else { return .failure(.notSet(.model)) }
-        return await client.ask(address: url, key: key, model: model, turns: turns)
+    /// Asks the chosen model, with the key read from its file now; `progress`
+    /// hears the words as they arrive. Nothing is sent while the switch is off,
+    /// even from a window left open.
+    func ask(_ turns: [ChatTurn], progress: @escaping @MainActor (AskProgress) -> Void = { _ in }) async -> AnotherModelAnswer {
+        guard isOn else { return .failed(.notSet(.switchedOff)) }
+        guard let url = addressURL else { return .failed(.notSet(.address)) }
+        guard let key = currentKey() else { return .failed(.notSet(.key)) }
+        guard let model else { return .failed(.notSet(.model)) }
+        return await client.ask(address: url, key: key, model: model, turns: turns, progress: progress)
     }
 
     var askLimit: Duration { client.askLimit }

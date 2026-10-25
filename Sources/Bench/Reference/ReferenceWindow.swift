@@ -719,6 +719,10 @@ struct ReferenceTextView: NSViewRepresentable {
     /// is on with a key (AskModel/AskModelMenu.swift): called with the
     /// selected text, or nil. Nil here: no item.
     var ask: (@MainActor (String?) -> Void)? = nil
+    /// The text is put in again and again as an answer streams in
+    /// (AskModel/): a selection of the reader's stays where it was, as long
+    /// as the new text reaches it. Off: a new text starts unselected.
+    var keepsSelection = false
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         /// The text last put in, by identity: the model renders once per text.
@@ -779,8 +783,13 @@ struct ReferenceTextView: NSViewRepresentable {
         context.coordinator.ask = ask
         guard context.coordinator.shown !== text else { return }
         context.coordinator.shown = text
+        let kept = textView.selectedRange()
         textView.textStorage?.setAttributedString(text)
-        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        if keepsSelection, kept.length > 0, NSMaxRange(kept) <= text.length {
+            textView.setSelectedRange(kept)
+        } else {
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+        }
     }
 
     /// The text's height at the proposed width. SwiftUI measures at several

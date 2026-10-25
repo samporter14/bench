@@ -173,7 +173,7 @@ struct AnotherModelSettingTests {
         rig.model.saveKey(madeUpModelKey)
         await rig.waitForList()
         #expect(rig.model.listing == .failed("That isn\u{2019}t an https address."))
-        #expect(await rig.model.ask([ChatTurn(role: .user, text: "Which buffer?")]) == .failure(.notSet(.address)))
+        #expect(await rig.model.ask([ChatTurn(role: .user, text: "Which buffer?")]).result == .failure(.notSet(.address)))
         #expect(FakeModelProtocol.seen(rig.host).requests.isEmpty)
     }
 
@@ -191,7 +191,7 @@ struct AnotherModelSettingTests {
         let before = FakeModelProtocol.seen(rig.host).requests.count
         rig.model.setOn(false)
         #expect(rig.model.isAvailable == false)
-        #expect(await rig.model.ask([ChatTurn(role: .user, text: "Which buffer?")]) == .failure(.notSet(.switchedOff)))
+        #expect(await rig.model.ask([ChatTurn(role: .user, text: "Which buffer?")]).result == .failure(.notSet(.switchedOff)))
         #expect(FakeModelProtocol.seen(rig.host).requests.count == before)
     }
 
@@ -221,14 +221,14 @@ struct AnotherModelSettingTests {
         let rig = Rig(answer: { _ in .reply(500, "{}") })
         let turns = [ChatTurn(role: .user, text: "Which buffer?")]
         // Off: nothing is sent, even to a window left open, and the sentence says why.
-        #expect(await rig.model.ask(turns) == .failure(.notSet(.switchedOff)))
+        #expect(await rig.model.ask(turns).result == .failure(.notSet(.switchedOff)))
         rig.model.setOn(true)
-        #expect(await rig.model.ask(turns) == .failure(.notSet(.key)))
+        #expect(await rig.model.ask(turns).result == .failure(.notSet(.key)))
         rig.model.saveKey(madeUpModelKey)
         await rig.waitForList()
         // The list failed, so no model is chosen.
         #expect(rig.model.model == nil)
-        #expect(await rig.model.ask(turns) == .failure(.notSet(.model)))
+        #expect(await rig.model.ask(turns).result == .failure(.notSet(.model)))
         #expect(FakeModelProtocol.seen(rig.host).requests.count == 1)
     }
 }
@@ -445,9 +445,9 @@ struct AskSourceTests {
     }
 
     @Test func theFolderIsThere() {
-        #expect(Set(Self.code().keys) == ["AnotherModel.swift", "AnotherModelClient.swift", "AskModel.swift",
-                                          "AskModelMenu.swift", "AskModelWindow.swift", "AskToolbarButton.swift",
-                                          "ModelPickerMenu.swift"])
+        #expect(Set(Self.code().keys) == ["AnotherModel.swift", "AnotherModelClient.swift", "AnotherModelStream.swift",
+                                          "AskModel.swift", "AskModelMenu.swift", "AskModelWindow.swift",
+                                          "AskScrollFollow.swift", "AskToolbarButton.swift", "ModelPickerMenu.swift"])
     }
 
     @Test func nothingHereReachesTheKeychain() {
@@ -473,7 +473,8 @@ struct AskSourceTests {
 
     @Test func theWindowAndTheRulesNeverHandTheKeyAnywhere() {
         // The key is read in `AnotherModel` for a request and goes no further than the client.
-        for name in ["AskModel.swift", "AskModelWindow.swift", "AskModelMenu.swift", "AskToolbarButton.swift", "ModelPickerMenu.swift"] {
+        for name in ["AskModel.swift", "AskModelWindow.swift", "AskModelMenu.swift", "AskToolbarButton.swift", "ModelPickerMenu.swift",
+                     "AnotherModelStream.swift", "AskScrollFollow.swift"] {
             let text = Self.code()[name] ?? ""
             #expect(!text.contains("currentKey") && !text.contains("AnotherModelKey"), "\(name)")
         }
