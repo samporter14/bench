@@ -142,7 +142,7 @@ struct ShelfClaudeLegendPartTests {
         let part = Rules.part(of: Self.headings, fromFile: "FIGURE_LEGENDS_final.md", forFigure: "fig2_edge_effects.png")
         #expect(part.scope == .section(label: "Figure 2"))
         #expect(part.text == """
-            **Edge effects.** Wells in column 1 read low on every plate.
+            Edge effects. Wells in column 1 read low on every plate.
 
             ### Panel notes
 
@@ -162,7 +162,7 @@ struct ShelfClaudeLegendPartTests {
         let part = Rules.part(of: Self.labels, fromFile: "legends.md", forFigure: "fig2_edge_effects.png")
         #expect(part.scope == .section(label: "Figure 2"))
         // The panel line opens with a bold "(A)", which doesn't open a figure: it is inside the section.
-        #expect(part.text == "**Figure 2.** Edge effects. Wells in column 1\nread low on every plate.\n\n**(A)** Column 1. **(B)** Column 12.")
+        #expect(part.text == "Figure 2. Edge effects. Wells in column 1\nread low on every plate.\n\n(A) Column 1. (B) Column 12.")
     }
 
     @Test func theFileNameIsTheBestWayToNameAFigureThenItsStemThenItsNumber() {
@@ -222,7 +222,7 @@ struct ShelfClaudeLegendPartTests {
         let file = "## Figure 2\n\n**Figure 2.** Edge effects.\n\nMore.\n\n## Figure 3\n\nThird."
         let part = Rules.part(of: file, fromFile: "l.md", forFigure: "fig2_a.png")
         #expect(part.scope == .section(label: "Figure 2"))
-        #expect(part.text == "**Figure 2.** Edge effects.\n\nMore.")
+        #expect(part.text == "Figure 2. Edge effects.\n\nMore.")
     }
 
     @Test func aFileWithNoSectionForTheFigureIsUsedWhole() {
@@ -394,3 +394,32 @@ struct ShelfClaudeLegendAnswerFilesTests {
         #expect(Rules.files(ofAnswerAtRow: 3, in: page(items, from: 10)).isEmpty)
     }
 }
+
+/// "Your legend" is a plain field, so Claude's bold marks come off (since 1.0.6), and nothing that isn't emphasis does.
+struct ShelfClaudeLegendUnboldedTests {
+    private typealias Rules = ShelfClaudeLegendRules
+
+    @Test func boldMarksComeOffTheWords() {
+        #expect(Rules.unbolded("**Edge effects.** Wells in column 1 read low.") == "Edge effects. Wells in column 1 read low.")
+        #expect(Rules.unbolded("__Edge effects.__ Low.") == "Edge effects. Low.")
+        #expect(Rules.unbolded("**(A)** Column 1. **(B)** Column 12.") == "(A) Column 1. (B) Column 12.")
+        #expect(Rules.unbolded("Line one **bold**\nline **two**") == "Line one bold\nline two")
+    }
+
+    @Test func whatIsNotEmphasisIsLeftAlone() {
+        // Significance stars, a lone star, snake_case names, code in backticks and fenced code.
+        for text in ["WT vs KO ****, KO vs rescue ***", "p < 0.05*", "z_prime_by_plate.png and a__b__c",
+                     "run `**kwargs**` here", "```\n**not bold**\n```", "** spaced **"] {
+            #expect(Rules.unbolded(text) == text, "\(text)")
+        }
+    }
+
+    @Test func aPartPutInTheLegendHasNoBoldMarks() {
+        let file = "## Figure 2\n\n**Edge effects.** Wells in column 1 read low (****).\n\n## Figure 3\n\nThird."
+        let part = Rules.part(of: file, fromFile: "legends.md", forFigure: "fig2_edge.png")
+        #expect(part.text == "Edge effects. Wells in column 1 read low (****).")
+        // The whole file, when no section is plainly the figure's, the same.
+        #expect(Rules.part(of: "**One.** Two.", fromFile: "l.md", forFigure: "other.png").text == "One. Two.")
+    }
+}
+

@@ -40,7 +40,7 @@ enum ClaudeLegendMade {
         **Recovery.** Spiked wells came back at 94%.
         """
     /// What the Figure 2 section comes to.
-    static let figureTwo = "**Edge effects.** Wells in column 1 read low on every plate."
+    static let figureTwo = "Edge effects. Wells in column 1 read low on every plate."
     static let siblingText = "The edge reads low on plates 3 and 7.\n"
 
     static func entry(_ name: String) -> ArtifactEntry {
@@ -342,7 +342,7 @@ struct ShelfClaudeLegendTests {
         #expect(item.canKeepWithDataAndCode)
         await rig.model.useClaudeLegend(candidate, for: item, confirmed: false)
 
-        let whole = ShelfClaudeLegendRules.normalized(ClaudeLegendMade.legendsText)
+        let whole = ShelfClaudeLegendRules.unbolded(ShelfClaudeLegendRules.normalized(ClaudeLegendMade.legendsText))
         #expect(try rig.parsed(item).text.legend == whole)
         #expect(rig.model.note?.sentence == "Put in all of FIGURE_LEGENDS_final.md, which has no section for plate_map.png. The file is beside the figure.")
         // A legend file beside the figure is not data and code: Keep with Data and Code… stays, and the folder is not the richer one.

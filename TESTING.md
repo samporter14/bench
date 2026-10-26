@@ -323,6 +323,17 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, merging 1.0.6: OpenCode's five Shelf items, and Claude's legend in plain words
+
+- ✅ **OpenCode's branch reviewed and merged** (`g/opencode-106`, nine commits: eight Sonnet 5.5, one Opus 5.5).
+  - The tree was clean, and the privacy check over its whole diff came back clean.
+  - Its captures looked right: a note's passage, Keep's "Claude's legend" row, and the tile's selection item.
+  - Its own critique stands for later: a note's words show three times on its detail card (preview, title, passage).
+- ✅ **Bold marks off a legend put in "Your legend"** (`ShelfClaudeLegendRules.unbolded`, used by the Shelf and
+  Keep alike). Three new tests cover what comes off and what stays: significance stars, a lone star, snake_case,
+  inline and fenced code. Five expectations changed from Claude's raw `**…**` to the plain words. The 177 legend
+  and Keep tests pass.
+
 ## 2026-10-26, Capsid 1.0.6 (OpenCode): the Shelf searches inside notes, a note shows its passage, a menu for two files of one name, a tile's selection item, Claude's legend in Keep
 
 Five changes on `g/opencode-106` (from main): the Shelf's search reads inside notes, documents and Claude's legend files

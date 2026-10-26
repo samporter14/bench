@@ -255,11 +255,11 @@ enum ShelfClaudeLegendRules {
                 let lowerLabel = one.marker.label.lowercased()
                 let bare = isBareFigureLabel(one.marker.label) || lowerLabel == figureName || lowerLabel == figureStem
                 if one.marker.level != nil, !bare { section = [one.marker.label, ""] + body }
-                let (shown, cut) = truncated(section.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), limit: limit)
+                let (shown, cut) = truncated(unbolded(section.joined(separator: "\n")).trimmingCharacters(in: .whitespacesAndNewlines), limit: limit)
                 return Part(text: cut ? shown + "\n\n" + cutNote(fileName) : shown, scope: .section(label: shortLabel(one.marker.label)), cut: cut)
             }
         }
-        let (shown, cut) = truncated(text, limit: limit)
+        let (shown, cut) = truncated(unbolded(text), limit: limit)
         return Part(text: cut ? shown + "\n\n" + cutNote(fileName) : shown, scope: .whole, cut: cut)
     }
 
@@ -280,6 +280,31 @@ enum ShelfClaudeLegendRules {
             }
         }
         return found
+    }
+
+    private static let doubleStars = try! NSRegularExpression(pattern: #"\*\*(?=[^*\s])((?:(?!\*\*).)+?)(?<=[^*\s])\*\*"#)
+    private static let doubleUnderscores = try! NSRegularExpression(
+        pattern: #"(?<![A-Za-z0-9_])__(?=[^_\s])((?:(?!__).)+?)(?<=[^_\s])__(?![A-Za-z0-9_])"#)
+
+    /// The legend's words without Markdown's bold marks, since "Your legend" is a plain field (since 1.0.6): "**Edge
+    /// effects.**" reads "Edge effects.". Only a pair around words goes: significance stars ("****"), a lone "*",
+    /// snake_case names, code between backticks and fenced code are left as they are.
+    static func unbolded(_ text: String) -> String {
+        var fenced = false
+        return text.components(separatedBy: "\n").map { line -> String in
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") { fenced.toggle(); return line }
+            guard !fenced, line.contains("**") || line.contains("__") else { return line }
+            // Between backticks is code: the even pieces are prose, the odd ones code.
+            return line.components(separatedBy: "`").enumerated().map { index, piece -> String in
+                guard index.isMultiple(of: 2) else { return piece }
+                var plain = piece
+                for pattern in [doubleStars, doubleUnderscores] {
+                    plain = pattern.stringByReplacingMatches(in: plain, range: NSRange(location: 0, length: (plain as NSString).length),
+                                                             withTemplate: "$1")
+                }
+                return plain
+            }.joined(separator: "`")
+        }.joined(separator: "\n")
     }
 
     /// A label without its emphasis marks and backticks, on one line.

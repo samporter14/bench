@@ -53,7 +53,7 @@ private enum Made {
         **edge_effect.png** Column 12 reads low.
         """
     /// What the figure's own part comes to.
-    static let legendPart = "**z_prime.png** Z\u{2032} by plate. Plate 7 is the low bar, at 0.41."
+    static let legendPart = "z_prime.png Z\u{2032} by plate. Plate 7 is the low bar, at 0.41."
     static let siblingText = "Z\u{2032} by plate, one dot for each plate.\n"
     static func historyFile(_ v: String, _ name: String, _ text: String) -> HistoryFile {
         HistoryFile(v: v, a: "eeeeeeee-0000-4000-8000-0000000000" + v.suffix(2), name: name,

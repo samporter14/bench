@@ -709,7 +709,7 @@ struct KeepLegendRowTests {
         let reading = ShelfClaudeLegendRules.reading(Data(text.utf8), fileName: "legends.md", forFigure: "fig2_z_prime.png")
         let part = ShelfClaudeLegendRules.part(of: text, fromFile: "legends.md", forFigure: "fig2_z_prime.png")
         #expect(reading == .part(part))
-        #expect(part.text == "**Z\u{2032}.** By plate.")
+        #expect(part.text == "Z\u{2032}. By plate.")
         #expect(ShelfClaudeLegendRules.reading(Data([0x41, 0x00, 0x42]), fileName: "a.md", forFigure: "f.png") == .notText)
         #expect(ShelfClaudeLegendRules.reading(Data("\n  \n".utf8), fileName: "a.md", forFigure: "f.png") == .empty)
     }
