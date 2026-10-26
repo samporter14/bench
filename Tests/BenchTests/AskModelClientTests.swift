@@ -294,6 +294,30 @@ struct AskModelAnswerReadingTests {
         #expect(names(#"{"data":[{"id":"\#(String(repeating: "m", count: 201))"}]}"#) == [])
     }
 
+    @Test func aThousandNamesAreKeptAndTheNextOneIsNot() {
+        func body(_ count: Int) -> String {
+            #"{"data":["# + (1...count).map { #"{"id":"vendor/model-\#($0)"}"# }.joined(separator: ",") + "]}"
+        }
+        #expect(AnotherModelClient.maxModels == 1000)
+        let kept = names(body(1000))
+        #expect(kept?.count == 1000)
+        #expect(kept?.last == "vendor/model-1000")
+        // The 1,001st is dropped; so is anything after it.
+        #expect(names(body(1001)) == kept)
+        #expect(names(body(1500)) == kept)
+        // Names left out (a repeat, a long one) don't use up the thousand.
+        let longName = String(repeating: "m", count: 201)
+        let padded = #"{"data":[{"id":"vendor/model-1"},{"id":"vendor/model-1"},{"id":"\#(longName)"}"#
+            + (2...1001).map { #",{"id":"vendor/model-\#($0)"}"# }.joined() + "]}"
+        #expect(names(padded)?.count == 1000)
+    }
+
+    @Test func anOpenRouterShapedListOf466NamesIsReadWhole() {
+        let ids = (1...466).map { "vendor-\($0 % 40)/model-\($0)" }
+        let body = #"{"data":["# + ids.map { #"{"id":"\#($0)","name":"Vendor: Model","context_length":128000}"# }.joined(separator: ",") + "]}"
+        #expect(names(body) == ids)
+    }
+
     @Test func aBodyThatIsNoListIsUnreadable() {
         #expect(names("not json") == nil)
         #expect(names(#"{"error":"nope"}"#) == nil)

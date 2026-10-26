@@ -5318,7 +5318,14 @@ foreground priority:
    was, stayed unticked. So Sam's first real keep, about ten seconds after
    opening the sheet, held the figure alone. After the two minutes Keep is on
    again, and that folder's README says its data and code weren't kept because
-   Claude Science was still working out where it came from.
+   Claude Science was still working out where it came from;
+5. since 1.0.6, the files of the answer that shows the chosen version, for
+   Claude's legend row: one page of history around the answer's row, read the
+   way the reference reader reads the files under a reply
+   (`KeepDependencies.answerFiles`, `KeepDependencies.liveAnswerFiles`, which the
+   Shelf's *Claude's legend* shares), once, with the answer, so the row is there
+   when the sheet is. Nothing is read when the answer wasn't found, or is one
+   the sheet was pinned to (it has no row of the history).
    The thumbnails in the strip are the shelf's own 120-px read.
 
 **The sheet** (Kept/KeepSheet.swift, Kept/KeepModel.swift), drawn as board 8 of the
@@ -5360,11 +5367,26 @@ Return.
   ("z_prime.py · 2 KB · Claude-generated reconstruction", and the page's other
   sentences). A version you uploaded shows one line instead of the data and
   code rows. There is no "raw input" row in 1.0: the list projection drops
-  `is_user_upload`.
+  `is_user_upload`. Since 1.0.6 there is a fourth row, *Claude's legend*
+  (`KeepRowKind.legend`), shown **only when the answer that shows the chosen
+  version made a legend file**: "FIGURE_LEGENDS_final.md · its part for this
+  figure goes in your legend". It is **on by default**, since the file is small
+  and belongs with a figure going into a paper, and it doesn't wait for the
+  provenance (an untick made while that is read stays the person's, as the
+  answer's does). With several legend files in the answer the best is used and
+  the detail says so, with no picker: "FIGURE_LEGENDS_final.md, the closest of 3
+  in the answer · its part for this figure goes in your legend" (the Shelf's
+  *Claude's legend*, which the row shares its rules with, lets a person pick
+  another later). No row for an upload, for a version the answer doesn't show
+  (the file is about the one it shows), for an answer the sheet was pinned to
+  (it has no row of the history to read the files around), while no version is
+  chosen, or when the files couldn't be read.
 - **Where it lands**: an ivory box with a folder, the path, and what goes in it
   ("z_prime.png · data/ · code/ · README.md with the text, sources and
   versions · about 92 KB"; with the answer unticked, "README.md with the
-  sources and versions"). A small "Change…" pill beside it opens a menu of the
+  sources and versions"; since 1.0.6 the legend file's name stands before the
+  README when the row is ticked, and the destination sentence lists "Claude's
+  legend" among what lands). A small "Change…" pill beside it opens a menu of the
   Kept folder's collections, the current one ticked, and New Collection… (an
   alert with a name). It defaults to the collection last kept into for this
   project (`keptCollections`, by project id), else the project's name, marked
@@ -5412,10 +5434,28 @@ from wasn't copied.", the row saying why in clay-text, with **Try Again**
 **Show in Finder** and **Done**. Everything copied: the sheet closes and the
 Kept section shows the new row; no card, no toast.
 
+**Claude's legend in a keep** (since 1.0.6). With the *Claude's legend* row
+ticked, the legend file is one more file of the plan: fetched through the same
+queue within the 8 MB cap after the figure, its sha256 compared as the others'
+are, given a name no other file in the folder has (`unique`), written to the top of the folder beside the figure and
+listed with role `legend`. When it has landed, its words go into **Your legend**
+in the README, written with the README itself: the figure's own section of the
+file, by the same rules as the Shelf's *Use Claude's legend*
+(`ShelfClaudeLegendRules.reading`, which the Shelf and Keep both call, so one
+file gives the same words either way: the section whose heading or bold label
+names the figure, else the whole file, at most 3,000 characters, Markdown marks
+and all). A legend file that isn't text or has nothing in it is kept all the
+same, and the legend stays empty. Try Again that lands the legend file puts its
+words in only when "Your legend" is still empty: **a legend a person wrote
+meanwhile is never written over**. The README Keep writes has no `source_row`,
+so the Shelf's own *Use Claude's legend* line isn't offered on that folder; the
+file and its words are already there.
+
 **Updating a README keeps the person's words (since Codex's review of 1.0).**
 Try Again changes only what Capsid keeps in README.md: the `files:` and
 `missing:` rows of the front matter and the "Not copied" and "Checksums"
-sections (`KeptReadme.updating`). Every other byte stays: a section or note a
+sections (`KeptReadme.updating`), and, since 1.0.6, an empty "Your legend" when
+Claude's legend file is what the retry landed (never one with words in it). Every other byte stays: a section or note a
 person added, their spacing, the legend, a byte order mark. The write is checked
 against what was read (`KeptDisk.replaceReadme(…lastRead:)`, the comparison and
 the write in one disk call); if README.md was edited in another app meanwhile it
@@ -5514,6 +5554,8 @@ each step under `keep` (`KeepDependencies.note`), in fixed words and counts:
 - the figure's first read failed, and how (`missing`, `timedOut`,
   `notReady`, `signedOut`, `unreadable`);
 - ready, with N versions and which answer;
+- since 1.0.6, the answer's files read, with their number, or that they
+  couldn't be read;
 - provenance read, with N inputs and M copyable, or unreadable, or an upload,
   and what Keep would do: N files, nothing to keep, or a figure over the cap;
 - keeping N files;
@@ -5536,20 +5578,21 @@ results you choose in your Documents folder."). The layout:
 ```
 <root>/<Collection>/<Name>/
   <the figure's own file name>
-  <Claude's legend file, when the Shelf put it there>
+  <Claude's legend file, when the Shelf or Keep put it there>
   data/…
   code/…
   README.md
 ```
 
-A file's role is `figure`, `data`, `code`, `input` or `legend`. The last is Claude's own legend file for the figure (the Shelf's *Claude's legend*, below): kept beside the figure at the top of the folder, with no subfolder of its own (`KeptLayout.folder(for: .legend)` is nil), and listed under `files:` like the others (`- { path: "FIGURE_LEGENDS_final.md", role: legend, … }`). The parser knows only the roles it was built with, so a Capsid from before it can't read a README that lists one (the folder leaves that Capsid's Shelf, as one with `source_row:` left an older one); this one and later ones read it. A legend file is neither data nor code: `KeptRecord.keepsDataOrCode` is what makes a folder the richer one for a figure (`ShelfRules.items`) and what keeps Keep with Data and Code… in the detail's ⋯ (`ShelfItem.canKeepWithDataAndCode`).
+A file's role is `figure`, `data`, `code`, `input` or `legend`. The last is Claude's own legend file for the figure (the Shelf's *Claude's legend*, below, and, since 1.0.6, Keep's *Claude's legend* row): kept beside the figure at the top of the folder, with no subfolder of its own (`KeptLayout.folder(for: .legend)` is nil), and listed under `files:` like the others (`- { path: "FIGURE_LEGENDS_final.md", role: legend, … }`). The parser knows only the roles it was built with, so a Capsid from before it can't read a README that lists one (the folder leaves that Capsid's Shelf, as one with `source_row:` left an older one); this one and later ones read it. A legend file is neither data nor code: `KeptRecord.keepsDataOrCode` is what makes a folder the richer one for a figure (`ShelfRules.items`) and what keeps Keep with Data and Code… in the detail's ⋯ (`ShelfItem.canKeepWithDataAndCode`).
 
 README.md is YAML front matter the Kept window reads (`capsid_kept: 1`, the
 name, when, the project and session as ids and names, the figure with its
 artifact, version, index and sha256, the files with their roles, what is
 missing and why, the Claude Science and Capsid versions) and readable
 sections: the name as a heading; **Your legend** (empty, with an HTML comment
-saying where to write it); **What Claude said**, quoted, with "From Claude's
+saying where to write it, unless Keep kept Claude's legend file, whose part for
+the figure it then holds); **What Claude said**, quoted, with "From Claude's
 answer at 8:12 AM on 22 October 2026." (dates written out, since the file may
 be read anywhere; the fallback says so); **Where it came from**, the session
 as a `bench://session?project=<id>&frame=<id>` link (`Router` now checks both
@@ -5736,10 +5779,26 @@ session's history. You asked: “…”"). The legend comment and fine print say
     an artifact once, by its latest, so a tile stepped back to an older version
     of a file is added at the latest);
   - none: "Capsid couldn’t find “notes.md” among this conversation’s files.";
-  - **two different files of one name are refused**, not guessed: “This
-    conversation has more than one file called “notes.md”, so Capsid can’t tell
-    which you meant. Results lists them.” The newest would be the wrong file as
-    often as the right one, and the toast has no room to say which was taken.
+  - **two different files of one name are asked about** (since 1.0.6; they were
+    refused with a sentence before, "This conversation has more than one file
+    called “notes.md”, so Capsid can’t tell which you meant. Results lists
+    them."). Capsid never picks one itself: the newest would be the wrong file
+    as often as the right one. It opens a small native menu at the pointer
+    (`ShelfDocumentChoice`, an `NSMenu` popped up in the main window's web view,
+    where the click on the page's own item was) with a quiet header, `Which
+    “notes.md”?`, and a line for each file, the newest first: when it was made
+    ("Today 2:02 PM", "Yesterday 4:40 PM", else the date), its size, and how
+    many versions the list holds of it when that is more than one ("Today 2:02
+    PM · 12 KB · 3 versions"; a file with no time in the list says "Time
+    unknown"). Choosing a line does the action on that file's **newest
+    version**; closing the menu does nothing and says nothing. The
+    menu is behind an injected presenter (`ConversationShelf.Dependencies.
+    chooseFile`), so a test gives it a made-up one and no test or demo opens a
+    menu (the live presenter shows nothing in a demo). An Add to Shelf's "Adding
+    to your shelf…" toast is taken down while the menu is up and comes back with
+    the choice. A name only one file has is added as before, with no menu.
+    **Show in Results never asks**: it needs only the session, so it is done
+    before the list is read.
 
   Then the action is the figure's: Add to Shelf (on the listing's own entry, so
   its type and size are known), Keep with Data and Code…, Open as Reference.
@@ -5763,7 +5822,8 @@ session's history. You asked: “…”"). The legend comment and fine print say
     by its name (it has no version to say);
   - `menu-matched`, `menu-other` (only another menu in the two seconds) or
     `menu-none`;
-  - `placed` or `unplaced`;
+  - `placed` or `unplaced` (and, since 1.0.6, `selection-offered` first when
+    Add Selection to Shelf was among the items placed in a tile's menu);
   - or `interrupted` by another right-click first.
 
   Swift drops any word not on that list, so nothing from the page reaches the
@@ -5789,6 +5849,32 @@ session's history. You asked: “…”"). The legend comment and fine print say
   note on the shelf, 812 characters", the toast says the title, and a test reads
   the source for any logging line that names the words.
 
+  **In a Markdown or text tile** (since 1.0.6). The page draws its own menu for
+  a tile and takes the right-click, so the Mac's item never shows there; a
+  passage selected in an open tile's body has the item in the page's own menu,
+  **Add Selection to Shelf**, first in Capsid's group (above Add to Shelf, with
+  a line icon of Capsid's own, drawn like the other four). It is offered only
+  when the right-click was in the tile's preview region
+  (`[data-testid="artifact-preview-region"]`), both ends of the selection are
+  inside that region (a selection that runs out of the body into the header or
+  the page is not the tile's words), and the selection is the same at the
+  button-down, at the `contextmenu` and again when the menu opens; a card in the
+  Generated tray has no body, so no item. The script keeps the selection's range
+  from the button-down and the words with it. A click on the item posts only
+  `{action: "addSelection", selected: <characters>}`, the count and never the
+  words, and the menu closes as for the other items. Pressing on an item of a
+  page's menu can collapse a selection, so the item stops its `mousedown` from
+  doing it (`preventDefault`), and the click puts the kept range back
+  (`removeAllRanges`, `addRange`) if it moved. The words wait in the script's own
+  content world for ten seconds and are read once, by `SelectedWordsScript`,
+  ahead of the live selection, and dropped (a later mouse-down or right-click
+  drops them too); then it is the same Swift entry as the Mac's item
+  (`shelveSelection()`, on a session's page only): the same folder, README, toast
+  and Undo, so what follows is *The note*, below. A trace for it adds one fixed
+  word, `selection-offered`. The selectors are the ones the inventory already
+  lists for a tile (`artifact-preview-region`, `window.getSelection()`), with
+  their entries widened to say so.
+
   **The note** is a kept folder in the session's project collection like any
   shelved file: the words as `note.md`, a document with no artifact and no
   version, and a README.
@@ -5811,11 +5897,33 @@ session's history. You asked: “…”"). The legend comment and fine print say
   - *On the Shelf* it is a document card with its first lines (`ShelfPeek` on
     `note.md`), under its day like any other, and the detail has no Keep with Data
     and Code… (no version to keep). The Shelf's search finds it by its title
-    (the first words), its session and its project; it does not search the rest
-    of the words, because the Shelf never reads file bodies. It exports to PDF as
+    (the first words), its session and its project, and since 1.0.6 by any word
+    in its passage (*The Shelf's search*, below). It exports to PDF as
     a document does (the words as text). Undo on the toast and Remove move the
     folder to the Trash. The same words from the same session are "Already on your
     shelf"; two notes that begin alike get a dated folder, as any keep does.
+  - *The detail shows the passage* (Kept/ShelfPassage.swift, `ShelfPassages`;
+    since 1.0.6). A note (`ShelfItem.isSelectionNote`:
+    a file called `note.md` with no version) now shows the whole passage on its
+    detail card, between the source line and the three controls: the words as
+    they were selected, at 13 points in the card's ink on a 19-point line,
+    selectable, and **not rendered as Markdown** (a `*` or a `#` in the
+    words stays as it is; what the card shows, what Copy copies and
+    what `note.md` holds are one text, as `ShelfSelectionNote.clean` leaves it:
+    line ends as `\n`, blanks at either end trimmed, 32,000 characters at most).
+    A passage taller than the card has room for scrolls inside the card, up to
+    280 points (about a dozen lines; less in a short window, never under 96),
+    and its foot fades while there is more below. That fade is the only sign:
+    no button or link was added. **Copy copies the passage as text**, not the
+    file; a note whose words can't be read (the file gone, put away in iCloud,
+    not text, empty, a disk that didn't answer) is copied as the file, as any
+    document is, and an ordinary document's card and Copy are as they were. The
+    file is read through the disk layer off the main actor (`KeptDisk.peek`,
+    to four bytes for each of the 32,000 characters), once for each state of it
+    (its date and size), when its card is shown and whenever the folders are read
+    again, and twelve passages are held, the newest looked at. A file changed in
+    another app is read again; one that went away takes its passage with it. The
+    log has nothing about a passage.
   Writing is by the disk's one queue (`KeptDisk.prepare`, `write`, `finish`), so
   a note can't leave a half folder; a Kept folder that isn't there is a failed
   add with the disk's sentence, naming the title and none of the words.
@@ -5898,6 +6006,41 @@ Shelf." Settings → General → "Shelf folder".
 `--demo kept --step window` shows the Shelf with ten made-up items of every
 kind; `--demo reference --step shelved` the reference window with a shelved
 figure.
+
+**The Shelf's search** (Kept/ShelfTextIndex.swift, `ShelfRules.matching`; since
+1.0.6). The box at the top used to look only at the words on the card: an item's
+title, file name, session, project, legend, Claude's words and the question it
+answered, so a note was found by its first words and a document by its name and
+never by what it says. It now reads inside the item's prose files
+(`ShelfRules.proseFiles(of:)`): its own file when that is Markdown or text (`md`,
+`markdown`, `txt`: a document, a note made by Add Selection to Shelf), and the
+legend files of Claude's kept beside a figure (role `legend`), in every folder
+the item has, each once; a path in a README that leaves its folder is not read.
+Each is read through the disk layer, off the main actor (`KeptDisk.peek`), up to
+a cap: **1 MiB of a file is read and the first 200,000 characters of that are
+kept**, folded (case, accents and width set aside) and held by path with the
+file's date and size, so a file is read again only when it is not the one read
+before. A file iCloud has put away is looked at and never fetched, and has no
+text. Reading **starts when a search is first typed**, not at launch or when the
+window opens, and from then on goes on each time the folders are read again (the
+rescan): files gone from the shelf are let go, new or changed ones are read.
+Typing never waits for it. A search runs on what has been read so far (the model
+holds that as a plain value, `ShelfTexts`) and runs again when each file
+finishes, so on a shelf of hundreds the first search finds more for a moment and
+settles.
+
+Every word of the search has to be found, in the card's words or in the text of
+one of the files, in any order. Both are case and diacritic insensitive: the
+card's words by `localizedStandardContains` (before 1.0.6,
+`localizedCaseInsensitiveContains`, which set case aside and not accents), the
+text by a byte search of the folded text, which can't match half of a character. When
+an item is found **only by its text** (without the text it would not match) its
+grid card says so in its caption, quietly: "Plate reader QC · 8:47 AM · in its
+text", and VoiceOver reads it. The list is made again only when the choice, the
+items or the text read changed. The log has one line when files were read, under
+`shelf-text`, with a count and no word of a file or of a search ("Read 14 text
+files for the Shelf's search"). The Find section below, "In your sessions", is
+not changed: it matches names and sessions in Claude Science's database, not text.
 
 **Lab-meeting PDF** (Kept/ShelfPDF.swift, ShelfPDFRules.swift,
 ShelfPDFCommand.swift, ShelfPicking.swift; since 1.0). Pick figures on the
@@ -5995,9 +6138,13 @@ failure is the field's to say and the pill says nothing.
 
 The editor changed in three ways for it, and in no other: `put`, `list` and `undoPut` (above), the one queue of writes (`inOrder`, which the legend's own save already used) now carries a file listing too, and `show()` waits for a write under way before it reads the README, so a field shown while Claude's legend is going in reads what the write left.
 
-*Keep with Data and Code… doesn't offer it.* A "Claude's legend file" row there was looked at and left out: the sheet's rows are a closed trio (`KeepRowKind`: answer, data, code) with a flag each in `KeepChoices`, built in `KeepRules.rows`, planned in `KeepPlan`, drawn by `KeepSheet` and pinned by `KeepSheetSnapshotTests`, and its sources hold the answer's text but not its files (`KeepSources.showing` is a `ShowingMessage`), so a "Claude's legend file" row would be a fourth row through five places plus a new read of the history for the sheet. Not simple; the Shelf's line does it from the card, and Keep with Data and Code… stays in ⋯ after a legend file is listed.
+*Keep with Data and Code… offers it too* (since 1.0.6). It was looked at and left out at first: the sheet's rows were a closed trio (`KeepRowKind`: answer, data, code) with a flag each in `KeepChoices`, and its sources held the answer's text but not its files, so a legend row was a fourth row through `KeepRules.rows`, `KeepPlan`, `KeepSheet` and `KeepSheetSnapshotTests` plus a new read of the history for the sheet. It is that now, and not more: the row is **Claude's legend** (`KeepRowKind.legend`, `KeepChoices.withLegend`, on by default), shown only when the answer that shows the chosen version has a legend file, from the files of that answer (`KeepSources.answerFiles`, read with the answer through `KeepDependencies.liveAnswerFiles`, the read the Shelf's offer makes). The finding and the reading are the Shelf's, called, not copied: `ShelfClaudeLegendRules.candidates` for the file (best first; with several the best is used and the row's detail says "the closest of 3 in the answer") and `ShelfClaudeLegendRules.reading` for its words (the figure's own section, the same cap, a file that isn't text or is empty a `notText` or `empty` reading). The file is copied with role `legend` and its part for the figure goes in "Your legend" (*Claude's legend in a keep*, in Keep above), so a figure kept with its data and code arrives with its legend in one go; the Shelf's own line is the way when the figure was shelved alone. After a keep, Keep with Data and Code… stays in ⋯ for an item that has only a legend file, as before (a legend file is neither data nor code).
 
 `ShelfClaudeLegendRulesTests` (candidates, parts, the offer's states, sentences, the answer's files), `ShelfClaudeLegendTests` (the whole use on a scratch Kept folder, the role, `KeptDisk.listFile`, the editor's `put`, `list` and `undoPut`) and `ShelfClaudeLegendSnapshotTests` (captures).
+
+Since 1.0.6, for Keep's row: `KeepPlanTests` (the row only with a candidate and on by default, none for an answer about another version, the best of several and the detail that says so, the plan with and without it, the destination sentence and the record carrying the legend, and that the Shelf and Keep read one file the same way), `KeepModelTests` (a keep copies the file and puts the figure's part in "Your legend", several files, unticking, a file that failed and Try Again filling the legend, a legend written meanwhile left alone) and `KeepSheetSnapshotTests` (the sheet with the row, and with several files).
+
+Since 1.0.6, for the rest of this section: `ShelfTextIndexTests` (which files an item's search reads, the search and its caption, the caps, a file read again when changed, reading off the main actor, five hundred items searched quickly, the model's use of it), `ShelfPassageTests` (the passage's rules, the held passages and the disk), `ShelfDocumentTests` (the several-file match, the menu's lines and what each does, no ask for one file or for Show in Results, a closed menu doing nothing) and `TileSelectionItemTests` (the script in JavaScriptCore against a made-up page: the item first only for a passage wholly inside the tile's region and left alone by the right-click, the selection put back, the words read once and dropped, the count posted and never the words; the Swift half on made-up menus; `FigureMenuSnapshotTests` has the captures). Only a real right-click in a real tile confirms the page's own menu.
 
 ## Find any figure (Find/, since 1.0)
 
@@ -6396,7 +6543,7 @@ the Keychain out of the folder, the word `Authorization` in one file, and one
 `Logger` with one call.
 
 **The address and the model.** Both are in Settings, under the key: the address
-prefilled with Abliteration.ai's, and "Model", a pop-up filled from `GET
+prefilled with Abliteration.ai's, and "Model", a search field filled from `GET
 /models` once a key is saved (asked when a key is saved, when the switch goes
 on with a key, when Settings opens on one, on Return in the address field, and
 from "List Models" or "Try Again"; never while the address is being typed: any
@@ -6404,11 +6551,27 @@ edit drops the old list until it is asked for again). Model names differ
 between sources (`abliterated-model`, `abliterated-model-large`, with or
 without an `abliteration-ai/` prefix), so Capsid takes the address's own
 list: `{"data": [{"id"}]}`, `{"models": […]}` or a bare array, each name once,
-200 at most, each 1 to 200 characters with no control character. With none
-chosen yet, or the chosen one gone from the list, the first is chosen; a model chosen before and
-not listed now stays in the pop-up as "… (not listed)". The choice is kept as
-the string the address gave (`anotherModelName`, not registered: absent means
-none chosen, and the window says so and keeps Ask off).
+1,000 at most (since 1.0.6; an aggregator's list, such as OpenRouter's at
+`https://openrouter.ai/api/v1`, runs to hundreds), each 1 to 200 characters
+with no control character. With none chosen yet, or the chosen one gone from
+the list, the first is chosen. The choice is kept as the string the address
+gave (`anotherModelName`, not registered: absent means none chosen, and the
+window says so and keeps Ask off).
+
+**Finding a model** (since 1.0.6). Hundreds of names are searched, not
+scrolled: Model is a text field with the system's own suggestions
+(`textInputSuggestions`, each with `textInputCompletion`), showing at most 12
+names. Every word typed must be in the id, in any order, with case and accents
+aside ("sonnet", "anthropic sonnet"), and the names keep the list's order
+(`AnotherModelRules.matches`, pure). Choosing a suggestion, or typing a name
+the list has, chooses it as the list spelled it. Return on an id the list
+leaves out chooses that id as typed, since an address can serve models it
+doesn't list; the line under "Model" then says "Not listed by the address;
+asked for as typed." (`AnotherModelRules.choice`). Words with a space in them
+are a search, so Return chooses nothing from them. Empty text never clears a
+choice: Return on it, or leaving the field with words not yet chosen, puts
+the chosen model back in the field. The line under "Model" says how many
+names the address listed ("Search the address's 466 models.").
 
 **Where it appears** (`AskMenu`, `AskCommands`, `AskToolbarButton`, `ModelPickerMenu`), only while it is
 available. Sam's first cut had it in File and at the top of the Mac's right-click menu on the conversation; he turned
@@ -6637,8 +6800,8 @@ name, the host or the key; tests look for each in every line.
 points taller for it, `settingsPage(height: 1190)`): the switch with one line
 under it; with it on, the key (a secure field and Save; once saved, eight dots
 and Remove), the address (a bordered field, https only; it says so while it
-isn't), the model pop-up (a spinner while it lists, the failure's sentence and
-Try Again, "The address lists no models."), and the fine print. A key that was
+isn't), the model search field (a spinner while it lists, the failure's sentence and
+Try Again, "The address lists no models."; Finding a model, above), and the fine print. A key that was
 refused keeps its file: the person may have pasted the right one for another
 address.
 

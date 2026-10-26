@@ -34,10 +34,24 @@ final class ShelfModel: ObservableObject {
     /// Export Figure as PDF… (ShelfPDFCommand.swift).
     let pdf: ShelfPDFMaker
 
-    @Published private(set) var items: [ShelfItem] = []
-    @Published var project: String? { didSet { if project != oldValue { reconcile(); findScopeChanged() } } }
+    /// What the search reads inside the prose files (Kept/ShelfTextIndex.swift): reading starts when a search is first typed.
+    let textIndex: ShelfTextIndex
+    /// The whole passage of a note, for its detail card and for Copy (Kept/ShelfPassage.swift).
+    let passages: ShelfPassages
+
+    @Published private(set) var items: [ShelfItem] = [] { didSet { scopedStale = true } }
+    @Published var project: String? { didSet { if project != oldValue { scopedStale = true; reconcile(); findScopeChanged() } } }
     @Published var kind: ShelfKind? { didSet { if kind != oldValue { reconcile(); findScopeChanged() } } }
-    @Published var search = "" { didSet { if search != oldValue { reconcile(); findScopeChanged() } } }
+    @Published var search = "" {
+        didSet {
+            guard search != oldValue else { return }
+            scopedStale = true
+            // The first search starts the reading; what is read so far is searched at once.
+            if !search.isEmpty, !textIndex.isActive { textIndex.update(for: items) }
+            reconcile()
+            findScopeChanged()
+        }
+    }
     /// "In your sessions": what the search finds beyond the shelf (Find/ShelfFinder.swift).
     @Published var finder: ShelfFinder
     /// The selected item's id (`ShelfItem.id`): the one the detail shows and the arrows move from.
@@ -66,7 +80,14 @@ final class ShelfModel: ObservableObject {
     private let legendDelay: Duration
 
     private var subscription: AnyCancellable?
+    private var textSubscription: AnyCancellable?
+    /// What the search has read of the prose files; replaced as reading finishes.
+    private var texts = ShelfTexts.none
+    /// `scoped` as last made, and whether a choice, the items or the text read has changed since.
+    private var scopedItems: [ShelfItem] = []
+    private var scopedStale = true
     private var legendSubscription: AnyCancellable?
+    private var passageSubscription: AnyCancellable?
     private var noteTask: Task<Void, Never>?
     private var pending: (folder: URL, until: Date)?
     private let now: () -> Date
@@ -76,8 +97,11 @@ final class ShelfModel: ObservableObject {
     private let noteLifetime: Duration
 
     init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() }, calendar: Calendar = .current,
-         pdf: ShelfPDFMaker? = nil, legendDelay: Duration = .seconds(1), claudeLegend: ShelfClaudeLegend? = nil) {
+         pdf: ShelfPDFMaker? = nil, legendDelay: Duration = .seconds(1), claudeLegend: ShelfClaudeLegend? = nil,
+         textIndex: ShelfTextIndex? = nil, passages: ShelfPassages? = nil) {
         self.shelf = shelf
+        self.passages = passages ?? ShelfPassages(disk: shelf.index.disk)
+        self.textIndex = textIndex ?? ShelfTextIndex(disk: shelf.index.disk)
         self.legendDelay = legendDelay
         self.claudeLegend = claudeLegend ?? ShelfClaudeLegend(dependencies: { shelf.legendDependencies })
         self.pdf = pdf ?? .live(disk: shelf.index.disk)
@@ -91,10 +115,27 @@ final class ShelfModel: ObservableObject {
         legendSubscription = self.claudeLegend.objectWillChange.sink { [weak self] _ in
             MainActor.assumeIsolated { self?.objectWillChange.send() }
         }
+        // The card is redrawn when a note's passage has been read.
+        passageSubscription = self.passages.objectWillChange.sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.objectWillChange.send() }
+        }
         subscription = shelf.index.$results.sink { [weak self] results in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.items = ShelfRules.items(from: results)
+                // The folders were read again: the files read for the search are looked at again too.
+                if self.textIndex.isActive { self.textIndex.update(for: self.items) }
+                self.reconcile()
+            }
+        }
+        // A file's text was read: the search runs again on it, when there is one.
+        textSubscription = self.textIndex.$texts.dropFirst().sink { [weak self] texts in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.texts = texts
+                guard !self.search.isEmpty else { return }
+                self.scopedStale = true
+                self.objectWillChange.send()
                 self.reconcile()
             }
         }
@@ -147,7 +188,18 @@ final class ShelfModel: ObservableObject {
     }
 
     /// In the project and matching the search: what the chips count.
-    var scoped: [ShelfItem] { ShelfRules.matching(items, project: project, query: search) }
+    /// Made again only when something it depends on changed: a search reads up to 200,000 characters of each item.
+    var scoped: [ShelfItem] {
+        if scopedStale {
+            scopedItems = ShelfRules.matching(items, project: project, query: search, texts: texts)
+            scopedStale = false
+        }
+        return scopedItems
+    }
+    /// The search found this item only by what its text says (a quiet word on its card).
+    func foundOnlyInText(_ item: ShelfItem) -> Bool {
+        !search.isEmpty && ShelfRules.foundOnlyInText(item, query: search, texts: texts)
+    }
     var counts: ShelfRules.Counts { ShelfRules.counts(of: scoped) }
     /// The grid: the scoped items of the chosen kind.
     var shown: [ShelfItem] { ShelfRules.items(scoped, of: kind) }

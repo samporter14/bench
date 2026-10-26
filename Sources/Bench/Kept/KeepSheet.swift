@@ -1,7 +1,8 @@
 // KeepSheet.swift — the Keep sheet, drawn as board 8 of the Capsid 1.0
 // mock-ups (DESIGN.md, Keep; Look → The 1.0 windows): a white sheet with the
 // name, the versions as tiles in a grid (the one Claude's answer shows
-// pre-selected, ringed in ink), three rows for what to keep with it, the
+// pre-selected, ringed in ink), the rows for what to keep with it (what Claude
+// said, the data, the code, and Claude's legend when the answer made one), the
 // folder it lands in with a menu to change the collection, and one clay
 // button. The sheet's own work is in KeepModel. A row that can't be ticked
 // says why in its own words, and the destination says where the folder lands
@@ -284,12 +285,13 @@ struct KeepSheet: View {
     }
 
     /// What lands in it, in the destination sentence's own facts: the figure,
-    /// the data and code folders when there are some, the README, the size.
+    /// the data and code folders when there are some, Claude's legend file, the README, the size.
     private var destinationContents: String? {
         guard let plan = model.plan else { return nil }
         var parts = [plan.figure.name]
         if plan.files.contains(where: { $0.role == .data }) { parts.append("data/") }
         if plan.files.contains(where: { $0.role == .code }) { parts.append("code/") }
+        if let legend = plan.files.first(where: { $0.role == .legend }) { parts.append(legend.name) }
         parts.append(plan.answer == nil ? "README.md with the sources and versions" : "README.md with the text, sources and versions")
         parts.append("about \(KeepRules.bytes(plan.totalBytes))")
         return parts.joined(separator: " · ")

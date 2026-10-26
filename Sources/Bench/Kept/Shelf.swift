@@ -85,15 +85,7 @@ struct ShelfDependencies {
                 }
                 return nil
             },
-            answerFiles: { frameID, row in
-                guard Demo.mode == nil else { return nil }
-                // The page that holds the row and a few rows after it: a reply's files sit under its last message.
-                let before = row + 1 + ShelfClaudeLegendRules.rowsAhead
-                guard let read = try? await WebContainer.shared.readHistory(frameID, before: before, rows: 50,
-                                                                            nonce: ArtifactReadAbort.makeNonce()),
-                      case .page(let page) = read else { return nil }
-                return ShelfClaudeLegendRules.files(ofAnswerAtRow: row, in: page)
-            })
+            answerFiles: { await KeepDependencies.liveAnswerFiles(frameID: $0, row: $1) })
     }
 }
 

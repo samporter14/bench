@@ -183,8 +183,9 @@ final class AnotherModelClient {
     nonisolated static let overallLimit: Duration = .seconds(600)
     /// A body over this (4 MiB), or an answer longer, isn't read as an answer.
     nonisolated static let maxBody = 4 * 1024 * 1024
-    /// The most models a list gives, and the longest name taken.
-    nonisolated static let maxModels = 200
+    /// The most models a list gives, and the longest name taken. 1,000 holds
+    /// the largest public lists (OpenRouter's has about 470; since 1.0.6).
+    nonisolated static let maxModels = 1000
     nonisolated static let maxModelName = 200
 
     let askLimit: Duration
@@ -317,7 +318,7 @@ final class AnotherModelClient {
 
     /// The names in a list: OpenAI's `{"data": [{"id"}]}`, or `{"models": […]}`,
     /// or a bare array, of names or of objects with an `id` or a `name`. In
-    /// the list's order, each once, 200 at most; a name is 1 to 200
+    /// the list's order, each once, 1,000 at most; a name is 1 to 200
     /// characters with no control character. Nil when the body is no list.
     nonisolated static func modelNames(in data: Data) -> [String]? {
         guard let root = try? JSONSerialization.jsonObject(with: data) else { return nil }
@@ -331,12 +332,13 @@ final class AnotherModelClient {
             return nil
         }
         var names: [String] = []
+        var seen = Set<String>()
         for item in items {
             let found = (item as? String)
                 ?? ((item as? [String: Any]).flatMap { ($0["id"] as? String) ?? ($0["name"] as? String) })
             guard let name = found?.trimmingCharacters(in: .whitespaces), (1...maxModelName).contains(name.count),
                   !name.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }),
-                  !names.contains(name) else { continue }
+                  seen.insert(name).inserted else { continue }
             names.append(name)
             if names.count == maxModels { break }
         }

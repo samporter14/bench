@@ -27,7 +27,8 @@
 // text of the first span in its header. The script then notes the name, adds
 // the same four items, and a click posts `{action, kind: "document", name}`;
 // Swift finds the file of that name among the session's files
-// (ShelfDocuments.swift), and refuses a name two different files have.
+// (ShelfDocuments.swift), and asks which when two different files have the
+// name (ShelfDocumentChoice.swift: a native menu at the pointer, since 1.0.6).
 //
 // The selected words. On a right-click that left a selection alone (the
 // selection was the same when the button went down as when the menu was asked
@@ -36,6 +37,15 @@
 // its characters, `selected`, to its message. The words stay in the page: Swift
 // asks for them with `window.getSelection()` only when "Add Selection to Shelf"
 // is chosen, never logs them, and writes them only to a note on the shelf.
+//
+// Inside a tile (since 1.0.6). A passage selected in a Markdown or text tile's
+// body and right-clicked there (the selection the same at the button as at the
+// menu, and wholly inside that tile's preview region) gets "Add Selection to
+// Shelf" in the page's menu too, first in Capsid's group, drawn like the other
+// four. Choosing it posts `{action: "addSelection", selected}`, the count and
+// not the words, and Swift runs the same entry point as the Mac's item. The
+// script puts the selection back if the click disturbed it and keeps the words
+// in its own world for the one read that follows (`SelectedWordsScript`).
 //
 // The order of the first path is not an API guarantee (see TabContextMenu): the
 // script posts from inside the `contextmenu` event and WebKit asks for the menu
@@ -143,6 +153,19 @@ enum ConversationMenuMessage {
         return count
     }
 
+    /// "Add Selection to Shelf" chosen in the page's menu for a tile:
+    /// `{action: "addSelection", selected}` with `selected` the count of
+    /// characters the script kept at the right-click, above zero (since 1.0.6).
+    /// The words are not in it; Swift reads them when it runs.
+    static func selectionChoice(in body: Any?) -> Int? {
+        guard let body = body as? [String: Any], body["action"] as? String == selectionAction, body["version"] == nil,
+              let count = body["selected"] as? Int, count > 0 else { return nil }
+        return count
+    }
+
+    /// The word the script posts for that item.
+    static let selectionAction = "addSelection"
+
     /// The page's menu opened after a right-click on a figure, and the script
     /// could not put the items in it: `{unplaced: true}`.
     static func isUnplaced(_ body: Any?) -> Bool {
@@ -184,6 +207,8 @@ enum FigureMenuStep: String, CaseIterable, Sendable {
     case versionOK = "version-ok", versionNone = "version-none", noObserver = "no-observer"
     case menuMatched = "menu-matched", menuOther = "menu-other", menuNone = "menu-none"
     case placed, unplaced, interrupted
+    /// Capsid's "Add Selection to Shelf" was among the items placed in a tile's menu (since 1.0.6).
+    case selectionOffered = "selection-offered"
 }
 
 /// The pick the last right-click made, for one menu, within a second of the
@@ -321,7 +346,7 @@ final class ConversationMenu {
         return true
     }
 
-    static let selectionTitle = "Add Selection to Shelf"
+    nonisolated static let selectionTitle = "Add Selection to Shelf"
     static let selectionID = NSUserInterfaceItemIdentifier("capsid.shelfSelection")
     /// WebKit's own identifier for "Copy" in a menu on selected text.
     private static let copyID = "WKMenuItemIdentifierCopy"
@@ -402,7 +427,7 @@ final class ConversationMenu {
     }
 
     /// What a message from the page means, once its sender is known to be the
-    /// main window's own page (`accepted`). Five shapes:
+    /// main window's own page (`accepted`). Six shapes:
     /// - `{kind, url, name}`: what the last right-click was on, kept a second
     ///   for the Mac's menu (anything else clears it), and `selected`, the
     ///   count of characters the right-click left selected, with it when there
@@ -411,6 +436,9 @@ final class ConversationMenu {
     ///   at once (that menu can stay open far longer than a second);
     /// - `{action, kind: "document", name}`: the same for a file with no
     ///   picture, which Swift finds by its name;
+    /// - `{action: "addSelection", selected}`: "Add Selection to Shelf" chosen
+    ///   in the page's menu for a tile (since 1.0.6), run at once like the Mac's
+    ///   item (`shelveSelection`), which reads the words itself;
     /// - `{unplaced: true}`: the page's menu opened and the items had nowhere
     ///   to go, which is a change in Claude Science worth a breadcrumb;
     /// - `{trace: [...]}`: a right-click's steps, logged, and leaving the pick
@@ -425,6 +453,9 @@ final class ConversationMenu {
             run(choice.action, choice.pick)
         } else if let choice = ConversationMenuMessage.documentChoice(in: body) {
             runDocument(choice.action, choice.name)
+        } else if ConversationMenuMessage.selectionChoice(in: body) != nil {
+            // The same call as the Mac's item, on a session's page only.
+            if isSession() { shelveSelection() }
         } else if ConversationMenuMessage.isUnplaced(body) {
             breadcrumbs.record(.figureMenuNotUnderstood)
         } else if let steps = ConversationMenuMessage.trace(in: body) {
@@ -442,7 +473,12 @@ final class ConversationMenu {
     nonisolated static let script: String = {
         let entries = ConversationAction.allCases.map { ["action": $0.rawValue, "title": $0.title] }
         let data = (try? JSONSerialization.data(withJSONObject: entries, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("[]".utf8)
-        return template.replacingOccurrences(of: "__ENTRIES__", with: String(decoding: data, as: UTF8.self))
+        let selection = (try? JSONSerialization.data(
+            withJSONObject: ["action": ConversationMenuMessage.selectionAction, "title": selectionTitle],
+            options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
+        return template
+            .replacingOccurrences(of: "__ENTRIES__", with: String(decoding: data, as: UTF8.self))
+            .replacingOccurrences(of: "__SELECTION__", with: String(decoding: selection, as: UTF8.self))
     }()
 
     /// A capturing `contextmenu` listener for real clicks on the daemon's own
@@ -480,6 +516,15 @@ final class ConversationMenu {
     /// version, the items placed or not, no menu in the two seconds, or
     /// another right-click first) it posts its steps, `{trace}`, in the fixed
     /// words of `FigureMenuStep`.
+    ///
+    /// A passage (since 1.0.6): when the right-click is in a tile's body and left
+    /// words selected wholly inside its preview region (the same at the button
+    /// as at the menu), the items start with "Add Selection to Shelf", if those
+    /// words are still the selection when the menu opens. A click on it puts
+    /// the selection back (from the range taken at the button) if the click
+    /// moved it, keeps the words in this world for the one read Swift makes
+    /// (`SelectedWordsScript`), posts `{action: "addSelection", selected}`, the
+    /// count and never the words, and closes the menu as for the other items.
     private nonisolated static let template = #"""
     (() => {
       "use strict";
@@ -489,6 +534,10 @@ final class ConversationMenu {
 
       // The four items, in order: what is posted for each, and its words.
       const ENTRIES = __ENTRIES__;
+      // The fifth, shown first in a tile's menu when a passage is selected in the tile (since 1.0.6).
+      const SELECTION = __SELECTION__;
+      // How long the words of a chosen passage wait in this script's world for Swift to read them.
+      const HELD_MS = 10000;
       // How long the page has to open its own menu after a right-click on a figure.
       const WAIT_MS = 2000;
       // The longest the items are looked after once they are in a menu.
@@ -503,7 +552,8 @@ final class ConversationMenu {
         addToShelf: "M4 2.75h8a.5.5 0 0 1 .5.5v10.2L8 10.55l-4.5 2.9V3.25a.5.5 0 0 1 .5-.5z",
         keep: "M2.75 3.25h10.5v2.5H2.75zM3.75 5.75v6.5a1 1 0 0 0 1 1h6.5a1 1 0 0 0 1-1v-6.5M6.5 8.5h3",
         openAsReference: "M8 4.5C7 3.5 5.4 3.1 2.75 3.25v8.5C5.4 11.6 7 12 8 13c1-1 2.6-1.4 5.25-1.25v-8.5C10.6 3.1 9 3.5 8 4.5zM8 4.5V13",
-        showInResults: "M2.75 3.5h10.5v9H2.75zM2.75 6.75h10.5M6.5 6.75v5.75"
+        showInResults: "M2.75 3.5h10.5v9H2.75zM2.75 6.75h10.5M6.5 6.75v5.75",
+        addSelection: "M2.75 3.5h10.5M2.75 6.5h10.5M2.75 9.5h5.5M11 9.75v3.5M9.25 11.5h3.5"
       };
       const VERSION = /^[0-9a-f-]{36}$/;
       // A session's own page: where there is a conversation to put a file or some of its words on the shelf from.
@@ -594,18 +644,19 @@ final class ConversationMenu {
       }
 
       // A file with no picture (Markdown, a table, text), found by the name its card or tile shows, on a session's
-      // page; "" if it is neither. A card in the Generated tray labels itself with the whole name as the title of its
-      // file-name label. An open tile (the side pane's, a tab's) shows it as the first span of its header, and the
-      // header also holds the button for the tile's menu, which is how the tile is told from any other header.
+      // page: `{name, region}`, or null if it is neither. A card in the Generated tray labels itself with the whole
+      // name as the title of its file-name label. An open tile (the side pane's, a tab's) shows it as the first span of
+      // its header, and the header also holds the button for the tile's menu, which is how the tile is told from any
+      // other header. `region` is a tile's preview region, which holds the file's own words (null for a card).
       function documentAt(event) {
-        if (!SESSION_PAGE.test(String(location.pathname || ""))) return "";
+        if (!SESSION_PAGE.test(String(location.pathname || ""))) return null;
         const node = event.target;
         const element = node && node.nodeType === 1 ? node : (node && node.parentElement) || null;
-        if (!element || !element.closest) return "";
+        if (!element || !element.closest) return null;
         const card = element.closest('[data-testid="turn-tray-card"]');
         if (card) {
           const label = card.querySelector('[data-testid="middle-truncated-filename"]');
-          return label ? nameFrom(label.title) : "";
+          return label ? { name: nameFrom(label.title), region: null } : null;
         }
         let start = element.closest('[data-testid="artifact-preview-region"]');
         if (!start) {
@@ -616,10 +667,10 @@ final class ConversationMenu {
           const bar = up.querySelector("header");
           if (bar && bar.querySelector('[data-testid="artifact-actions"]')) {
             const label = bar.querySelector("span");
-            return label ? nameFrom(label.textContent) : "";
+            return label ? { name: nameFrom(label.textContent), region: up.querySelector('[data-testid="artifact-preview-region"]') } : null;
           }
         }
-        return "";
+        return null;
       }
 
       // The words selected in the page, as the browser has them. They are read here and compared, and only their
@@ -633,19 +684,49 @@ final class ConversationMenu {
       // WebKit selects the word under the pointer when a right-click lands outside the selection, before the
       // contextmenu event, so only a selection the same at the menu as at the button is one the user chose.
       let before = "";
+      // The selection's range at that moment, to put it back if a click on one of Capsid's items disturbs it.
+      let beforeRange = null;
+
+      // A copy of the first range of the selection, or null.
+      function selectedRange() {
+        const selection = typeof window.getSelection === "function" ? window.getSelection() : null;
+        if (!selection || !selection.rangeCount) return null;
+        try { return selection.getRangeAt(0).cloneRange(); } catch (error) { return null; }
+      }
 
       document.addEventListener("mousedown", (event) => {
         if (!event.isTrusted) return;
-        before = event.button === 2 || (event.button === 0 && event.ctrlKey) ? selectedText() : "";
+        // Words kept for one read by the last chosen passage are not for a later click's.
+        window.capsidHeldSelection = null;
+        const right = event.button === 2 || (event.button === 0 && event.ctrlKey);
+        before = right ? selectedText() : "";
+        beforeRange = right && before !== "" ? selectedRange() : null;
       }, true);
+
+      // The passage the last right-click left alone (its words, and its range as it was at the button), or null.
+      let left = null;
 
       // How many characters the right-click left selected, if it left them alone on a session's page; else 0.
       function selectionLeft() {
-        const kept = before;
+        const kept = before, range = beforeRange;
         before = "";
+        beforeRange = null;
+        left = null;
         if (kept === "" || !SESSION_PAGE.test(String(location.pathname || ""))) return 0;
         const now = selectedText();
-        return now === kept && now.trim() !== "" ? Array.from(now).length : 0;
+        if (now !== kept || now.trim().length === 0) return 0;
+        left = { text: now, range: range };
+        return Array.from(now).length;
+      }
+
+      // The passage, if the right-click was in a tile and left words selected wholly inside its preview region
+      // (both ends of the selection); else null. A card, the header and the rest of the page are not a tile's words.
+      function passageIn(found) {
+        if (!left || !found || !found.region) return null;
+        const selection = typeof window.getSelection === "function" ? window.getSelection() : null;
+        if (!selection || !selection.anchorNode || !selection.focusNode) return null;
+        if (!found.region.contains(selection.anchorNode) || !found.region.contains(selection.focusNode)) return null;
+        return left;
       }
 
       // A message to Swift; with the count of what the right-click left selected, if there was any.
@@ -679,9 +760,9 @@ final class ConversationMenu {
         if (view.hold) clearTimeout(view.hold);
       }
 
-      function startWatch(figure) {
+      function startWatch(figure, passage) {
         if (typeof MutationObserver !== "function") { report("no-observer"); return; }
-        const view = { figure: figure, menu: null, nodes: [], observer: null, timer: null, hold: null, held: null, other: false };
+        const view = { figure: figure, passage: passage || null, menu: null, nodes: [], observer: null, timer: null, hold: null, held: null, other: false };
         view.observer = new MutationObserver((records) => changed(view, records));
         view.observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
         view.timer = setTimeout(() => {
@@ -767,7 +848,9 @@ final class ConversationMenu {
         const rule = doc.createElement("div");
         rule.className = ruleClass;
         nodes.push(rule);
-        ENTRIES.forEach((entry) => {
+        // A passage selected in the tile: its item first, as the one that is about what the person chose.
+        const entries = view.passage && selectedText() === view.passage.text ? [SELECTION].concat(ENTRIES) : ENTRIES;
+        entries.forEach((entry) => {
           const button = doc.createElement("button");
           button.setAttribute("type", "button");
           button.setAttribute("role", "menuitem");
@@ -778,6 +861,8 @@ final class ConversationMenu {
             button.appendChild(holder);
           }
           button.appendChild(doc.createTextNode(entry.title));
+          // A press on the item must not move focus or collapse the selection the item is about.
+          if (entry === SELECTION) button.addEventListener("mousedown", (event) => event.preventDefault());
           button.addEventListener("click", (event) => choose(view, entry, event));
           nodes.push(button);
         });
@@ -787,6 +872,7 @@ final class ConversationMenu {
         view.hold = setTimeout(() => { if (watch === view) stopWatch(); }, HOLD_MS);
         nodes.forEach((node) => menu.insertBefore(node, anchorIn(menu, nodes)));
         fit(view);
+        if (entries !== ENTRIES) step("selection-offered");
         report("placed");
         // From here the page's whole body is not watched: only the menu, what
         // it sits in and what that sits in, one level each (the menu's items
@@ -881,10 +967,41 @@ final class ConversationMenu {
         view.menu.style.overflowY = held.overflowY;
       }
 
+      // What Swift reads after a click on "Add Selection to Shelf": the words as they were when the item was offered
+      // (still the selection then), kept here for one read and dropped after HELD_MS.
+      let heldTimer = null;
+
+      function hold(text) {
+        window.capsidHeldSelection = text;
+        if (heldTimer) clearTimeout(heldTimer);
+        heldTimer = setTimeout(() => { window.capsidHeldSelection = null; heldTimer = null; }, HELD_MS);
+      }
+
+      // Puts the selection back as it was at the right-click if the click on the item moved it.
+      function restoreSelection(passage) {
+        if (selectedText() === passage.text || !passage.range) return;
+        const selection = typeof window.getSelection === "function" ? window.getSelection() : null;
+        if (!selection) return;
+        try {
+          selection.removeAllRanges();
+          selection.addRange(passage.range);
+        } catch (error) { /* the page took the words away; Swift will find nothing selected and say so */ }
+      }
+
       function choose(view, entry, event) {
         if (!event.isTrusted) return;
         event.preventDefault();
         event.stopPropagation();
+        if (entry === SELECTION) {
+          const passage = view.passage;
+          const menu = view.menu;
+          restoreSelection(passage);
+          hold(passage.text);
+          handler.postMessage({ action: SELECTION.action, selected: Array.from(passage.text).length });
+          stopWatch();
+          dismiss(menu);
+          return;
+        }
         const message = { action: entry.action, name: view.figure.name, kind: view.figure.kind };
         if (view.figure.version) message.version = view.figure.version;
         handler.postMessage(message);
@@ -909,6 +1026,7 @@ final class ConversationMenu {
 
       document.addEventListener("contextmenu", (event) => {
         if (!event.isTrusted) return;
+        window.capsidHeldSelection = null;
         // A right-click before the last one's menu came ends that one's trace.
         report("interrupted");
         stopWatch();
@@ -918,12 +1036,12 @@ final class ConversationMenu {
         if (!found) {
           tell({ kind: null }, selected);
           const named = documentAt(event);
-          if (named === "") {
+          if (!named || named.name === "") {
             report("figure-none");
             return;
           }
           step("figure-document");
-          startWatch({ kind: "document", version: null, name: named });
+          startWatch({ kind: "document", version: null, name: named.name }, passageIn(named));
           return;
         }
         const image = isImage(found);
@@ -936,13 +1054,13 @@ final class ConversationMenu {
         if (!version) {
           // A link or a picture in a Markdown tile names no file; the tile may.
           const named = documentAt(event);
-          if (named === "") {
+          if (!named || named.name === "") {
             report("version-none");
             return;
           }
           step("version-none");
           step("figure-document");
-          startWatch({ kind: "document", version: null, name: named });
+          startWatch({ kind: "document", version: null, name: named.name }, passageIn(named));
           return;
         }
         step("version-ok");
@@ -1001,11 +1119,18 @@ private final class WeakConversationHandler: NSObject, WKScriptMessageHandler {
 
 /// Add Selection to Shelf's one look at the page, run in Capsid's own content
 /// world when the item is chosen: the selection's text, cut at `limit`
-/// characters. No element, no selector, no fetch; nothing is posted.
+/// characters. No element, no selector, no fetch; nothing is posted. When the
+/// item was chosen in the page's own menu for a tile (since 1.0.6) the page
+/// script has kept the words of the passage in this world for this one read,
+/// since a click in the page's menu can move the selection; they are used, and
+/// dropped, before the live selection is looked at.
 enum SelectedWordsScript {
     static let read = #"""
+    const held = window.capsidHeldSelection;
+    window.capsidHeldSelection = null;
     const selection = window.getSelection();
-    const text = selection ? String(selection) : "";
+    const live = selection ? String(selection) : "";
+    const text = typeof held === "string" && held !== "" ? held : live;
     return Array.from(text).slice(0, Math.max(0, limit)).join("");
     """#
 }
@@ -1062,6 +1187,10 @@ final class ConversationShelf {
         /// The words selected in the page, at most this many characters, or
         /// nil when there are none (or the page doesn't answer).
         var selection: @MainActor (Int) async -> String? = { _ in nil }
+        /// Asks which of several different files of one name was meant, in a
+        /// menu at the pointer; nil when the menu was closed. The default
+        /// chooses nothing and shows nothing, so a test opens no menu.
+        var chooseFile: ShelfDocumentChoice.Presenter = { _, _ in nil }
 
         @MainActor
         static func live() -> Dependencies {
@@ -1090,7 +1219,8 @@ final class ConversationShelf {
                             .list(frame: frame), priority: .foreground, keepsOnClose: true) else { return nil }
                     return entries
                 },
-                selection: { limit in await WebContainer.shared.selectedWords(limit: limit) })
+                selection: { limit in await WebContainer.shared.selectedWords(limit: limit) },
+                chooseFile: ShelfDocumentChoice.live(over: { WebContainer.shared.webView }))
         }
     }
 
@@ -1131,9 +1261,12 @@ final class ConversationShelf {
     /// An item chosen for a tile of a file with no picture, which carries only
     /// the name it shows. Capsid finds the file of that name among the files of
     /// the session in the main window (`ShelfDocument.match`) and does what it
-    /// does for a figure; a name no file has, or two different files have, is a
-    /// sentence on the toast and nothing else, never a guess. Show in Results
-    /// needs no file, only the session, so it does not wait for the list.
+    /// does for a figure; a name no file has is a sentence on the toast and
+    /// nothing else. When two or more different files have it, Capsid asks which
+    /// (a menu at the pointer, newest first; since 1.0.6) and does the action on
+    /// the newest version of the one chosen; a menu closed without a choice
+    /// does nothing, and says nothing. Never a guess. Show in Results needs no
+    /// file, only the session, so it does not wait for the list.
     func run(_ action: ConversationAction, named name: String) async {
         let toast = dependencies.toast
         guard let route = dependencies.route() else {
@@ -1153,7 +1286,12 @@ final class ConversationShelf {
         switch ShelfDocument.match(name: name, in: files) {
         case .found(let entry): await perform(action, on: entry, in: session)
         case .none: toast.show(.failed(ShelfDocument.notFound(name)))
-        case .several: toast.show(.failed(ShelfDocument.several(name)))
+        case .several(let candidates):
+            // "Adding…" must not sit behind the menu; it comes back with a choice.
+            if action == .addToShelf { toast.dismiss() }
+            guard let chosen = await dependencies.chooseFile(name, candidates) else { return }
+            if action == .addToShelf { toast.show(.adding) }
+            await perform(action, on: chosen, in: session)
         }
     }
 

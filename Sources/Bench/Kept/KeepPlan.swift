@@ -70,6 +70,10 @@ struct KeepSources: Equatable, Sendable {
     var inputFacts: [String: ArtifactFacts] = [:]
     /// Versions that vanished while the sheet was open.
     var gone: Set<String> = []
+    /// The files of the answer that shows the version (not pictures), read from the history around its row, where
+    /// Claude's legend file is looked for (since 1.0.6). Empty when the answer has no known row (one the caller pinned) or
+    /// its files couldn't be read.
+    var answerFiles: [HistoryFile] = []
 }
 
 /// One version in the strip.
@@ -103,7 +107,7 @@ struct VersionTile: Equatable, Identifiable, Sendable {
     }
 }
 
-enum KeepRowKind: String, Sendable { case answer, data, code }
+enum KeepRowKind: String, Sendable { case answer, data, code, legend }
 
 /// A "Keep with it" row: what it is, what it holds, and whether it can be
 /// ticked. A row that can't says why in its detail.
@@ -153,6 +157,8 @@ struct KeepChoices: Equatable, Sendable {
     var withAnswer: Bool
     var withData: Bool
     var withCode: Bool
+    /// Claude's legend file, when the answer made one (since 1.0.6): on whenever it is found.
+    var withLegend: Bool = true
     var collection: String
 }
 
@@ -249,10 +255,32 @@ enum KeepRules {
         return stem.isEmpty ? entry.name : stem
     }
 
-    /// The three "Keep with it" rows for the chosen version. `chosen` is the
-    /// version picked in the strip, nil while none is.
+    /// The "Keep with it" rows for the chosen version: what Claude said, the data and the code, and Claude's legend
+    /// when the answer that shows this version made one. `chosen` is the version picked in the strip, nil while none is.
     static func rows(sources: KeepSources, chosen: String? = nil) -> [KeepRow] {
-        [answerRow(sources, chosen: chosen), dataRow(sources), codeRow(sources)]
+        [answerRow(sources, chosen: chosen), dataRow(sources), codeRow(sources)] + [legendRow(sources, chosen: chosen)].compactMap { $0 }
+    }
+
+    // MARK: Claude's legend
+
+    /// The legend files among the files of the answer that shows the chosen version, best first, by the rules of the
+    /// Shelf's "Use Claude's legend" (`ShelfClaudeLegendRules.candidates`). None for an upload, for an answer that shows
+    /// another version (it isn't about this one), for an answer with no known row, and while no version is chosen.
+    static func legendCandidates(_ sources: KeepSources, chosen: String?) -> [ShelfClaudeLegendRules.Candidate] {
+        guard let chosen, !isUpload(sources), let showing = sources.showing, showing.i >= 0, showing.v == chosen,
+              let figure = sources.chosenFacts?.name ?? sources.facts?.name else { return [] }
+        return ShelfClaudeLegendRules.candidates(among: sources.answerFiles, forFigure: KeptLayout.figureFileName(figure), version: chosen)
+    }
+
+    /// The row: the file it will copy, and its part for this figure going in "Your legend". With several legend files the
+    /// best is used and the detail says so (no picker: the Shelf's own offer lets the person pick another later).
+    private static func legendRow(_ sources: KeepSources, chosen: String?) -> KeepRow? {
+        let found = legendCandidates(sources, chosen: chosen)
+        guard let best = found.first else { return nil }
+        let which = found.count == 1 ? best.name : "\(best.name), the closest of \(found.count) in the answer"
+        return KeepRow(kind: .legend, title: "Claude\u{2019}s legend",
+                       detail: "\(which) \u{00B7} its part for this figure goes in your legend",
+                       available: true, onByDefault: true, info: nil)
     }
 
     /// The version Claude's answer shows, when a version is chosen and it is
@@ -528,6 +556,11 @@ enum KeepRules {
             files.append(KeepItem(role: .code, source: .text(text), artifact: nil, version: chosen,
                                   name: unique(scriptName(sources)), size: text.utf8.count, sha: nil))
         }
+        if choices.withLegend, rows.first(where: { $0.kind == .legend })?.available == true,
+           let legend = legendCandidates(sources, chosen: chosen).first {
+            files.append(KeepItem(role: .legend, source: .download(version: legend.file.v), artifact: legend.file.a, version: legend.file.v,
+                                  name: unique(legend.name), size: legend.file.size, sha: nil))
+        }
         let answer: KeepAnswer? = choices.withAnswer
             ? (sources.showing.map { KeepAnswer(text: $0.text, at: $0.at, how: $0.how, isFallback: false, cut: sources.showingCut) }
                 ?? sources.lastAnswer)
@@ -559,6 +592,7 @@ enum KeepRules {
         var parts = [plan.figure.name]
         if plan.files.contains(where: { $0.role == .data }) { parts.append("data") }
         if plan.files.contains(where: { $0.role == .code }) { parts.append("code") }
+        if plan.files.contains(where: { $0.role == .legend }) { parts.append("Claude\u{2019}s legend") }
         parts.append("a README.md")
         let list: String
         if parts.count == 1 {
@@ -641,9 +675,11 @@ enum KeepRules {
 
     // MARK: The README
 
-    /// The record and the readable text for a kept folder.
+    /// The record and the readable text for a kept folder. `legend` is what goes in "Your legend": Claude's legend file's
+    /// part for the figure, when that file was kept (since 1.0.6); empty otherwise.
     static func record(subject: KeepSubject, sources: KeepSources, plan: KeepPlan, folderName: String, keptAt: Date,
-                       copied: [KeptFile], missing: [KeptMissing], scienceVersion: String?, capsidVersion: String) -> (KeptRecord, KeptText) {
+                       copied: [KeptFile], missing: [KeptMissing], scienceVersion: String?, capsidVersion: String,
+                       legend: String = "") -> (KeptRecord, KeptText) {
         let versions = sources.versions
         let index = versions.first { $0.v == plan.figure.version }?.n
         let figure = copied.first { $0.role == .figure }
@@ -680,7 +716,7 @@ enum KeepRules {
         }
         origin += "kept on \(longDate(keptAt)) at \(longTime(keptAt)) by Capsid \(capsidVersion), from Claude Science \(scienceVersion ?? "an unknown version"). The link opens the session in Capsid on a Mac that has it."
         for line in leftOut(sources: sources, plan: plan, copied: copied, missing: missing) { origin += "\n" + line }
-        let text = KeptText(legend: "", claudeSaid: plan.answer?.text ?? "", attribution: attribution, origin: origin)
+        let text = KeptText(legend: legend, claudeSaid: plan.answer?.text ?? "", attribution: attribution, origin: origin)
         return (record, text)
     }
 

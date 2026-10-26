@@ -19,7 +19,11 @@
 // (index-DhEuR7nq.js, `NI`), and an open tile (ArtifactTile-DmtoiOPx.js) whose
 // header holds the name in its first span and the "More actions" button, over
 // a preview region. The selection is a variable (`__selected`) behind
-// `window.getSelection()`.
+// `window.getSelection()`, and the node it lies in (`__selectedIn`, both its
+// ends, or its focus end apart from its anchor when a test says so);
+// `__select(words, node, focus)` sets them, and a
+// selection with no node is anywhere and nowhere. A press on a button that
+// nothing cancels collapses it, as WebKit's does (`__press`).
 import Foundation
 
 enum FakeFigurePage {
@@ -315,9 +319,23 @@ enum FakeFigurePage {
     var __V = __VERSION;
     var __log = [];
     var __selected = "";
+    var __selectedIn = null, __selectedFocus = null;
+    function __range(words, node) {
+      return { text: words, node: node, commonAncestorContainer: node, cloneRange: function () { return __range(words, node); } };
+    }
+    var __selection = {
+      toString: function () { return __selected; },
+      get rangeCount() { return __selected === "" ? 0 : 1; },
+      get anchorNode() { return __selected === "" ? null : __selectedIn; },
+      get focusNode() { return __selected === "" ? null : (__selectedFocus || __selectedIn); },
+      getRangeAt: function () { return __range(__selected, __selectedIn); },
+      removeAllRanges: function () { __selected = ""; __selectedIn = null; __selectedFocus = null; },
+      addRange: function (range) { __selected = range.text; __selectedIn = range.node; __selectedFocus = null; }
+    };
+    function __select(words, node, focus) { __selected = words; __selectedIn = node || null; __selectedFocus = focus || null; }
     var window = { webkit: { messageHandlers: { capsidShelfMenu: { postMessage: function (m) { __posted.push(JSON.parse(JSON.stringify(m))); } } } },
                    innerWidth: 1000, innerHeight: 700,
-                   getSelection: function () { return { toString: function () { return __selected; } }; } };
+                   getSelection: function () { return __selection; } };
     document.defaultView = window;
     // A session's page, as the daemon has it: /projects/<project>/frames/<session>.
     var location = { protocol: "http:", hostname: "localhost", origin: "http://localhost:8123", href: "http://localhost:8123/",
@@ -398,7 +416,7 @@ enum FakeFigurePage {
       if (options.down !== false) {
         var down = new __Event("mousedown", { bubbles: true, cancelable: true, clientX: options.x || 40, clientY: options.y || 60,
                                               button: options.control ? 0 : 2, ctrlKey: !!options.control });
-        down.isTrusted = options.trusted !== false;
+        down.isTrusted = options.downTrusted !== undefined ? options.downTrusted : options.trusted !== false;
         __dispatch(target, down);
       }
       // WebKit selects the word under the pointer when the click is outside the selection, before the menu is asked for.
@@ -479,6 +497,15 @@ enum FakeFigurePage {
       event.isTrusted = trusted !== false;
       __dispatch(button, event);
       __flush();
+      return event;
+    }
+    // A left press on a button, as the browser makes it before the click: a button pressed with nothing cancelling the
+    // press takes the selection away.
+    function __press(button) {
+      var event = new __Event("mousedown", { bubbles: true, cancelable: true, button: 0 });
+      event.isTrusted = true;
+      __dispatch(button, event);
+      if (!event.defaultPrevented) { __select("", null); }
       return event;
     }
     // The page's own arrow keys: every menu item or enabled button in the menu.

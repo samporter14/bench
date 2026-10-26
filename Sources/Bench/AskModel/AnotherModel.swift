@@ -204,18 +204,69 @@ final class AnotherModel: ObservableObject {
     }
 }
 
+// MARK: Finding a model
+
+/// The search in Settings' Model field (since 1.0.6): a list of hundreds of
+/// names is searched, not scrolled. Pure, so the view only draws it.
+enum AnotherModelRules {
+    /// The choices shown under the field at most.
+    static let maxSuggestions = 12
+
+    /// The names that hold every word of `query` (split at white space), in the
+    /// list's order and `limit` at most; case and accents don't matter. An empty
+    /// query holds every name, so it gives the first `limit`.
+    static func matches(_ names: [String], query: String, limit: Int = maxSuggestions) -> [String] {
+        guard limit > 0 else { return [] }
+        let words = folded(query).split(whereSeparator: \.isWhitespace)
+        var found: [String] = []
+        for name in names {
+            let id = folded(name)
+            if words.allSatisfy({ id.contains($0) }) {
+                found.append(name)
+                if found.count == limit { break }
+            }
+        }
+        return found
+    }
+
+    /// What Return in the field chooses: the listed name the text spells, with
+    /// the list's own case and accents; else the text itself, as an id the list
+    /// may leave out (OpenRouter has some). Nil when the text is empty, or has
+    /// white space (that is a search, not an id), or is no name (see
+    /// `AnotherModelClient.modelNames`): then nothing is chosen.
+    static func choice(typed: String, listed: [String]) -> String? {
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        if listed.contains(text) { return text }
+        let id = folded(text)
+        if let same = listed.first(where: { folded($0) == id }) { return same }
+        guard text.count <= AnotherModelClient.maxModelName,
+              !text.unicodeScalars.contains(where: { $0.properties.generalCategory == .control || $0.properties.isWhitespace })
+        else { return nil }
+        return text
+    }
+
+    private static func folded(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
+}
+
 // MARK: Settings → General
 
 /// "Another model": the switch, and while it is on, the key (pasted, then
-/// Save; Remove once saved), the address, the model from the address's own
-/// list, and one line on what is sent and where.
+/// Save; Remove once saved), the address, the model (a field that searches the
+/// address's own list), and one line on what is sent and where.
 struct AnotherModelSection: View {
     @ObservedObject var model: AnotherModel
     @AppStorage private var address: String
     @State private var draft = ""
+    /// What is typed in the Model field; the model chosen is `model.model`.
+    @State private var search = ""
+    @FocusState private var searching: Bool
 
     init(model: AnotherModel = .shared) {
         self.model = model
+        _search = State(initialValue: model.model ?? "")
         _address = AppStorage(wrappedValue: AnotherModelAddress.usual, SettingsKey.anotherModelAddress, store: model.defaults)
     }
 
@@ -285,15 +336,7 @@ struct AnotherModelSection: View {
         LabeledContent {
             switch model.listing {
             case .listed(let names) where !names.isEmpty:
-                Picker("Model", selection: Binding(get: { model.model ?? "" }, set: { model.choose($0) })) {
-                    ForEach(names, id: \.self) { Text($0).tag($0) }
-                    // A model chosen before and not listed now: still shown, so the choice reads true.
-                    if let chosen = model.model, !names.contains(chosen) {
-                        Text("\(chosen) (not listed)").tag(chosen)
-                    }
-                }
-                .labelsHidden()
-                .fixedSize()
+                modelField(names)
             case .loading:
                 ProgressView().controlSize(.small)
             case .failed:
@@ -306,10 +349,41 @@ struct AnotherModelSection: View {
             switch model.listing {
             case .failed(let sentence): Text(sentence)
             case .listed(let names) where names.isEmpty: Text("The address lists no models.")
+            case .listed(let names):
+                // A model chosen before, or typed, that the list leaves out: said, so the choice reads true.
+                if let chosen = model.model, !names.contains(chosen) {
+                    Text("Not listed by the address; asked for as typed.")
+                } else {
+                    Text(names.count == 1 ? "Search the address\u{2019}s one model." : "Search the address\u{2019}s \(names.count) models.")
+                }
             case .loading: Text("Asking the address for its models\u{2026}")
             default: Text("From the address\u{2019}s own list.")
             }
         }
+    }
+
+    /// A text field with the system's own suggestions (`textInputSuggestions`):
+    /// typing narrows the address's list to a dozen, choosing one chooses it,
+    /// and Return on an id the list leaves out chooses that. Empty text, or
+    /// leaving the field, puts the chosen model back: nothing is cleared by accident.
+    private func modelField(_ names: [String]) -> some View {
+        TextField("Model", text: $search, prompt: Text("Search models"))
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 250)
+            .focused($searching)
+            .textInputSuggestions(AnotherModelRules.matches(names, query: search), id: \.self) { name in
+                Text(name).textInputCompletion(name)
+            }
+            .onAppear { search = model.model ?? "" }
+            .onChange(of: model.model) { search = model.model ?? "" }
+            // A suggestion chosen puts its whole id in the field: that is the choice.
+            .onChange(of: search) { if names.contains(search), search != model.model { model.choose(search) } }
+            .onChange(of: searching) { if !searching { search = model.model ?? "" } }
+            .onSubmit {
+                if let chosen = AnotherModelRules.choice(typed: search, listed: names) { model.choose(chosen) }
+                search = model.model ?? ""
+            }
     }
 
     private func save() {
