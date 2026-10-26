@@ -9,10 +9,11 @@
 // The rule is "never a wrong file". A name is matched whole and exactly. If
 // the list holds one artifact by that name, its newest version is the file. If
 // it holds two or more different artifacts by that name, Capsid can't tell
-// which tile was meant, and says so; it does not pick the newest. If it holds
-// none, it says that. The list names each artifact once, by its latest
-// version, so a tile stepped back to an older version of a file is the file's
-// latest one here.
+// which tile was meant, so it hands them back, newest first, for the person to
+// choose (since 1.0.6: a small native menu, ShelfDocumentChoice.swift; before,
+// a sentence); it never picks one itself. If it holds none, it says that. The
+// list names each artifact once, by its latest version, so a tile stepped back
+// to an older version of a file is the file's latest one here.
 import Foundation
 
 enum ShelfDocument {
@@ -30,12 +31,33 @@ enum ShelfDocument {
         return name.isEmpty ? nil : name
     }
 
+    /// One of several different files that share a name: its newest version,
+    /// and how many versions the list gave of it.
+    struct Candidate: Equatable, Sendable {
+        let entry: ArtifactEntry
+        /// The versions of this file the list holds (1 when it names the file once).
+        let versions: Int
+    }
+
     enum Match: Equatable, Sendable {
         case found(ArtifactEntry)
         /// Nothing in the session's files has this name.
         case none
-        /// Two or more different artifacts have it.
-        case several
+        /// Two or more different artifacts have it: each one's newest version,
+        /// the newest file first (since 1.0.6).
+        case several([Candidate])
+    }
+
+    /// Whether `lhs` is an older listing than `rhs`: the earlier time; a
+    /// version with no time is older than any with one, and among equals the
+    /// earlier in the list (it is listed oldest first).
+    private static func isOlder(_ lhs: (offset: Int, element: ArtifactEntry), _ rhs: (offset: Int, element: ArtifactEntry)) -> Bool {
+        switch (lhs.element.at, rhs.element.at) {
+        case let (left?, right?): left != right ? left < right : lhs.offset < rhs.offset
+        case (nil, .some): true
+        case (.some, nil): false
+        case (nil, nil): lhs.offset < rhs.offset
+        }
     }
 
     /// The file named `name` among `entries`. Exact: the same characters, not
@@ -45,31 +67,20 @@ enum ShelfDocument {
         guard !named.isEmpty else { return .none }
         // One artifact listed more than once is one file; an entry with no
         // artifact id can't be told from another, so each stands alone.
-        let artifacts = Set(named.map { $0.element.artifact ?? $0.element.version })
-        guard artifacts.count == 1 else { return .several }
-        // The newest version: the latest time; a version with no time is older
-        // than any with one, and among equals the later in the list (it is
-        // listed oldest first).
-        let newest = named.max { lhs, rhs in
-            switch (lhs.element.at, rhs.element.at) {
-            case let (left?, right?): left != right ? left < right : lhs.offset < rhs.offset
-            case (nil, .some): true
-            case (.some, nil): false
-            case (nil, nil): lhs.offset < rhs.offset
-            }
+        let files = Dictionary(grouping: named) { $0.element.artifact ?? $0.element.version }
+        let newest = files.values.compactMap { listings in
+            listings.max(by: isOlder).map { (listing: $0, versions: listings.count) }
         }
-        return newest.map { .found($0.element) } ?? .none
+        guard newest.count > 1 else { return newest.first.map { .found($0.listing.element) } ?? .none }
+        // The newest file first.
+        let ordered = newest.sorted { isOlder($1.listing, $0.listing) }
+        return .several(ordered.map { Candidate(entry: $0.listing.element, versions: $0.versions) })
     }
 
     // MARK: The sentences
 
     static func notFound(_ name: String) -> String {
         "Capsid couldn\u{2019}t find \u{201C}\(name)\u{201D} among this conversation\u{2019}s files."
-    }
-
-    static func several(_ name: String) -> String {
-        "This conversation has more than one file called \u{201C}\(name)\u{201D}, so Capsid can\u{2019}t tell which you meant. "
-            + "Results lists them."
     }
 
     static let unreadable = "Capsid couldn\u{2019}t read this conversation\u{2019}s files just now. Try again in a moment."

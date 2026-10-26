@@ -27,7 +27,8 @@
 // text of the first span in its header. The script then notes the name, adds
 // the same four items, and a click posts `{action, kind: "document", name}`;
 // Swift finds the file of that name among the session's files
-// (ShelfDocuments.swift), and refuses a name two different files have.
+// (ShelfDocuments.swift), and asks which when two different files have the
+// name (ShelfDocumentChoice.swift: a native menu at the pointer, since 1.0.6).
 //
 // The selected words. On a right-click that left a selection alone (the
 // selection was the same when the button went down as when the menu was asked
@@ -1062,6 +1063,10 @@ final class ConversationShelf {
         /// The words selected in the page, at most this many characters, or
         /// nil when there are none (or the page doesn't answer).
         var selection: @MainActor (Int) async -> String? = { _ in nil }
+        /// Asks which of several different files of one name was meant, in a
+        /// menu at the pointer; nil when the menu was closed. The default
+        /// chooses nothing and shows nothing, so a test opens no menu.
+        var chooseFile: ShelfDocumentChoice.Presenter = { _, _ in nil }
 
         @MainActor
         static func live() -> Dependencies {
@@ -1090,7 +1095,8 @@ final class ConversationShelf {
                             .list(frame: frame), priority: .foreground, keepsOnClose: true) else { return nil }
                     return entries
                 },
-                selection: { limit in await WebContainer.shared.selectedWords(limit: limit) })
+                selection: { limit in await WebContainer.shared.selectedWords(limit: limit) },
+                chooseFile: ShelfDocumentChoice.live(over: { WebContainer.shared.webView }))
         }
     }
 
@@ -1131,9 +1137,12 @@ final class ConversationShelf {
     /// An item chosen for a tile of a file with no picture, which carries only
     /// the name it shows. Capsid finds the file of that name among the files of
     /// the session in the main window (`ShelfDocument.match`) and does what it
-    /// does for a figure; a name no file has, or two different files have, is a
-    /// sentence on the toast and nothing else, never a guess. Show in Results
-    /// needs no file, only the session, so it does not wait for the list.
+    /// does for a figure; a name no file has is a sentence on the toast and
+    /// nothing else. When two or more different files have it, Capsid asks which
+    /// (a menu at the pointer, newest first; since 1.0.6) and does the action on
+    /// the newest version of the one chosen; a menu closed without a choice
+    /// does nothing, and says nothing. Never a guess. Show in Results needs no
+    /// file, only the session, so it does not wait for the list.
     func run(_ action: ConversationAction, named name: String) async {
         let toast = dependencies.toast
         guard let route = dependencies.route() else {
@@ -1153,7 +1162,12 @@ final class ConversationShelf {
         switch ShelfDocument.match(name: name, in: files) {
         case .found(let entry): await perform(action, on: entry, in: session)
         case .none: toast.show(.failed(ShelfDocument.notFound(name)))
-        case .several: toast.show(.failed(ShelfDocument.several(name)))
+        case .several(let candidates):
+            // "Adding…" must not sit behind the menu; it comes back with a choice.
+            if action == .addToShelf { toast.dismiss() }
+            guard let chosen = await dependencies.chooseFile(name, candidates) else { return }
+            if action == .addToShelf { toast.show(.adding) }
+            await perform(action, on: chosen, in: session)
         }
     }
 

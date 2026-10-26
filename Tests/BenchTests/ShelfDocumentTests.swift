@@ -41,14 +41,35 @@ struct ShelfDocumentResolutionTests {
 
     @Test func twoDifferentFilesOfOneNameAreTwoAndNeitherIsPicked() {
         let files = [entry("notes.md", version: 1, artifact: 1, at: 10), entry("notes.md", version: 2, artifact: 2, at: 99)]
-        #expect(ShelfDocument.match(name: "notes.md", in: files) == .several)
+        // Both come back, the newest file first.
+        #expect(ShelfDocument.match(name: "notes.md", in: files)
+                == .several([.init(entry: files[1], versions: 1), .init(entry: files[0], versions: 1)]))
         // Listed without artifact ids they can't be told apart, so each is its own file.
         let bare = [entry("notes.md", version: 1, at: 10), entry("notes.md", version: 2, at: 99)]
-        #expect(ShelfDocument.match(name: "notes.md", in: bare) == .several)
+        #expect(ShelfDocument.match(name: "notes.md", in: bare)
+                == .several([.init(entry: bare[1], versions: 1), .init(entry: bare[0], versions: 1)]))
         // Three files, two of which share a name: only that name is in doubt.
         let mixed = files + [entry("plan.md", version: 3, artifact: 3)]
         #expect(ShelfDocument.match(name: "plan.md", in: mixed) == .found(mixed[2]))
-        #expect(ShelfDocument.match(name: "notes.md", in: mixed) == .several)
+        #expect(ShelfDocument.match(name: "notes.md", in: mixed)
+                == .several([.init(entry: files[1], versions: 1), .init(entry: files[0], versions: 1)]))
+    }
+
+    @Test func severalFilesAreEachTheirNewestVersionWithTheVersionsCountedNewestFileFirst() {
+        let oldA1 = entry("notes.md", version: 1, artifact: 1, at: 10)
+        let oldA2 = entry("notes.md", version: 2, artifact: 1, at: 40)
+        let b = entry("notes.md", version: 3, artifact: 2, at: 90)
+        let c1 = entry("notes.md", version: 4, artifact: 3, at: 20)
+        let c2 = entry("notes.md", version: 5, artifact: 3, at: 60)
+        let c3 = entry("notes.md", version: 6, artifact: 3, at: 50)
+        let match = ShelfDocument.match(name: "notes.md", in: [oldA1, c1, oldA2, b, c2, c3])
+        #expect(match == .several([.init(entry: b, versions: 1), .init(entry: c2, versions: 3), .init(entry: oldA2, versions: 2)]))
+        // A file with no time is last; two with the same time, the later in the list first.
+        let untimed = entry("notes.md", version: 7, artifact: 4)
+        let tieA = entry("notes.md", version: 8, artifact: 5, at: 30)
+        let tieB = entry("notes.md", version: 9, artifact: 6, at: 30)
+        #expect(ShelfDocument.match(name: "notes.md", in: [untimed, tieA, tieB])
+                == .several([.init(entry: tieB, versions: 1), .init(entry: tieA, versions: 1), .init(entry: untimed, versions: 1)]))
     }
 
     @Test func oneFileListedAtSeveralVersionsIsThatFilesNewest() {
@@ -92,8 +113,6 @@ struct ShelfDocumentResolutionTests {
 
     @Test func theSentencesNameTheFileAndSayWhatToDo() {
         #expect(ShelfDocument.notFound("notes.md") == "Capsid couldn\u{2019}t find \u{201C}notes.md\u{201D} among this conversation\u{2019}s files.")
-        #expect(ShelfDocument.several("notes.md").contains("more than one file called \u{201C}notes.md\u{201D}"))
-        #expect(ShelfDocument.several("notes.md").hasSuffix("Results lists them."))
         #expect(ShelfDocument.unreadable.contains("couldn\u{2019}t read"))
     }
 }
@@ -207,6 +226,10 @@ struct ShelfDocumentActionTests {
         var files: [ArtifactEntry]? = []
         var facts: ArtifactFacts?
         var order: [String] = []
+        /// What the made-up menu was shown (the name, the candidates), and what it answers: the line
+        /// at this position, or nil for a menu closed without a choice.
+        var menus: [(String, [ShelfDocument.Candidate])] = []
+        var pickLine: Int?
     }
 
     private func make(route: NidusTaskSelection.Route? = ShelfDocumentActionTests.route)
@@ -222,7 +245,11 @@ struct ShelfDocumentActionTests {
             keep: { calls.kept.append($0) },
             reference: { calls.references.append(($0, $1)) },
             results: { calls.results.append($0) },
-            files: { calls.fileAsks.append($0); return calls.files }))
+            files: { calls.fileAsks.append($0); return calls.files },
+            chooseFile: { name, candidates in
+                calls.menus.append((name, candidates))
+                return calls.pickLine.map { candidates[$0].entry }
+            }))
         return (shelf, fake, toast, calls)
     }
 
@@ -321,14 +348,132 @@ struct ShelfDocumentActionTests {
         }
     }
 
-    @Test func twoFilesOfOneNameAreRefusedWithASentenceAndNeitherIsUsed() async {
+    // MARK: Two files of one name: which?
+
+    static let older = entry("notes.md", version: 30, artifact: 30, at: 10, mime: "text/markdown")
+    static let middle = entry("notes.md", version: 31, artifact: 31, at: 50, mime: "text/markdown")
+    static let newer = entry("notes.md", version: 32, artifact: 32, at: 90, mime: "text/markdown")
+
+    @Test func twoFilesOfOneNameAskWhichNewestFirstAndAskOnce() async {
+        let (shelf, _, _, calls) = make()
+        calls.files = [Self.older] + Self.others + [Self.newer]
+        await shelf.run(.openAsReference, named: "notes.md")
+        #expect(calls.menus.count == 1)
+        #expect(calls.menus[0].0 == "notes.md")
+        #expect(calls.menus[0].1.map(\.entry) == [Self.newer, Self.older])
+        #expect(calls.menus[0].1.map(\.entry.at) == [Self.newer.at, Self.older.at])
+    }
+
+    @Test func threeFilesOfOneNameAreListedNewestFirstWhateverTheListsOrder() async {
+        for files in [[Self.older, Self.middle, Self.newer], [Self.newer, Self.older, Self.middle], [Self.middle, Self.newer, Self.older]] {
+            let (shelf, _, _, calls) = make()
+            calls.files = files
+            await shelf.run(.openAsReference, named: "notes.md")
+            #expect(calls.menus.first?.1.map(\.entry) == [Self.newer, Self.middle, Self.older])
+            #expect(calls.menus.first?.1.map(\.entry.at) == [Self.newer.at, Self.middle.at, Self.older.at])
+        }
+    }
+
+    @Test func aChoiceAddsThatFilesNewestVersionToTheShelf() async {
+        let (shelf, fake, toast, calls) = make()
+        let newestOfMiddle = entry("notes.md", version: 33, artifact: 31, at: 70, mime: "text/markdown")
+        calls.files = [Self.older, Self.middle, newestOfMiddle, Self.newer]
+        // The lines are Newer, the middle file at its newest version, Older: the second is chosen.
+        calls.pickLine = 1
+        await shelf.run(.addToShelf, named: "notes.md")
+        #expect(fake.added.count == 1)
+        #expect(fake.added[0].entry == newestOfMiddle, "the chosen file's newest version, not the one listed first")
+        #expect(fake.added[0].session == Self.session)
+        #expect(toast.state == .added(MadeShelf.placement("notes.md")))
+    }
+
+    @Test func aChoiceKeepsThatVersionWithItsFacts() async {
+        let (shelf, fake, toast, calls) = make()
+        calls.files = [Self.older, Self.newer]
+        calls.pickLine = 1
+        await shelf.run(.keep, named: "notes.md")
+        #expect(calls.kept.count == 1)
+        #expect(calls.kept[0].entry.version == Self.older.version)
+        #expect(calls.kept[0].selectsItsVersion && calls.kept[0].session == Self.session)
+        #expect(calls.factsAsks == [Self.older.version])
+        #expect(fake.added.isEmpty && toast.state == nil)
+    }
+
+    @Test func aChoiceOpensThatVersionAsAReference() async {
+        let (shelf, fake, toast, calls) = make()
+        calls.files = [Self.older, Self.middle, Self.newer]
+        calls.pickLine = 2
+        await shelf.run(.openAsReference, named: "notes.md")
+        #expect(calls.references.count == 1)
+        #expect(calls.references[0].0 == Self.session && calls.references[0].1 == Self.older.version)
+        #expect(fake.added.isEmpty && toast.state == nil)
+    }
+
+    @Test func showInResultsNeedsNoChoiceEvenWhenSeveralFilesShareTheName() async {
+        let (shelf, _, toast, calls) = make()
+        calls.files = [Self.older, Self.newer]
+        calls.pickLine = 0
+        await shelf.run(.showInResults, named: "notes.md")
+        #expect(calls.results == [Self.session], "it acts on the session, so no file needs choosing")
+        #expect(calls.menus.isEmpty && calls.fileAsks.isEmpty && toast.state == nil)
+    }
+
+    @Test func aMenuClosedWithoutAChoiceDoesNothingAndSaysNothing() async {
         for action in [ConversationAction.addToShelf, .keep, .openAsReference] {
             let (shelf, fake, toast, calls) = make()
-            calls.files = [Self.notes, entry("notes.md", version: 23, artifact: 23, at: 99)]
+            calls.files = [Self.older, Self.newer]
+            calls.pickLine = nil
             await shelf.run(action, named: "notes.md")
-            #expect(toast.state == .failed(ShelfDocument.several("notes.md")), "\(action)")
-            #expect(fake.added.isEmpty && calls.kept.isEmpty && calls.references.isEmpty && calls.factsAsks.isEmpty, "\(action)")
+            #expect(calls.menus.count == 1, "\(action)")
+            #expect(toast.state == nil, "\(action): no toast, not even \u{201C}adding\u{201D}")
+            #expect(fake.added.isEmpty && calls.kept.isEmpty && calls.references.isEmpty && calls.results.isEmpty
+                    && calls.factsAsks.isEmpty, "\(action)")
         }
+    }
+
+    @Test func theToastDoesNotSayAddingBehindTheMenuAndComesBackWithAChoice() async {
+        let (shelf, fake, toast, calls) = make()
+        calls.files = [Self.older, Self.newer]
+        calls.pickLine = 0
+        var during: ShelfToastModel.State?
+        let asked = ConversationShelf(dependencies: .init(
+            route: { Self.route }, session: { _ in Self.session }, facts: { _ in nil },
+            shelf: fake.access, toast: toast, keep: { _ in }, reference: { _, _ in }, results: { _ in },
+            files: { _ in calls.files },
+            chooseFile: { _, candidates in during = toast.state; return candidates[0].entry }))
+        await asked.run(.addToShelf, named: "notes.md")
+        #expect(during == nil)
+        #expect(toast.state == .added(MadeShelf.placement("notes.md")))
+        _ = shelf
+    }
+
+    @Test func oneMatchNeverAsks() async {
+        let (shelf, fake, toast, calls) = make()
+        calls.files = Self.others + [Self.notes]
+        calls.pickLine = 0
+        await shelf.run(.addToShelf, named: "notes.md")
+        #expect(calls.menus.isEmpty)
+        #expect(fake.added.first?.entry == Self.notes)
+        #expect(toast.state == .added(MadeShelf.placement("notes.md")))
+        // One file at several versions is still one file: its newest, no menu.
+        let (second, secondFake, _, secondCalls) = make()
+        secondCalls.files = [Self.older, entry("notes.md", version: 34, artifact: 30, at: 80)]
+        await second.run(.addToShelf, named: "notes.md")
+        #expect(secondCalls.menus.isEmpty)
+        #expect(secondFake.added.first?.entry.version == id(34))
+    }
+
+    @Test func theDefaultPresenterChoosesNothing() async {
+        // A shelf made without a presenter (every test but these) can never open a menu.
+        let fake = MadeShelf()
+        let toast = ShelfToastModel(shelf: fake.access, sleep: { _ in try await Task.sleep(for: .seconds(3_600)) }, announce: { _ in })
+        let shelf = ConversationShelf(dependencies: .init(
+            route: { Self.route }, session: { _ in Self.session }, facts: { _ in nil }, shelf: fake.access, toast: toast,
+            keep: { _ in Issue.record("nothing was chosen") }, reference: { _, _ in Issue.record("nothing was chosen") },
+            results: { _ in }, files: { _ in [Self.older, Self.newer] }))
+        await shelf.run(.openAsReference, named: "notes.md")
+        await shelf.run(.keep, named: "notes.md")
+        #expect(fake.added.isEmpty && toast.state == nil)
     }
 
     @Test func aListThatCouldntBeReadIsASentenceToo() async {
@@ -355,5 +500,70 @@ struct ShelfDocumentActionTests {
         calls.files = [Self.notes]
         await shelf.run(.openAsReference, named: "notes.md")
         #expect(calls.fileAsks == [Self.route.frameID])
+    }
+}
+
+// MARK: The menu itself
+
+@MainActor
+struct ShelfDocumentChoiceMenuTests {
+    private static let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }()
+    private static let locale = Locale(identifier: "en_US")
+    /// 14:30 on 25 October 2026, UTC.
+    private static let now = Date(timeIntervalSince1970: 1_792_938_600)
+
+    private func candidate(_ minutesAgo: Double?, size: Int = 12_000, versions: Int = 1) -> ShelfDocument.Candidate {
+        let at = minutesAgo.map { Self.now.addingTimeInterval(-$0 * 60) }
+        return .init(entry: ArtifactEntry(version: id(1), artifact: nil, name: "notes.md", mime: nil, size: size, at: at), versions: versions)
+    }
+
+    private func title(_ candidate: ShelfDocument.Candidate) -> String {
+        ShelfDocumentChoice.title(candidate, now: Self.now, calendar: Self.calendar, locale: Self.locale)
+    }
+
+    @Test func aTitleSaysWhenHowBigAndHowManyVersions() {
+        #expect(title(candidate(28, versions: 3)) == "Today 2:02\u{202F}PM \u{00B7} 12 KB \u{00B7} 3 versions")
+        #expect(title(candidate(60 * 24, size: 2_048)).hasPrefix("Yesterday 2:30\u{202F}PM \u{00B7} 2 KB"))
+        #expect(!title(candidate(5)).contains("version"), "one version is not worth a word")
+        #expect(title(candidate(60 * 24 * 40)).hasPrefix("Sep 15, 2:30\u{202F}PM"))
+        #expect(title(candidate(60 * 24 * 400)).contains("2025"))
+        #expect(title(candidate(nil)) == "Time unknown \u{00B7} 12 KB")
+    }
+
+    @Test func theMenuHasAHeaderAndALinePerFileInTheOrderGivenAndNeverOpens() {
+        let lines = [candidate(5, versions: 2), candidate(90), candidate(60 * 30)]
+        var chosen: [ArtifactEntry] = []
+        let menu = ShelfDocumentChoice.menu(name: "notes.md", candidates: lines, now: Self.now, calendar: Self.calendar,
+                                            locale: Self.locale) { chosen.append($0) }
+        #expect(menu.items.count == 4)
+        #expect(menu.items[0].isSectionHeader && menu.items[0].title == "Which \u{201C}notes.md\u{201D}?")
+        #expect(Array(menu.items.dropFirst()).map(\.title) == lines.map(title))
+        #expect(menu.items.dropFirst().allSatisfy { $0.isEnabled && $0.action != nil && $0.target != nil })
+        #expect(chosen.isEmpty, "making a menu chooses nothing")
+    }
+
+    @Test func aLinesActionChoosesThatFilesEntry() throws {
+        let first = ArtifactEntry(version: id(1), artifact: nil, name: "notes.md", mime: nil, size: 1, at: nil)
+        let second = ArtifactEntry(version: id(2), artifact: nil, name: "notes.md", mime: nil, size: 2, at: nil)
+        var chosen: [ArtifactEntry] = []
+        let menu = ShelfDocumentChoice.menu(name: "notes.md", candidates: [.init(entry: first, versions: 1), .init(entry: second, versions: 1)]) {
+            chosen.append($0)
+        }
+        let item = menu.items[2]
+        let action = try #require(item.action)
+        _ = (item.target as AnyObject?)?.perform(action, with: item)
+        #expect(chosen == [second])
+    }
+
+    @Test func theLivePresenterShowsNothingWithoutAWindowAndChoosesNothing() async {
+        let present = ShelfDocumentChoice.live(over: { nil })
+        #expect(await present("notes.md", [candidate(5)]) == nil)
+        // A view that is in no window has no pointer to open at: still nothing, and no menu.
+        let detached = ShelfDocumentChoice.live(over: { NSView() })
+        #expect(await detached("notes.md", [candidate(5)]) == nil)
     }
 }
