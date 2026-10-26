@@ -5755,6 +5755,44 @@ session's history. You asked: “…”"). The legend comment and fine print say
   keys reach the items, since the page re-queries its items on each key.
   The menu's selectors are page hooks in the inventory, checked when used.
 
+  **A picture open large in the page's own viewer** (the side pane, a tab, the
+  fullscreen tile; after 1.0.6, when a right-click there showed the page's menu
+  and none of Capsid's items, and the trace said `contextmenu → figure-none`).
+  The sibling-of-the-layer rule above is how an inline figure and a tile's
+  thumbnail are found, and it does not reach the viewer, which the page draws
+  differently (read in the 0.1.70 bundle: `ArtifactTile-DmtoiOPx.js`, `xo`;
+  `ImagePreview-C0f3P6Gf.js`; `index.esm-D4jRnBIq.js`, the zoom library):
+  - the tile (`ArtifactTile`) holds a header and a body
+    (`[data-testid="artifact-preview-region"]`); the body holds `ImagePreview`,
+    which draws the picture as a plain `<img>`, inside the zoom-and-pan wrapper
+    of react-zoom-pan-pinch (`div.react-transform-wrapper >
+    div.react-transform-component > div.relative (the picture's size) > img`),
+    with the annotation layer (`div.absolute.inset-0`) over it;
+  - **the library's stylesheet gives every image in the wrapper `pointer-events:
+    none`** (`.transform-component-module_content__… img`). So the picture is
+    never what a right-click lands on (the layer, the box round it or the
+    wrapper's empty space is) and never in `document.elementsFromPoint`, which
+    skips what takes no pointer events: `closest("img")` found nothing and the
+    stack had no picture to be beside the layer;
+  - the picture's address is `<getVersionUrl>?v=<version>`, i.e.
+    `/api/artifacts/versions/<version>?v=<version>`, the same shape as any
+    figure's, so `versionOf` reads it; its `alt` is the file's name;
+  - the menu is the page's own `oG` again (`role="menu"`, "Artifact actions"),
+    opened by `ImagePreview`'s own handler (Copy image, Save image, Download,
+    Export Metadata; no red Delete), in a portal as for any figure.
+  So when the click is not on a picture, a link or a tray card, the script
+  looks at the tile it is in (found by its body or its header, as a file with
+  no picture is) and takes the tile's **one** picture in a zoom-and-pan wrapper
+  (`.react-transform-component img`), from wherever in the tile the click was:
+  the layer, the empty space beside the picture, the header. That is the step
+  `figure-viewer`, and after it everything is as for any figure (its version
+  from its address, the menu waited for two seconds, the items placed, and a
+  click tells Swift the version). It takes nothing when the tile has no such
+  picture or more than one, so a Markdown tile with pictures in it (no wrapper)
+  is still its own words, and a wrapper with no tile round it (a file on the
+  host's disk, open in a tab: no artifact, no version) gets no items. A viewer
+  whose picture's address names no version falls to the tile's name, below.
+
   **A file with no picture** (after 1.0.4; Markdown, CSV, text). Its tile and its
   card in the Generated tray carry no address that names a version: they show
   the file's name and nothing else. Before, they got no items, and Results and
@@ -5763,7 +5801,10 @@ session's history. You asked: “…”"). The legend comment and fine print say
   conversation to add the file from). On a card it is the `title` of the
   file-name label (`[data-testid="middle-truncated-filename"]`: the whole name,
   where the text is cut in the middle). On an open tile (the side pane's, a
-  tab's) it is the text of the first span in the tile's header. The tile has no
+  tab's) it is the text of the span that opens the tile's header (its first
+  child's first child, a span with only text in it; since after 1.0.6, because
+  the version stepper, the buttons and the provenance breadcrumb hold elements,
+  and none of them is a name). The tile has no
   attribute of its own, so it is found from the right-click by its body
   (`[data-testid="artifact-preview-region"]`) or its header, and only a header
   that holds the tile's "More actions" button
@@ -5805,8 +5846,38 @@ session's history. You asked: “…”"). The legend comment and fine print say
   Show in Results needs only the session, so it does not wait for the list.
   Everything it reads is the page's own list; nothing is written to Claude
   Science. The step is `figure-document`. A header that shows something other
-  than the name (the page's breadcrumb, if it draws one) gets "couldn’t find",
-  never a wrong file.
+  than the name (the page's breadcrumb over a tile's provenance) gives no name,
+  so nothing is added (`tile-unnamed`), never a wrong file.
+
+  **The right-hand panel's tiles show no name** (read in the bundle; to be
+  confirmed by a live right-click). `ArtifactTile` draws its title only when it
+  is not in "slot chrome" mode (`!G && <span>…</span>`), and the panel that holds
+  the side pane and its tabs (`session-tabs-pane`, whose bindings are
+  `slotChrome: true`) puts every tile in that mode: the panel's tab strip shows
+  the file's name, and the tile's header has only the version stepper, the diff
+  toggle and the buttons. So "the first span in the header" was the version
+  stepper's ("v2", "v2 (old)") or nothing: a document open in the panel traced
+  `figure-document`, placed the items, and then "couldn't find “v2”" on the
+  click; a version-1 file traced `figure-none`. Now such a tile (inside
+  `[data-pane="right"]`, the panel's body) is named by the panel's **shown
+  tab**: the tab-strip tab marked `data-shown` (or whose button has
+  `aria-current="true"`), exactly one of them, and the last element of its
+  button (an icon comes first), whose text is the file's name as the page shows
+  it (`Us(filename)`, the same text as a tile's own title). It is read like any
+  tile's name (the last part of a path, one line, no control characters) and
+  resolved by the same lookup (`ShelfDocument.match`: one file, none, or several
+  and the question). The step `name-from-tab` says it came from the tab. With no
+  strip, two shown tabs, none, a blank label, or a tile outside the panel there
+  is no name and nothing is added (`tile-unnamed`). A tile that shows its own
+  name never looks at the tab.
+
+  **The lookup says what it found, in the log** (after 1.0.6; an add from the
+  viewer had not been confirmed and the log could not say why). Every lookup of
+  a name logs one line under `figure-menu`, in fixed words and a count, never
+  the name: `Figure menu: name matched 1` (one file), `Figure menu: name matched
+  2` (two or more different files; the question is then asked), `Figure menu:
+  name not found`, or `Figure menu: files not read` (the session's list could
+  not be read). A name of "v2" would have shown as "name not found".
 
   **The step trace** (since 1.0.1). The first retry after the fix showed no
   items and logged nothing, so nobody could say which step stopped. Now each
@@ -5816,10 +5887,14 @@ session's history. You asked: “…”"). The legend comment and fine print say
   words (`FigureMenuStep`):
   - the right-click heard;
   - how the figure was found (`figure-image`, `figure-link`, `figure-card`,
-    `figure-beside`) or `figure-none`;
+    `figure-beside`, or, after 1.0.6, `figure-viewer`: the one picture in the
+    page's viewer for a file, found from the tile) or `figure-none`;
   - `version-ok` or `version-none`, and after `version-none` or `figure-none`,
     `figure-document` when the tile or card of a file with no picture was found
-    by its name (it has no version to say);
+    by its name (it has no version to say), then `name-from-tab` when a tile of
+    the right-hand panel was named by its shown tab; or `tile-unnamed` when the
+    tile was found and no name was to be had, which ends the trace (after
+    `figure-none` or `version-none`, as the case was);
   - `menu-matched`, `menu-other` (only another menu in the two seconds) or
     `menu-none`;
   - `placed` or `unplaced` (and, since 1.0.6, `selection-offered` first when

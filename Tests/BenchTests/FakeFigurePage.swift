@@ -14,10 +14,23 @@
 // The stand-in menu is guarded: any read of `textContent` on the page's own
 // items throws, so a script that read an item's words would fail its tests.
 //
+// The page's own viewer for a file is drawn as the 0.1.70 bundle draws it
+// (ArtifactTile-DmtoiOPx.js and ImagePreview-C0f3P6Gf.js): a tile in the right-
+// hand panel (`[data-pane="right"]`) whose header, in the panel's slot-chrome
+// mode, has no name (a version stepper and the button for the tile's menu
+// only), over a preview region that holds the picture's root, the zoom-and-pan
+// wrapper of react-zoom-pan-pinch (`.react-transform-wrapper` and
+// `.react-transform-component`, whose stylesheet gives its images
+// `pointer-events: none`) and, in it, a box with the picture and the page's
+// annotation layer. Because that picture takes no pointer events it is never
+// the target of a right-click and never in `elementsFromPoint`: a test that
+// right-clicks the viewer gives a stack without it (`under:`), as the
+// browser does. The panel's tab strip names the file in its shown tab.
+//
 // Files with no picture are drawn as the 0.1.70 bundle draws them: a card in
 // the Generated tray whose file-name label carries the name as its title
 // (index-DhEuR7nq.js, `NI`), and an open tile (ArtifactTile-DmtoiOPx.js) whose
-// header holds the name in its first span and the "More actions" button, over
+// header holds the name in the first span of its first box and the "More actions" button, over
 // a preview region. The selection is a variable (`__selected`) behind
 // `window.getSelection()`, and the node it lies in (`__selectedIn`, both its
 // ends, or its focus end apart from its anchor when a test says so);
@@ -167,11 +180,14 @@ enum FakeFigurePage {
       return parts;
     }
     function __compound(element, text) {
-      var parsed = /^([a-z0-9*]*)((?:\[[^\]]*\])*)$/i.exec(text);
+      var parsed = /^([a-z0-9*]*)((?:\.[\w-]+)*)((?:\[[^\]]*\])*)$/i.exec(text);
       if (!parsed) { throw new Error("fake DOM: unsupported selector " + text); }
       if (parsed[1] && parsed[1] !== "*" && element.localName !== parsed[1].toLowerCase()) { return false; }
+      var classes = (element.getAttribute("class") || "").split(/\s+/);
+      var wanted = parsed[2] ? parsed[2].slice(1).split(".") : [];
+      for (var c = 0; c < wanted.length; c++) { if (classes.indexOf(wanted[c]) < 0) { return false; } }
       var pattern = /\[([\w-]+)(?:=(?:"([^"]*)"|'([^']*)'))?(?:\s*)\]/g, found;
-      while ((found = pattern.exec(parsed[2])) !== null) {
+      while ((found = pattern.exec(parsed[3])) !== null) {
         var value = element.getAttribute(found[1]);
         if (value === null) { return false; }
         var want = found[2] !== undefined ? found[2] : found[3];
@@ -244,6 +260,7 @@ enum FakeFigurePage {
       getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; }
       hasAttribute(name) { return this.getAttribute(name) !== null; }
       get children() { return this.childNodes.filter(function (n) { return n.nodeType === 1; }); }
+      get firstElementChild() { return this.children[0] || null; }
       get lastElementChild() { var kids = this.children; return kids[kids.length - 1] || null; }
       get textContent() {
         if (this.__guard) { throw new Error("read the text of the page's own menu"); }
@@ -300,6 +317,7 @@ enum FakeFigurePage {
       createTextNode(text) { return new FText(text); }
       elementsFromPoint(x, y) { return this.__stack.slice(); }
       querySelector(selector) { return this.documentElement.querySelector(selector); }
+      querySelectorAll(selector) { return this.documentElement.querySelectorAll(selector); }
     }
     var document = new FDocument();
 
@@ -366,7 +384,8 @@ enum FakeFigurePage {
     var __label2 = el("span", { "data-testid": "middle-truncated-filename", "class": "flex min-w-0 overflow-hidden", title: "notes.md" }, __caption2);
     var __captionText2 = el("span", { "class": "truncate" }, __label2); text(__captionText2, "notes.md");
 
-    // A tile's picture, with the annotation layer over it.
+    // A picture with the annotation layer over it, whose picture takes pointer events (so a right-click on the layer has
+    // it under the pointer): the shape of an inline figure's, which is how the page draws every figure but the viewer's.
     var __tile = el("div", { "class": "relative flex items-center justify-center h-full overflow-hidden" }, document.body);
     var __tileBox = el("div", { "class": "relative" }, __tile);
     var __tileImg = el("img", { src: __address("?v=" + __V), alt: "plate_map.png" }, __tileBox);
@@ -401,6 +420,73 @@ enum FakeFigurePage {
     // A header of the page's own, with a span in it and no button for a tile's menu.
     var __pageHeader = el("header", { "class": "page-top" }, document.body);
     var __pageTitle = el("span", {}, __pageHeader); text(__pageTitle, "Plate reader QC");
+
+    // The right-hand panel's tab strip: two tabs, the second shown, each a button with an icon first and the name last.
+    function __tab(parent, id, name, shown) {
+      var tab = el("div", { "data-tab-id": id, "data-testid": "right-tab", "class": "tab" }, parent);
+      if (shown) { tab.attrs["data-shown"] = "true"; }
+      var button = el("button", { type: "button", "data-tab-btn": "true", "class": "flex min-w-0 flex-1 items-center gap-1.5" }, tab);
+      if (shown) { button.attrs["aria-current"] = "true"; }
+      var icon = el("span", { "aria-hidden": "true", "class": "shrink-0 text-text-400" }, button); text(icon, "");
+      var label = el("span", { "class": "fade-overflow min-w-0 flex-1" }, button); text(label, name);
+      return tab;
+    }
+    var __strip = el("div", { "data-testid": "right-tab-strip", "class": "relative flex shrink-0 items-stretch" }, document.body);
+    var __toolbar = el("div", { role: "toolbar", "aria-label": "Open panels", "class": "flex" }, __strip);
+    var __tabOther = __tab(__toolbar, "t-other", "other_figure.png", false);
+    var __tabShown = __tab(__toolbar, "t-shown", "scatter_plot.png", true);
+    // What the shown tab says it holds (the name of the file open in the panel).
+    function __showTab(name) { __tabShown.children[0].children[1].textContent = name; }
+
+    // A tile of the panel, as the page draws it with the panel's slot chrome: the header has no name, only the version
+    // stepper (with its buttons, one of them "v2") and the button for the tile's menu. This one holds a picture, in the
+    // page's viewer: the preview region holds the root, the zoom-and-pan wrapper, its content, a box the size of the
+    // picture, the picture and the annotation layer over it. The picture is another version than the page's others.
+    var __VV = __V.slice(0, 35) + (__V.slice(35) === "0" ? "1" : "0");
+    var __pane = el("div", { "data-pane": "right", "class": "contents" }, document.body);
+    var __vTile = el("div", { "class": "flex flex-col h-full" }, __pane);
+    var __vHeader = el("header", { "class": "flex items-center gap-2 px-3 h-11" }, __vTile);
+    var __vTitleBox = el("div", { "class": "flex items-center gap-1.5 flex-1 min-w-0" }, __vHeader);
+    var __vStep = el("span", { "class": "inline-flex shrink-0 items-center gap-1", title: "Viewing an older version" }, __vTitleBox);
+    var __vStepGroup = el("div", { role: "group", "aria-label": "Artifact version", "class": "joined" }, __vStep);
+    var __vStepPrev = el("button", { type: "button", "aria-label": "Previous version" }, __vStepGroup);
+    var __vStepNow = el("button", { type: "button", disabled: "true" }, __vStepGroup); text(__vStepNow, "v2 (old)");
+    var __vStepNext = el("button", { type: "button", "aria-label": "Next version" }, __vStepGroup);
+    var __vActions = el("button", { "data-testid": "artifact-actions", "aria-label": "More actions", "aria-haspopup": "menu" }, __vHeader);
+    var __vRest = el("div", { "class": "relative flex-1 min-h-0 flex flex-col" }, __vTile);
+    var __vRegion = el("div", { "data-testid": "artifact-preview-region", "class": "flex-1 min-h-0 overflow-auto relative" }, __vRest);
+    var __vRoot = el("div", { "class": "relative flex items-center justify-center h-full overflow-hidden" }, __vRegion);
+    var __vWrapper = el("div", { "class": "react-transform-wrapper transform-component-module_wrapper__SPB86", style: "width: 100%; height: 100%;" }, __vRoot);
+    var __vContent = el("div", { "class": "react-transform-component transform-component-module_content__FBWxo", style: "width: 100%; height: 100%;" }, __vWrapper);
+    var __vBox = el("div", { "class": "relative" }, __vContent);
+    var __vImg = el("img", { src: "http://localhost:8123/api/artifacts/versions/" + __VV + "?v=" + __VV, alt: "scatter_plot.png", "class": "w-full h-full select-none" }, __vBox);
+    var __vLayer = el("div", { "class": "absolute inset-0 pointer-events-auto cursor-crosshair" }, __vBox);
+    var __vMarker = el("span", { "class": "annotation-marker" }, __vLayer);
+    // The stack under a click on the picture: everything the browser hit-tests, which is not the picture.
+    var __vStack = [__vLayer, __vBox, __vContent, __vWrapper, __vRoot, __vRegion];
+
+    // A Markdown tile of that panel, drawn the same way (no name in its header), in the pane beside the picture's: the
+    // preview region holds the file's words, and one picture in them, which is not in a zoom-and-pan wrapper.
+    var __wTile = el("div", { "class": "flex flex-col h-full" }, __pane);
+    var __wHeader = el("header", { "class": "flex items-center gap-2 px-3 h-11" }, __wTile);
+    var __wTitleBox = el("div", { "class": "flex items-center gap-1.5 flex-1 min-w-0" }, __wHeader);
+    var __wActions = el("button", { "data-testid": "artifact-actions", "aria-label": "More actions", "aria-haspopup": "menu" }, __wHeader);
+    var __wRest = el("div", { "class": "relative flex-1 min-h-0 flex flex-col" }, __wTile);
+    var __wRegion = el("div", { "data-testid": "artifact-preview-region", "class": "flex-1 min-h-0 overflow-auto relative" }, __wRest);
+    var __wText = el("p", {}, __wRegion); text(__wText, "Plate 7 drifts.");
+    var __wImg = el("img", { src: __address("?v=" + __V), alt: "plate_map.png" }, __wRegion);
+
+    // A file on the host's disk, open in a tab: the same viewer (the wrapper and the picture) with no preview region and a
+    // header that has no button for an artifact's menu; its picture's address names no version.
+    var __fTile = el("section", { "data-testid": "file-tile", "class": "flex min-h-0 flex-1 flex-col" }, document.body);
+    var __fHeader = el("header", { "class": "flex items-center" }, __fTile);
+    var __fName = el("span", { "class": "text-sm" }, __fHeader); text(__fName, "scatter_plot.png");
+    var __fRoot = el("div", { "class": "relative flex items-center justify-center h-full overflow-hidden" }, __fTile);
+    var __fWrapper = el("div", { "class": "react-transform-wrapper" }, __fRoot);
+    var __fContent = el("div", { "class": "react-transform-component" }, __fWrapper);
+    var __fBox = el("div", { "class": "relative" }, __fContent);
+    var __fImg = el("img", { src: "http://localhost:8123/api/files/read?host=local&path=%2Fsrv%2Fscatter_plot.png&mtime=1", alt: "scatter_plot.png" }, __fBox);
+    var __fLayer = el("div", { "class": "absolute inset-0" }, __fBox);
 
     // A modal over the conversation, its text above the tile's picture.
     var __modal = el("div", { "class": "fixed inset-0" }, document.body);

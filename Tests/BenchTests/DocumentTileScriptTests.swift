@@ -171,7 +171,8 @@ struct DocumentTileScriptTests {
         #expect(watching(tile) == 0)
         tile.evaluate("__openMenu()")
         #expect(shape(tile) == Self.plain)
-        #expect(traces(tile) == [["contextmenu", "figure-none"]])
+        // A tile was found and had no name to be had: said apart from a click on no tile at all.
+        #expect(traces(tile) == [["contextmenu", "figure-none", "tile-unnamed"]])
         let card = page()
         card.evaluate("__label2.attrs.title = ''")
         card.evaluate("__rightClick(__captionText2)")
