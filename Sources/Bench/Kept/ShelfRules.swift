@@ -551,6 +551,13 @@ enum ShelfRules {
         var cut = false
     }
 
+    /// A known reply's history row, shared by Add to Shelf and Keep. A pinned answer has no row (-1), and a last
+    /// answer used as a fallback does not identify the reply that showed this version.
+    static func sourceRow(_ row: Int?, showsVersion: Bool) -> Int? {
+        guard showsVersion, let row, row >= 0 else { return nil }
+        return row
+    }
+
     /// The record and the sections for a figure put on the shelf: no data and
     /// no code, and where it came from in words. `row` is the history row of
     /// the message that showed it, `question` what the user asked in that
@@ -563,7 +570,7 @@ enum ShelfRules {
             name: folderName, keptAt: keptAt, projectID: session.projectID, projectName: session.projectName,
             sessionID: session.id, sessionTitle: session.displayTitle, figure: figure, files: [], missing: [],
             claudeScience: claudeScience ?? "unknown", capsid: capsid,
-            sourceRow: answer == nil || answer?.isLast == true ? nil : row, question: asked,
+            sourceRow: sourceRow(row, showsVersion: answer?.isLast == false), question: asked,
             answerAt: answer?.at)
 
         var attribution = ""

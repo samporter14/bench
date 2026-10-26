@@ -424,6 +424,44 @@ struct KeepSentenceTests {
 }
 
 struct KeepRecordTests {
+    @Test @MainActor func aKeepRemembersOnlyTheReplyThatShowsItsChosenVersion() throws {
+        func write(_ sources: KeepSources, _ choices: KeepChoices = Made.choices) throws -> (KeptRecord, KeptText) {
+            let plan = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: choices))
+            return KeepRules.record(subject: Made.subject, sources: sources, plan: plan, folderName: "Plate reader QC",
+                                    keptAt: Made.at(100), copied: [], missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0.6")
+        }
+        let (record, text) = try write(Made.full)
+        #expect(record.sourceRow == 41)
+        let markdown = KeptReadme.render(record, text: text)
+        let parsed = try #require(KeptReadme.parse(markdown))
+        #expect(parsed.record.sourceRow == 41)
+        let result = KeptResult(folder: URL(fileURLWithPath: "/made-up/Kept/Assay development/Plate reader QC"),
+                                collection: "Assay development", record: parsed.record, text: parsed.text)
+        let item = try #require(ShelfRules.items(from: [result]).first)
+        #expect(ShelfClaudeLegend.canLook(at: item))
+        #expect(item.record.sourceRow == 41, "Show Where It Came From uses this row")
+
+        var sources = Made.full
+        sources.showing = ShowingMessage(i: 0, at: Made.showing.at, text: Made.showing.text, how: .image, v: Made.v3)
+        #expect(try write(sources).0.sourceRow == 0)
+        sources.showing = ShowingMessage(i: -1, at: Made.showing.at, text: Made.showing.text, how: .image, v: Made.v3)
+        #expect(try write(sources).0.sourceRow == nil, "a pinned answer has no history row")
+        sources.showing = nil
+        sources.lastAnswer = KeepAnswer(text: "Last answer.", at: Made.at(30), how: nil, isFallback: true)
+        #expect(try write(sources).0.sourceRow == nil)
+        sources.lastAnswer = nil
+        #expect(try write(sources).0.sourceRow == nil)
+
+        var choices = Made.choices
+        choices.version = Made.v4
+        #expect(try write(Made.full, choices).0.sourceRow == nil, "another version's reply is not this figure's source")
+        choices = Made.choices
+        choices.withAnswer = false
+        let withoutWords = try write(Made.full, choices)
+        #expect(withoutWords.0.sourceRow == 41, "omitting the quoted words keeps the known provenance")
+        #expect(withoutWords.1.claudeSaid.isEmpty)
+    }
+
     @Test func theRecordNamesTheChosenVersionNotTheLatest() throws {
         let plan = try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: Made.choices))
         let sha = String(repeating: "cd", count: 32)
