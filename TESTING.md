@@ -323,6 +323,18 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, Capsid 1.0.6 released and installed
+
+- ✅ Released as v1.0.6 (tag on 3339a43, "Capsid 1.0.6", by Sam with `gh release create`), marked Latest:
+  `Bench.zip` with Capsid.app 1.0.6 (53) inside, 18,240,715 bytes, sha256 9601568be095e671…. GitHub's asset
+  digest matches the file built from that commit. Build 52 was never published; 53 adds the note polish.
+- ✅ Installed from that same build before the release (CDHash 76606bea; the unzipped copy's signature checks and
+  its CDHash is the same). "Signing in: with a code from claude-science url", and the usage read answered 4 s
+  after launch.
+- The whole suite before the push: 4,343 tests in 564 suites pass.
+- ⏳ **Live**: search inside a real Kept folder, a real note's card (drag, Quick Look, the fade), the duplicate-name
+  menu, Add Selection to Shelf inside a real Markdown tile, Keep's legend row on a real figure, and OpenRouter's list.
+
 ## 2026-10-26, a note's detail card says its words once (`g/note-polish`, from main 7561a05, Capsid 1.0.6)
 
 A note made by Add Selection to Shelf showed the same words three times on its detail card: a picture of its first lines, a
