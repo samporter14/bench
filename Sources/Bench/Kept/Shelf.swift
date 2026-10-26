@@ -100,7 +100,6 @@ struct ShelfRemoval: Equatable, Sendable {
     /// The name shown ("z_prime_by_plate.png").
     let name: String
     fileprivate(set) var moved: [Moved]
-    fileprivate(set) var versions: Set<String>
     /// Why some folders didn't move, in a sentence; nil when all did.
     fileprivate(set) var problem: String?
 
@@ -129,8 +128,8 @@ final class Shelf: ObservableObject {
     private var placements: [String: ShelfPlacement] = [:]
     /// Landed, and not in a read of the folders yet.
     private var added: [String: ShelfPlacement] = [:]
-    /// Taken off, and still in a read of the folders.
-    private var removed: Set<String> = []
+    /// Folders taken off, and still in a read of the folders. Notes have no version of their own.
+    private var removed: Set<URL> = []
     private var requestedRead = false
     private var subscription: AnyCancellable?
 
@@ -276,7 +275,7 @@ final class Shelf: ObservableObject {
         }
         let placement = ShelfPlacement(folder: folder, name: fileName, collection: destination.collection)
         log.notice("Put one file on the shelf")
-        removed.remove(version)
+        removed.remove(folder)
         added[version] = placement
         sync(index.results)
         index.refresh()
@@ -361,14 +360,14 @@ final class Shelf: ObservableObject {
             log.error("Couldn't undo an add: \(KeptDiskError.sentence(error), privacy: .public)")
             return false
         }
-        forget(folders: [placement.folder], versions: versionsOf(folders: [placement.folder]))
+        forget(folders: [placement.folder])
         return true
     }
 
     /// Takes an item off the shelf: each of its folders goes to the Trash.
     /// Answers what moved, so Undo can put it back, and why not all did.
     func remove(_ item: ShelfItem) async -> ShelfRemoval {
-        var removal = ShelfRemoval(name: item.fileName, moved: [], versions: item.version.map { [$0] } ?? [], problem: nil)
+        var removal = ShelfRemoval(name: item.fileName, moved: [], problem: nil)
         for folder in item.folders {
             do {
                 let trashed = try await dependencies.keep.disk.trash(folder)
@@ -378,7 +377,7 @@ final class Shelf: ObservableObject {
                 break
             }
         }
-        forget(folders: removal.moved.map(\.from), versions: removal.versions)
+        forget(folders: removal.moved.map(\.from))
         return removal
     }
 
@@ -389,34 +388,22 @@ final class Shelf: ObservableObject {
         for move in removal.moved {
             do {
                 _ = try await dependencies.keep.disk.restore(move.trashed, to: move.from, at: dependencies.keep.now())
+                removed.remove(move.from)
             } catch {
                 problem = KeptDiskError.sentence(error)
             }
         }
-        removed.subtract(removal.versions)
         sync(index.results)
         await index.refreshAndWait()
         return problem
     }
 
-    private func versionsOf(folders: [URL]) -> Set<String> {
-        Set(index.results.filter { result in folders.contains { $0.path == result.folder.path } }
-            .compactMap(\.record.figure.version)).union(added.filter { pair in folders.contains { $0.path == pair.value.folder.path } }.map(\.key))
-    }
-
-    /// Folders went to the Trash: a version with no other folder is off the
-    /// shelf at once, before the next read of the folders says so.
-    private func forget(folders: [URL], versions gone: Set<String>) {
+    /// Folders went to the Trash: the count and the version marks change before another scan. Filtering folders
+    /// before grouping versions also keeps a second copy on the shelf when only one of its folders moved.
+    private func forget(folders: [URL]) {
         guard !folders.isEmpty else { return }
-        for version in gone {
-            let others = index.results.contains { result in
-                result.record.figure.version == version && !folders.contains { $0.path == result.folder.path }
-            }
-            if !others {
-                removed.insert(version)
-                added[version] = nil
-            }
-        }
+        removed.formUnion(folders)
+        added = added.filter { !removed.contains($0.value.folder) }
         sync(index.results)
         index.refresh()
     }
@@ -425,7 +412,8 @@ final class Shelf: ObservableObject {
 
     /// The folders as read, and what has landed or gone since.
     private func sync(_ results: [KeptResult]) {
-        let items = ShelfRules.items(from: results)
+        removed.formIntersection(Set(results.map(\.folder)))
+        let items = ShelfRules.items(from: results.filter { !removed.contains($0.folder) })
         var map: [String: ShelfPlacement] = [:]
         for item in items {
             if let version = item.version {
@@ -434,13 +422,11 @@ final class Shelf: ObservableObject {
         }
         let present = Set(map.keys)
         for version in Array(added.keys) where present.contains(version) { added[version] = nil }
-        for version in removed where !present.contains(version) { removed.remove(version) }
         for (version, placement) in added where map[version] == nil { map[version] = placement }
-        for version in removed { map[version] = nil }
         placements = map
         let now = Set(map.keys)
         if versions != now { versions = now }
-        let total = items.count + added.keys.filter { !present.contains($0) }.count - removed.filter { present.contains($0) }.count
+        let total = items.count + added.keys.filter { !present.contains($0) }.count
         if count != total { count = total }
     }
 

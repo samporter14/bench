@@ -337,6 +337,7 @@ struct ShelfSelectionNoteAddTests {
         guard case .added(let placement) = await rig.shelf.addNote(note()) else { Issue.record("not added"); return }
         #expect(rig.shelf.count == 1)
         #expect(await rig.shelf.undo(placement))
+        #expect(rig.shelf.count == 0, "Undo updates the count before another folder scan")
         #expect(rig.names().isEmpty, "the folder is gone from the collection")
         let trashed = (try? FileManager.default.contentsOfDirectory(atPath: rig.trash.path)) ?? []
         #expect(trashed.count == 1 && trashed[0].hasSuffix("Plate 7 drifts after the midpoint, and the\u{2026}"), "and in the Trash, not deleted")
