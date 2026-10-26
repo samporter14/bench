@@ -203,7 +203,7 @@ struct ShelfMoreMenuTests {
         let view = FindRepo.source("Kept/ShelfView.swift")
         let detail = try #require(view.range(of: "struct ShelfDetail: View"))
         let body = String(view[detail.lowerBound...].prefix(upTo: view.range(of: "/// The legend and the files of an item")!.lowerBound))
-        #expect(body.contains("ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode)"))
+        #expect(body.contains("ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode, note: drawsAsNote)"))
         #expect(body.contains(".accessibilityActions {"))
         #expect(body.contains("SolanumPillStyle(.regular, prominent: true)"))
         #expect(body.components(separatedBy: "prominent: true").count == 2, "one action that asks")

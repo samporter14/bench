@@ -323,6 +323,68 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, a note's detail card says its words once (`g/note-polish`, from main 7561a05, Capsid 1.0.6)
+
+A note made by Add Selection to Shelf showed the same words three times on its detail card: a picture of its first lines, a
+title of its first words, and the whole passage. The card now has no picture and no title: one quiet header ("Note · Plate
+reader QC · Assay development · 11:12 AM"), the passage set as a quotation, and the same three controls. Ordinary documents,
+figures and tables keep their card exactly (the main row of `ShelfDetail` is the old code, checked line for line against
+main). Everything ran offscreen on made-up notes and scratch folders: no window shown, nothing launched, installed, merged
+or pushed, the real Kept folder and `~/.claude-science` untouched.
+
+- ✅ **The whole suite**: `✔ Test run with 4343 tests in 564 suites passed` (32 new tests). The first full run failed once, for
+  a good reason and not a flake: `KeptDiskCallsTests` counts `NSWorkspace` in `ShelfView.swift`, and a note's ⋯ has one more
+  (Show in Finder, the call the grid card's menu makes); the allowed count is now 6, with the reason beside it.
+- ✅ **What changed**: `ShelfDetail` draws one of two forms (`ShelfDetail.form(for:reading:)`): an ordinary item's, or a
+  note's, `ShelfNoteHeader` over `ShelfPassageText` over the controls. The header's words are `ShelfRules.noteHeader`
+  ("Note", the session, the project, when it was put on the shelf in the grid card's own words; each only when known;
+  VoiceOver reads them with commas). The passage is 14 on 21 (the reference reader's type), ink, a 2-point rounded rule
+  at its leading edge (muted ink with Increase Contrast), at most 600 points wide, selectable, still not rendered as
+  Markdown, scrolling inside 280 points with the fade at its foot. The fade is a mask over the words alone and its
+  strength follows how much is below, so it needs no animation.
+- ✅ **What the preview carried, and where it went**: the drag of the file and the double-click to Quick Look moved to the
+  header (same file, same panel, the preview's tooltip reworded for a note); the ⋯ menu of a note opens with Quick Look
+  and Show in Finder (a note's alone: every other item's ⋯ is as it was); the grid card (drag, Space, double-click,
+  its right-click menu) is untouched; "Preview of note.md" goes with the picture, so VoiceOver reads the header and the
+  passage once each. A note whose words can't be read (file gone, put away in iCloud, empty, a disk that didn't answer
+  with nothing held) is drawn as any document is, picture and name, since it has only its file (`ShelfPassages.reading`
+  tells not yet, words and none apart, so a note's card never starts as a document's and turns into a note's when its words arrive).
+- ✅ **New tests** (`ShelfNoteCardTests.swift`, 31, and one more capture test): the header's words with each part present
+  and missing (no project, no time, no session, nothing, blanks) and the time as the grid card's caption gives it; the
+  note's ⋯ menu and an ordinary item's unchanged; which form a note, a numbered `note.md`, a document, a figure and a table
+  get, whether the words are being read, read or missing; the reading states with fake files (gone, put away, empty,
+  a disk that fails with and without words held, the wordless forgotten past 64); the drag provider, and the header, ⋯
+  and grid card wiring for drag and Quick Look; Copy puts on the pasteboard the same string the card draws; the note's
+  card has no preview, name, title or source line and the ordinary one has all of them; the VoiceOver wiring; the
+  passage's type, rule, measure and fade; and one that **draws the card and reads it back with the system's text
+  recognition**: a note's first words are on its card once (it was three), its header is there, and a document's picture
+  (its file's heading) still is.
+- ✅ **Mutation checks** (break it, see the test fail, restore it; eleven, all caught): a note drawn with its picture again
+  (the form test and the recognition test); the header without its project (four header tests); Copy copying the file
+  (three Copy tests); the header with no drag or double-click; a note's ⋯ without Quick Look; the title back on a note's
+  card (the source test and the recognition test); Quick Look in ⋯ doing nothing; the passage's room back at 172 points
+  (it was `height − 172`, now `− 120`); an animation put back on the fade; a wordless note staying "not yet"; and the
+  rule no longer hidden from VoiceOver.
+- ✅ **Offscreen captures**, light and dark, in `shots-notepolish/` beside the worktree: `shelf-passage-short-*`,
+  `shelf-passage-long-*` (the same made-up notes as `shots-106/`, so each pair is before and after), their `-small-*`
+  windows (620 × 480), `shelf-passage-oneline-*` (and `-small-*`), `shelf-passage-gone-*` (the file moved away: drawn as a
+  document), `shelf-figure-*` (a figure's card, unchanged), and `shelf-note-*` (the note among the demo's cards, the
+  Documents chip, the narrowest window). `first-pass/` holds the first complete render (the very first one
+  had an animation on the fade's mask that, in an offscreen host, left the mask at the height it had before the words
+  were measured, so the words were cut after two lines; that animation is gone and the fade's strength is now continuous).
+  Refined after that first complete look: the rule is rounded, the words 600 points wide at most
+  (was 620), the fade 40 points (was 32, which left a ghost of the next line), and a note being read keeps the room of
+  one 17-point line (not 21) so a one-line note doesn't jump.
+- ⏳ **Live, in a real window** (nothing here ran in one): dragging the header into Finder, a manuscript or a Markdown
+  editor, and that the drag image is the header line and not something odd; double-clicking the header for Quick Look
+  and that a single click does nothing; Quick Look and Show in Finder in the ⋯ menu of a note (and that a
+  non-note's ⋯ has neither); that selecting words in the passage, ⌘C and Look Up still work inside the scroll view; the
+  scroll itself, its indicator and the fade as the end arrives, with a trackpad and a mouse wheel; the card when a long
+  session title wraps the header to two lines; VoiceOver reading the header ("Note, Plate reader QC, …") and then the
+  passage once, with the rule skipped and the ⋯ items offered as actions; Increase Contrast (the rule's colour: the
+  environment value can't be forced offscreen, so the choice is a tested function, `ShelfPassageText.ruleColor`); and the
+  Shelf's text sizes (fixed points, so no Dynamic Type, as before).
+
 ## 2026-10-26, merging 1.0.6: OpenCode's five Shelf items, and Claude's legend in plain words
 
 - ✅ **OpenCode's branch reviewed and merged** (`g/opencode-106`, nine commits: eight Sonnet 5.5, one Opus 5.5).

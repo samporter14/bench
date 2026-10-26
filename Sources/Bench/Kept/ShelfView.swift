@@ -8,7 +8,9 @@
 // the one selected: its picture, its name, the session, project, version and
 // time, what you asked, what Claude said, and Show Where It Came From (clay),
 // Copy and a ⋯ menu with the rest. An item kept with data and code also shows
-// its legend and its files below. Hairlines, no shadows, 24-point gutters.
+// its legend and its files below. A note (words selected in a conversation) has
+// no picture and no title on its detail: a quiet header, its passage as a
+// quotation, and the same three controls. Hairlines, no shadows, 24-point gutters.
 // The rules are in ShelfRules, the choices in ShelfModel; this file only draws.
 import AppKit
 import SwiftUI
@@ -246,7 +248,7 @@ struct ShelfView: View {
             gridFocused = true
         }
         .id(item.id)
-        .onDrag { NSItemProvider(contentsOf: item.fileURL) ?? NSItemProvider() }
+        .onDrag { ShelfActions.fileProvider(for: item) }
         .contextMenu {
             Button("Show Where It Came From") { ShelfActions.showWhereItCameFrom(item) }
                 .disabled(Demo.mode != nil)
@@ -398,6 +400,12 @@ struct ShelfSearchPill: View {
 /// What the buttons do, apart from the window.
 @MainActor
 enum ShelfActions {
+    /// What a drag out of the Shelf carries: the item's file, which another app takes as a file. The grid card, the
+    /// detail's picture and a note's header (below) all drag the same.
+    static func fileProvider(for item: ShelfItem) -> NSItemProvider {
+        NSItemProvider(contentsOf: item.fileURL) ?? NSItemProvider()
+    }
+
     /// "Show Where It Came From": the reference reader at the message that showed it.
     static func showWhereItCameFrom(_ item: ShelfItem) {
         let record = item.record
@@ -463,8 +471,9 @@ enum ShelfActions {
 /// The selected item at the window's foot: its picture, its name, where it came from in one line, what was asked,
 /// what Claude said, and three controls: Show Where It Came From (the one that asks, clay), Copy, and ⋯ with Keep
 /// with Data and Code…, Export Figure as PDF… and Remove. Each of the ⋯ items is also a VoiceOver action on the card.
-/// A note made by Add Selection to Shelf shows its whole passage between the source and the controls, and Copy copies
-/// it (since 1.0.6, `ShelfPassage`).
+/// A note made by Add Selection to Shelf has no picture and no title of its own (both would say its words again):
+/// its card is one quiet line of what it is and where it came from, its whole passage as a quotation, and the same
+/// three controls, with Copy copying the passage (since 1.0.6, `ShelfPassage`; the card after 1.0.6).
 struct ShelfDetail: View {
     let item: ShelfItem
     @ObservedObject var model: ShelfModel
@@ -480,70 +489,39 @@ struct ShelfDetail: View {
 
     private var said: String { item.text.claudeSaid.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var longSaid: Bool { said.count > 170 || said.filter(\.isNewline).count > 2 }
-    private var more: [ShelfRules.MoreItem] { ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode) }
     /// A note's whole passage, once read (Kept/ShelfPassage.swift).
     private var passage: String? { model.passages.text(for: item) }
+    private var reading: ShelfPassages.Reading { model.passages.reading(for: item) }
+    /// Whether the card is a note's: its header and its passage, with no picture and no title.
+    private var drawsAsNote: Bool { Self.form(for: item, reading: reading) == .note }
+    private var more: [ShelfRules.MoreItem] { ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode, note: drawsAsNote) }
+
+    /// The two cards: an ordinary item's, with its picture and name, and a note's.
+    enum Form: Equatable, Sendable { case ordinary, note }
+
+    /// A note's card is a note's from the moment it is shown, before its words are read (so it doesn't change shape
+    /// when they arrive), unless they are known to be missing: a note whose file is gone, put away in iCloud, not
+    /// text or empty has only its file to show, and is drawn as any document is, picture and name. Everything else
+    /// is an ordinary item's, as before the note polish.
+    static func form(for item: ShelfItem, reading: ShelfPassages.Reading) -> Form {
+        item.isSelectionNote && reading != .none ? .note : .ordinary
+    }
 
     /// Board 12's 250 points, less in a narrow window so the three controls stay on one row beside it.
     static func previewWidth(forWindow width: CGFloat) -> CGFloat {
         min(250, max(160, ((width - 2 * ShelfRules.gutter - 36) * 0.3).rounded()))
     }
 
-    /// The most height a note's passage takes before it scrolls: what the card has beside the name, the source and the
-    /// controls, and no more than 280 points (a dozen lines), so the card fits in its own height.
-    static func passageHeight(forCard height: CGFloat) -> CGFloat { min(280, max(96, height - 172)) }
+    /// The most height a note's passage takes before it scrolls: what the card has beside the header, the controls and
+    /// its padding (about 120 points), and no more than 280 points (a dozen lines), so the card fits in its own height.
+    static func passageHeight(forCard height: CGFloat) -> CGFloat { min(280, max(96, height - 120)) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .top, spacing: 22) {
-                    preview
-                    VStack(alignment: .leading, spacing: 6) {
-                        ShelfName(parts: item.nameParts, size: 17, weight: .semibold)
-                            .lineLimit(2)
-                            .textSelection(.enabled)
-                        Text(ShelfRules.sourceLine(for: item))
-                            .font(.system(size: Solanum.captionSize))
-                            .foregroundStyle(Solanum.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let asked = ShelfRules.askedLine(for: item) {
-                            Text(asked)
-                                .font(.system(size: 13))
-                                .lineSpacing(19 - 15.5)
-                                .foregroundStyle(Solanum.muted)
-                                .lineLimit(2)
-                                .padding(.top, 2)
-                        }
-                        if !said.isEmpty {
-                            Text(said)
-                                .font(.system(size: 13))
-                                .lineSpacing(19 - 15.5)
-                                .foregroundStyle(Solanum.ink)
-                                .lineLimit(sayingMore ? nil : 3)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                            if longSaid {
-                                Button(sayingMore ? "Less" : "More") { sayingMore.toggle() }
-                                    .buttonStyle(.plain)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(Solanum.muted)
-                                    .underline()
-                            }
-                            if let note = ShelfRules.lastAnswerNote(for: item) {
-                                Text(note)
-                                    .font(.system(size: Solanum.captionSize))
-                                    .foregroundStyle(Solanum.muted)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        if let passage {
-                            ShelfPassageText(text: passage, maxHeight: ShelfDetail.passageHeight(forCard: maxHeight))
-                                .padding(.top, 4)
-                        }
-                        Spacer(minLength: 8)
-                        buttons
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+                switch Self.form(for: item, reading: reading) {
+                case .note: noteMain
+                case .ordinary: ordinaryMain
                 }
                 if item.hasMore {
                     Solanum.hairline.frame(height: 1).padding(.top, 18)
@@ -587,13 +565,80 @@ struct ShelfDetail: View {
         }
     }
 
+    /// An ordinary item's main row: the picture on paper, then its name, where it came from, what was asked, what Claude
+    /// said and the controls. As it was before the note polish.
+    private var ordinaryMain: some View {
+        HStack(alignment: .top, spacing: 22) {
+            preview
+            VStack(alignment: .leading, spacing: 6) {
+                ShelfName(parts: item.nameParts, size: 17, weight: .semibold)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                Text(ShelfRules.sourceLine(for: item))
+                    .font(.system(size: Solanum.captionSize))
+                    .foregroundStyle(Solanum.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let asked = ShelfRules.askedLine(for: item) {
+                    Text(asked)
+                        .font(.system(size: 13))
+                        .lineSpacing(19 - 15.5)
+                        .foregroundStyle(Solanum.muted)
+                        .lineLimit(2)
+                        .padding(.top, 2)
+                }
+                if !said.isEmpty {
+                    Text(said)
+                        .font(.system(size: 13))
+                        .lineSpacing(19 - 15.5)
+                        .foregroundStyle(Solanum.ink)
+                        .lineLimit(sayingMore ? nil : 3)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if longSaid {
+                        Button(sayingMore ? "Less" : "More") { sayingMore.toggle() }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Solanum.muted)
+                            .underline()
+                    }
+                    if let note = ShelfRules.lastAnswerNote(for: item) {
+                        Text(note)
+                            .font(.system(size: Solanum.captionSize))
+                            .foregroundStyle(Solanum.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 8)
+                buttons
+            }
+            .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+        }
+    }
+
+    /// A note's main column: what it is and where it came from, its words, and the controls under them. The words are
+    /// the card's one big thing, in the room the picture had; they are not said again as a title or a picture.
+    private var noteMain: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ShelfNoteHeader(item: item, quickLook: quickLook)
+            if let passage {
+                ShelfPassageText(text: passage, maxHeight: ShelfDetail.passageHeight(forCard: maxHeight))
+                    .padding(.top, 14)
+            } else {
+                // Being read: the room of a line, so the card keeps its shape when the words arrive.
+                Color.clear.frame(height: ShelfPassageText.lineHeight).padding(.top, 14)
+            }
+            buttons.padding(.top, 20)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var preview: some View {
         ShelfPaper(store: thumbnails, url: item.fileURL, side: item.kind == .figure ? 300 : 560, kind: item.kind, inset: 6, symbolSize: 40,
                    radius: 6, margin: item.kind == .figure ? 6 : 8)
             .frame(width: previewWidth, height: 150)
             .background(Solanum.raised, in: .rect(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ShelfLook.cardEdge, lineWidth: 1))
-            .onDrag { NSItemProvider(contentsOf: item.fileURL) ?? NSItemProvider() }
+            .onDrag { ShelfActions.fileProvider(for: item) }
             .onTapGesture(count: 2) { quickLook.show([item.fileURL], at: 0) }
             .accessibilityLabel("Preview of \(item.fileName)")
             .help("Drag it into your manuscript, or double-click to preview it")
@@ -620,7 +665,7 @@ struct ShelfDetail: View {
                 }
             }
             .buttonStyle(SolanumPillStyle(.regular))
-            .help(item.kind == .figure ? "The file and its picture" : item.isSelectionNote ? "The passage" : "The file")
+            .help(item.kind == .figure ? "The file and its picture" : drawsAsNote ? "The passage" : "The file")
             Menu {
                 ForEach(Array(more.enumerated()), id: \.offset) { _, entry in
                     if entry == .divider {
@@ -637,7 +682,7 @@ struct ShelfDetail: View {
             .menuIndicator(.hidden)
             .buttonStyle(ShelfMoreStyle())
             .fixedSize()
-            .help("Keep with Data and Code, Export as PDF, Remove")
+            .help(drawsAsNote ? "Quick Look, Show in Finder, Export as PDF, Remove" : "Keep with Data and Code, Export as PDF, Remove")
             .accessibilityLabel("More for \(item.fileName)")
         }
     }
@@ -648,6 +693,10 @@ struct ShelfDetail: View {
         case .keepWithDataAndCode:
             guard Demo.mode == nil else { return }
             keep()
+        case .quickLook:
+            quickLook.show([item.fileURL], at: 0)
+        case .showInFinder:
+            NSWorkspace.shared.activateFileViewerSelecting([item.folder])
         case .exportPDF:
             model.exportPDF(from: item)
         case .remove:
@@ -658,39 +707,99 @@ struct ShelfDetail: View {
     }
 }
 
-/// A note's passage on its detail card: its words as they were selected, in the card's own type, selectable. Longer than
+/// A note's detail header: what it is and where it came from, in the source line's own type ("Note · Plate reader QC ·
+/// Assay development · 11:12 AM", `ShelfRules.noteHeader`), "Note" in ink and the rest muted. It stands where the
+/// card's picture stood, and does what the picture did to the file: dragged, it takes the note's file out (the grid
+/// card's drag, `ShelfActions.fileProvider`), and a double-click opens it in Quick Look. Neither is drawn as a control;
+/// the tooltip says so. VoiceOver reads the line once, with commas, and the card's actions have Quick Look too.
+struct ShelfNoteHeader: View {
+    let item: ShelfItem
+    let quickLook: KeptQuickLook
+
+    /// The tooltip: what the picture's said, for a note.
+    static let help = "Drag the note\u{2019}s file into your manuscript, or double-click to preview it"
+
+    var body: some View {
+        Text(attributed)
+            .font(.system(size: Solanum.captionSize))
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .onDrag { ShelfActions.fileProvider(for: item) }
+            .onTapGesture(count: 2) { quickLook.show([item.fileURL], at: 0) }
+            .help(Self.help)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(ShelfRules.noteHeaderSpoken(for: item))
+    }
+
+    private var attributed: AttributedString {
+        let parts = ShelfRules.noteHeaderParts(for: item)
+        var kind = AttributedString(parts.first ?? "Note")
+        kind.swiftUI.foregroundColor = Solanum.ink
+        kind.swiftUI.font = .system(size: Solanum.captionSize, weight: .medium)
+        var rest = AttributedString(parts.dropFirst().map { ShelfRules.noteHeaderSeparator + $0 }.joined())
+        rest.swiftUI.foregroundColor = Solanum.muted
+        return kind + rest
+    }
+}
+
+/// A note's passage on its detail card: its words as they were selected, set as a quotation from a reply. The reading
+/// type of the reference reader (14 points on 21, ink) at a reading width (`measure`: a wide card leaves the rest to
+/// whitespace), selectable, with a rule at its leading edge that stays put while the words scroll. Longer than
 /// `maxHeight` it scrolls, within the card, and its foot fades while there is more below (the only sign of it: no
-/// control is added).
+/// control is added); the fade is a mask, so it shows the card's own colour in light and dark alike.
 struct ShelfPassageText: View {
     let text: String
     let maxHeight: CGFloat
+    /// The widest the words and their rule run: about 84 characters of the reading type to a line.
+    static let measure: CGFloat = 600
+    /// The rule's width, and the space between it and the words.
+    static let ruleWidth: CGFloat = 2
+    static let inset: CGFloat = 16
+    /// The natural height of one line of the reading type, before the extra between lines (`Solanum.bodyLeading`).
+    static let lineHeight: CGFloat = 17
+    /// The fade at the foot.
+    static let fade: CGFloat = 40
     /// The words' height as measured; a short guess until then, so the card never fills the window for a frame.
     @State private var contentHeight: CGFloat = 40
-    @State private var moreBelow = false
+    /// How much of the fade is wanted: 0 with nothing below, 1 with a fade's length of words or more below, and
+    /// between as the end comes into view, so the fade melts away as the last line arrives, with no animation to run.
+    @State private var below: CGFloat = 0
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    /// The rule: a strong hairline's ink, and the muted ink with Increase Contrast (a decorative line, so this is
+    /// the only place the card changes for it; the words are the ink's, and the muted header is 6:1 or better).
+    static func ruleColor(_ contrast: ColorSchemeContrast) -> Color { contrast == .increased ? Solanum.muted : Solanum.strong }
 
     var body: some View {
         ScrollView {
             Text(text)
-                .font(.system(size: 13))
-                .lineSpacing(19 - 15.5)
+                .font(.system(size: Solanum.bodySize))
+                .lineSpacing(Solanum.bodyLeading - Self.lineHeight)
                 .foregroundStyle(Solanum.ink)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, Self.inset)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         }
         .scrollBounceBehavior(.basedOnSize)
-        .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.containerSize.height < $0.contentSize.height - 1 } action: { _, now in
-            moreBelow = now
+        .onScrollGeometryChange(for: CGFloat.self) {
+            max(0, min(1, ($0.contentSize.height - $0.contentOffset.y - $0.containerSize.height) / Self.fade))
+        } action: { _, now in
+            below = now
         }
         .mask {
             VStack(spacing: 0) {
                 Color.black
-                LinearGradient(colors: [.black, .black.opacity(moreBelow ? 0 : 1)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 28)
+                LinearGradient(colors: [.black, .black.opacity(1 - below)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: Self.fade)
             }
         }
         .frame(height: min(contentHeight, maxHeight))
+        .overlay(alignment: .leading) {
+            Capsule().fill(Self.ruleColor(contrast)).frame(width: Self.ruleWidth).accessibilityHidden(true)
+        }
+        .frame(maxWidth: Self.measure, alignment: .leading)
     }
 }
 

@@ -7,7 +7,8 @@
 // The notes are added through `Shelf.addNote` into a temporary root, so the
 // folders on screen are the ones a real add writes. A second test draws the
 // passage on a note's detail card (since 1.0.6): a short note's, a long one's that
-// scrolls, and both in the narrowest window. Without the variable the
+// scrolls, and both in the narrowest window; a third draws the edges of the card as it is since the note polish (a note
+// of one line, a note whose file has gone, and a figure beside them, whose card has not changed). Without the variable the
 // test does nothing. The title bar belongs to the window; a stand-in for it is
 // drawn here, as in KeptWindowSnapshotTests.
 import AppKit
@@ -161,5 +162,49 @@ struct ShelfNoteSnapshotTests {
                            name: "\(name)-small", to: directory, settle: 8)
             #expect(model.passages.text(for: note) != nil, "the card asked for the words and they were read")
         }
+    }
+    static let oneLine = "Repeat plate 7 with a fresh seal."
+    static let gone = "The cold room ran two degrees warm overnight, so every plate in it is suspect."
+
+    /// The edges of a note's card: one line of words (the card must not look empty), a note whose file has gone (it is
+    /// drawn as any document is, picture and name, since there are no words to show), and a figure's card, unchanged.
+    @Test func theEdgesOfANotesDetailCardAreDrawnWhenAsked() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("shelf-edges-snapshot-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let disk = KeptDisk(root: { root })
+        await KeptDemo.seed(disk)
+        let index = KeptIndex(disk: disk, root: { root })
+        let shelf = KeptDemo.shelf(index: index, root: root)
+        for text in [Self.oneLine, Self.gone] {
+            let outcome = await shelf.addNote(ShelfSelectionNote(session: Self.session, text: try #require(ShelfSelectionNote.clean(text))))
+            guard case .added = outcome else { Issue.record("\(outcome)"); return }
+        }
+        index.refresh()
+        for _ in 0..<100 where index.results.count < 12 { try await Task.sleep(for: .milliseconds(50)) }
+        let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
+        let size = KeptWindowController.size
+        let narrow = NSSize(width: 620, height: 480)
+
+        let one = ShelfModel(shelf: shelf)
+        let oneNote = try #require(one.items.first { $0.title.hasPrefix("Repeat plate 7") })
+        one.selection = oneNote.id
+        try await draw(ShelfView(model: one, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size, name: "shelf-passage-oneline", to: directory)
+        try await draw(ShelfView(model: one, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: narrow, name: "shelf-passage-oneline-small", to: directory, settle: 8)
+
+        let figure = ShelfModel(shelf: shelf)
+        let picture = try #require(figure.items.first { $0.kind == .figure })
+        figure.selection = picture.id
+        try await draw(ShelfView(model: figure, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size, name: "shelf-figure", to: directory)
+
+        // The file is gone (moved in another app) while the folder's README says it should be there.
+        let missing = ShelfModel(shelf: shelf)
+        let lost = try #require(missing.items.first { $0.title.hasPrefix("The cold room ran") })
+        try FileManager.default.removeItem(at: lost.fileURL)
+        missing.selection = lost.id
+        try await draw(ShelfView(model: missing, thumbnails: thumbnails, quickLook: KeptQuickLook()), size: size, name: "shelf-passage-gone", to: directory)
+        #expect(missing.passages.reading(for: lost) == .none)
     }
 }

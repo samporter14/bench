@@ -112,7 +112,7 @@ struct ShelfPassageRulesTests {
 
     @Test func theCardGivesAPassageRoomAndNoMoreThanItsMaximum() {
         #expect(ShelfDetail.passageHeight(forCard: 459) == 280, "the default window")
-        #expect(ShelfDetail.passageHeight(forCard: 269) == 97, "the narrowest window")
+        #expect(ShelfDetail.passageHeight(forCard: 269) == 149, "the narrowest window: seven lines of the reading type")
         #expect(ShelfDetail.passageHeight(forCard: 120) == 96)
         #expect(ShelfDetail.passageHeight(forCard: 2_000) == 280)
     }

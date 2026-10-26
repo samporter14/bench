@@ -78,10 +78,11 @@ struct KeptDiskCallsTests {
             // The rename that refuses to replace a folder.
             "KeptDisk.swift: renamex_np(": 1,
             // Finder and the default app, asked to show or open a kept file (a UI call, not a look at the disk),
-            // and the temporary folder a demo names: none of these reads or writes anything.
+            // and the temporary folder a demo names: none of these reads or writes anything. The Shelf's: a card's
+            // menu (Open, Show in Finder), the detail's Show in Finder in a note's ⋯ menu, and the rest as before.
             "KeepModel.swift: NSWorkspace": 1,
             "KeptDemo.swift: FileManager.default": 1,
-            "ShelfView.swift: NSWorkspace": 5,
+            "ShelfView.swift: NSWorkspace": 6,
             // Export as PDF…'s drawing runs on a queue of its own (ShelfPDF.swift): its PDF is written to a temporary
             // file and moved over the old one only when whole, and a failed one is cleared away. Finder is
             // asked to show the file it made (a UI call, as above).

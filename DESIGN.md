@@ -5902,28 +5902,78 @@ session's history. You asked: “…”"). The legend comment and fine print say
     a document does (the words as text). Undo on the toast and Remove move the
     folder to the Trash. The same words from the same session are "Already on your
     shelf"; two notes that begin alike get a dated folder, as any keep does.
-  - *The detail shows the passage* (Kept/ShelfPassage.swift, `ShelfPassages`;
-    since 1.0.6). A note (`ShelfItem.isSelectionNote`:
-    a file called `note.md` with no version) now shows the whole passage on its
-    detail card, between the source line and the three controls: the words as
-    they were selected, at 13 points in the card's ink on a 19-point line,
-    selectable, and **not rendered as Markdown** (a `*` or a `#` in the
-    words stays as it is; what the card shows, what Copy copies and
-    what `note.md` holds are one text, as `ShelfSelectionNote.clean` leaves it:
-    line ends as `\n`, blanks at either end trimmed, 32,000 characters at most).
-    A passage taller than the card has room for scrolls inside the card, up to
-    280 points (about a dozen lines; less in a short window, never under 96),
-    and its foot fades while there is more below. That fade is the only sign:
-    no button or link was added. **Copy copies the passage as text**, not the
-    file; a note whose words can't be read (the file gone, put away in iCloud,
-    not text, empty, a disk that didn't answer) is copied as the file, as any
-    document is, and an ordinary document's card and Copy are as they were. The
-    file is read through the disk layer off the main actor (`KeptDisk.peek`,
-    to four bytes for each of the 32,000 characters), once for each state of it
-    (its date and size), when its card is shown and whenever the folders are read
-    again, and twelve passages are held, the newest looked at. A file changed in
-    another app is read again; one that went away takes its passage with it. The
-    log has nothing about a passage.
+  - *The detail shows the passage, once* (Kept/ShelfPassage.swift, `ShelfPassages`,
+    `ShelfNoteHeader`, `ShelfPassageText`; the passage since 1.0.6, the card as it
+    is now after the note polish). A note (`ShelfItem.isSelectionNote`: a file
+    called `note.md` with no version) says its words once. In 1.0.6 its detail
+    card said them three times: a picture of its first lines at the left, a title
+    of its first words, and the whole passage. The card now has **no picture and
+    no title**; the words are its main content, in the room the picture had:
+    - *The header*, one quiet line at the top in the source line's type (12
+      points): **"Note · Plate reader QC · Assay development · 11:12 AM"**, "Note"
+      in ink and medium, the rest muted: the session, the project and when it was
+      put on the shelf (the grid card's own words for the moment: the time today,
+      "Yesterday", the weekday this week, else the day), each only when known
+      (`ShelfRules.noteHeader`; with no project: "Note · Plate reader QC · 11:12
+      AM"). It says nothing of the passage. VoiceOver reads it as one element,
+      with commas ("Note, Plate reader QC, Assay development, 11:12 AM"), once.
+    - *The passage* is set as a quotation from a reply: the reference reader's
+      reading type (14 points on 21, ink), a 2-point rounded rule at its leading
+      edge in the strong hairline's ink (the muted ink with Increase Contrast),
+      the words 16 points in, and no wider than 600 points (about 84 characters
+      to a line), so a wide window leaves whitespace and not a line the eye
+      loses. The words are **not rendered as Markdown** (a `*` or a `#` stays as
+      it is; what the card shows, what Copy copies and what `note.md` holds are
+      one text, as `ShelfSelectionNote.clean` leaves it: line ends as `\n`, blanks
+      at either end trimmed, 32,000 characters at most), selectable, and the rule
+      is hidden from VoiceOver. A passage taller than the card has room for
+      scrolls inside the card, up to 280 points (about a dozen lines; less in a
+      short window, never under 96: the card's other contents take about 120),
+      and its foot fades while there is more below, over 40 points. The fade is
+      a mask over the words alone (the rule stays whole and doesn't scroll), so
+      it shows the card's own colour, ivory or the raised grey, and looks the
+      same in light and dark; its strength follows how much is below (full with
+      40 points or more, none at the end), so it melts away as the last line
+      arrives and no animation is run. That fade is the only sign: no button or
+      link was added.
+    - *Under them* the same three controls: **Show Where It Came From** (clay),
+      **Copy**, which copies the passage as text, not the file, and ⋯. A note
+      whose words can't be read is copied as the file, as any document is.
+    - *What the picture carried, and where it went.* The picture dragged the
+      file out, opened Quick Look on a double-click, had a tooltip ("Drag it into
+      your manuscript, or double-click to preview it") and the VoiceOver label
+      "Preview of note.md". On a note's card the **header takes the drag and the
+      double-click** (the same file as the grid card's drag, the same Quick Look;
+      the tooltip is "Drag the note's file into your manuscript, or double-click
+      to preview it"; nothing is drawn as a control); the **⋯ menu opens with Quick
+      Look and Show in Finder** (a note's alone; the ⋯ of every other item is as
+      it was), then Export Figure as PDF…, then Remove after a rule, with no Keep
+      with Data and Code… (no version to keep), and each item is a VoiceOver
+      action on the card as the others are; the **grid card is as it was**: it
+      drags, Space and a double-click open Quick Look, and its right-click menu
+      has Quick Look and Show in Finder. The label "Preview of note.md" goes with
+      the picture, which is the point: VoiceOver reads the header and then the
+      passage, each once.
+    - *Before the words arrive, and when they never do.* A note's card is a
+      note's from the moment it is shown, with the room of a line under the
+      header, so it never shows the picture and the title for a moment and drops
+      them when the words are read (it only grows to fit them;
+      `ShelfPassages.reading`: not yet, words, none). A note whose file has no
+      words to show has only its file, so it is drawn as any document is: its
+      picture, its name (the title), the source line and the ordinary ⋯
+      (`ShelfDetail.form`).
+    - The file is read through the disk layer off the main actor (`KeptDisk.peek`,
+      to four bytes for each of the 32,000 characters), once for each state of it
+      (its date and size), when its card is shown and whenever the folders are
+      read again, and twelve passages are held, the newest looked at (and the
+      paths of up to sixty-four notes looked at that had no words). A file
+      changed in another app is read again; one that went away takes its passage
+      with it. The log has nothing about a passage.
+    - *What is not changed.* The grid card of a note (its first lines, its first
+      words as its name) is drawn as every document's card is. The Shelf sets
+      its type in fixed point sizes throughout, so the card does not follow
+      Dynamic Type, as no other part of it does; Increase Contrast changes only
+      the rule.
   Writing is by the disk's one queue (`KeptDisk.prepare`, `write`, `finish`), so
   a note can't leave a half folder; a Kept folder that isn't there is a failed
   add with the disk's sentence, naming the title and none of the words.
@@ -5996,6 +6046,9 @@ Data and Code… (the Keep sheet pinned to that answer, sized to the window;
 only for an item not kept with its data and code), Export Figure as PDF…, and,
 after a rule, Remove (to the Trash, with a dark Undo pill for eight seconds).
 Each of the ⋯ items is also a VoiceOver action on the card (`ShelfRules.moreMenu`).
+A note made by Add Selection to Shelf has a card of its own, with no picture and no
+title (a header and its passage, then these controls, and Quick Look and Show in
+Finder at the head of its ⋯: *Add Selection to Shelf*, above).
 An item kept with data and code also shows its legend field and files below,
 so nothing the Kept window had is lost; a figure shelved and later kept with
 data and code is one item, shown from the richer folder. Space is Quick Look,

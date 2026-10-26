@@ -400,6 +400,38 @@ enum ShelfRules {
         return parts.filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
     }
 
+    /// What a note's detail card says it is and where it came from, one quiet line in place of a title: "Note", the
+    /// session, the project and when it was put on the shelf ("Note · Plate reader QC · Assay development · 11:12 AM",
+    /// the same moment the grid card's caption gives), each part only when known. The words themselves are the card's
+    /// one big thing, so the card does not title itself by their first few.
+    /// What sets the header's parts apart, as the source line does.
+    static let noteHeaderSeparator = " \u{00B7} "
+
+    static func noteHeaderParts(session: String, project: String, at date: Date?, now: Date = Date(),
+                                calendar: Calendar = .current, locale: Locale = .current) -> [String] {
+        let known = [session, project, date.map { when($0, now: now, calendar: calendar, locale: locale) } ?? ""]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return ["Note"] + known
+    }
+
+    static func noteHeaderParts(for item: ShelfItem, now: Date = Date(), calendar: Calendar = .current,
+                                locale: Locale = .current) -> [String] {
+        noteHeaderParts(session: item.record.sessionTitle, project: item.record.projectName, at: item.addedAt, now: now,
+                        calendar: calendar, locale: locale)
+    }
+
+    /// The header as it is drawn: the parts, set apart by the same " · " as the source line.
+    static func noteHeader(for item: ShelfItem, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+        noteHeaderParts(for: item, now: now, calendar: calendar, locale: locale).joined(separator: noteHeaderSeparator)
+    }
+
+    /// The header as VoiceOver reads it: the same parts, with commas, since a middle dot is read out loud or not at all.
+    static func noteHeaderSpoken(for item: ShelfItem, now: Date = Date(), calendar: Calendar = .current,
+                                 locale: Locale = .current) -> String {
+        noteHeaderParts(for: item, now: now, calendar: calendar, locale: locale).joined(separator: ", ")
+    }
+
     /// What the user asked, in quotes and flattened to one line; nil when it isn't known.
     static func askedLine(for item: ShelfItem) -> String? {
         guard let question = item.record.question else { return nil }
@@ -419,6 +451,10 @@ enum ShelfRules {
     /// One line of the ⋯ menu beside Show Where It Came From and Copy.
     enum MoreItem: Hashable, Sendable {
         case keepWithDataAndCode
+        /// A note's only (its card has no picture to double-click or drag, after 1.0.6): the file in Quick Look.
+        case quickLook
+        /// A note's only: the note's folder in Finder.
+        case showInFinder
         case exportPDF
         case divider
         case remove
@@ -427,6 +463,8 @@ enum ShelfRules {
         var title: String {
             switch self {
             case .keepWithDataAndCode: "Keep with Data and Code\u{2026}"
+            case .quickLook: "Quick Look"
+            case .showInFinder: "Show in Finder"
             case .exportPDF: ShelfPDFRules.exportName(count: 1)
             case .divider: ""
             case .remove: "Remove"
@@ -443,9 +481,12 @@ enum ShelfRules {
     }
 
     /// What the ⋯ menu holds, in order: Keep with Data and Code… when it can be asked for, Export Figure as PDF…, and
-    /// Remove last, after a divider.
-    static func moreMenu(canKeep: Bool) -> [MoreItem] {
-        (canKeep ? [.keepWithDataAndCode] : []) + [.exportPDF, .divider, .remove]
+    /// Remove last, after a divider. A note's card (after 1.0.6) has no picture to double-click or drag out, so its menu
+    /// opens with the two things the picture did to the file, Quick Look and Show in Finder, and then has what any
+    /// item's has (a note has no version to keep).
+    static func moreMenu(canKeep: Bool, note: Bool = false) -> [MoreItem] {
+        if note { return [.quickLook, .showInFinder, .divider, .exportPDF, .divider, .remove] }
+        return (canKeep ? [.keepWithDataAndCode] : []) + [.exportPDF, .divider, .remove]
     }
 
     static func flatten(_ text: String) -> String {
