@@ -244,16 +244,79 @@ enum ShelfRules {
     // MARK: Showing them
 
     /// The items in a project (a collection) matching a search: the names, the
-    /// sessions, the legends and Claude's words.
-    static func matching(_ items: [ShelfItem], project: String?, query: String) -> [ShelfItem] {
-        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
+    /// sessions, the legends, Claude's words and, since 1.0.6, the text of the
+    /// item's own prose files as far as `texts` has read it. Every word has to
+    /// be somewhere, with case and accents set aside.
+    static func matching(_ items: [ShelfItem], project: String?, query: String, texts: ShelfTexts = .none) -> [ShelfItem] {
+        let words = searchWords(query)
         return items.filter { item in
             if let project, item.collection != project { return false }
-            return words.allSatisfy { word in
-                [item.title, item.fileName, item.record.sessionTitle, item.record.projectName, item.text.legend, item.text.claudeSaid,
-                 item.record.question ?? ""].contains { $0.localizedCaseInsensitiveContains(word) }
+            return matches(item, words, texts: texts)
+        }
+    }
+
+    /// A search's words: split at blanks, none of them empty.
+    static func searchWords(_ query: String) -> [SearchWord] {
+        query.split(whereSeparator: \.isWhitespace).map { SearchWord(String($0)) }
+    }
+
+    /// One word of a search, ready to be looked for in a card's words and in a file's folded text.
+    struct SearchWord: Sendable {
+        let word: String
+        /// Folded, as UTF-8: how the text of a file is looked in.
+        let bytes: [UInt8]
+
+        init(_ word: String) {
+            self.word = word
+            bytes = Array(ShelfTexts.fold(word).utf8)
+        }
+    }
+
+    private static func matchesFields(_ item: ShelfItem, _ word: SearchWord) -> Bool {
+        [item.title, item.fileName, item.record.sessionTitle, item.record.projectName, item.text.legend, item.text.claudeSaid,
+         item.record.question ?? ""].contains { $0.localizedStandardContains(word.word) }
+    }
+
+    private static func matches(_ item: ShelfItem, _ words: [SearchWord], texts: ShelfTexts) -> Bool {
+        var paths: [String]?
+        return words.allSatisfy { word in
+            if matchesFields(item, word) { return true }
+            guard !texts.isEmpty else { return false }
+            let files = paths ?? proseFiles(of: item).map(\.path)
+            paths = files
+            return texts.contains(word.bytes, inFilesAt: files)
+        }
+    }
+
+    /// The search finds this item only by what a prose file of it says: without that text it would not match. Says so
+    /// on its card, once (`inTextSentence`).
+    static func foundOnlyInText(_ item: ShelfItem, query: String, texts: ShelfTexts) -> Bool {
+        let words = searchWords(query)
+        guard !words.isEmpty, !texts.isEmpty else { return false }
+        return matches(item, words, texts: texts) && !matches(item, words, texts: .none)
+    }
+
+    /// What a card adds to its caption when the search found the item only in its text.
+    static let inTextSentence = "in its text"
+
+    // MARK: The text a search can read
+
+    /// The files of an item whose words a search reads (`ShelfPeek.proseExtensions`): its own file when it is Markdown
+    /// or text (a document, a note made by Add Selection to Shelf), and the legend files of Claude's kept beside it,
+    /// in every folder of the item. Each once, the item's own file first.
+    static func proseFiles(of item: ShelfItem) -> [URL] {
+        func isProse(_ path: String) -> Bool { ShelfPeek.proseExtensions.contains((path as NSString).pathExtension.lowercased()) }
+        var files: [URL] = []
+        if isProse(item.fileName) { files.append(item.fileURL) }
+        for result in [item.result] + item.others {
+            for file in result.record.files where file.role == .legend && isProse(file.path) {
+                // A path in a README that leaves its folder is not read.
+                guard !file.path.hasPrefix("/"), !file.path.split(separator: "/").contains("..") else { continue }
+                let url = result.folder.appending(path: file.path, directoryHint: .notDirectory)
+                if !files.contains(url) { files.append(url) }
             }
         }
+        return files
     }
 
     /// One chip's count and the whole.

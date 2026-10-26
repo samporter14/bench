@@ -209,6 +209,8 @@ struct ShelfView: View {
 
     private func card(_ item: ShelfItem) -> some View {
         let isSelected = model.isPicked(item.id)
+        // A search that found it only in its text says so, quietly, on its caption.
+        let caption = ShelfRules.caption(for: item) + (model.foundOnlyInText(item) ? " \u{00B7} \(ShelfRules.inTextSentence)" : "")
         return VStack(alignment: .leading, spacing: 7) {
             // The picture fills its card, a few points in from the edge: on its paper, which is white in both appearances.
             Color.clear
@@ -228,7 +230,7 @@ struct ShelfView: View {
             ShelfName(parts: item.nameParts, size: 13, weight: isSelected ? .semibold : .regular)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Text(ShelfRules.caption(for: item))
+            Text(caption)
                 .font(.system(size: 11))
                 .foregroundStyle(Solanum.muted)
                 .lineLimit(1)
@@ -259,7 +261,7 @@ struct ShelfView: View {
             Button("Remove") { model.selection = item.id; model.removeSelected() }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(item.title), \(ShelfRules.caption(for: item))" + (model.pageNumber(of: item.id).map { ", page \($0)" } ?? ""))
+        .accessibilityLabel("\(item.title), \(caption)" + (model.pageNumber(of: item.id).map { ", page \($0)" } ?? ""))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { model.selection = item.id }
     }
