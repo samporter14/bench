@@ -323,6 +323,44 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, Capsid 1.0.6 (OpenCode): the Shelf searches inside notes, a note shows its passage, a menu for two files of one name, a tile's selection item, Claude's legend in Keep
+
+Five changes on `g/opencode-106` (from main): the Shelf's search reads inside notes, documents and Claude's legend files
+(`ShelfTextIndex`); a note's detail card shows its passage (`ShelfPassage`); two files of one name in a Markdown tile's menu
+are asked about, newest first, in a native menu (`ShelfDocumentChoice`); Add Selection to Shelf in the page's menu for a
+Markdown tile; and a Claude's legend row in Keep with Data and Code… (`ShelfClaudeLegendRules.reading`, shared with the Shelf).
+Everything ran offscreen on made-up sessions, a made-up page (JavaScriptCore, as the figure menu's tests do), fake reads and
+scratch Kept folders under the temporary folder: no window shown, no menu opened, the real Kept folder untouched, nothing read
+under `~/.claude-science`, nothing launched, installed, merged or pushed.
+
+- ✅ **The whole suite**: `✔ Test run with 4299 tests in 554 suites passed` (4,178 in 538 at 1.0.5).
+- ✅ **One load flake, found and fixed**: `fiveHundredItemsWithAMadeUpReaderAreIndexedAndSearchedQuickly` took 16 s in the full
+  suite under load, against 0.2 s alone: its budget for the reading was a speed check, which a loaded run misses. It is now
+  relaxed to a guard against a stall, and the typing's budget (the search over what is read) still guards speed.
+- ✅ **Offscreen captures**, light and dark, in `shots-106/` beside the worktree: `shelf-passage-short-*`, `shelf-passage-long-*`
+  (and the `-small-*` window) for a note's passage, with the fade at the foot of the long one; `keep-sheet-legend-*` and
+  `keep-sheet-legend-several-*` for Claude's legend row (one file; the best of several, with the detail that says so);
+  `doc-tile-selection-menu-*` for a tile's page menu with the new item first in Capsid's group (a hand-drawn stand-in for the
+  page's menu in a real WebKit view with the real script in its own world). The NSMenu for two files of one name is the
+  system's and isn't drawn off screen; its lines are tested as text.
+- ⏳ **Live, on the real page** (nothing here ran in the real Claude Science): that the real tile's markup is what the script
+  expects (the preview region holds the file's words, and a selection inside it is wholly inside it), that the page's menu
+  opens in time for the item to be placed first, that the selection is still there when the menu opens, and that it is kept
+  on a real click on the item (and the words read once, within ten seconds), ending in a note with the right words.
+- ⏳ **Live, two files of one name**: that the NSMenu opens at the pointer in the main window and not somewhere else, that
+  choosing a line runs Add to Shelf, Keep with Data and Code… and Open as Reference on that file, and that closing it
+  with Escape or a click away does nothing, over a real session with two different files called alike.
+- ⏳ **Live, real history pages with legend files**: that the page of history around an answer's row lists the legend file
+  under the reply that shows the figure, so Keep's row appears; the best of several is the right one; the kept folder's
+  "Your legend" holds the figure's section of a real legend file.
+- ⏳ **Live, search over a real Kept folder**: that a first search over hundreds of real items starts reading at once, finds
+  more for a moment and settles, with no stutter in typing, and that notes, documents and kept legend files are found by a
+  word inside them (with an accent, and with another case); that a Kept folder on a share or with files put away in iCloud
+  is left alone; and the " · in its text" caption.
+- ⏳ **Live, a note's passage with real notes**: that a long real note scrolls inside the detail card and fades at its foot,
+  that its words can be selected and Copy puts the passage on the pasteboard as text, and that a note edited in another app
+  shows the new words when the folders are read again.
+
 ## 2026-10-24, Capsid 1.0.5 released and installed
 
 - ✅ Released as v1.0.5 (tag on 38522a8, "Capsid 1.0.5", by Sam with `gh release create`), marked Latest:
