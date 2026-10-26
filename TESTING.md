@@ -348,7 +348,7 @@ or pushed, the real Kept folder and `~/.claude-science` untouched.
   its right-click menu) is untouched; "Preview of note.md" goes with the picture, so VoiceOver reads the header and the
   passage once each. A note whose words can't be read (file gone, put away in iCloud, empty, a disk that didn't answer
   with nothing held) is drawn as any document is, picture and name, since it has only its file (`ShelfPassages.reading`
-  tells not yet, words and none apart, so a note's card doesn't change shape when its words arrive).
+  tells not yet, words and none apart, so a note's card never starts as a document's and turns into a note's when its words arrive).
 - ✅ **New tests** (`ShelfNoteCardTests.swift`, 31, and one more capture test): the header's words with each part present
   and missing (no project, no time, no session, nothing, blanks) and the time as the grid card's caption gives it; the
   note's ⋯ menu and an ordinary item's unchanged; which form a note, a numbered `note.md`, a document, a figure and a table
@@ -369,7 +369,7 @@ or pushed, the real Kept folder and `~/.claude-science` untouched.
   `shelf-passage-long-*` (the same made-up notes as `shots-106/`, so each pair is before and after), their `-small-*`
   windows (620 × 480), `shelf-passage-oneline-*` (and `-small-*`), `shelf-passage-gone-*` (the file moved away: drawn as a
   document), `shelf-figure-*` (a figure's card, unchanged), and `shelf-note-*` (the note among the demo's cards, the
-  Documents chip, the narrowest window). `first-pass/` holds the first complete render (very first one
+  Documents chip, the narrowest window). `first-pass/` holds the first complete render (the very first one
   had an animation on the fade's mask that, in an offscreen host, left the mask at the height it had before the words
   were measured, so the words were cut after two lines; that animation is gone and the fade's strength is now continuous).
   Refined after that first complete look: the rule is rounded, the words 600 points wide at most

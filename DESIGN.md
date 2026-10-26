@@ -5956,8 +5956,9 @@ session's history. You asked: “…”"). The legend comment and fine print say
       passage, each once.
     - *Before the words arrive, and when they never do.* A note's card is a
       note's from the moment it is shown, with the room of a line under the
-      header, so it doesn't change shape when the words are read
-      (`ShelfPassages.reading`: not yet, words, none). A note whose file has no
+      header, so it never shows the picture and the title for a moment and drops
+      them when the words are read (it only grows to fit them;
+      `ShelfPassages.reading`: not yet, words, none). A note whose file has no
       words to show has only its file, so it is drawn as any document is: its
       picture, its name (the title), the source line and the ordinary ⋯
       (`ShelfDetail.form`).
