@@ -409,8 +409,25 @@ enum ShelfActions {
     /// read (`KeptDisk`, off the main actor) and made ready (`ShelfPicture`, on a thread of its own). Nothing is
     /// read or decoded on the main actor; the file may be on a share. The picture is added only if nothing else
     /// has been copied meanwhile. The task is the picture's, for a test to wait for.
+    ///
+    /// A note (Add Selection to Shelf) copies its passage, as text, since 1.0.6: the words are read through the disk
+    /// (`ShelfPassage`) and put on the pasteboard when they come, if nothing else has been copied meanwhile; a note whose
+    /// words can't be read is the file, as any document is. The task is the read, for a test to wait for.
     @discardableResult
     static func copy(_ item: ShelfItem, disk: KeptDisk, to pasteboard: NSPasteboard = .general) -> Task<Void, Never> {
+        if item.isSelectionNote {
+            let count = pasteboard.changeCount
+            return Task { @MainActor in
+                let passage = await ShelfPassage.read(item, disk: disk)
+                guard pasteboard.changeCount == count else { return }
+                pasteboard.clearContents()
+                if let passage {
+                    pasteboard.setString(passage, forType: .string)
+                } else {
+                    pasteboard.writeObjects([item.fileURL as NSURL])
+                }
+            }
+        }
         pasteboard.clearContents()
         pasteboard.writeObjects([item.fileURL as NSURL])
         let count = pasteboard.changeCount
@@ -446,6 +463,8 @@ enum ShelfActions {
 /// The selected item at the window's foot: its picture, its name, where it came from in one line, what was asked,
 /// what Claude said, and three controls: Show Where It Came From (the one that asks, clay), Copy, and ⋯ with Keep
 /// with Data and Code…, Export Figure as PDF… and Remove. Each of the ⋯ items is also a VoiceOver action on the card.
+/// A note made by Add Selection to Shelf shows its whole passage between the source and the controls, and Copy copies
+/// it (since 1.0.6, `ShelfPassage`).
 struct ShelfDetail: View {
     let item: ShelfItem
     @ObservedObject var model: ShelfModel
@@ -462,11 +481,17 @@ struct ShelfDetail: View {
     private var said: String { item.text.claudeSaid.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var longSaid: Bool { said.count > 170 || said.filter(\.isNewline).count > 2 }
     private var more: [ShelfRules.MoreItem] { ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode) }
+    /// A note's whole passage, once read (Kept/ShelfPassage.swift).
+    private var passage: String? { model.passages.text(for: item) }
 
     /// Board 12's 250 points, less in a narrow window so the three controls stay on one row beside it.
     static func previewWidth(forWindow width: CGFloat) -> CGFloat {
         min(250, max(160, ((width - 2 * ShelfRules.gutter - 36) * 0.3).rounded()))
     }
+
+    /// The most height a note's passage takes before it scrolls: what the card has beside the name, the source and the
+    /// controls, and no more than 280 points (a dozen lines), so the card fits in its own height.
+    static func passageHeight(forCard height: CGFloat) -> CGFloat { min(280, max(96, height - 172)) }
 
     var body: some View {
         ScrollView {
@@ -511,6 +536,10 @@ struct ShelfDetail: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
+                        if let passage {
+                            ShelfPassageText(text: passage, maxHeight: ShelfDetail.passageHeight(forCard: maxHeight))
+                                .padding(.top, 4)
+                        }
                         Spacer(minLength: 8)
                         buttons
                     }
@@ -535,6 +564,9 @@ struct ShelfDetail: View {
         .scrollBounceBehavior(.basedOnSize)
         // Claude's legend file for this figure, if its answer made one (ShelfClaudeLegend.swift).
         .task(id: item.id) { await model.claudeLegend.look(at: item) }
+        // A note's words, read when its card is shown and again when the folders are read.
+        .task(id: item.id) { await model.passages.look(at: item) }
+        .onReceive(model.index.$results.dropFirst()) { _ in Task { await model.passages.look(at: item) } }
         .frame(height: min(contentHeight, maxHeight))
         .background(Solanum.raised, in: .rect(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(ShelfLook.detailEdge, lineWidth: 1))
@@ -588,7 +620,7 @@ struct ShelfDetail: View {
                 }
             }
             .buttonStyle(SolanumPillStyle(.regular))
-            .help(item.kind == .figure ? "The file and its picture" : "The file")
+            .help(item.kind == .figure ? "The file and its picture" : item.isSelectionNote ? "The passage" : "The file")
             Menu {
                 ForEach(Array(more.enumerated()), id: \.offset) { _, entry in
                     if entry == .divider {
@@ -623,6 +655,42 @@ struct ShelfDetail: View {
         case .divider:
             break
         }
+    }
+}
+
+/// A note's passage on its detail card: its words as they were selected, in the card's own type, selectable. Longer than
+/// `maxHeight` it scrolls, within the card, and its foot fades while there is more below (the only sign of it: no
+/// control is added).
+struct ShelfPassageText: View {
+    let text: String
+    let maxHeight: CGFloat
+    /// The words' height as measured; a short guess until then, so the card never fills the window for a frame.
+    @State private var contentHeight: CGFloat = 40
+    @State private var moreBelow = false
+
+    var body: some View {
+        ScrollView {
+            Text(text)
+                .font(.system(size: 13))
+                .lineSpacing(19 - 15.5)
+                .foregroundStyle(Solanum.ink)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.containerSize.height < $0.contentSize.height - 1 } action: { _, now in
+            moreBelow = now
+        }
+        .mask {
+            VStack(spacing: 0) {
+                Color.black
+                LinearGradient(colors: [.black, .black.opacity(moreBelow ? 0 : 1)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 28)
+            }
+        }
+        .frame(height: min(contentHeight, maxHeight))
     }
 }
 

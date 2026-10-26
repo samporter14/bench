@@ -36,6 +36,8 @@ final class ShelfModel: ObservableObject {
 
     /// What the search reads inside the prose files (Kept/ShelfTextIndex.swift): reading starts when a search is first typed.
     let textIndex: ShelfTextIndex
+    /// The whole passage of a note, for its detail card and for Copy (Kept/ShelfPassage.swift).
+    let passages: ShelfPassages
 
     @Published private(set) var items: [ShelfItem] = [] { didSet { scopedStale = true } }
     @Published var project: String? { didSet { if project != oldValue { scopedStale = true; reconcile(); findScopeChanged() } } }
@@ -85,6 +87,7 @@ final class ShelfModel: ObservableObject {
     private var scopedItems: [ShelfItem] = []
     private var scopedStale = true
     private var legendSubscription: AnyCancellable?
+    private var passageSubscription: AnyCancellable?
     private var noteTask: Task<Void, Never>?
     private var pending: (folder: URL, until: Date)?
     private let now: () -> Date
@@ -95,8 +98,9 @@ final class ShelfModel: ObservableObject {
 
     init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() }, calendar: Calendar = .current,
          pdf: ShelfPDFMaker? = nil, legendDelay: Duration = .seconds(1), claudeLegend: ShelfClaudeLegend? = nil,
-         textIndex: ShelfTextIndex? = nil) {
+         textIndex: ShelfTextIndex? = nil, passages: ShelfPassages? = nil) {
         self.shelf = shelf
+        self.passages = passages ?? ShelfPassages(disk: shelf.index.disk)
         self.textIndex = textIndex ?? ShelfTextIndex(disk: shelf.index.disk)
         self.legendDelay = legendDelay
         self.claudeLegend = claudeLegend ?? ShelfClaudeLegend(dependencies: { shelf.legendDependencies })
@@ -109,6 +113,10 @@ final class ShelfModel: ObservableObject {
         items = ShelfRules.items(from: shelf.index.results)
         // The card is redrawn when a look at an item's legend files ends or one is put in.
         legendSubscription = self.claudeLegend.objectWillChange.sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.objectWillChange.send() }
+        }
+        // The card is redrawn when a note's passage has been read.
+        passageSubscription = self.passages.objectWillChange.sink { [weak self] _ in
             MainActor.assumeIsolated { self?.objectWillChange.send() }
         }
         subscription = shelf.index.$results.sink { [weak self] results in
