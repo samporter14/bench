@@ -5,8 +5,12 @@
 // that file as `ShelfSelectionNote.clean` leaves it: line ends as `\n`, blanks at
 // either end trimmed, at most 32,000 characters. A note's words are shown as
 // they were selected, not rendered: what the card shows, what Copy puts on the
-// pasteboard and what the file holds are one text. An ordinary document keeps
-// its picture of first lines and its detail as they were.
+// pasteboard and what the file holds are one text. The card says them once: with
+// the passage as its main content it has no picture of first lines and no title
+// of its first words, only a quiet header (`ShelfNoteHeader`); a note whose words
+// can't be read is drawn as any document is (`ShelfPassages.reading`,
+// `ShelfDetail.form`). An ordinary document keeps its picture and its detail as
+// they were.
 //
 // The file is read through the disk layer (`KeptDisk.peek`), off the main actor,
 // once for each state of it (its date and size); the detail card asks when it is
@@ -47,6 +51,15 @@ final class ShelfPassages: ObservableObject {
 
     /// How many passages are held.
     static let kept = 12
+    /// How many files looked at that have no words are remembered (a few more than a person looks at in a sitting).
+    static let remembered = 64
+
+    /// Where a note's words are: not looked for yet, read, or looked for and not there.
+    enum Reading: Equatable, Sendable {
+        case notYet
+        case words(String)
+        case none
+    }
 
     private struct Held {
         let stamp: KeptFileStamp
@@ -54,6 +67,10 @@ final class ShelfPassages: ObservableObject {
     }
 
     @Published private var held: [String: Held] = [:]
+    /// Notes looked at whose file has no words to give (gone, put away in iCloud, not text, empty, or a disk that
+    /// didn't answer and held nothing): their card is an ordinary document's. Forgotten past `remembered`, which only
+    /// shows such a card as "not yet" until the next look.
+    @Published private var wordless: Set<String> = []
     private var order: [String] = []
     private let inspect: Inspect
     private let read: Read
@@ -73,6 +90,16 @@ final class ShelfPassages: ObservableObject {
         item.isSelectionNote ? held[item.fileURL.path]?.text : nil
     }
 
+    /// What the card of `item` has to go on: `.notYet` for a note whose file has not been looked at (its card is drawn
+    /// as a note's, with no words under the header, so it doesn't change shape when they arrive), `.words` once read,
+    /// `.none` for a note whose file has none and for an item that isn't a note (its card is an ordinary one's).
+    func reading(for item: ShelfItem) -> Reading {
+        guard item.isSelectionNote else { return .none }
+        let path = item.fileURL.path
+        if let text = held[path]?.text { return .words(text) }
+        return wordless.contains(path) ? .none : .notYet
+    }
+
     /// Reads the passage of `item` if it isn't held for the file as it is now. Nothing for an item that isn't a note.
     /// A file that is gone, put away in iCloud (never fetched), not text or empty has no passage: one held before goes.
     func look(at item: ShelfItem) async {
@@ -88,22 +115,33 @@ final class ShelfPassages: ObservableObject {
         do {
             raw = try await read(url)
         } catch {
-            // The disk didn't answer: what is held stays, and the next look tries again.
+            // The disk didn't answer: what is held stays, and the next look tries again. A card with nothing held
+            // is an ordinary one's meanwhile, not a note's with a blank where the words go.
+            if held[path] == nil { markWordless(path) }
             return
         }
         guard let raw, let text = ShelfPassage.text(from: raw) else {
             drop(path)
             return
         }
+        wordless.remove(path)
         held[path] = Held(stamp: facts.stamp, text: text)
         order.removeAll { $0 == path }
         order.append(path)
         while order.count > Self.kept { held[order.removeFirst()] = nil }
     }
 
+    /// The file has no words: any held before go, and the card is an ordinary one's.
     private func drop(_ path: String) {
-        guard held[path] != nil else { return }
-        held[path] = nil
-        order.removeAll { $0 == path }
+        if held[path] != nil {
+            held[path] = nil
+            order.removeAll { $0 == path }
+        }
+        markWordless(path)
+    }
+
+    private func markWordless(_ path: String) {
+        if wordless.count >= Self.remembered { wordless.removeAll() }
+        wordless.insert(path)
     }
 }
