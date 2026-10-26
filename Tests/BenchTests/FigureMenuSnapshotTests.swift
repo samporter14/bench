@@ -13,7 +13,8 @@
 // posts, the page's own Escape handling closing the menu. The same for a tile
 // and a card of a file with no picture (Markdown), which the script finds by the
 // name they show, drawn with the markup of the bundle's ArtifactTile and tray
-// card, on a page whose address is a session's. The page's icons
+// card, on a page whose address is a session's, and a passage selected in the
+// tile for Add Selection to Shelf (since 1.0.6). The page's icons
 // are drawn stand-ins (its icon font is not here), so the PNGs show how
 // Capsid's items sit among items of the same classes, not a match of glyphs.
 // Without the variable the test does nothing.
@@ -161,6 +162,27 @@ struct FigureMenuSnapshotTests {
         // A right-click in a tile of a file with no picture (its words), or on a card of one in the tray.
         window.__rightClickDocTile = function () {
           document.getElementById('docbody').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 250, clientY: 110 }));
+        };
+        // Words selected in the tile's body (or any node), and a right-click inside it as the browser makes one: the
+        // button goes down, then the menu is asked for. A left press on an item takes the selection away unless the
+        // press is cancelled, as a button's does.
+        window.__select = function (selector) {
+          var range = document.createRange();
+          range.selectNodeContents(document.querySelector(selector));
+          var selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+        };
+        window.__rightClickIn = function (selector) {
+          var node = document.querySelector(selector);
+          node.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2, clientX: 250, clientY: 110 }));
+          node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 250, clientY: 110 }));
+        };
+        window.__press = function (item) {
+          var event = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
+          item.dispatchEvent(event);
+          if (!event.defaultPrevented) { window.getSelection().removeAllRanges(); }
+          return event.defaultPrevented;
         };
         window.__rightClickDocCard = function () {
           document.getElementById('doccardpreview').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 300 }));
@@ -320,6 +342,65 @@ struct FigureMenuSnapshotTests {
             try await snapshot(view, to: directory.appendingPathComponent("doc-card-menu-\(mode).png"))
             let traces = posts.all.compactMap { $0["trace"] as? [String] }
             #expect(traces.last == ["contextmenu", "figure-document", "menu-matched", "placed"], "\(mode)")
+        }
+    }
+
+    /// A passage selected in a Markdown tile's body in a real WebKit view, with the script in its own world: the right-click,
+    /// the page's menu opening, "Add Selection to Shelf" first in Capsid's group (above the four, a red Delete below), a
+    /// press on it that the page cannot turn into a lost selection, a selection taken away before the click and put back by
+    /// it, the one message with the count and no words, the page's own Escape closing the menu, and the words Swift reads
+    /// afterwards from the script's world. Words selected in the tile's header get no item (checked last, so the PNG shows the
+    /// passage). PNGs show the menu.
+    @Test func theTileMenuWithTheSelectionItemIsDrawnAndDrivenInARealPageWhenAsked() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let four = ["Add to Shelf", "Keep with Data and Code\u{2026}", "Open as Reference", "Show in Results"]
+        let passage = "Drifts after the midpoint, and the edge wells run low."
+        for dark in [false, true] {
+            let mode = dark ? "dark" : "light"
+            let posts = Posts()
+            let (view, window, _) = try await loadedPage(dark: dark, posts: posts)
+            defer { window.close() }
+            await settle()
+            await js(view, "window.__docMenu = true; window.__withDelete = true;")
+            // A passage in the body: the item first in Capsid's group.
+            await js(view, "window.__select('#docbody p'); window.__rightClickIn('#docbody p');")
+            await settle()
+            let shape = await js(view, "window.__shape()") as? [String]
+            #expect(shape == ["Open in split view", "Provenance", "Copy link", "Download", "-", ConversationMenu.selectionTitle] + four + ["-", "Delete"], "\(mode)")
+            let selected = posts.all.last { $0["kind"] is NSNull }?["selected"] as? Int
+            #expect(selected == passage.count, "the right-click reports the count of what it left selected: \(mode)")
+            try await snapshot(view, to: directory.appendingPathComponent("doc-tile-selection-menu-\(mode).png"))
+            // A press on the item does not take the selection away; one on another item would.
+            #expect(await js(view, "window.__press(document.querySelectorAll('[role=menu] [role=menuitem]')[4])") as? Bool == true, "\(mode)")
+            #expect(await js(view, "window.getSelection().toString()") as? String == passage, "\(mode)")
+            // Something (a re-render, a focus change) took it away before the click: the click puts it back.
+            await js(view, "window.getSelection().removeAllRanges();")
+            let before = posts.all.count
+            await js(view, "document.querySelectorAll('[role=menu] [role=menuitem]')[4].click();")
+            await settle()
+            let sent = posts.all.dropFirst(before).first { $0["action"] != nil }
+            #expect(sent?["action"] as? String == "addSelection", "\(mode)")
+            #expect(sent?["selected"] as? Int == passage.count, "\(mode)")
+            #expect(Set(sent?.keys.map { $0 } ?? []) == ["action", "selected"], "the count, never the words: \(mode)")
+            #expect(!"\(posts.all)".contains("midpoint"), "no message holds the words: \(mode)")
+            #expect(await js(view, "window.getSelection().toString()") as? String == passage, "put back: \(mode)")
+            #expect(await js(view, "window.__menuOpen()") as? Bool == false, "the menu closed: \(mode)")
+            // What Swift reads next: the words, from the script's own world, even if the selection goes again.
+            await js(view, "window.getSelection().removeAllRanges();")
+            let read = try await view.callAsyncJavaScript(SelectedWordsScript.read, arguments: ["limit": 32_000], in: nil, contentWorld: ConversationMenu.world)
+            #expect(read as? String == passage, "\(mode)")
+            // Once: the next read is of the live selection, which is none.
+            let again = try await view.callAsyncJavaScript(SelectedWordsScript.read, arguments: ["limit": 32_000], in: nil, contentWorld: ConversationMenu.world)
+            #expect(again as? String == "", "\(mode)")
+            #expect(posts.all.compactMap { $0["trace"] as? [String] }.contains(["contextmenu", "figure-document", "menu-matched", "selection-offered", "placed"]), "\(mode)")
+            // The same menu on words selected in the tile's header, which are not the file's: no item.
+            await js(view, "window.__select('#doctile .name'); window.__rightClickIn('#docbody p');")
+            await settle()
+            #expect(await js(view, "window.__shape()") as? [String] == ["Open in split view", "Provenance", "Copy link", "Download", "-"] + four + ["-", "Delete"],
+                    "a selection in the header gets no item: \(mode)")
+            await js(view, "closeMenu();")
         }
     }
 
