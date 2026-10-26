@@ -67,6 +67,22 @@ private enum Made {
     }
 }
 
+/// Claude's legend files: the files of the answer that shows version 3, made up (since 1.0.6).
+private extension Made {
+    static let legendsFile = HistoryFile(v: "ffffffff-0000-4000-8000-000000000031", a: "eeeeeeee-0000-4000-8000-000000000031",
+                                         name: "FIGURE_LEGENDS_final.md", kind: .markdown, size: 2_400)
+    static let siblingFile = HistoryFile(v: "ffffffff-0000-4000-8000-000000000032", a: "eeeeeeee-0000-4000-8000-000000000032",
+                                         name: "z_prime.md", kind: .markdown, size: 300)
+    static let otherLegend = HistoryFile(v: "ffffffff-0000-4000-8000-000000000033", a: "eeeeeeee-0000-4000-8000-000000000033",
+                                         name: "legends_fig7.md", kind: .markdown, size: 900)
+
+    static func withLegends(_ files: [HistoryFile]) -> KeepSources {
+        var sources = full
+        sources.answerFiles = files
+        return sources
+    }
+}
+
 struct KeepVersionTests {
     @Test func theAnswersVersionIsPreselectedElseTheNewest() {
         #expect(KeepRules.preselect(versions: Made.versions, showing: Made.showing) == Made.v3)
@@ -608,5 +624,93 @@ struct KeepFigureFirstTests {
         for sentence in [KeepRules.figureTooBig("a.png"), KeepRules.figureNotCopied("a.png", because: "x."), KeepRules.overCapSentence(size: 9_000_000)] {
             #expect(!sentence.contains("!"))
         }
+    }
+}
+
+// MARK: Claude's legend (since 1.0.6)
+
+struct KeepLegendRowTests {
+    @Test func theRowIsThereOnlyWithACandidateAndOnByDefault() {
+        #expect(KeepRules.rows(sources: Made.full, chosen: Made.v3).map(\.kind) == [.answer, .data, .code])
+        // Files that aren't a legend (a data table, a figure's own version) are no candidate.
+        let others = [HistoryFile(v: "ffffffff-0000-4000-8000-000000000041", a: nil, name: "plate_map.csv", kind: .table, size: 90)]
+        #expect(KeepRules.rows(sources: Made.withLegends(others), chosen: Made.v3).map(\.kind) == [.answer, .data, .code])
+
+        let rows = KeepRules.rows(sources: Made.withLegends([Made.legendsFile]), chosen: Made.v3)
+        #expect(rows.map(\.kind) == [.answer, .data, .code, .legend])
+        let legend = rows.last!
+        #expect(legend.title == "Claude\u{2019}s legend")
+        #expect(legend.detail == "FIGURE_LEGENDS_final.md \u{00B7} its part for this figure goes in your legend")
+        #expect(legend.available && legend.onByDefault && legend.info == nil)
+    }
+
+    @Test func noRowWhileNoVersionIsChosenOrForAnAnswerAboutAnotherVersion() {
+        let sources = Made.withLegends([Made.legendsFile])
+        #expect(KeepRules.rows(sources: sources).map(\.kind) == [.answer, .data, .code])
+        // The answer shows version 3: its legend isn't about version 4.
+        #expect(KeepRules.rows(sources: sources, chosen: Made.v4).map(\.kind) == [.answer, .data, .code])
+        // An answer whose row isn't known (one the caller pinned) has no files to look in.
+        var pinned = sources
+        pinned.showing = ShowingMessage(i: -1, at: Made.at(12), text: "x", how: .image, v: Made.v3)
+        #expect(KeepRules.rows(sources: pinned, chosen: Made.v3).map(\.kind) == [.answer, .data, .code])
+        // An upload has no legend from Claude.
+        var upload = sources
+        upload.chosenFacts = Made.facts(Made.v3, n: 3, upload: true)
+        #expect(KeepRules.rows(sources: upload, chosen: Made.v3).map(\.kind) == [.answer, .data, .code])
+    }
+
+    @Test func theBestOfSeveralIsUsedAndTheDetailSaysWhich() {
+        let sources = Made.withLegends([Made.legendsFile, Made.otherLegend, Made.siblingFile])
+        let candidates = KeepRules.legendCandidates(sources, chosen: Made.v3)
+        // The same order the Shelf's offer shows: the file with the figure's name, then the legend files.
+        #expect(candidates.map(\.name) == ["z_prime.md", "FIGURE_LEGENDS_final.md", "legends_fig7.md"])
+        #expect(candidates.map(\.name) == ShelfClaudeLegendRules.candidates(among: sources.answerFiles, forFigure: "z_prime.png", version: Made.v3).map(\.name))
+        let row = KeepRules.rows(sources: sources, chosen: Made.v3).last!
+        #expect(row.detail == "z_prime.md, the closest of 3 in the answer \u{00B7} its part for this figure goes in your legend")
+    }
+
+    @Test func thePlanIncludesTheFileUnlessItIsUnticked() throws {
+        let sources = Made.withLegends([Made.legendsFile])
+        let plan = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: Made.choices))
+        let legend = try #require(plan.files.first { $0.role == .legend })
+        #expect(plan.files.map(\.role) == [.data, .code, .legend])
+        #expect(legend.source == .download(version: Made.legendsFile.v))
+        #expect(legend.artifact == Made.legendsFile.a && legend.version == Made.legendsFile.v)
+        #expect(legend.relativePath == "FIGURE_LEGENDS_final.md" && legend.size == 2_400)
+        #expect(plan.totalBytes == 86_016 + 4096 + legend.size! + (plan.files.first { $0.role == .code }?.size ?? 0))
+
+        var off = Made.choices
+        off.withLegend = false
+        let without = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: off))
+        #expect(without.files.map(\.role) == [.data, .code])
+        // No file to copy where there is no row, ticked or not.
+        let none = try #require(KeepRules.plan(subject: Made.subject, sources: Made.full, choices: Made.choices))
+        #expect(none.files.allSatisfy { $0.role != .legend })
+    }
+
+    @Test func theDestinationNamesItAndTheRecordCarriesTheLegend() throws {
+        let sources = Made.withLegends([Made.legendsFile])
+        let plan = try #require(KeepRules.plan(subject: Made.subject, sources: sources, choices: Made.choices))
+        let sentence = KeepRules.destinationSentence(root: URL(fileURLWithPath: "/tmp/Kept"), collection: "Paper draft", folderName: "Fig",
+                                                     plan: plan, nameTaken: false, requested: "Fig")
+        #expect(sentence.contains("z_prime.png, data, code, Claude\u{2019}s legend and a README.md."), "\(sentence)")
+        let (_, text) = KeepRules.record(subject: Made.subject, sources: sources, plan: plan, folderName: "Fig", keptAt: Made.at(100),
+                                         copied: [], missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0", legend: "Z\u{2032} by plate.")
+        #expect(text.legend == "Z\u{2032} by plate.")
+        // Without one, as before: the person writes it.
+        let (_, plain) = KeepRules.record(subject: Made.subject, sources: sources, plan: plan, folderName: "Fig", keptAt: Made.at(100),
+                                          copied: [], missing: [], scienceVersion: "0.1.70", capsidVersion: "1.0")
+        #expect(plain.legend.isEmpty)
+        #expect(KeepRules.roleTitle(.legend) == "Claude\u{2019}s legend file")
+    }
+
+    @Test func theShelfAndKeepReadTheSameFileTheSameWay() {
+        let text = "# Legends\n\n## Figure 2\n\n**Z\u{2032}.** By plate.\n\n## Figure 3\n\nElsewhere.\n"
+        let reading = ShelfClaudeLegendRules.reading(Data(text.utf8), fileName: "legends.md", forFigure: "fig2_z_prime.png")
+        let part = ShelfClaudeLegendRules.part(of: text, fromFile: "legends.md", forFigure: "fig2_z_prime.png")
+        #expect(reading == .part(part))
+        #expect(part.text == "**Z\u{2032}.** By plate.")
+        #expect(ShelfClaudeLegendRules.reading(Data([0x41, 0x00, 0x42]), fileName: "a.md", forFigure: "f.png") == .notText)
+        #expect(ShelfClaudeLegendRules.reading(Data("\n  \n".utf8), fileName: "a.md", forFigure: "f.png") == .empty)
     }
 }

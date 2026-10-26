@@ -76,6 +76,10 @@ struct KeepDependencies {
     /// The wait between two asks for a provenance Claude Science is still
     /// working out (`recheckTime`, at most `rechecks` times). The tests don't wait.
     var recheck: @MainActor (Duration) async -> Void = KeepDependencies.pause
+    /// The files of the answer that holds history row `row`, as the reference reader tells them: where Claude's legend file
+    /// is looked for (since 1.0.6; `ShelfClaudeLegendRules.files`). Nil when they can't be read; empty when the page has
+    /// no answer around that row.
+    var answerFiles: @MainActor (_ frameID: String, _ row: Int) async -> [HistoryFile]? = { _, _ in nil }
 
     static let recheckTime: Duration = .seconds(5)
     /// Two minutes of asking, 5 seconds apart.
@@ -121,7 +125,21 @@ struct KeepDependencies {
             scienceVersion: { await DaemonController.runningStatus()?.version },
             capsidVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
             now: { Date() },
-            didKeep: { KeptIndex.shared.add($0) })
+            didKeep: { KeptIndex.shared.add($0) },
+            answerFiles: { await liveAnswerFiles(frameID: $0, row: $1) })
+    }
+
+    /// One page of the session's history, around `row`: the page that holds it and the rows after it, where a reply's
+    /// files sit under its last message. The Keep sheet's legend row and the Shelf's "Use Claude's legend" read it the
+    /// same way.
+    @MainActor
+    static func liveAnswerFiles(frameID: String, row: Int) async -> [HistoryFile]? {
+        guard Demo.mode == nil else { return nil }
+        let before = row + 1 + ShelfClaudeLegendRules.rowsAhead
+        guard let read = try? await WebContainer.shared.readHistory(frameID, before: before, rows: 50,
+                                                                    nonce: ArtifactReadAbort.makeNonce()),
+              case .page(let page) = read else { return nil }
+        return ShelfClaudeLegendRules.files(ofAnswerAtRow: row, in: page)
     }
 }
 
@@ -367,6 +385,17 @@ final class KeepModel: ObservableObject, Identifiable {
             }
         }
         if Task.isCancelled { return }
+        // Claude's legend file, if the answer made one: its files are read now, with the answer, so the row is there when
+        // the sheet is (a pinned answer has no row of the history, so no legend is looked for).
+        if let showing = sources.showing, showing.i >= 0 {
+            if let files = await dependencies.answerFiles(subject.session.id, showing.i) {
+                sources.answerFiles = files
+                dependencies.note("Keep: the answer's files read, \(files.count)")
+            } else if !Task.isCancelled {
+                dependencies.note("Keep: the answer's files couldn't be read")
+            }
+            if Task.isCancelled { return }
+        }
         tiles = KeepRules.tiles(versions: sources.versions, showing: sources.showing, gone: sources.gone)
         // 4. Where it can go.
         collections = (try? await dependencies.disk.listCollections()) ?? []
@@ -451,6 +480,8 @@ final class KeepModel: ObservableObject, Identifiable {
         // The answer's row doesn't wait for the provenance: off for a version
         // the answer doesn't show, on again for the one it does.
         if let answer = rows.first(where: { $0.kind == .answer }) { choices.withAnswer = answer.onByDefault }
+        // Likewise Claude's legend: it doesn't depend on the provenance, and is on whenever it is found.
+        if let legend = rows.first(where: { $0.kind == .legend }) { choices.withLegend = legend.onByDefault }
         guard let version else { return }
         readingProvenance = true
         let dependencies = self.dependencies
@@ -548,6 +579,7 @@ final class KeepModel: ObservableObject, Identifiable {
         case .answer: choices.withAnswer = on
         case .data: choices.withData = on
         case .code: choices.withCode = on
+        case .legend: choices.withLegend = on
         }
     }
 
@@ -557,18 +589,19 @@ final class KeepModel: ObservableObject, Identifiable {
         case .answer: return choices.withAnswer
         case .data: return choices.withData
         case .code: return choices.withCode
+        case .legend: return choices.withLegend
         }
     }
 
     /// The data and code rows take their defaults when the provenance comes.
-    /// The answer's row isn't one of them: it doesn't depend on the provenance,
-    /// its default was applied when the version was chosen, and it can be
-    /// ticked from then on, so an untick made while the provenance was still
-    /// being read is the user's.
+    /// The answer's row isn't one of them, nor is Claude's legend's: they don't
+    /// depend on the provenance, their defaults were applied when the version
+    /// was chosen, and they can be ticked from then on, so an untick made while
+    /// the provenance was still being read is the user's.
     private func applyRowDefaults() {
         for row in rows {
             switch row.kind {
-            case .answer: break
+            case .answer, .legend: break
             case .data: choices.withData = row.onByDefault
             case .code: choices.withCode = row.onByDefault
             }
@@ -661,6 +694,8 @@ final class KeepModel: ObservableObject, Identifiable {
         }
         var copied: [KeptFile] = []
         var missing: [KeptMissing] = []
+        // Claude's legend file, once it is copied: the figure's part of it goes in "Your legend".
+        var legend = ""
         for (index, item) in plan.all.enumerated() {
             if Task.isCancelled { await d.disk.abandon(destination); d.note("Keep: cancelled"); phase = .ready; return }
             switch await fetch(item) {
@@ -670,6 +705,7 @@ final class KeepModel: ObservableObject, Identifiable {
                     copied.append(KeptFile(path: item.relativePath, role: item.role, artifact: item.artifact, version: item.version,
                                            index: nil, of: nil, sha256: d.disk.sha256(of: data), bytes: data.count,
                                            expectedSha256: expected))
+                    if item.role == .legend { legend = Self.legendText(data, file: item.name, figure: plan.figure.name) ?? "" }
                 } catch where item.role == .figure {
                     // A folder is its figure: without one it is not made, and the hidden
                     // one goes. (Listing the figure as missing would finish a folder that
@@ -725,7 +761,7 @@ final class KeepModel: ObservableObject, Identifiable {
         defer { isFinishing = false }
         let (record, text) = KeepRules.record(subject: subject, sources: sources, plan: plan, folderName: destination.name,
                                               keptAt: keptAt, copied: copied, missing: missing,
-                                              scienceVersion: scienceVersion, capsidVersion: d.capsidVersion)
+                                              scienceVersion: scienceVersion, capsidVersion: d.capsidVersion, legend: legend)
         let folder: URL
         do {
             folder = try await d.disk.finish(destination, readme: KeptReadme.render(record, text: text))
@@ -743,6 +779,14 @@ final class KeepModel: ObservableObject, Identifiable {
         log.notice("Kept \(outcome.kept, privacy: .public) of \(outcome.total, privacy: .public) files")
         d.didKeep(outcome)
         phase = outcome.isComplete ? .kept(outcome) : .partial(outcome)
+    }
+
+    /// The words for "Your legend" from Claude's legend file `file`: the figure's own section, by the rules the Shelf's
+    /// "Use Claude's legend" uses (`ShelfClaudeLegendRules.reading`). Nil for a file that isn't text or is empty: it is
+    /// still kept, and the legend stays empty.
+    private static func legendText(_ bytes: Data, file: String, figure: String) -> String? {
+        if case .part(let part) = ShelfClaudeLegendRules.reading(bytes, fileName: file, forFigure: figure) { return part.text }
+        return nil
     }
 
     /// The disk's sentence for a write that failed. A write that got no answer
@@ -776,6 +820,7 @@ final class KeepModel: ObservableObject, Identifiable {
         var missing = outcome.missing
         var landed = unrecorded
         var kept = outcome.kept
+        var legend: String?
         copying: for item in wanted {
             if Task.isCancelled { break }
             switch await fetch(item) {
@@ -785,6 +830,7 @@ final class KeepModel: ObservableObject, Identifiable {
                     landed.append(KeptFile(path: item.relativePath, role: item.role, artifact: item.artifact, version: item.version,
                                            index: nil, of: nil, sha256: d.disk.sha256(of: data), bytes: data.count,
                                            expectedSha256: expected))
+                    if item.role == .legend, let figure = keptPlan?.figure.name { legend = Self.legendText(data, file: item.name, figure: figure) }
                     missing.removeAll { $0.name == item.name && $0.role == item.role }
                     kept += 1
                     phase = .keeping(done: kept, total: outcome.total)
@@ -798,7 +844,7 @@ final class KeepModel: ObservableObject, Identifiable {
             }
         }
         // The README, with what is there now, even after a Cancel.
-        let recordFailed = await rewriteReadme(at: folder, adding: landed, missing: missing)
+        let recordFailed = await rewriteReadme(at: folder, adding: landed, missing: missing, legend: legend)
         unrecorded = recordFailed == nil ? [] : landed
         let noted = Set(outcome.mismatched.map(\.path))
         let mismatched = outcome.mismatched + landed.filter { $0.expectedSha256 != nil && !noted.contains($0.path) }
@@ -815,7 +861,10 @@ final class KeepModel: ObservableObject, Identifiable {
     /// sentence. It runs as a task of its own: the disk makes no look for a
     /// task that was cancelled, and a Cancel that stopped the copies must
     /// still leave a README that agrees with the folder.
-    private func rewriteReadme(at folder: URL, adding landed: [KeptFile], missing: [KeptMissing]) async -> String? {
+    ///
+    /// `legend` is Claude's legend, when its file landed in this retry: it goes in "Your legend" only if that is empty,
+    /// since a legend a person wrote meanwhile is never written over.
+    private func rewriteReadme(at folder: URL, adding landed: [KeptFile], missing: [KeptMissing], legend: String? = nil) async -> String? {
         let disk = dependencies.disk
         let rewrite = Task { @MainActor () -> String? in
             do {
@@ -823,8 +872,12 @@ final class KeepModel: ObservableObject, Identifiable {
                 let listed = Set(read.record.files.map(\.path))
                 let files = read.record.files + landed.filter { !listed.contains($0.path) }
                 // Only what Capsid keeps in it is changed: a section a person added stays as it is.
-                guard let updated = KeptReadme.updating(read.markdown, files: files, missing: missing) else {
+                guard var updated = KeptReadme.updating(read.markdown, files: files, missing: missing) else {
                     return Self.readmeNotUpdatableSentence
+                }
+                if let legend, !legend.isEmpty, let written = KeptReadme.parse(updated), written.text.legend.isEmpty,
+                   let filled = KeptReadme.replacingLegend(in: updated, with: legend) {
+                    updated = filled
                 }
                 // And only if it is still what was read: an edit made meanwhile is never written over.
                 try await disk.replaceReadme(at: folder, markdown: updated, lastRead: read.markdown)
@@ -883,6 +936,7 @@ final class KeepModel: ObservableObject, Identifiable {
         case .answer: .figure
         case .data: .data
         case .code: .code
+        case .legend: .legend
         }
         if kind == .answer { return nil }
         let items = plan.files.filter { $0.role == role }

@@ -2,7 +2,8 @@
 // a folder, draws the Keep sheet (on the demo's made-up reads, after they
 // have come in) into it as PNGs, light and dark, so it can be looked at
 // without opening a window: ready, reading, a name already kept, a partial
-// keep, a keep with a checksum that doesn't match, a failed read, the folder
+// keep, a keep with a checksum that doesn't match, a failed read, Claude's legend file
+// as a fourth row (one file, and the best of three), the folder
 // being put in place (no count, Cancel off), and a ready
 // sheet on a short screen, where its body scrolls. Without the variable the
 // test does nothing. It draws through an `NSHostingView` that is never put in
@@ -53,6 +54,17 @@ struct KeepSheetSnapshotTests {
         taken.setName("Fig 2B \u{00B7} Z\u{2032} by plate")
         for _ in 0..<100 where !taken.nameTaken { try await Task.sleep(for: .milliseconds(50)) }
         try await draw(taken, name: "keep-sheet-taken", to: directory)
+
+        // Claude's legend file in the answer: a fourth row, one file and then three to choose the best of.
+        let legend = Self.model(root: root, corruptFigure: false, failFirstRead: false, legends: [Self.legendsFile])
+        legend.open()
+        try await settle(legend)
+        try await draw(legend, name: "keep-sheet-legend", to: directory)
+        let several = Self.model(root: root, corruptFigure: false, failFirstRead: false,
+                                 legends: [Self.legendsFile, Self.siblingFile, Self.otherLegendFile])
+        several.open()
+        try await settle(several)
+        try await draw(several, name: "keep-sheet-legend-several", to: directory)
 
         // A short screen: the body scrolls, the footer stays.
         let short = KeptDemo.sheetModel(root: root)
@@ -155,11 +167,19 @@ struct KeepSheetSnapshotTests {
     private static let artifact = "bbbbbbbb-0000-4000-8000-000000000011"
     private static let versionIDs = (1...4).map { "aaaaaaaa-0000-4000-8000-00000000001\($0)" }
     private static let inputID = "cccccccc-0000-4000-8000-000000000011"
+    private static let legendText = "# Figure legends\n\n**z_prime.png** Z\u{2032} by plate. Plate 7 is the low bar, at 0.41.\n"
+    private static func legendFile(_ n: Int, _ name: String) -> HistoryFile {
+        HistoryFile(v: "ffffffff-0000-4000-8000-00000000004\(n)", a: "eeeeeeee-0000-4000-8000-00000000004\(n)", name: name,
+                    kind: ArtifactKind.classify(name: name, mime: nil), size: legendText.utf8.count)
+    }
+    private static let legendsFile = legendFile(1, "FIGURE_LEGENDS_final.md")
+    private static let siblingFile = legendFile(2, "z_prime.md")
+    private static let otherLegendFile = legendFile(3, "legends_fig7.md")
 
     /// A sheet whose figure's checksum is stale, whose first read times out, or
     /// whose first read never comes back.
     private static func model(root: URL, corruptFigure: Bool, failFirstRead: Bool, stall: Bool = false,
-                              hold: FinishHold? = nil) -> KeepModel {
+                              hold: FinishHold? = nil, legends: [HistoryFile] = []) -> KeepModel {
         let figures = (0..<4).map { KeptDemo.chart(variant: $0) }
         let table = KeptDemo.csv()
         let thumbnails = ShelfThumbnails()
@@ -195,6 +215,7 @@ struct KeepSheetSnapshotTests {
                         inputs: [LineageInput(v: inputID, a: "dddddddd-0000-4000-8000-000000000011", name: "z_prime_by_plate.csv",
                                               file: nil, how: "runtime", inferred: false)])))
                 case .download(let v):
+                    if legends.contains(where: { $0.v == v }) { return .answered(.bytes(Data(legendText.utf8))) }
                     if v == inputID { return .answered(.bytes(table)) }
                     if let index = versionIDs.firstIndex(of: v) { return .answered(.bytes(figures[index])) }
                     return .answered(.missing)
@@ -218,7 +239,8 @@ struct KeepSheetSnapshotTests {
             },
             capsidVersion: "1.0",
             now: { Date() },
-            didKeep: { _ in })
+            didKeep: { _ in },
+            answerFiles: { _, _ in legends })
         let entry = ArtifactEntry(version: versionIDs[3], artifact: artifact, name: "z_prime.png", mime: "image/png",
                                   size: figures[3].count, at: at(51))
         return KeepModel(subject: KeepSubject(session: session, entry: entry), dependencies: dependencies)

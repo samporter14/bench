@@ -38,6 +38,29 @@ private enum Made {
     static func table(_ v: String) -> Data { Data("plate,z_prime\n1,0.71\n# \(inputNames[v] ?? v)\n".utf8) }
     static func bytes(_ v: String) -> Data { inputNames[v] == nil ? figure(v) : table(v) }
     static func showing(_ v: String) -> ShowingMessage { ShowingMessage(i: 12, at: at(20), text: answer, how: .image, v: v) }
+
+    /// Claude's legend files, as the answer's history lists them (since 1.0.6): a legend for three figures, and one that
+    /// shares the figure's name.
+    static let legends = "ffffffff-0000-4000-8000-000000000021"
+    static let sibling = "ffffffff-0000-4000-8000-000000000022"
+    static let legendsText = """
+        # Figure legends
+
+        **plate_map.png** Eight plates, sixteen rows.
+
+        **z_prime.png** Z\u{2032} by plate. Plate 7 is the low bar, at 0.41.
+
+        **edge_effect.png** Column 12 reads low.
+        """
+    /// What the figure's own part comes to.
+    static let legendPart = "**z_prime.png** Z\u{2032} by plate. Plate 7 is the low bar, at 0.41."
+    static let siblingText = "Z\u{2032} by plate, one dot for each plate.\n"
+    static func historyFile(_ v: String, _ name: String, _ text: String) -> HistoryFile {
+        HistoryFile(v: v, a: "eeeeeeee-0000-4000-8000-0000000000" + v.suffix(2), name: name,
+                    kind: ArtifactKind.classify(name: name, mime: nil), size: text.utf8.count)
+    }
+    static var legendsFile: HistoryFile { historyFile(legends, "FIGURE_LEGENDS_final.md", legendsText) }
+    static var siblingFile: HistoryFile { historyFile(sibling, "z_prime.md", siblingText) }
 }
 
 /// Claude Science, made up: four versions of a figure drawn from one or two
@@ -88,11 +111,21 @@ private final class Science {
     var unlisted: Set<String> = []
     /// The session's last answer, the fallback.
     var last: KeepAnswer?
+    /// The files of the answer that shows the version (`answerFiles`), and the rows they were asked for; nil can't be read.
+    var answerFiles: [HistoryFile]? = []
+    private(set) var answerFileAsks: [Int] = []
+    /// Bytes for files that aren't the figure or its inputs (Claude's legend files), by version.
+    var extraBytes: [String: Data] = [:]
     /// The versions each search was asked about, in order.
     private(set) var searches: [[String]] = []
     /// A search finds the answer only if it shows one of the versions asked about,
     /// as the real reader does; off, it answers whatever it was asked.
     var searchMatchesVersions = true
+
+    func files(row: Int) -> [HistoryFile]? {
+        answerFileAsks.append(row)
+        return answerFiles
+    }
 
     func search(_ versions: [String]? = nil) -> ShowingRead {
         showingCalls += 1
@@ -179,6 +212,10 @@ private final class Science {
         case .download(let v):
             downloads.append(v)
             if let answer = onDownload?(v) { return answer }
+            if let extra = extraBytes[v] {
+                if let left = downloadFailures[v], left > 0 { downloadFailures[v] = left - 1; return .timedOut }
+                return .answered(.bytes(extra))
+            }
             if let left = downloadFailures[v], left > 0 { downloadFailures[v] = left - 1; return .timedOut }
             if vanished.contains(v) { return .answered(.missing) }
             if let left = corrupt[v], left > 0 { corrupt[v] = left - 1; return .answered(.bytes(Data("not these bytes".utf8))) }
@@ -277,7 +314,8 @@ private final class Rig {
             didKeep: { [self] outcome in kept.append(outcome) },
             settle: { _ in await science.settle() },
             note: { [self] line in notes.append(line) },
-            recheck: { [self] _ in keepOnWhilePending.append(current?.canKeep ?? true) })
+            recheck: { [self] _ in keepOnWhilePending.append(current?.canKeep ?? true) },
+            answerFiles: { _, row in science.files(row: row) })
         let model = KeepModel(subject: KeepSubject(session: Made.session, entry: entry, pinned: pinned, selectsItsVersion: selectsItsVersion),
                               dependencies: dependencies)
         current = model
@@ -1558,5 +1596,193 @@ struct KeepPendingTests {
         model.keep()
         try await until("it is kept") { model.keptOutcome != nil }
         #expect(try readme(try #require(model.keptOutcome)).contains("The code that drew it: not kept. Left out when it was kept."))
+    }
+}
+
+// MARK: F. Claude's legend file (since 1.0.6)
+
+@MainActor
+struct KeepLegendTests {
+    /// A sheet on a made-up answer that shows version 3 and made a legend file, with the legend files read.
+    private func rig(files: [HistoryFile]? = [Made.legendsFile]) throws -> Rig {
+        let rig = try Rig()
+        rig.science.showing = Made.showing(Made.v3)
+        rig.science.answerFiles = files
+        rig.science.extraBytes = [Made.legends: Data(Made.legendsText.utf8), Made.sibling: Data(Made.siblingText.utf8)]
+        return rig
+    }
+
+    private func readme(_ outcome: KeepOutcome) throws -> String {
+        try String(contentsOf: outcome.folder.appending(path: "README.md", directoryHint: .notDirectory), encoding: .utf8)
+    }
+
+    @Test func theRowIsThereOnlyWithALegendFileAndOnByDefault() async throws {
+        let none = try rig(files: [])
+        defer { none.tearDown() }
+        let without = none.model()
+        without.open()
+        try await until("the sheet is filled") { without.isReady }
+        #expect(without.rows.map(\.kind) == [.answer, .data, .code])
+        #expect(without.row(.legend) == nil && !without.isOn(.legend))
+
+        let rig = try rig()
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.rows.map(\.kind) == [.answer, .data, .code, .legend])
+        let row = try #require(model.row(.legend))
+        #expect(row.title == "Claude\u{2019}s legend")
+        #expect(row.detail.hasPrefix("FIGURE_LEGENDS_final.md \u{00B7} "))
+        #expect(row.available && row.onByDefault)
+        #expect(model.isOn(.legend) && model.choices.withLegend)
+        // It was looked for around the row of the answer that shows the version, once.
+        #expect(rig.science.answerFileAsks == [12])
+    }
+
+    @Test func anAnswerWithNoRowOrUnreadableFilesHasNoLegendRow() async throws {
+        // Pinned by the caller: no row of the history to look around.
+        let pinned = try rig()
+        defer { pinned.tearDown() }
+        let fromPage = pinned.model(entry: Made.v3, pinned: KeepPinnedAnswer(text: Made.answer, at: Made.at(20)))
+        fromPage.open()
+        try await until("the sheet is filled") { fromPage.isReady }
+        #expect(fromPage.row(.legend) == nil)
+        #expect(pinned.science.answerFileAsks.isEmpty)
+
+        // The page couldn't be read: the keep goes on without the row, and says so in the log.
+        let unreadable = try rig(files: nil)
+        defer { unreadable.tearDown() }
+        let model = unreadable.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.row(.legend) == nil)
+        #expect(unreadable.notes.contains("Keep: the answer's files couldn't be read"))
+    }
+
+    @Test func theRowFollowsTheVersionTheAnswerShows() async throws {
+        let rig = try rig()
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        #expect(model.row(.legend) != nil)
+        // Version 4 isn't the one the answer shows: its legend is for another figure.
+        model.choose(Made.v4)
+        try await until("version 4 is read") { model.settled && model.choices.version == Made.v4 }
+        #expect(model.row(.legend) == nil && !model.isOn(.legend))
+        #expect(model.plan?.files.contains { $0.role == .legend } == false)
+        model.choose(Made.v3)
+        try await until("version 3 is read") { model.settled && model.choices.version == Made.v3 }
+        #expect(model.row(.legend) != nil && model.isOn(.legend))
+    }
+
+    @Test func keepingCopiesTheFileAndPutsTheFiguresPartInYourLegend() async throws {
+        let rig = try rig()
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        let legend = try #require(model.plan?.files.first { $0.role == .legend })
+        #expect(legend.relativePath == "FIGURE_LEGENDS_final.md" && legend.version == Made.legends)
+        #expect(model.destinationSentence.contains("code, Claude\u{2019}s legend and a README.md."), "\(model.destinationSentence)")
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.closesSheet && outcome.kept == 4 && outcome.total == 4)
+        #expect(names(outcome.folder) == ["FIGURE_LEGENDS_final.md", "README.md", "code", "data", "z_prime.png"])
+        // The file as Claude made it, whole.
+        let copy = try Data(contentsOf: outcome.folder.appending(path: "FIGURE_LEGENDS_final.md", directoryHint: .notDirectory))
+        #expect(copy == Data(Made.legendsText.utf8))
+        // Listed with its role, and the legend holds the figure's section alone.
+        let back = try await rig.disk.readme(at: outcome.folder)
+        let listed = try #require(back.record.files.first { $0.path == "FIGURE_LEGENDS_final.md" })
+        #expect(listed.role == .legend && listed.version == Made.legends)
+        #expect(listed.sha256 == KeptDisk.sha256(of: copy))
+        #expect(back.text.legend == Made.legendPart)
+        #expect(!back.text.legend.contains("plate_map") && !back.text.legend.contains("edge_effect"))
+        #expect(try readme(outcome).contains("## Your legend\n\n\(Made.legendPart)\n"))
+    }
+
+    @Test func severalLegendFilesKeepTheBestAndTheRowSaysWhich() async throws {
+        let rig = try rig(files: [Made.legendsFile, Made.siblingFile])
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        // The file that shares the figure's name beats the one with "legend" in its name.
+        let row = try #require(model.row(.legend))
+        #expect(row.detail.hasPrefix("z_prime.md, the closest of 2 in the answer \u{00B7} "), "\(row.detail)")
+        #expect(model.plan?.files.filter { $0.role == .legend }.map(\.name) == ["z_prime.md"])
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(!exists(outcome.folder, "FIGURE_LEGENDS_final.md") && exists(outcome.folder, "z_prime.md"))
+        // No section for the figure in a file that is only for it: all of it.
+        #expect(try await rig.disk.readme(at: outcome.folder).text.legend == Made.siblingText.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    @Test func untickingLeavesItOut() async throws {
+        let rig = try rig()
+        defer { rig.tearDown() }
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.toggle(.legend, false)
+        #expect(!model.isOn(.legend))
+        #expect(model.plan?.files.contains { $0.role == .legend } == false)
+        #expect(!model.destinationSentence.contains("legend"))
+        model.keep()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let outcome = try #require(model.keptOutcome)
+        #expect(outcome.total == 3)
+        #expect(names(outcome.folder) == ["README.md", "code", "data", "z_prime.png"])
+        #expect(!rig.science.downloads.contains(Made.legends))
+        let back = try await rig.disk.readme(at: outcome.folder)
+        #expect(back.record.files.allSatisfy { $0.role != .legend })
+        #expect(back.text.legend.isEmpty)
+    }
+
+    @Test func aLegendFileThatCouldntBeCopiedIsListedAndTryAgainFillsYourLegend() async throws {
+        let rig = try rig()
+        defer { rig.tearDown() }
+        rig.science.downloadFailures[Made.legends] = 1
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep ends") { model.partialOutcome != nil }
+        let first = try #require(model.partialOutcome)
+        #expect(first.missing.map(\.role) == [.legend])
+        #expect(model.fate(of: .legend)?.isProblem == true)
+        #expect(try await rig.disk.readme(at: first.folder).text.legend.isEmpty)
+        model.retry()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let done = try #require(model.keptOutcome)
+        #expect(done.isComplete)
+        let back = try await rig.disk.readme(at: done.folder)
+        #expect(back.record.files.contains { $0.path == "FIGURE_LEGENDS_final.md" && $0.role == .legend })
+        #expect(back.text.legend == Made.legendPart)
+    }
+
+    @Test func aLegendAPersonWroteMeanwhileIsNeverWrittenOver() async throws {
+        let rig = try rig()
+        defer { rig.tearDown() }
+        rig.science.downloadFailures[Made.legends] = 1
+        let model = rig.model()
+        model.open()
+        try await until("the sheet is filled") { model.isReady }
+        model.keep()
+        try await until("the keep ends") { model.partialOutcome != nil }
+        let first = try #require(model.partialOutcome)
+        // Their own words, typed into the README before Try Again.
+        let before = try await rig.disk.readme(at: first.folder)
+        let written = try #require(KeptReadme.replacingLegend(in: before.markdown, with: "Z\u{2032} per plate, in my words."))
+        try await rig.disk.replaceReadme(at: first.folder, markdown: written, lastRead: before.markdown)
+        model.retry()
+        try await until("it is kept") { model.keptOutcome != nil }
+        let back = try await rig.disk.readme(at: first.folder)
+        #expect(back.text.legend == "Z\u{2032} per plate, in my words.")
+        #expect(back.record.files.contains { $0.role == .legend })
     }
 }
