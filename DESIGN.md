@@ -5791,7 +5791,10 @@ session's history. You asked: “…”"). The legend comment and fine print say
   picture or more than one, so a Markdown tile with pictures in it (no wrapper)
   is still its own words, and a wrapper with no tile round it (a file on the
   host's disk, open in a tab: no artifact, no version) gets no items. A viewer
-  whose picture's address names no version falls to the tile's name, below.
+  whose picture's address names no version falls to the tile's name, below. The
+  annotation layer's markers and popover are buttons, divs and spans in the
+  bundle (`g$t`, `Rae`: no `<img>`), so a picture with annotations is still the
+  tile's one.
 
   **A file with no picture** (after 1.0.4; Markdown, CSV, text). Its tile and its
   card in the Generated tray carry no address that names a version: they show
@@ -5852,10 +5855,19 @@ session's history. You asked: “…”"). The legend comment and fine print say
   **The right-hand panel's tiles show no name** (read in the bundle; to be
   confirmed by a live right-click). `ArtifactTile` draws its title only when it
   is not in "slot chrome" mode (`!G && <span>…</span>`), and the panel that holds
-  the side pane and its tabs (`session-tabs-pane`, whose bindings are
-  `slotChrome: true`) puts every tile in that mode: the panel's tab strip shows
-  the file's name, and the tile's header has only the version stepper, the diff
-  toggle and the buttons. So "the first span in the header" was the version
+  the side pane and its tabs (`session-tabs-pane`) puts every tile in that mode:
+  its bindings, `slotChrome: true`, are spread into the page's (`index-` `arn`,
+  `ProjectControlPlane-` bindings). In that mode the header's children are
+  meant to be portalled to a slot in the panel's own chrome (`To`, in `kt`), and
+  then the tile would have no `<header>` at all; but the slot's context (`zt`) is
+  local to `ArtifactTile`, never exported and never provided (four references in
+  the chunk, none a provider), so the fallback `<header>` is always drawn, and
+  the finding stands on that: the panel's tab strip shows the file's name, and
+  the tile's header has only the version stepper, the diff toggle and the
+  buttons. (Were a provider ever added, the tile would lose its header and
+  `tileAt` would find nothing: the viewer's picture and the documents would
+  get no items, and the trace would say `figure-none`.) So "the first span in
+  the header" was the version
   stepper's ("v2", "v2 (old)") or nothing: a document open in the panel traced
   `figure-document`, placed the items, and then "couldn't find “v2”" on the
   click; a version-1 file traced `figure-none`. Now such a tile (inside
@@ -5869,7 +5881,11 @@ session's history. You asked: “…”"). The legend comment and fine print say
   and the question). The step `name-from-tab` says it came from the tab. With no
   strip, two shown tabs, none, a blank label, or a tile outside the panel there
   is no name and nothing is added (`tile-unnamed`). A tile that shows its own
-  name never looks at the tab.
+  name never looks at the tab. **A limit**: the tab strip and `[data-pane=
+  "right"]` exist only in the page's split layout (the session beside the
+  panel: `split-right`); in the single-column layout a file open in the viewer
+  has neither, so a document there gets no items (`tile-unnamed`), and a picture
+  there is found by its address as always.
 
   **The lookup says what it found, in the log** (after 1.0.6; an add from the
   viewer had not been confirmed and the log could not say why). Every lookup of

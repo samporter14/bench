@@ -358,6 +358,14 @@ nothing installed, merged or pushed.
   the span that opens the header's first box and holds only text (the stepper, the buttons and the provenance breadcrumb never are), and
   a tile with none inside `[data-pane="right"]` is named by the shown tab (`data-shown`, or `aria-current` on its button; exactly one;
   the label is the button's last element). Steps `name-from-tab` and `tile-unnamed` say which.
+- ✅ **Checked in the bundle after a review**: (1) the header is always drawn: `kt` would portal a slot-chrome tile's header
+  elsewhere if `zt` had a provider, but `zt` is local to `ArtifactTile`, not exported, referenced four times in the chunk and
+  never provided, so the fallback `<header>` (with its More actions button) is always there, which is also what Sam's document trace
+  shows; the panel's `slotChrome: true` reaches the tile through the page's bindings (`ProjectControlPlane-ZzzhlAui.js`, 79870, spreads
+  `arn`). (2) the annotation layer's markers (`g$t`) and popover (`Rae`) render buttons, divs and spans, no `<img>`, so a picture with
+  annotations is still the tile's one picture (the "exactly one" rule would otherwise have fallen back to the file's newest version).
+  (3) the tab strip (`qnn`) and `[data-pane="right"]` are drawn only in the split layout (`split-right`); in the single-column layout a
+  document in the viewer has no name to be had and gets no items.
 - ✅ **The log** now says what a name lookup found, one line, counts only: `Figure menu: name matched 1`, `name matched 2` (three, …),
   `name not found`, `files not read`.
 - ✅ **Tests** (33 new, `ViewerFigureTests.swift`, the fake page's viewer and tab strip in `FakeFigurePage.swift`): a right-click on the
@@ -388,9 +396,10 @@ nothing installed, merged or pushed.
   `contextmenu → figure-viewer → version-ok → menu-matched → placed` (the `pointer-events: none` is read from the library's stylesheet, and
   confirmed in WebKit for a page that has the rule, not seen on the daemon's page); that a document in the right-hand panel gives
   `figure-document → name-from-tab → menu-matched → placed` and then `Figure menu: name matched 1` (the tab strip's markup is read
-  from the bundle and shared with Capsid's tab hooks, which work live); that the version stepper really was the old first span; which
-  `[data-pane="right"]` wrapper exists in the single-column layout (none is assumed, and then nothing is added); and the real click on
-  Add to Shelf from the viewer, which Sam has not confirmed.
+  from the bundle and shared with Capsid's tab hooks, which work live); that the version stepper really was the old first span; and the real click on
+  Add to Shelf from the viewer, which Sam has not confirmed. **A limit, not an unknown**: in the single-column layout (no session
+  beside the panel) there is no tab strip, so a document open in the viewer gets no items (`tile-unnamed`); a picture there is found by
+  its address as always.
 
 ## 2026-10-26, Capsid 1.0.6 released and installed
 
