@@ -12,20 +12,21 @@
 curl -fsSL https://raw.githubusercontent.com/samporter14/bench/main/install.sh | zsh
 ```
 
-Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/download/Bench.zip) (15 MB); see [Install](#install).
+Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/download/Bench.zip) (18 MB); see [Install](#install).
 
 ## Why Capsid
 
-- **Small and light.** A 15 MB download, most of it the six app icons, with
+- **Small and light.** An 18 MB download, most of it the six app icons, with
   no Electron and no bundled browser. It uses the WebKit already built into
-  macOS. Capsid itself idles at 0% CPU and about 50 MB of memory, and the page
-  runs in WebKit like a Safari tab.
+  macOS. In the recorded idle check, Capsid itself used 0% CPU and about
+  50 MB of memory; the page runs in WebKit like a Safari tab.
 - **Truly Mac native.** Written in Swift with SwiftUI and AppKit: Liquid
   Glass, a real toolbar, menus, keyboard shortcuts, Settings (⌘,) and Find
   (⌘F).
 - **Nothing collected.** No Capsid account, no analytics, no telemetry. Capsid
   talks to nothing beyond your Mac except links you click, a once-a-day
-  update check, which you can turn off, the update you choose to install, and, if you turn on Capsid on your phone,
+  update check, which you can turn off, the update you choose to install,
+  a model provider you configure and ask (below), and, if you turn on Capsid on your phone,
   your own paired devices over your Tailscale network, with notifications,
   if you turn them on, carried by Apple's push service and encrypted so only
   your device can read them. Capsid reads Claude Science and changes nothing
@@ -143,8 +144,8 @@ without altering itself.
 ## Your shelf
 
 Claude Science makes a lot of figures, notes and tables, and the one you
-meant is easy to lose. **Right-click any figure or file in a conversation and
-choose Add to Shelf** (or click the seal on a file in Results, or the pill
+meant is easy to lose. **Right-click a figure, file link or document tile in a
+conversation and choose Add to Shelf** (or click the seal on a file in Results, or the pill
 under a figure in the reference window). It's copied onto your shelf with what
 Claude said about it and exactly where it came from. **The Shelf** (⇧⌘K, or
 the Shelf button in the toolbar) shows everything you've shelved, by project
@@ -160,9 +161,15 @@ Where It Came From. For lab meeting, pick several figures (⌘-click) and
 choose **Export Figure as PDF…** (⌘P; "Export 3 Figures as PDF…" with
 several): one 16:9 page each, with its title, legend and where it came from.
 
+**Add Selection to Shelf** keeps selected words as a note. Its card shows the
+passage, with where it came from; Copy copies the words. Search also looks
+inside notes, Markdown and text documents, and the legend files kept beside
+figures, so you can find a passage without remembering its file name.
+
 When a figure is going into a paper, **Keep with Data and Code…** (⌥⌘K) keeps
-the real version with the data it was drawn from and the script that drew it,
-and the Shelf lets you write the legend you'll use beside it.
+the real version with the data it was drawn from and the script that drew it.
+If Claude made a legend file, Keep can keep it too; on the Shelf, **Use
+Claude’s legend** puts its words into Your legend, where you can edit them.
 
 <img src="docs/shelf.png" width="600" alt="The Shelf window with heatmap typed in its search: two shelved heatmaps as cards, then In your sessions with five more files from other sessions, each with Add to Shelf, and the selected figure's detail with where it came from">
 
@@ -183,12 +190,28 @@ phone does, a page at a time, waits while you type, and writes nothing.
 
 <img src="docs/reference.png" width="300" alt="A reference window titled Plate reader QC, read only: the question, then Claude's figure full width with Add to Shelf under it, and Copy with Source and Open Conversation at the foot">
 
+## Ask another model
+
+Ask a model at another provider, with your own key. **Ask Another Model…**
+is in the File menu and toolbar. Turn it on in Settings → General, paste
+your key, and choose a model at an OpenAI-compatible provider
+(Abliteration.ai is the default; OpenRouter works too).
+
+It is off by default. Your question and, if you choose, the conversation
+shown beside it go to that provider only when you press **Ask**. The answer
+streams into its own window, with Copy and **Send to Session** when it
+finishes. It cannot change Claude Science’s own model.
+
+<img src="docs/ask-another-model.png" width="420" alt="Ask Another Model for the made-up Plate reader QC session: a question, the included conversation, a finished answer, Copy and Send to Session">
+
 ## Start from anywhere
 
 **Quick Start** (⌃⌥⌘Space, or File → Quick Start…) is a small panel over
 whatever you're doing: type a request, drop files in, pick the project, and
 press Return for a new session (Shift-Return sends it to the session you're
-looking at instead). Save the requests you make often as **recipes**
+looking at instead). Messages sent from the Mac can be up to 32,000
+characters; the phone keeps its 4,000-character limit. Save the requests you
+make often as **recipes**
 (Settings → Recipes) and fill them with ⌘1 to ⌘9. Finder's Services menu
 starts a session with the files or text you've selected, and Shortcuts has
 actions to start a session, run a recipe, send a message or list the sessions
