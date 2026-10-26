@@ -165,6 +165,24 @@ enum ShelfClaudeLegendRules {
         let cut: Bool
     }
 
+    /// What a legend file's bytes come to for a figure.
+    enum Reading: Equatable, Sendable {
+        case part(Part)
+        /// Not text Capsid can read (a NUL in it, or not UTF-8).
+        case notText
+        /// Nothing but blank lines.
+        case empty
+    }
+
+    /// `bytes` of Claude's legend file `fileName`, read the one way for everything that puts a legend in a field: the
+    /// Shelf's "Use Claude's legend" and Keep with Data and Code (since 1.0.6) both go through here, so the same file gives
+    /// the same words wherever it is used.
+    static func reading(_ bytes: Data, fileName: String, forFigure figure: String) -> Reading {
+        guard let read = ReferenceFileRules.text(from: bytes) else { return .notText }
+        guard !normalized(read.text).isEmpty else { return .empty }
+        return .part(part(of: read.text, fromFile: fileName, forFigure: figure))
+    }
+
     /// A heading ("## Figure 2") or a bold label at the start of a line ("**Figure 2.** …").
     private struct Marker {
         let line: Int
@@ -568,11 +586,14 @@ final class ShelfClaudeLegend: ObservableObject {
         case .failed(let why): return .failed(Rules.notChanged("Couldn\u{2019}t get \(name). \(why)"))
         case .cancelled: return .failed(Rules.notChanged(Rules.stopped))
         }
-        guard let read = ReferenceFileRules.text(from: bytes) else { return .failed(Rules.notChanged(Rules.notText(name))) }
-        guard !Rules.normalized(read.text).isEmpty else { return .failed(Rules.notChanged(Rules.empty(name))) }
+        let part: Rules.Part
+        switch Rules.reading(bytes, fileName: name, forFigure: item.fileName) {
+        case .notText: return .failed(Rules.notChanged(Rules.notText(name)))
+        case .empty: return .failed(Rules.notChanged(Rules.empty(name)))
+        case .part(let found): part = found
+        }
 
         // The legend, by the field's own save: the conflict rule and the byte rules are the editor's.
-        let part = Rules.part(of: read.text, fromFile: name, forFigure: item.fileName)
         var undo: Undo?
         switch await editor.put(part.text) {
         case .failed(let why): return .failed(Rules.notChanged(why))
