@@ -421,6 +421,12 @@ enum ShelfRules {
                         calendar: calendar, locale: locale)
     }
 
+    /// An ordinary document's header uses its filename followed by the same known source parts as a note.
+    static func documentHeaderParts(for item: ShelfItem, now: Date = Date(), calendar: Calendar = .current,
+                                    locale: Locale = .current) -> [String] {
+        [item.fileName] + noteHeaderParts(for: item, now: now, calendar: calendar, locale: locale).dropFirst()
+    }
+
     /// The header as it is drawn: the parts, set apart by the same " · " as the source line.
     static func noteHeader(for item: ShelfItem, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         noteHeaderParts(for: item, now: now, calendar: calendar, locale: locale).joined(separator: noteHeaderSeparator)
@@ -483,10 +489,12 @@ enum ShelfRules {
     /// What the ⋯ menu holds, in order: Keep with Data and Code… when it can be asked for, Export Figure as PDF…, and
     /// Remove last, after a divider. A note's card (after 1.0.6) has no picture to double-click or drag out, so its menu
     /// opens with the two things the picture did to the file, Quick Look and Show in Finder, and then has what any
-    /// item's has (a note has no version to keep).
-    static func moreMenu(canKeep: Bool, note: Bool = false) -> [MoreItem] {
+    /// item's has (a note has no version to keep). Since 1.0.7 a document's reading card also has the two file actions,
+    /// followed by its existing actions.
+    static func moreMenu(canKeep: Bool, note: Bool = false, document: Bool = false) -> [MoreItem] {
         if note { return [.quickLook, .showInFinder, .divider, .exportPDF, .divider, .remove] }
-        return (canKeep ? [.keepWithDataAndCode] : []) + [.exportPDF, .divider, .remove]
+        return (document ? [.quickLook, .showInFinder, .divider] : [])
+            + (canKeep ? [.keepWithDataAndCode] : []) + [.exportPDF, .divider, .remove]
     }
 
     static func flatten(_ text: String) -> String {
@@ -551,6 +559,13 @@ enum ShelfRules {
         var cut = false
     }
 
+    /// A known reply's history row, shared by Add to Shelf and Keep. A pinned answer has no row (-1), and a last
+    /// answer used as a fallback does not identify the reply that showed this version.
+    static func sourceRow(_ row: Int?, showsVersion: Bool) -> Int? {
+        guard showsVersion, let row, row >= 0 else { return nil }
+        return row
+    }
+
     /// The record and the sections for a figure put on the shelf: no data and
     /// no code, and where it came from in words. `row` is the history row of
     /// the message that showed it, `question` what the user asked in that
@@ -563,7 +578,7 @@ enum ShelfRules {
             name: folderName, keptAt: keptAt, projectID: session.projectID, projectName: session.projectName,
             sessionID: session.id, sessionTitle: session.displayTitle, figure: figure, files: [], missing: [],
             claudeScience: claudeScience ?? "unknown", capsid: capsid,
-            sourceRow: answer == nil || answer?.isLast == true ? nil : row, question: asked,
+            sourceRow: sourceRow(row, showsVersion: answer?.isLast == false), question: asked,
             answerAt: answer?.at)
 
         var attribution = ""

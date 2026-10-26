@@ -694,7 +694,8 @@ enum KeepRules {
                              expectedSha256: figure.expectedSha256),
             files: copied.filter { $0.role != .figure }, missing: missing,
             claudeScience: scienceVersion ?? "unknown", capsid: capsidVersion,
-            answerShowsVersion: plan.answerShows.flatMap { shown in versions.first { $0.v == shown }?.n })
+            answerShowsVersion: plan.answerShows.flatMap { shown in versions.first { $0.v == shown }?.n },
+            sourceRow: ShelfRules.sourceRow(sources.showing?.i, showsVersion: sources.showing?.v == plan.figure.version))
         var attribution: String
         if let answer = plan.answer {
             let when = answer.at.map { " at \(longTime($0)) on \(longDate($0))" } ?? ""

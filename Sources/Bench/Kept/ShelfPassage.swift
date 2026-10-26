@@ -9,8 +9,8 @@
 // the passage as its main content it has no picture of first lines and no title
 // of its first words, only a quiet header (`ShelfNoteHeader`); a note whose words
 // can't be read is drawn as any document is (`ShelfPassages.reading`,
-// `ShelfDetail.form`). An ordinary document keeps its picture and its detail as
-// they were.
+// `ShelfDetail.form`). Since 1.0.7 ordinary prose documents have a separate reading
+// cache (ShelfDocumentReading.swift).
 //
 // The file is read through the disk layer (`KeptDisk.peek`), off the main actor,
 // once for each state of it (its date and size); the detail card asks when it is

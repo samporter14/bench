@@ -5447,9 +5447,14 @@ names the figure, else the whole file, at most 3,000 characters, without
 Markdown's bold marks since 1.0.6, as on the Shelf). A legend file that isn't text or has nothing in it is kept all the
 same, and the legend stays empty. Try Again that lands the legend file puts its
 words in only when "Your legend" is still empty: **a legend a person wrote
-meanwhile is never written over**. The README Keep writes has no `source_row`,
-so the Shelf's own *Use Claude's legend* line isn't offered on that folder; the
-file and its words are already there.
+meanwhile is never written over**. Since 1.0.7, Keep's README also records
+`source_row` when the answer found shows the chosen version and has a known
+history row. It shares Add to Shelf's rule (`ShelfRules.sourceRow`): no row
+for a pinned answer (`i == -1`), a last answer used as a fallback, or an answer
+that shows a different version. Leaving the answer's words unticked does not
+remove a known source row. The Shelf can then offer *Use Claude's legend*
+and open *Show Where It Came From* at that reply. Existing READMEs are not
+rewritten.
 
 **Updating a README keeps the person's words (since Codex's review of 1.0).**
 Try Again changes only what Capsid keeps in README.md: the `files:` and
@@ -5722,7 +5727,8 @@ session's history. You asked: “…”"). The legend comment and fine print say
   characters; anything else gets no items. The page's words are only a
   stand-in name until the daemon's facts give the file's own; nothing read from
   the page is logged. Both are in the compatibility inventory, checked only
-  when used. Board 10's in-page "Shelf" pill on a file chip is left out: there
+  when used. Since 1.0.7, the menu breadcrumb is "Add to Shelf from a figure, file link or document tile".
+  Board 10's in-page "Shelf" pill on a file chip is left out: there
   is no verified stable hook on the page's chips.
 
   **Claude Science's own figure menu** (since 1.0's walkthrough, Sam: "2 I
@@ -6140,6 +6146,32 @@ Each of the ⋯ items is also a VoiceOver action on the card (`ShelfRules.moreMe
 A note made by Add Selection to Shelf has a card of its own, with no picture and no
 title (a header and its passage, then these controls, and Quick Look and Show in
 Finder at the head of its ⋯: *Add Selection to Shelf*, above).
+Since 1.0.7, an ordinary Markdown or text document (`md`, `markdown`, `txt`,
+`text`, `rst`) also has a reading card (`ShelfDocumentReading.swift`,
+`ShelfDocumentCard.swift`). Its quiet header is the filename, session, project
+and time, with the same drag and double-click Quick Look as a note's. There is
+no paper thumbnail or repeated title. Markdown uses `AnswerMarkdown` and the
+Reference text view at 14 on 21; plain text keeps its marks. The reading area is
+no wider than 600 points and at most 280 high, less in a short window, with the
+note's bottom fade while more is below. **What Claude said** is a disclosure
+below the document, closed when another item is selected; a fallback last
+answer still says so inside it. Copy still copies the document's file. Quick
+Look and Show in Finder open its More menu, followed by its existing actions.
+Figures, tables and other formats keep the preview layout.
+
+The document is read only when selected, through `KeptDisk` off the main actor;
+Markdown parsing also runs off the main actor. Four rendered documents are
+cached by path, modification date and size, with the least recently looked at
+let go first. Reads are capped at 256 KiB; oversized, missing, empty, non-UTF-8,
+NUL-containing and iCloud-offloaded files fall back to the preview card. A file
+changed during a read is not published, and cancelled or superseded requests
+cannot replace a newer result. No file is fetched from iCloud and no document
+content is logged. The cap bounds source bytes, not attributed-string overhead.
+
+Since 1.0.7, filename extensions use `Solanum.muted` without another opacity
+reduction, keeping the quiet regular weight while improving small-text contrast
+on both raised surfaces.
+
 An item kept with data and code also shows its legend field and files below,
 so nothing the Kept window had is lost; a figure shelved and later kept with
 data and code is one item, shown from the richer folder. Space is Quick Look,
@@ -6269,7 +6301,7 @@ failure is the field's to say and the pill says nothing.
 
 **Claude's legend** (Kept/ShelfClaudeLegend.swift, ShelfClaudeLegendView.swift; after 1.0.4). When Claude makes a figure, the same answer often makes a legend file too: `FIGURE_LEGENDS_final.md`, or a `.md` that shares the figure's name. The detail card offers it in one quiet line in its legend area, **Use Claude's legend** · `FIGURE_LEGENDS_final.md`: the card's quiet-link style (12 points, muted, underlined, as More and Less are), no clay (the card's one clay action is Show Where It Came From). A figure shelved alone has no legend field (the field is for an item kept with data and code, or with a legend), so for it the line sits alone under a hairline, and once Claude's legend is in, the card shows what any item with a legend shows: its Files (the figure and Claude's file) and the legend field with the words in it.
 
-*Finding it.* The files of the answer that showed the figure are read the way the reference reader reads them: one page of history around the README's `source_row` (`ShelfDependencies.answerFiles`, then `ReferenceRules.answers` and `ReferenceFileRules.documents`: the files that aren't pictures, one for each artifact, less the ones Claude Science hides), when the card is first shown, once for each item (a page that couldn't be read is asked again the next time). Nothing is read under Claude Science's own folders; the file's bytes, when asked for, come through the shelf's queue and its 8 MB cap (`KeepDependencies.fetch`), as Add to Shelf's do. A figure whose README has no `source_row` (a keep from the Kept window, a last answer standing in for the one that showed it) has no offer, and neither has a document or a table. A **legend file** is a prose file (`md`, `markdown`, `txt`) of at most 1,000,000 bytes and not empty, other than the figure itself, whose name has "legend" in it (any case) or whose stem is the figure's stem (any case). Several are offered best first, at most six: the stem match; a legend for this figure (its name has the figure's stem or a number the figure's name has: `fig2_legend.md` for `fig2_zprime.png`); a legend with no number in its name (`FIGURE_LEGENDS_final.md`); a legend that names another figure (`fig1_legend.md`); the answer's own order inside each. A number in a name is a run of one to three digits, not part of a date or a version ("v2"); "S2", "figS2" and a name with "supp" or "extended" in it are supplementary figures'.
+*Finding it.* The files of the answer that showed the figure are read the way the reference reader reads them: one page of history around the README's `source_row` (`ShelfDependencies.answerFiles`, then `ReferenceRules.answers` and `ReferenceFileRules.documents`: the files that aren't pictures, one for each artifact, less the ones Claude Science hides), when the card is first shown, once for each item (a page that couldn't be read is asked again the next time). Nothing is read under Claude Science's own folders; the file's bytes, when asked for, come through the shelf's queue and its 8 MB cap (`KeepDependencies.fetch`), as Add to Shelf's do. A figure whose README has no `source_row` (a pinned answer, or a last answer standing in for the one that showed it) has no offer, and neither has a document or a table. A **legend file** is a prose file (`md`, `markdown`, `txt`) of at most 1,000,000 bytes and not empty, other than the figure itself, whose name has "legend" in it (any case) or whose stem is the figure's stem (any case). Several are offered best first, at most six: the stem match; a legend for this figure (its name has the figure's stem or a number the figure's name has: `fig2_legend.md` for `fig2_zprime.png`); a legend with no number in its name (`FIGURE_LEGENDS_final.md`); a legend that names another figure (`fig1_legend.md`); the answer's own order inside each. A number in a name is a run of one to three digits, not part of a date or a version ("v2"); "S2", "figS2" and a name with "supp" or "extended" in it are supplementary figures'.
 
 *The states.* Legend empty: **Use Claude's legend**. A legend written, or typed and not yet saved: **Replace with Claude's legend…**, which asks once (a confirmation dialog: "Replace your legend?", "Your legend will be replaced with Claude's, from FIGURE_LEGENDS_final.md. Undo is on the line that follows."), and nothing is fetched or changed before the answer. Several files: the name is a small menu (the best one shown, all of them listed; picking one uses it at once) and the words use the best. No line while the field has something to settle (a README changed in another app, a save that failed, a README that can't be read: their own lines say so), and none while the field holds exactly what Claude's legend put in (`ShelfClaudeLegend.applied`), until it is edited or emptied.
 

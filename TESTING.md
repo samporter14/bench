@@ -323,6 +323,20 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, merging 1.0.7: Codex's branch with the right-pane fix
+
+- ✅ **Codex's branch validated where its sandbox couldn't** (`g/codex-107` at 4225954, eight commits from 1.0.6).
+  The full suite in the ordinary environment: 4,356 tests in 568 suites pass. That includes the thumbnail, image,
+  pasteboard, preferences and file-watching tests that failed or crashed under Codex's sandbox, so those were the
+  sandbox, not the code.
+- ✅ **Reviewed:** the README (neutral wording, one new picture with made-up content only, no metadata), Keep's
+  `source_row`, the folder-keyed Undo count, and the document card's captures in both themes and at the narrowest
+  size.
+  - Noted for later: `Shelf.removed` compares folder URLs where the old code compared paths. The scanner and a new
+    folder build their URLs the same way (`KeptDisk.swift` 712–717 and 761), so they match today.
+- ✅ **Merged with main**, which holds the right-pane fix (958bb95). The only conflict was this file. The combined
+  suite is below.
+
 ## 2026-10-26, a picture open large in Claude Science's viewer gets Capsid's items (`g/rightpane-figure`, from main 87ea69b, Capsid 1.0.6)
 
 Sam: right-clicking a picture open large in the right-hand viewer showed the page's own menu and none of Capsid's items, while
@@ -400,6 +414,70 @@ nothing installed, merged or pushed.
   Add to Shelf from the viewer, which Sam has not confirmed. **A limit, not an unknown**: in the single-column layout (no session
   beside the panel) there is no tab strip, so a document open in the viewer gets no items (`tile-unnamed`); a picture there is found by
   its address as always.
+
+## 2026-10-26, Capsid 1.0.7 (Codex): Keep provenance, note Undo and document reading cards
+
+- **Build and focused checks.** The package and tests build with two jobs. After all mutation checks were restored
+  and the document menu's source-wiring assertion was updated:
+  `✔ Test run with 186 tests in 26 suites passed after 0.187 seconds.` These cover document reads and rendering,
+  Keep records, plans, versions and source replies, README parsing, note adds and Undo, figure duplicates,
+  removal and restore, the diagnostic breadcrumb, and existing note-card rules. These are automated checks,
+  not a live app walkthrough.
+- **Keep's source reply.** A new test round-trips a known source row into a Shelf item, checks legend eligibility
+  and source navigation, accepts row zero, and excludes pinned, fallback, missing and different-version answers.
+  Leaving the quoted answer unticked still retains a known source row.
+- **Immediate note Undo.** The temporary-disk test checks the count before another scan. Removals track folders,
+  so notes and duplicate figure folders both count correctly.
+- **Approved UI changes.** Ordinary Markdown and text documents now show their words, with a quiet source header
+  and a closed What Claude said disclosure. The header and More retain file actions; figures and tables keep
+  their preview cards. Filename extensions use full muted ink. The compatibility breadcrumb now includes tiles.
+- **Bounded document reader.** Eleven tests cover supported types, actual Markdown styling and literal plain
+  text, the fallback card, menu actions, size and UTF-8 checks, disk failures, a four-entry LRU, changed files,
+  cancellation and an older read completing after a newer read with the same file stamp. Disk reads use KeptDisk;
+  Markdown parses off the main actor. Source bytes are capped at 256 KiB per file; unreadable or offloaded files
+  use the old card. The bound does not include attributed-string overhead.
+- **Mutation checks.** Setting Keep's source row to nil and removing folder tombstones failed two tests with
+  seven issues. Removing document request ownership, the post-read stamp check, cache eviction and the pre-read
+  size guard failed four tests with five issues. Production files were restored before the passing checks.
+- **Offscreen captures.** The original two conditional snapshot tests passed and produced 28 PNGs: short/long
+  notes at normal/narrow widths and ten Ask states, in light and dark. The new document snapshot test passed and
+  produced 22 PNGs: short/long Markdown, plain text, figure/table comparisons at normal/minimum content size,
+  and missing-document fallback at minimum size, all in both themes. Each image was inspected for names and
+  paths; only synthetic fixtures appear. No live window was opened. README adds just one image,
+  `docs/ask-another-model.png` (215,051 bytes); the old Shelf image is unchanged.
+- **Capture limits.** Seeded figure/table images still appear as placeholders because decoding fails in this
+  execution environment. The old note harness clips its narrow mock bar; the new document harness adds the
+  bar above 620 by 480 points of content and does not clip it. Short documents read cleanly, long ones fade
+  above the actions, and the disclosure remains reachable. Actual scrolling, selection, VoiceOver, drag and
+  Quick Look still need a live check. Layout comparisons do not certify thumbnail decoding.
+- **Full suite did not complete.** The final UI-round full run exited 1 with unexpected signal code 5 at
+  `BenchTests/ShelfThumbnailsTests.swift:330`, a nil image force-unwrap in
+  `bytesForAKeptVersionReplaceItsPictureAtItsNewCost`. It recorded 19 failing test names before the abort.
+  One was an old source-string assertion, `theDetailDrawsTheMenuFromTheRules`, which expected the menu call
+  without its new document argument. That assertion was updated and passes in the 186-test run above.
+  The full suite was not repeated after this test-only correction. There is no final `✔ Test run with` line
+  for the full run and no full-suite pass is claimed.
+- **Other unresolved validation failures.** Pasteboard, image/type, preferences, service, asset-catalog and
+  swap-script checks failed in the full run. The prior nonvisual round also hit file-watch and installed
+  Tailscale signature checks, and crashed at thumbnail line 287; that crash also happened alone.
+  The UI capture run had five pasteboard failures despite its snapshot test passing. No load flake has been
+  confirmed. Run the full suite in the ordinary development environment before merge; the detailed private
+  handoff preserves names and logs. These failures have not been counted as passes.
+- Commands used separate temporary compiler/package caches and SwiftPM's `--disable-sandbox`. Native service
+  and permission errors remained in this execution environment. Only one Swift command ran at a time, with
+  at most two jobs. Existing compiler warnings remain. No dependencies, version, installed app or live services
+  changed; no merge, push, tag, install or release.
+- The README now covers Shelf text, Claude's legend, Ask Another Model and Mac/phone message limits. Its local
+  links resolve; release download, install-script and Nidus targets were checked against GitHub, and Tailscale
+  resolved. The download size is 18 MB; the historical idle measurement is labelled as such.
+- **Housekeeping.** All nine specified clean, merged worktrees were moved to the Trash, their records pruned,
+  and the 60 original merged branch candidates deleted with `git branch -d`, after rechecking each. The main
+  checkout, prepared Codex checkout, newer right-pane worktree, scripts, screenshots, remotes and older separate
+  improvements clone were retained. The private handoff lists every move, pruned record and deleted branch.
+- **Live checks still needed.** Keep-to-Shelf legend and exact reply landing; conversation-menu note Undo;
+  duplicate folders and external/iCloud disks; document scrolling, selection, disclosure, keyboard, VoiceOver,
+  drag and Quick Look in both themes at minimum size. No real conversations or Kept files were used. The eight
+  wider review findings remain open. Source-action restyling and search-progress UI were not approved or changed.
 
 ## 2026-10-26, Capsid 1.0.6 released and installed
 

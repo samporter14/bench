@@ -4,7 +4,8 @@
 // of its first lines, as a title of its first words, and whole. Now its card is one quiet
 // header ("Note · Plate reader QC · Assay development · 11:12 AM"), the passage set as a
 // quotation, and the three controls; the picture's drag and Quick Look stay reachable
-// (the header, ⋯, the grid card); an ordinary document, figure or table keeps its card;
+// (the header, ⋯, the grid card); figures and tables keep their cards; ordinary prose
+// documents have a separate reader since 1.0.7;
 // and a note whose words can't be read is drawn as a document is. The rules are pure and
 // made up here; the card's wiring is read from the source, as ShelfDaysTests does; the
 // disk work uses a folder made for each test and a private pasteboard.
@@ -153,7 +154,7 @@ struct ShelfNoteFormTests {
         #expect(form(note(), .none) == .ordinary)
     }
 
-    @Test func aDocumentAFigureAndATableKeepTheirCard() {
+    @Test func itemsWithoutDocumentReadingsKeepTheirPreviewCard() {
         let document = ShelfRules.items(from: [result("qc_notes.md", folder: "qc_notes")])[0]
         let numbered = ShelfRules.items(from: [result("note.md", folder: "note", version: "v-3")])[0]
         let figure = ShelfRules.items(from: [result("z_prime.png", folder: "z_prime", version: "v-1")])[0]
@@ -169,7 +170,7 @@ struct ShelfNoteFormTests {
     /// picture, and a document's menu.
     @Test func theMenuFollowsTheCardNotTheFile() {
         let view = FindRepo.source("Kept/ShelfView.swift")
-        #expect(view.contains("ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode, note: drawsAsNote)"))
+        #expect(view.contains("ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode, note: drawsAsNote, document: drawsAsDocument)"))
         #expect(view.contains("private var drawsAsNote: Bool { Self.form(for: item, reading: reading) == .note }"))
     }
 }
@@ -375,12 +376,12 @@ struct ShelfNoteOnceTests {
             #expect(!main.contains(word), "a note's card says its words once: \(word)")
         }
         // The body chooses between the two from the rule the tests above pin.
-        #expect(view.contains("switch Self.form(for: item, reading: reading) {\n                case .note: noteMain\n                case .ordinary: ordinaryMain"))
+        #expect(view.contains("switch Self.form(for: item, reading: reading, document: documentReading) {\n                case .note: noteMain\n                case .ordinary: ordinaryMain"))
     }
 
     @Test func anOrdinaryCardStillHasItsPictureItsNameAndItsSourceLine() {
         let view = FindRepo.source("Kept/ShelfView.swift")
-        let main = slice(view, from: "private var ordinaryMain: some View", to: "/// A note's main column")
+        let main = slice(view, from: "private var ordinaryMain: some View", to: "/// A document's words")
         #expect(main.contains("preview\n"))
         #expect(main.contains("ShelfName(parts: item.nameParts, size: 17, weight: .semibold)"))
         #expect(main.contains("Text(ShelfRules.sourceLine(for: item))"))
@@ -450,7 +451,7 @@ struct ShelfPassageLookTests {
 // MARK: Drawn, and read back
 
 /// The card drawn offscreen (no window, nothing on a display) and read back by the system's text recognition: how many
-/// times a note's first words are on it, and that a document's picture still is. The same bitmap path as the snapshot
+/// times a note's first words are on it, and that a document shows its text. The same bitmap path as the snapshot
 /// tests, in light only.
 @MainActor
 struct ShelfNoteRenderedTests {
@@ -477,7 +478,7 @@ struct ShelfNoteRenderedTests {
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
     }
 
-    @Test func aNotesFirstWordsAreOnItsCardOnceAndADocumentsPictureIsStillThere() async throws {
+    @Test func aNotesFirstWordsAreOnItsCardOnceAndADocumentShowsItsText() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("note-card-render-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }
         let disk = KeptDisk(root: { folder })
@@ -507,7 +508,7 @@ struct ShelfNoteRenderedTests {
         let document = try #require(model.items.first { $0.fileName == "qc_notes.md" })
         let documentLines = try await recognised(card(document), size: CGSize(width: 900, height: 300))
         #expect(documentLines.contains { $0.localizedCaseInsensitiveContains("qc_notes") }, "the name: \(documentLines)")
-        // Only the picture of the file has its heading; the card's own words are what Claude said.
-        #expect(documentLines.contains { $0.localizedCaseInsensitiveContains("Plate reader QC, 21 October") }, "its picture: \(documentLines)")
+        // The document itself is now the reading content, with its filename in the quiet header.
+        #expect(documentLines.contains { $0.localizedCaseInsensitiveContains("Plate reader QC, 21 October") }, "its rendered text: \(documentLines)")
     }
 }
