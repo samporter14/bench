@@ -553,7 +553,7 @@ struct ShelfDetail: View {
         .accessibilityActions {
             // What moved into ⋯, still a VoiceOver action away.
             ForEach(more.filter { $0 != .divider }, id: \.self) { entry in
-                Button(entry.spoken) { perform(entry) }
+                Button(entry == .exportPDF ? model.exportSpoken(from: item) : entry.spoken) { perform(entry) }
             }
         }
         .padding(.horizontal, ShelfRules.gutter)

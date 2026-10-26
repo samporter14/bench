@@ -6103,7 +6103,9 @@ clicked, ⌘A takes everything shown; a plain click, an arrow key or Esc goes
 back to one. While several are picked the cards wear their page number, and
 a card in place of the detail says how many, shows the pages small, and holds
 the one clay action, **Export 3 Figures as PDF…** (the number picked; **Export
-Figure as PDF…** for one). The same command is a quiet pill in the title bar
+Figure as PDF…** for one; since 1.0.6, when a note, a document or a table is
+among them, **Export 3 Items as PDF…**, and **Export as PDF…** for one that
+isn't a figure, VoiceOver's action likewise). The same command is a quiet pill in the title bar
 once two or more are picked (board 12), in the detail's ⋯ and a card's menu
 with one, and ⌘P with one or several: the key is a button of its own that
 nothing shows (`ShelfExportPDFKey`), and the pill has none, so it never asks

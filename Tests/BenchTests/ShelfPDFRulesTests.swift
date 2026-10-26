@@ -185,6 +185,11 @@ struct ShelfPDFNameTests {
         // VoiceOver hears the same words without the ellipsis.
         #expect(ShelfPDFRules.exportSpoken(count: 1) == "Export Figure as PDF")
         #expect(ShelfPDFRules.exportSpoken(count: 3) == "Export 3 Figures as PDF")
+        // A note, a document or a table among them isn't called a figure.
+        #expect(ShelfPDFRules.exportName(count: 1, allFigures: false) == "Export as PDF\u{2026}")
+        #expect(ShelfPDFRules.exportName(count: 3, allFigures: false) == "Export 3 Items as PDF\u{2026}")
+        #expect(ShelfPDFRules.exportSpoken(count: 1, allFigures: false) == "Export as PDF")
+        #expect(ShelfPDFRules.exportSpoken(count: 3, allFigures: false) == "Export 3 Items as PDF")
         // The title bar's pill has no count, the progress has the page it is on, the panel's button is one word.
         #expect(ShelfPDFRules.exportPillName == "Export as PDF\u{2026}")
         #expect(ShelfPDFRules.exporting(done: 0, total: 1) == "Exporting\u{2026}")
@@ -211,14 +216,23 @@ struct ShelfPDFNameTests {
         let shelf = KeptDemo.shelf(index: index, root: root)
         await index.refreshAndWait()
         let model = ShelfModel(shelf: shelf, pdf: ShelfPDFMaker(dependencies: .declining))
-        model.pick(model.shown[0].id, .only)
-        #expect(model.exportName(from: model.shown[0]) == "Export Figure as PDF\u{2026}")
+        let figures = model.shown.filter { $0.kind == .figure }
+        let documents = model.shown.filter { $0.kind == .document }
+        try #require(figures.count >= 4 && !documents.isEmpty)
+        model.pick(figures[0].id, .only)
+        #expect(model.exportName(from: figures[0]) == "Export Figure as PDF\u{2026}")
         // A card outside the picks is exported alone, whatever is picked.
-        model.pick(model.shown[2].id, .toggle)
-        model.pick(model.shown[4].id, .toggle)
+        model.pick(figures[1].id, .toggle)
+        model.pick(figures[2].id, .toggle)
         #expect(model.pickCount == 3)
-        #expect(model.exportName(from: model.shown[4]) == "Export 3 Figures as PDF\u{2026}")
-        #expect(model.exportName(from: model.shown[7]) == "Export Figure as PDF\u{2026}")
+        #expect(model.exportName(from: figures[2]) == "Export 3 Figures as PDF\u{2026}")
+        #expect(model.exportName(from: figures[3]) == "Export Figure as PDF\u{2026}")
+        // A document isn't called a figure, alone or among the picks; VoiceOver says the same.
+        #expect(model.exportName(from: documents[0]) == "Export as PDF\u{2026}")
+        #expect(model.exportSpoken(from: documents[0]) == "Export as PDF")
+        model.pick(documents[0].id, .toggle)
+        #expect(model.exportName(from: figures[0]) == "Export 4 Items as PDF\u{2026}")
+        #expect(model.exportSpoken(from: figures[0]) == "Export 4 Items as PDF")
     }
 
     /// The wiring the names can't see: the old name is gone from every file of the command, ⌘P stays, the save panel's

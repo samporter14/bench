@@ -310,13 +310,17 @@ enum ShelfPDFRules {
 
     /// What the command is called where there is room for the count: "Export Figure as PDF…" for one,
     /// "Export 3 Figures as PDF…" for several. The save panel opens on it and the file is "Lab meeting <date>.pdf".
-    static func exportName(count: Int) -> String {
-        count > 1 ? "Export \(count) Figures as PDF\u{2026}" : "Export Figure as PDF\u{2026}"
+    /// What isn't all figures (a note, a document, a table among them) says what it is (since 1.0.6): "Export as
+    /// PDF…" for one, "Export 3 Items as PDF…" for several.
+    static func exportName(count: Int, allFigures: Bool = true) -> String {
+        guard allFigures else { return count > 1 ? "Export \(count) Items as PDF\u{2026}" : exportPillName }
+        return count > 1 ? "Export \(count) Figures as PDF\u{2026}" : "Export Figure as PDF\u{2026}"
     }
 
     /// The same, as VoiceOver says it: no ellipsis.
-    static func exportSpoken(count: Int) -> String {
-        count > 1 ? "Export \(count) Figures as PDF" : "Export Figure as PDF"
+    static func exportSpoken(count: Int, allFigures: Bool = true) -> String {
+        guard allFigures else { return count > 1 ? "Export \(count) Items as PDF" : "Export as PDF" }
+        return count > 1 ? "Export \(count) Figures as PDF" : "Export Figure as PDF"
     }
 
     /// The title bar's pill. Short, because at the window's narrowest the bar also holds "Shelf", the project pill and

@@ -395,6 +395,12 @@ or pushed, the real Kept folder and `~/.claude-science` untouched.
   Keep alike). Three new tests cover what comes off and what stays: significance stars, a lone star, snake_case,
   inline and fenced code. Five expectations changed from Claude's raw `**…**` to the plain words. The 177 legend
   and Keep tests pass.
+- ✅ **A note's detail card says its words once** (`g/note-polish`, Sonnet 5.5). Merged after a look at its before
+  and after captures: a quiet "Note · session · project · time" header, the passage as a quotation with a rule at
+  its edge, and Quick Look and Show in Finder in its ⋯ menu.
+- ✅ **A note, document or table isn't called a figure** when it's exported: "Export as PDF…" for one, "Export 3
+  Items as PDF…" with one among the picks, and VoiceOver's action likewise. The card-menu test now picks by kind.
+  The 126 Shelf and export tests pass.
 
 ## 2026-10-26, Capsid 1.0.6 (OpenCode): the Shelf searches inside notes, a note shows its passage, a menu for two files of one name, a tile's selection item, Claude's legend in Keep
 

@@ -123,7 +123,21 @@ extension ShelfModel {
     /// The card menu's name for the command: "Export 3 Figures as PDF…" on a card among the picks, which is what it
     /// exports, else "Export Figure as PDF…", the card alone.
     func exportName(from item: ShelfItem) -> String {
-        ShelfPDFRules.exportName(count: picked.contains(item.id) ? picked.count : 1)
+        let (count, allFigures) = exporting(from: item)
+        return ShelfPDFRules.exportName(count: count, allFigures: allFigures)
+    }
+
+    /// The same, as VoiceOver offers it.
+    func exportSpoken(from item: ShelfItem) -> String {
+        let (count, allFigures) = exporting(from: item)
+        return ShelfPDFRules.exportSpoken(count: count, allFigures: allFigures)
+    }
+
+    /// How many a card's Export as PDF… would export (the picks when the card is one, else the card), and whether
+    /// they are all figures, so that a note or a document isn't called a figure.
+    private func exporting(from item: ShelfItem) -> (count: Int, allFigures: Bool) {
+        guard picked.contains(item.id) else { return (1, item.kind == .figure) }
+        return (picked.count, items.filter { picked.contains($0.id) }.allSatisfy { $0.kind == .figure })
     }
 
     /// Export as PDF… from a card's menu: on the picks when that card is one of them, else on that card alone.
