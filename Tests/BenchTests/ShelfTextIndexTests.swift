@@ -521,7 +521,9 @@ struct ShelfTextManyTests {
         await texts.waitUntilRead()
         let indexed = clock.now - start
         #expect(files.reads == 500)
-        #expect(indexed < .seconds(10), "indexing took \(indexed)")
+        // Reading is utility work: alone it takes a fraction of a second, but in the full suite it waits behind
+        // thousands of tests, so this only guards against a stall. The typing budget below is the one that matters.
+        #expect(indexed < .seconds(60), "indexing took \(indexed)")
 
         // Typing: every keystroke of a word searches all 500.
         let typing = clock.now
