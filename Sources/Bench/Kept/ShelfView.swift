@@ -21,8 +21,8 @@ enum ShelfLook {
     static let cardEdge = Solanum.hairline.opacity(0.8)
     /// The detail card's edge, between the hairline and the strong edge (ink at 20%).
     static let detailEdge = Solanum.strong.opacity(0.67)
-    /// An extension after a name: quieter than a caption.
-    static let extensionInk = Solanum.muted.opacity(0.72)
+    /// An extension after a name: quiet, with the full muted contrast in both themes.
+    static let extensionInk = Solanum.muted
     /// A card's picture: as wide as its column, this much less tall (board 12's 285 by 150).
     static let tileAspect: CGFloat = 285.0 / 150.0
     static let tileRadius: CGFloat = 12
