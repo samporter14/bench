@@ -6055,6 +6055,32 @@ Each of the ⋯ items is also a VoiceOver action on the card (`ShelfRules.moreMe
 A note made by Add Selection to Shelf has a card of its own, with no picture and no
 title (a header and its passage, then these controls, and Quick Look and Show in
 Finder at the head of its ⋯: *Add Selection to Shelf*, above).
+Since 1.0.7, an ordinary Markdown or text document (`md`, `markdown`, `txt`,
+`text`, `rst`) also has a reading card (`ShelfDocumentReading.swift`,
+`ShelfDocumentCard.swift`). Its quiet header is the filename, session, project
+and time, with the same drag and double-click Quick Look as a note's. There is
+no paper thumbnail or repeated title. Markdown uses `AnswerMarkdown` and the
+Reference text view at 14 on 21; plain text keeps its marks. The reading area is
+no wider than 600 points and at most 280 high, less in a short window, with the
+note's bottom fade while more is below. **What Claude said** is a disclosure
+below the document, closed when another item is selected; a fallback last
+answer still says so inside it. Copy still copies the document's file. Quick
+Look and Show in Finder open its More menu, followed by its existing actions.
+Figures, tables and other formats keep the preview layout.
+
+The document is read only when selected, through `KeptDisk` off the main actor;
+Markdown parsing also runs off the main actor. Four rendered documents are
+cached by path, modification date and size, with the least recently looked at
+let go first. Reads are capped at 256 KiB; oversized, missing, empty, non-UTF-8,
+NUL-containing and iCloud-offloaded files fall back to the preview card. A file
+changed during a read is not published, and cancelled or superseded requests
+cannot replace a newer result. No file is fetched from iCloud and no document
+content is logged. The cap bounds source bytes, not attributed-string overhead.
+
+Since 1.0.7, filename extensions use `Solanum.muted` without another opacity
+reduction, keeping the quiet regular weight while improving small-text contrast
+on both raised surfaces.
+
 An item kept with data and code also shows its legend field and files below,
 so nothing the Kept window had is lost; a figure shelved and later kept with
 data and code is one item, shown from the richer folder. Space is Quick Look,

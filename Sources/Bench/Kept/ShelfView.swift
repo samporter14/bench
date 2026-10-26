@@ -484,6 +484,7 @@ struct ShelfDetail: View {
     var previewWidth: CGFloat = 250
     @State private var copied = false
     @State private var sayingMore = false
+    @State private var showingClaude = false
     /// The card's height as measured; a guess until then, so it never fills the window for a frame.
     @State private var contentHeight: CGFloat = 200
 
@@ -494,17 +495,23 @@ struct ShelfDetail: View {
     private var reading: ShelfPassages.Reading { model.passages.reading(for: item) }
     /// Whether the card is a note's: its header and its passage, with no picture and no title.
     private var drawsAsNote: Bool { Self.form(for: item, reading: reading) == .note }
-    private var more: [ShelfRules.MoreItem] { ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode, note: drawsAsNote) }
+    private var documentReading: ShelfDocumentReadings.Reading { model.documents.reading(for: item) }
+    private var drawsAsDocument: Bool { Self.form(for: item, reading: reading, document: documentReading) == .document }
+    private var more: [ShelfRules.MoreItem] {
+        ShelfRules.moreMenu(canKeep: item.canKeepWithDataAndCode, note: drawsAsNote, document: drawsAsDocument)
+    }
 
-    /// The two cards: an ordinary item's, with its picture and name, and a note's.
-    enum Form: Equatable, Sendable { case ordinary, note }
+    /// Preview cards, notes with literal passages, and documents with rendered text.
+    enum Form: Equatable, Sendable { case ordinary, note, document }
 
     /// A note's card is a note's from the moment it is shown, before its words are read (so it doesn't change shape
     /// when they arrive), unless they are known to be missing: a note whose file is gone, put away in iCloud, not
     /// text or empty has only its file to show, and is drawn as any document is, picture and name. Everything else
-    /// is an ordinary item's, as before the note polish.
-    static func form(for item: ShelfItem, reading: ShelfPassages.Reading) -> Form {
-        item.isSelectionNote && reading != .none ? .note : .ordinary
+    /// keeps its preview unless a supported ordinary document has a reading available (since 1.0.7).
+    static func form(for item: ShelfItem, reading: ShelfPassages.Reading, document: ShelfDocumentReadings.Reading = .none) -> Form {
+        if item.isSelectionNote && reading != .none { return .note }
+        if ShelfDocumentReading.accepts(item) && document != .none { return .document }
+        return .ordinary
     }
 
     /// Board 12's 250 points, less in a narrow window so the three controls stay on one row beside it.
@@ -519,9 +526,10 @@ struct ShelfDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                switch Self.form(for: item, reading: reading) {
+                switch Self.form(for: item, reading: reading, document: documentReading) {
                 case .note: noteMain
                 case .ordinary: ordinaryMain
+                case .document: documentMain
                 }
                 if item.hasMore {
                     Solanum.hairline.frame(height: 1).padding(.top, 18)
@@ -544,7 +552,13 @@ struct ShelfDetail: View {
         .task(id: item.id) { await model.claudeLegend.look(at: item) }
         // A note's words, read when its card is shown and again when the folders are read.
         .task(id: item.id) { await model.passages.look(at: item) }
-        .onReceive(model.index.$results.dropFirst()) { _ in Task { await model.passages.look(at: item) } }
+        .task(id: item.fileURL) { await model.documents.look(at: item) }
+        .onReceive(model.index.$results.dropFirst()) { _ in
+            Task {
+                await model.passages.look(at: item)
+                await model.documents.look(at: item)
+            }
+        }
         .frame(height: min(contentHeight, maxHeight))
         .background(Solanum.raised, in: .rect(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(ShelfLook.detailEdge, lineWidth: 1))
@@ -561,6 +575,7 @@ struct ShelfDetail: View {
         .padding(.top, 8)
         .onChange(of: item.id) { _, _ in
             sayingMore = false
+            showingClaude = false
             copied = false
         }
     }
@@ -614,6 +629,44 @@ struct ShelfDetail: View {
             .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
         }
     }
+
+    /// A document's words are the main content. Claude's accompanying reply remains available without repeating
+    /// the document, in a disclosure that starts closed for each item.
+    private var documentMain: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ShelfDocumentHeader(item: item, quickLook: quickLook)
+            if let document = model.documents.document(for: item) {
+                ShelfDocumentText(document: document, fileName: item.fileName,
+                                  maxHeight: Self.documentHeight(forCard: maxHeight))
+                    .id(item.id)
+                    .padding(.top, 14)
+            } else {
+                Color.clear.frame(height: ShelfPassageText.lineHeight).padding(.top, 14)
+            }
+            if !said.isEmpty {
+                DisclosureGroup("What Claude said", isExpanded: $showingClaude) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(said)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Solanum.ink)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let note = ShelfRules.lastAnswerNote(for: item) {
+                            Text(note).foregroundStyle(Solanum.muted)
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.system(size: Solanum.captionSize))
+                .foregroundStyle(Solanum.muted)
+                .padding(.top, 12)
+            }
+            buttons.padding(.top, 20)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    static func documentHeight(forCard height: CGFloat) -> CGFloat { min(280, max(72, height - 160)) }
 
     /// A note's main column: what it is and where it came from, its words, and the controls under them. The words are
     /// the card's one big thing, in the room the picture had; they are not said again as a title or a picture.
@@ -682,7 +735,7 @@ struct ShelfDetail: View {
             .menuIndicator(.hidden)
             .buttonStyle(ShelfMoreStyle())
             .fixedSize()
-            .help(drawsAsNote ? "Quick Look, Show in Finder, Export as PDF, Remove" : "Keep with Data and Code, Export as PDF, Remove")
+            .help(drawsAsNote || drawsAsDocument ? "Quick Look, Show in Finder, Export as PDF, Remove" : "Keep with Data and Code, Export as PDF, Remove")
             .accessibilityLabel("More for \(item.fileName)")
         }
     }

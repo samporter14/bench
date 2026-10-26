@@ -723,6 +723,7 @@ struct ReferenceTextView: NSViewRepresentable {
     /// (AskModel/): a selection of the reader's stays where it was, as long
     /// as the new text reaches it. Off: a new text starts unselected.
     var keepsSelection = false
+    var accessibilityLabel = "Claude\u{2019}s answer"
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         /// The text last put in, by identity: the model renders once per text.
@@ -773,7 +774,7 @@ struct ReferenceTextView: NSViewRepresentable {
             .foregroundColor: Solanum.inkColor, .underlineStyle: NSUnderlineStyle.single.rawValue,
             .underlineColor: NSColor(Theme.clay), .cursor: NSCursor.pointingHand,
         ]
-        textView.setAccessibilityLabel("Claude\u{2019}s answer")
+        textView.setAccessibilityLabel(accessibilityLabel)
         textView.delegate = context.coordinator
         selection.textView = textView
         return textView
@@ -781,6 +782,7 @@ struct ReferenceTextView: NSViewRepresentable {
 
     func updateNSView(_ textView: NSTextView, context: Context) {
         context.coordinator.ask = ask
+        textView.setAccessibilityLabel(accessibilityLabel)
         guard context.coordinator.shown !== text else { return }
         context.coordinator.shown = text
         let kept = textView.selectedRange()
