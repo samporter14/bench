@@ -14,7 +14,12 @@
 // and a card of a file with no picture (Markdown), which the script finds by the
 // name they show, drawn with the markup of the bundle's ArtifactTile and tray
 // card, on a page whose address is a session's, and a passage selected in the
-// tile for Add Selection to Shelf (since 1.0.6). The page's icons
+// tile for Add Selection to Shelf (since 1.0.6). The page's own viewer for a
+// picture is drawn too, as the bundle draws it (a tile in the right-hand
+// panel, the zoom-and-pan wrapper whose stylesheet gives its images
+// `pointer-events: none`, the annotation layer over the picture, the panel's tab
+// strip), where WebKit's own hit test shows the picture is not under the pointer;
+// the tile of a Markdown file in that panel is named by its shown tab. The page's icons
 // are drawn stand-ins (its icon font is not here), so the PNGs show how
 // Capsid's items sit among items of the same classes, not a match of glyphs.
 // Without the variable the test does nothing.
@@ -70,6 +75,25 @@ struct FigureMenuSnapshotTests {
         #doccard{position:absolute;left:24px;top:270px;width:128px;height:96px;border-radius:12px;background:hsl(var(--bg-000));box-shadow:0 0 0 1px hsl(var(--border-300) / .15);overflow:hidden}
         #doccard .preview{height:70px;padding:8px;font-size:7px;line-height:9px;color:hsl(var(--text-400));overflow:hidden}
         #doccard .label{display:flex;font-size:10.5px;font-weight:500;padding:4px 8px;color:hsl(var(--text-100))}
+        #viewerpane{position:absolute;left:190px;top:270px;width:300px;height:320px;border-radius:12px;background:hsl(var(--bg-000));box-shadow:0 0 0 1px hsl(var(--border-300) / .15);overflow:hidden;display:flex;flex-direction:column}
+        #viewerpane .tabs{display:flex;height:30px;align-items:stretch;flex-shrink:0;background:hsl(var(--bg-100));border-bottom:1px solid hsl(var(--border-300) / .15)}
+        #viewerpane .tab{display:flex;align-items:center;padding:0 10px;font-size:12px;color:hsl(var(--text-400))}
+        #viewerpane .tab[data-shown]{color:hsl(var(--text-000));background:hsl(var(--bg-000))}
+        #viewerpane .tab button{display:flex;gap:6px;align-items:center;border:0;padding:0}
+        #viewerpane .tile{display:flex;flex-direction:column;flex:1;min-height:0}
+        #viewerpane header{display:flex;align-items:center;justify-content:space-between;height:36px;padding:0 10px;flex-shrink:0}
+        #viewerpane .box{display:flex;align-items:center;gap:6px}
+        #viewerpane .stepper{display:inline-flex;font-size:11px;color:hsl(var(--text-400))}
+        #viewerpane .stepper button{border:0;padding:0 3px}
+        #viewerpane .more{width:28px;height:28px;border-radius:8px;font-size:16px;line-height:1;color:hsl(var(--text-400))}
+        #viewerpane .region{position:relative;flex:1;min-height:0;overflow:auto}
+        #viewerpane .md{padding:12px 14px;font-size:13px;line-height:19px;color:hsl(var(--text-100))}
+        #viewerpane h3{margin:0 0 6px;font-size:15px;font-weight:600}
+        #viewerpane p{margin:0 0 8px}
+        .viewerroot{position:relative;display:flex;align-items:center;justify-content:center;height:100%;overflow:hidden}
+        .react-transform-wrapper{position:relative;overflow:hidden;width:100%;height:100%;margin:0;padding:0}
+        .react-transform-component{display:flex;flex-wrap:wrap;width:100%;height:100%;align-items:center;justify-content:center;margin:0;padding:0;transform-origin:0 0}
+        .react-transform-component img{pointer-events:none}
         </style></head><body>
         <div id="card"><div class="thumb"><img id="figure" alt="z_prime.png" style="width:100%;height:100%;opacity:0"
           src="http://localhost:8123/api/artifacts/versions/\(ShelfAddressTests.version)?thumbnail=400"></div><div class="name">z_prime.png</div></div>
@@ -84,6 +108,30 @@ struct FigureMenuSnapshotTests {
             <p>Drifts after the midpoint, and the edge wells run low.</p><p>The cutoff is 0.5; plate 7 sits at 0.41.</p></div></div>
         <div id="doccard"><div data-testid="turn-tray-card" id="doccardbutton"><div class="preview" id="doccardpreview">Plate 7 drifts after the midpoint. The edge wells run low and the centre does not.</div>
           <div class="label"><span data-testid="middle-truncated-filename" title="plan_notes.md" id="doclabel">plan_notes.md</span></div></div></div>
+        <div id="viewerpane" data-pane="right">
+          <div data-testid="right-tab-strip" class="tabs"><div role="toolbar" aria-label="Open panels" style="display:flex">
+            <div class="tab" data-tab-id="t1" data-testid="right-tab"><button type="button" data-tab-btn><span aria-hidden="true">&#9638;</span><span>other_figure.png</span></button></div>
+            <div class="tab" data-tab-id="t2" data-testid="right-tab" data-shown="true"><button type="button" data-tab-btn aria-current="true"><span aria-hidden="true">&#9638;</span><span id="shownlabel">scatter_plot.png</span></button></div>
+          </div></div>
+          <div class="tile" id="vtile">
+            <header><div class="box"><span class="stepper"><div role="group" aria-label="Artifact version" style="display:flex;align-items:center"><button type="button" aria-label="Previous version">&#8249;</button><button type="button" disabled style="color:inherit">v2</button><button type="button" aria-label="Next version">&#8250;</button></div></span></div>
+              <button type="button" class="more" data-testid="artifact-actions" aria-label="More actions" aria-haspopup="menu">&#8943;</button></header>
+            <div class="region" data-testid="artifact-preview-region" id="vregion">
+              <div class="viewerroot"><div class="react-transform-wrapper"><div class="react-transform-component">
+                <div id="vbox" style="position:relative;width:220px;height:160px">
+                  <img id="viewerimg" alt="scatter_plot.png" style="display:block;width:100%;height:100%;font-size:0;color:transparent;background:linear-gradient(135deg,#6a9bcc 0%,#e8c4a0 55%,#d97757 100%)"
+                    src="http://localhost:8123/api/artifacts/versions/\(ViewerFigureScriptTests.viewerVersion)?v=\(ViewerFigureScriptTests.viewerVersion)">
+                  <div id="vlayer" style="position:absolute;top:0;right:0;bottom:0;left:0;cursor:crosshair"></div>
+                </div></div></div></div>
+            </div>
+          </div>
+          <div class="tile" id="wtile" style="display:none">
+            <header><div class="box"></div>
+              <button type="button" class="more" data-testid="artifact-actions" aria-label="More actions" aria-haspopup="menu">&#8943;</button></header>
+            <div class="region md" data-testid="artifact-preview-region" id="wregion"><h3>Plate 7</h3>
+              <p>Drifts after the midpoint, and the edge wells run low.</p><p>The cutoff is 0.5; plate 7 sits at 0.41.</p></div>
+          </div>
+        </div>
         <script>
         // Stand-in icons: drawn lines in the icon box, where the page has its icon font.
         var glyphs = {
@@ -127,6 +175,10 @@ struct FigureMenuSnapshotTests {
           if (window.__docMenu === true) {
             // What the page's menu holds for a file with no picture: no "Copy image".
             item('split', 'Open in split view'); item('provenance', 'Provenance'); item('link', 'Copy link'); item('download', 'Download');
+          } else if (window.__viewerMenu === true) {
+            // What the viewer's own menu (ImagePreview's) holds: the image items and downloads, and no Delete.
+            item('copy', 'Copy image'); item('download', 'Save image'); rule();
+            item('download', 'Download'); item('provenance', 'Export Metadata');
           } else {
             item('copy', 'Copy image'); item('viewer', 'Open in Artifact Viewer'); rule();
             item('split', 'Open in split view'); item('provenance', 'Provenance'); item('link', 'Copy link'); item('download', 'Download');
@@ -138,7 +190,7 @@ struct FigureMenuSnapshotTests {
         }
         function closeMenu() { if (shown) { shown.remove(); shown = null; } }
         // The page's own hook: cancels the Mac's menu, opens its own; closes on Escape or a click outside it.
-        ['card', 'tile', 'doctile', 'doccard'].forEach(function (id) {
+        ['card', 'tile', 'doctile', 'doccard', 'viewerpane'].forEach(function (id) {
           document.getElementById(id).addEventListener('contextmenu', function (e) {
             e.preventDefault(); e.stopPropagation();
             openMenu(e.clientX, e.clientY, window.__withDelete === true);
@@ -183,6 +235,20 @@ struct FigureMenuSnapshotTests {
           item.dispatchEvent(event);
           if (!event.defaultPrevented) { window.getSelection().removeAllRanges(); }
           return event.defaultPrevented;
+        };
+        // A right-click on the annotation layer over the viewer's picture, where the point is over the picture. The
+        // picture takes no pointer events, so the click lands on the layer, and the picture is not under the pointer.
+        window.__rightClickViewer = function () {
+          document.getElementById('vlayer').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 280, clientY: 440 }));
+        };
+        // The same tile of the panel showing a Markdown file: no name in its header, and the panel's shown tab says it.
+        window.__showPaneDoc = function () {
+          document.getElementById('vtile').style.display = 'none';
+          document.getElementById('wtile').style.display = 'flex';
+          document.getElementById('shownlabel').textContent = 'plan_notes.md';
+        };
+        window.__rightClickPaneDoc = function () {
+          document.getElementById('wregion').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 250, clientY: 440 }));
         };
         window.__rightClickDocCard = function () {
           document.getElementById('doccardpreview').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 300 }));
@@ -342,6 +408,62 @@ struct FigureMenuSnapshotTests {
             try await snapshot(view, to: directory.appendingPathComponent("doc-card-menu-\(mode).png"))
             let traces = posts.all.compactMap { $0["trace"] as? [String] }
             #expect(traces.last == ["contextmenu", "figure-document", "menu-matched", "placed"], "\(mode)")
+        }
+    }
+
+    /// The page's own viewer for a picture in a real WebKit view, with the script in its own world: the zoom-and-pan
+    /// wrapper's `pointer-events: none` on the picture, so WebKit's own hit test at the click has the layer over the picture
+    /// and not the picture (the reason the first script found nothing: `figure-none`), the right-click on the layer, the
+    /// viewer's menu (the image items and downloads, no Delete) opening, Capsid's four items at its end, a click on one and
+    /// the message with the viewer picture's version, the page's own Escape closing the menu. The same panel's tile of a
+    /// Markdown file, which has no name in its header, is named by the panel's shown tab. PNGs show both menus.
+    @Test func theViewersMenuIsDrawnAndDrivenInARealPageWhenAsked() async throws {
+        guard let path = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !path.isEmpty else { return }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let four = ["Add to Shelf", "Keep with Data and Code\u{2026}", "Open as Reference", "Show in Results"]
+        let version = ViewerFigureScriptTests.viewerVersion
+        for dark in [false, true] {
+            let mode = dark ? "dark" : "light"
+            let posts = Posts()
+            let (view, window, _) = try await loadedPage(dark: dark, posts: posts)
+            defer { window.close() }
+            await settle()
+            // What is under the pointer there, by WebKit's own hit test: the layer, and not the picture it covers.
+            let under = await js(view, "document.elementsFromPoint(280, 440).map(function (e) { return e.id || e.localName; })") as? [String]
+            #expect(under?.first == "vlayer", "\(mode): \(under ?? [])")
+            #expect(under?.contains("viewerimg") == false, "the picture takes no pointer events: \(mode): \(under ?? [])")
+            await js(view, "window.__viewerMenu = true; window.__rightClickViewer();")
+            await settle()
+            #expect(await js(view, "window.__shape()") as? [String] == ["Copy image", "Save image", "-", "Download", "Export Metadata", "-"] + four, "\(mode)")
+            let told = posts.all.first { $0["kind"] != nil }
+            #expect(told?["kind"] as? String == "image", "\(mode)")
+            #expect((told?["url"] as? String)?.hasSuffix("/api/artifacts/versions/\(version)?v=\(version)") == true, "\(mode)")
+            try await snapshot(view, to: directory.appendingPathComponent("viewer-menu-\(mode).png"))
+            let before = posts.all.count
+            await js(view, "document.querySelectorAll('[role=menu] [role=menuitem]')[4].click();")
+            await settle()
+            let chosen = posts.all.dropFirst(before).first { $0["action"] != nil }
+            #expect(chosen?["action"] as? String == "addToShelf", "\(mode)")
+            #expect(chosen?["version"] as? String == version, "the viewer picture's version: \(mode)")
+            #expect(chosen?["name"] as? String == "scatter_plot.png", "\(mode)")
+            #expect(chosen?["kind"] as? String == "image", "\(mode)")
+            #expect(await js(view, "window.__menuOpen()") as? Bool == false, "the menu closed: \(mode)")
+            #expect(posts.all.compactMap { $0["trace"] as? [String] }.last == ["contextmenu", "figure-viewer", "version-ok", "menu-matched", "placed"], "\(mode)")
+            // The panel's tile of a Markdown file: its header shows no name; the shown tab does.
+            await js(view, "window.__viewerMenu = false; window.__docMenu = true; window.__showPaneDoc(); window.__rightClickPaneDoc();")
+            await settle()
+            #expect(await js(view, "window.__shape()") as? [String] == ["Open in split view", "Provenance", "Copy link", "Download", "-"] + four, "\(mode)")
+            try await snapshot(view, to: directory.appendingPathComponent("viewer-doc-menu-\(mode).png"))
+            let beforeDoc = posts.all.count
+            await js(view, "document.querySelectorAll('[role=menu] [role=menuitem]')[5].click();")
+            await settle()
+            let document = posts.all.dropFirst(beforeDoc).first { $0["action"] != nil }
+            #expect(document?["action"] as? String == "keep", "\(mode)")
+            #expect(document?["kind"] as? String == "document", "\(mode)")
+            #expect(document?["name"] as? String == "plan_notes.md", "\(mode)")
+            #expect(document?["version"] == nil, "\(mode)")
+            #expect(posts.all.compactMap { $0["trace"] as? [String] }.last == ["contextmenu", "figure-document", "name-from-tab", "menu-matched", "placed"], "\(mode)")
         }
     }
 

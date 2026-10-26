@@ -323,6 +323,84 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, a picture open large in Claude Science's viewer gets Capsid's items (`g/rightpane-figure`, from main 87ea69b, Capsid 1.0.6)
+
+Sam: right-clicking a picture open large in the right-hand viewer showed the page's own menu and none of Capsid's items, while
+figures in the conversation worked. The log said `Figure menu: contextmenu → figure-none` there and `contextmenu → figure-beside →
+version-ok → menu-matched → placed` in the conversation. Everything ran on a made-up page (JavaScriptCore), made-up sessions and
+lists, and an offscreen WebKit view that is never shown for the captures: no daemon touched, no window shown, the app not launched,
+`/Applications` and the running Capsid untouched, nothing read under `~/.claude-science` but the served bundle's `web-dist/assets`,
+nothing installed, merged or pushed.
+
+- ✅ **Why, read in the 0.1.70 bundle (not run).** The viewer is `ArtifactTile` (`ArtifactTile-DmtoiOPx.js`, `xo` at 29312 builds the
+  picture's address, `getVersionUrl(v)?v=v`, and `case"image"` at 31165 hands it to `ImagePreview`) in the right-hand panel
+  (`RightPaneTabContent-BZFM08bq.js`, `Ha` at 41290). `ImagePreview` (`ImagePreview-C0f3P6Gf.js`) draws the picture as a plain `<img>`
+  (4144) inside react-zoom-pan-pinch's `div.react-transform-wrapper > div.react-transform-component` (3554), in a box the size of the
+  picture with the annotation layer (`vFt` in `index-DhEuR7nq.js` at 2355338, `div.absolute.inset-0`) over it. **The library's stylesheet
+  (`index.esm-D4jRnBIq.js` at 27938) gives every image in that wrapper `pointer-events: none`**, so the picture is never what a
+  right-click lands on and never in `document.elementsFromPoint`. `closest("img")` found nothing, and `pictureBeside` (the picture in the
+  stack, beside the layer: how an inline figure is found) had no picture in the stack. The menu is the same `oG` (`Artifact actions`,
+  `index` 2266305), opened by `ImagePreview`'s own handler (2807, `OFt` at 2369542): Copy image, Save image, Download, Export Metadata, no
+  red Delete. The address is `/api/artifacts/versions/<version>?v=<version>`, which `versionOf` already reads, and the `alt` is the
+  file's name.
+- ✅ **Real WebKit confirms the cause** (`theViewersMenuIsDrawnAndDrivenInARealPageWhenAsked`): with the library's one rule in the page,
+  `document.elementsFromPoint` at the click has the layer first and not the picture. The fake page's older "tile" fixtures passed because
+  their stack had the picture in it, which the viewer's never does.
+- ✅ **The fix**: when a right-click is on no picture, link or tray card, the script finds the tile it is in (by its body or its header, as
+  a file with no picture is) and takes the tile's one picture in a `.react-transform-component` (`figure-viewer`); from there it is as
+  for any figure (version from the address, the menu waited for, the items placed). It takes nothing when there is no such picture or
+  more than one. A file on the host's disk (the same wrapper in a `file-tile`, no preview region, no artifact) gets nothing.
+- ✅ **Documents in the viewer, the second finding.** `ArtifactTile` draws its title span only when it is not in "slot chrome" mode
+  (`!G && <span>`, 56789), and the panel's bindings are `slotChrome: true` (`index` 3289594). So a tile of the right-hand panel has no
+  name in its header: the panel's tab strip (`qnn`, 3279391; `FPe` 3303209) has it. "The first span in the header" was therefore the
+  version stepper's `v2` (version 2 or later) or nothing (version 1). That fits the trace Sam saw for a document in the viewer,
+  `figure-document → menu-matched → placed` with no add confirmed: the click would have looked up a file called "v2". Now the title is
+  the span that opens the header's first box and holds only text (the stepper, the buttons and the provenance breadcrumb never are), and
+  a tile with none inside `[data-pane="right"]` is named by the shown tab (`data-shown`, or `aria-current` on its button; exactly one;
+  the label is the button's last element). Steps `name-from-tab` and `tile-unnamed` say which.
+- ✅ **Checked in the bundle after a review**: (1) the header is always drawn: `kt` would portal a slot-chrome tile's header
+  elsewhere if `zt` had a provider, but `zt` is local to `ArtifactTile`, not exported, referenced four times in the chunk and
+  never provided, so the fallback `<header>` (with its More actions button) is always there, which is also what Sam's document trace
+  shows; the panel's `slotChrome: true` reaches the tile through the page's bindings (`ProjectControlPlane-ZzzhlAui.js`, 79870, spreads
+  `arn`). (2) the annotation layer's markers (`g$t`) and popover (`Rae`) render buttons, divs and spans, no `<img>`, so a picture with
+  annotations is still the tile's one picture (the "exactly one" rule would otherwise have fallen back to the file's newest version).
+  (3) the tab strip (`qnn`) and `[data-pane="right"]` are drawn only in the split layout (`split-right`); in the single-column layout a
+  document in the viewer has no name to be had and gets no items.
+- ✅ **The log** now says what a name lookup found, one line, counts only: `Figure menu: name matched 1`, `name matched 2` (three, …),
+  `name not found`, `files not read`.
+- ✅ **Tests** (33 new, `ViewerFigureTests.swift`, the fake page's viewer and tab strip in `FakeFigurePage.swift`): a right-click on the
+  layer, a marker in it, the box, the content, the wrapper, the root, the preview region, the header, the stepper and the More actions
+  button each puts Capsid's group at the end of the viewer's menu, and a click on each of the four posts the action on the viewer's
+  version (a different one from the page's others), name and `image`, and Swift runs each on that version; the stack under the click
+  has no picture in it; an untrusted right-click and an untrusted click do nothing; a picture whose address names no version
+  (`blob:`, or another origin) is found by the tab's name; no tab strip, two shown tabs, none, a blank or missing label, or a tile outside
+  the panel adds nothing and traces `tile-unnamed`; a file on disk adds nothing; two pictures in the wrapper are not a viewer; a Markdown
+  tile with a picture in it is its words, and the picture itself still its own version; the conversation's figures trace the same words
+  as before; a tile of the panel is named by its tab and not by the stepper's "v2 (old)", cleaned like any name; a tile that shows its own
+  name never reads the tab; the provenance breadcrumb is no name; a page that is not a session's gets no name; every step is a word Swift
+  reads; the lookup's lines (found, none, two and three, one file at two versions, unreadable, Show in Results, no session) and that none
+  holds the name. The inventory lists the new selectors (`.react-transform-component img`, `[data-pane="right"]`, and the tab strip's
+  already-listed ones, now read for this too; the `span` selector is gone) and one test pins them. Two older tests changed: a tile with a
+  blank name now traces `figure-none → tile-unnamed`, and the script reads three `textContent`s, not two.
+- ✅ **Mutation checks** (each broken, run, restored with `cmp`): `viewerPicture` returning null fails 75 expectations in the viewer
+  suite, and the WebKit test; the header's name read back to "the first span" fails the stepper, breadcrumb and no-name tests; the tab
+  name returning "" fails the name-from-tab tests; `>= 1` for "exactly one" fails `twoPicturesInTheViewer…`; the picture taken from the
+  wrapper with no tile round it fails `aFileOnTheHostsDisk…`.
+- ✅ **Captures** in real WebKit (offscreen), light and dark: `viewer-menu-{light,dark}.png` (the viewer's menu with Capsid's four items
+  at its end, the panel's tab strip above, the version stepper in the header) and `viewer-doc-menu-{light,dark}.png` (the same panel's
+  tile of a Markdown file, named by its tab), in `bench-wt/shots-rightpane/`. The WebKit test also drives the click, the message and the
+  page's own Escape closing the menu.
+- ✅ **The whole suite**: 4,376 tests in 566 suites pass (4,343 in 564 before), `✔ Test run with 4376 tests in 566 suites passed`; no
+  failure in the run, no flake.
+- ⏳ **Live**, which only a real right-click on the real page can say: that the viewer's picture really gives
+  `contextmenu → figure-viewer → version-ok → menu-matched → placed` (the `pointer-events: none` is read from the library's stylesheet, and
+  confirmed in WebKit for a page that has the rule, not seen on the daemon's page); that a document in the right-hand panel gives
+  `figure-document → name-from-tab → menu-matched → placed` and then `Figure menu: name matched 1` (the tab strip's markup is read
+  from the bundle and shared with Capsid's tab hooks, which work live); that the version stepper really was the old first span; and the real click on
+  Add to Shelf from the viewer, which Sam has not confirmed. **A limit, not an unknown**: in the single-column layout (no session
+  beside the panel) there is no tab strip, so a document open in the viewer gets no items (`tile-unnamed`); a picture there is found by
+  its address as always.
+
 ## 2026-10-26, Capsid 1.0.6 released and installed
 
 - ✅ Released as v1.0.6 (tag on 3339a43, "Capsid 1.0.6", by Sam with `gh release create`), marked Latest:

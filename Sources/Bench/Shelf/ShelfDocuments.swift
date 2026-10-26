@@ -77,6 +77,22 @@ enum ShelfDocument {
         return .several(ordered.map { Candidate(entry: $0.listing.element, versions: $0.versions) })
     }
 
+    // MARK: The log
+
+    /// The log line for a lookup by name, in fixed words and a count: how many
+    /// different files of the session had the name ("Figure menu: name matched
+    /// 1", "name matched 2"), none ("name not found"), or the list could not be
+    /// read (`nil`, "files not read"). The name is never in it: it is the name
+    /// of someone's file.
+    static func lookupLine(_ match: Match?) -> String {
+        switch match {
+        case nil: "Figure menu: files not read"
+        case .some(.none): "Figure menu: name not found"
+        case .some(.found): "Figure menu: name matched 1"
+        case .some(.several(let candidates)): "Figure menu: name matched \(candidates.count)"
+        }
+    }
+
     // MARK: The sentences
 
     static func notFound(_ name: String) -> String {

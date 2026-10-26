@@ -176,7 +176,11 @@ struct CompatPageHookTests {
             #"[role="menuitem"]"#, #"[data-cds="Icon"]"#,
             // A file with no picture, by its name: the card's label, the tile's body, its header and the button in it.
             #"[data-testid="middle-truncated-filename"]"#, #"[data-testid="artifact-preview-region"]"#, "header",
-            #"[data-testid="artifact-actions"]"#, "span",
+            #"[data-testid="artifact-actions"]"#,
+            // The page's viewer for a picture (the one picture in the zoom-and-pan wrapper of a tile's body), and the name
+            // of a tile of the right-hand panel, which its header does not show: the panel's shown tab.
+            ".react-transform-component img", #"[data-pane="right"]"#,
+            #"[data-testid="right-tab-strip"] [data-tab-id]"#, "[data-tab-btn]", "data-shown", "aria-current",
         ])
         #expect(ScriptLiterals.selectors(in: ModelPickerMenu.script) == [
             #"[role="menu"][data-cds="ModelSelector"], [role="menu"][data-testid="model-selector-popup"]"#, #"[role="menu"]"#,

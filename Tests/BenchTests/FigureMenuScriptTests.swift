@@ -58,7 +58,9 @@ struct FigureMenuScriptTests {
 
     // MARK: The items, after a right-click on a figure
 
-    @Test func aRightClickOnATileThenThePagesMenuGetsTheFourItems() {
+    // A picture whose pictures take pointer events, with the annotation layer over it (how the conversation draws every
+    // figure). The page's own viewer does not: see ViewerFigureTests.
+    @Test func aRightClickOnAPictureUnderALayerThenThePagesMenuGetsTheFourItems() {
         let script = page()
         script.evaluate("__rightClick(__tileImg, { under: [__layer, __tileImg, __tileBox, __tile] })")
         // The old message is still sent: the Mac's menu is a way in as well.
@@ -860,11 +862,11 @@ struct FigureMenuScriptTests {
         #expect(!text.contains("innerHTML"))
         #expect(!text.contains("outerHTML"))
         #expect(!text.contains("eval("))
-        // The only textContent it reads are a file link's own name and the name a tile shows in its header;
-        // nothing of a menu item.
-        #expect(text.components(separatedBy: "textContent").count == 3)
+        // The only textContent it reads are a file link's own name, the name a tile shows in its header and the name on the
+        // right-hand panel's shown tab (for the tiles of that panel, which show none); nothing of a menu item.
+        #expect(text.components(separatedBy: "textContent").count == 4)
         #expect(text.contains("found.textContent"))
-        #expect(text.contains("label.textContent"))
+        #expect(text.components(separatedBy: "label.textContent").count == 3)
         #expect(!text.contains("innerText"))
         // The four words are the ones the Mac's menu has.
         for word in Self.words { #expect(text.contains(word)) }

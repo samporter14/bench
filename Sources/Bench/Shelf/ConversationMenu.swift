@@ -21,10 +21,19 @@
 // action as the Mac menu's item, and the script closes the page's menu the way
 // the page does (Escape on the document).
 //
+// The page's own viewer for a picture (the side pane, a tab, the fullscreen
+// tile) draws it inside a zoom-and-pan wrapper that takes no pointer events for
+// its images, so a right-click lands on the layer over the picture or on the
+// space beside it, and the picture is in no list of what is under the pointer.
+// The script finds it from the tile instead: the one picture in the tile's body
+// that is in such a wrapper (`figure-viewer`). Its address names the version like any other
+// figure's (1.0.6 and before missed it, and the trace said `figure-none`).
+//
 // A file with no picture (Markdown, CSV, text) gets the same menu from the page
 // but its tile carries no address, only the name it shows: the Generated tray's
 // card has it as the `title` of its file-name label, and an open tile as the
-// text of the first span in its header. The script then notes the name, adds
+// text of the span that opens its header (the tiles of the right-hand panel
+// show none; their tab does). The script then notes the name, adds
 // the same four items, and a click posts `{action, kind: "document", name}`;
 // Swift finds the file of that name among the session's files
 // (ShelfDocuments.swift), and asks which when two different files have the
@@ -173,8 +182,11 @@ enum ConversationMenuMessage {
         return body["unplaced"] as? Bool == true
     }
 
-    /// The most steps a trace is read for; one right-click makes five at most.
-    static let maxSteps = 8
+    /// The most steps a trace is read for; one right-click makes eight at most
+    /// (the viewer's picture with no version, found by its tab's name, with a
+    /// passage selected: contextmenu, figure-viewer, version-none,
+    /// figure-document, name-from-tab, menu-matched, selection-offered, placed).
+    static let maxSteps = 10
 
     /// The steps a trace names, `{trace: [word, …]}`, as the script's own
     /// fixed words. Any other word is dropped, so nothing the page could put
@@ -194,16 +206,30 @@ enum ConversationMenuMessage {
 /// words, so one right-click says in Capsid's log where the items stopped
 /// (since 1.0.1, after a retry that showed nothing and logged nothing):
 /// heard; the figure found under it (a picture, a link, a tray card's
-/// thumbnail, the picture beside a layer over it) or none; a version in its
-/// address or none (and then a tile or card of a file with no picture, by its
-/// name: `figure-document`); the page's menu matched, some other menu, or no menu in
-/// the two seconds; the items placed or not; or another right-click first.
+/// thumbnail, the picture beside a layer over it, or the only picture in the
+/// page's viewer for one file) or none; a version in its address or none (and
+/// then a tile or card of a file with no picture, by its name:
+/// `figure-document`, and `name-from-tab` when a tile of the right-hand panel,
+/// which shows no name of its own, was named by its tab; or `tile-unnamed`
+/// when the tile was found and no name was to be had); the page's menu
+/// matched, some other menu, or no menu in the two seconds; the items placed
+/// or not; or another right-click first.
 enum FigureMenuStep: String, CaseIterable, Sendable {
     case contextmenu
     case figureImage = "figure-image", figureLink = "figure-link", figureCard = "figure-card"
     case figureBeside = "figure-beside", figureNone = "figure-none"
+    /// The one picture in the zoom-and-pan wrapper of the page's own viewer for a
+    /// file (the side pane, a tab, the fullscreen tile), which takes no pointer
+    /// events, so neither the click nor the stack under it names it.
+    case figureViewer = "figure-viewer"
     /// A file with no picture, found by the name its tile or card shows.
     case figureDocument = "figure-document"
+    /// The name came from the right-hand panel's shown tab: the panel's tiles
+    /// carry no name in their header.
+    case nameFromTab = "name-from-tab"
+    /// A tile (it has the button for its menu) was found and no name was to be
+    /// had for it: nothing is added, since a guess could be the wrong file.
+    case tileUnnamed = "tile-unnamed"
     case versionOK = "version-ok", versionNone = "version-none", noObserver = "no-observer"
     case menuMatched = "menu-matched", menuOther = "menu-other", menuNone = "menu-none"
     case placed, unplaced, interrupted
@@ -491,8 +517,10 @@ final class ConversationMenu {
     /// control-click), `selected`, their count, in the same message. A picture can be under a
     /// transparent layer (the page's annotation layer sits over every figure
     /// it draws), so when the click isn't on one the picture beside the thing
-    /// clicked, under the pointer, is the figure; and a card in the Generated
-    /// tray stands for its thumbnail.
+    /// clicked, under the pointer, is the figure; a card in the Generated
+    /// tray stands for its thumbnail; and in the page's own viewer for a file
+    /// (a zoom-and-pan wrapper in a tile's body, whose pictures take no pointer
+    /// events) the figure is the tile's one picture in such a wrapper.
     ///
     /// When the address names a version it also watches, for two seconds, for
     /// the page's own menu (`role="menu"` named "Artifact actions"): a
@@ -509,8 +537,10 @@ final class ConversationMenu {
     /// session's page, when the right-click was on a Generated card with no
     /// picture, in an open tile's body or in its header, or on a link or
     /// picture in a tile that names no version, the script takes the name the
-    /// card or tile shows (the title of the card's file-name label; the first
-    /// span of the tile's header, which holds the button for its menu), watches
+    /// card or tile shows (the title of the card's file-name label; the span
+    /// that opens the tile's header, which holds the button for its menu; for a
+    /// tile of the right-hand panel, which has none, the label of the panel's
+    /// shown tab), watches
     /// for the menu the same way and posts `{action, kind: "document", name}`
     /// when an item is chosen. Once a right-click is done with (no figure, no
     /// version, the items placed or not, no menu in the two seconds, or
@@ -621,6 +651,39 @@ final class ConversationMenu {
         trail = null;
       }
 
+      // The open file tile (the page's ArtifactTile: the side pane's, a tab's, a fullscreen one) a click was in, in its
+      // body or its header: `{bar, tile, region}`, or null. The tile has no attribute of its own, so it is found from
+      // the click by its body (`artifact-preview-region`) or its header, and only a header that holds the tile's "More
+      // actions" button (`artifact-actions`) counts, so a header elsewhere on the page is never taken for one.
+      function tileAt(element) {
+        let start = element.closest('[data-testid="artifact-preview-region"]');
+        if (!start) {
+          const bar = element.closest("header");
+          if (bar && bar.querySelector('[data-testid="artifact-actions"]')) start = bar;
+        }
+        for (let up = start && start.parentElement; up && up !== document.body && up !== document.documentElement; up = up.parentElement) {
+          const bar = up.querySelector("header");
+          if (bar && bar.querySelector('[data-testid="artifact-actions"]')) {
+            return { bar: bar, tile: up, region: up.querySelector('[data-testid="artifact-preview-region"]') };
+          }
+        }
+        return null;
+      }
+
+      // The picture in the page's own viewer for one file (the side pane, a tab, the fullscreen tile). The page draws
+      // it inside a zoom-and-pan wrapper (react-zoom-pan-pinch), whose stylesheet gives every image in it
+      // `pointer-events: none`: the picture is never what a right-click lands on (the layer over it, the box round it
+      // or the space beside it is) and never in the list of what is under the pointer, so neither `closest("img")` nor
+      // `pictureBeside` can find it. A tile whose body holds exactly one picture in such a wrapper is that picture's
+      // viewer, and a right-click anywhere in the tile is a right-click on the picture. Markdown with pictures in it
+      // has no wrapper; a file on the host's disk has the wrapper and no tile. Nothing but one picture will do.
+      function viewerPicture(element) {
+        const tile = tileAt(element);
+        if (!tile || !tile.region) return null;
+        const pictures = tile.region.querySelectorAll(".react-transform-component img");
+        return pictures.length === 1 ? pictures[0] : null;
+      }
+
       // The figure or the link a right-click was on.
       function figureAt(event) {
         const node = event.target;
@@ -632,6 +695,13 @@ final class ConversationMenu {
           return found;
         }
         const card = element.closest('[data-testid="turn-tray-card"]');
+        if (!card) {
+          const viewer = viewerPicture(element);
+          if (viewer) {
+            step("figure-viewer");
+            return viewer;
+          }
+        }
         const thumbnail = card ? card.querySelector("img") : pictureBeside(element, event);
         if (thumbnail) step(card ? "figure-card" : "figure-beside");
         return thumbnail;
@@ -643,11 +713,39 @@ final class ConversationMenu {
         return last.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, "").trim().slice(0, NAME_MAX);
       }
 
+      // The name a tile's header shows: the text of the span that opens it, the first thing in the header's first box.
+      // That span holds only text. The version stepper that can follow it, the buttons and the breadcrumb the page
+      // draws over a tile's provenance hold elements, so none of them is taken for the name ("v2" is not a file). The
+      // tiles of the right-hand panel have no such span (the panel's tab shows the name; see `shownTabName`).
+      function titleIn(bar) {
+        const box = bar.firstElementChild;
+        const label = box && box.firstElementChild;
+        if (!label || String(label.tagName).toLowerCase() !== "span" || label.children.length > 0) return "";
+        return nameFrom(label.textContent);
+      }
+
+      // The name on the right-hand panel's shown tab: its button's label, the last thing in it (an icon comes first).
+      // For a tile of that panel, which shows no name of its own. Empty unless exactly one tab is shown.
+      function shownTabName() {
+        const tabs = document.querySelectorAll('[data-testid="right-tab-strip"] [data-tab-id]');
+        let shown = null;
+        for (let index = 0; index < tabs.length; index++) {
+          const button = tabs[index].querySelector("[data-tab-btn]");
+          if (tabs[index].getAttribute("data-shown") === null && !(button && button.getAttribute("aria-current") === "true")) continue;
+          if (shown || !button) return "";
+          shown = button;
+        }
+        const label = shown && shown.lastElementChild;
+        return label ? nameFrom(label.textContent) : "";
+      }
+
       // A file with no picture (Markdown, a table, text), found by the name its card or tile shows, on a session's
-      // page: `{name, region}`, or null if it is neither. A card in the Generated tray labels itself with the whole
-      // name as the title of its file-name label. An open tile (the side pane's, a tab's) shows it as the first span of
-      // its header, and the header also holds the button for the tile's menu, which is how the tile is told from any
-      // other header. `region` is a tile's preview region, which holds the file's own words (null for a card).
+      // page: `{name, region, fromTab}`, or null if it is neither. A card in the Generated tray labels itself with the
+      // whole name as the title of its file-name label. An open tile (the side pane's, a tab's) shows it as the first
+      // span of its header, and the header also holds the button for the tile's menu, which is how the tile is told
+      // from any other header. A tile of the right-hand panel shows no name there, so the name is the one on the
+      // panel's shown tab (`fromTab`). A tile whose name is not to be had has the empty name. `region` is a tile's
+      // preview region, which holds the file's own words (null for a card).
       function documentAt(event) {
         if (!SESSION_PAGE.test(String(location.pathname || ""))) return null;
         const node = event.target;
@@ -656,21 +754,14 @@ final class ConversationMenu {
         const card = element.closest('[data-testid="turn-tray-card"]');
         if (card) {
           const label = card.querySelector('[data-testid="middle-truncated-filename"]');
-          return label ? { name: nameFrom(label.title), region: null } : null;
+          return label ? { name: nameFrom(label.title), region: null, fromTab: false } : null;
         }
-        let start = element.closest('[data-testid="artifact-preview-region"]');
-        if (!start) {
-          const bar = element.closest("header");
-          if (bar && bar.querySelector('[data-testid="artifact-actions"]')) start = bar;
-        }
-        for (let up = start && start.parentElement; up && up !== document.body && up !== document.documentElement; up = up.parentElement) {
-          const bar = up.querySelector("header");
-          if (bar && bar.querySelector('[data-testid="artifact-actions"]')) {
-            const label = bar.querySelector("span");
-            return label ? { name: nameFrom(label.textContent), region: up.querySelector('[data-testid="artifact-preview-region"]') } : null;
-          }
-        }
-        return null;
+        const tile = tileAt(element);
+        if (!tile) return null;
+        const title = titleIn(tile.bar);
+        if (title !== "") return { name: title, region: tile.region, fromTab: false };
+        const tabbed = tile.tile.closest('[data-pane="right"]') ? shownTabName() : "";
+        return { name: tabbed, region: tile.region, fromTab: tabbed !== "" };
       }
 
       // The words selected in the page, as the browser has them. They are read here and compared, and only their
@@ -1037,10 +1128,13 @@ final class ConversationMenu {
           tell({ kind: null }, selected);
           const named = documentAt(event);
           if (!named || named.name === "") {
-            report("figure-none");
+            // A tile that was found but has no name to be had is said apart from a click on no tile at all.
+            if (named) step("figure-none");
+            report(named ? "tile-unnamed" : "figure-none");
             return;
           }
           step("figure-document");
+          if (named.fromTab) step("name-from-tab");
           startWatch({ kind: "document", version: null, name: named.name }, passageIn(named));
           return;
         }
@@ -1055,11 +1149,13 @@ final class ConversationMenu {
           // A link or a picture in a Markdown tile names no file; the tile may.
           const named = documentAt(event);
           if (!named || named.name === "") {
-            report("version-none");
+            if (named) step("version-none");
+            report(named ? "tile-unnamed" : "version-none");
             return;
           }
           step("version-none");
           step("figure-document");
+          if (named.fromTab) step("name-from-tab");
           startWatch({ kind: "document", version: null, name: named.name }, passageIn(named));
           return;
         }
@@ -1191,6 +1287,9 @@ final class ConversationShelf {
         /// menu at the pointer; nil when the menu was closed. The default
         /// chooses nothing and shows nothing, so a test opens no menu.
         var chooseFile: ShelfDocumentChoice.Presenter = { _, _ in nil }
+        /// Where the line about a name's lookup goes (the log): fixed words
+        /// and counts, never the name.
+        var note: @MainActor (String) -> Void = { ConversationMenu.logTrace($0) }
 
         @MainActor
         static func live() -> Dependencies {
@@ -1266,7 +1365,9 @@ final class ConversationShelf {
     /// (a menu at the pointer, newest first; since 1.0.6) and does the action on
     /// the newest version of the one chosen; a menu closed without a choice
     /// does nothing, and says nothing. Never a guess. Show in Results needs no
-    /// file, only the session, so it does not wait for the list.
+    /// file, only the session, so it does not wait for the list. The log gets
+    /// one line for the lookup (`ShelfDocument.lookupLine`: how many files had
+    /// the name, never the name).
     func run(_ action: ConversationAction, named name: String) async {
         let toast = dependencies.toast
         guard let route = dependencies.route() else {
@@ -1280,10 +1381,14 @@ final class ConversationShelf {
             return
         }
         guard let files = await dependencies.files(session.id) else {
+            dependencies.note(ShelfDocument.lookupLine(nil))
             toast.show(.failed(ShelfDocument.unreadable))
             return
         }
-        switch ShelfDocument.match(name: name, in: files) {
+        let match = ShelfDocument.match(name: name, in: files)
+        // One line a lookup, so a name that found nothing, or two, shows in the log (after 1.0.6).
+        dependencies.note(ShelfDocument.lookupLine(match))
+        switch match {
         case .found(let entry): await perform(action, on: entry, in: session)
         case .none: toast.show(.failed(ShelfDocument.notFound(name)))
         case .several(let candidates):
