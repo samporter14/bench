@@ -68,7 +68,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         switch self {
         case .closeTabs: "Close Other Tabs and Close All Tabs"
         case .tabMenu: "The tab right-click menu"
-        case .shelfMenu: "Add to Shelf from a figure or a file link in the conversation"
+        case .shelfMenu: "Add to Shelf from a figure, file link or document tile"
         case .modelMenu: "Ask Another Model in Claude Science's model menu"
         case .signIn: "Signing back in"
         case .notifications: "Needs-input cards from the page's notifications"

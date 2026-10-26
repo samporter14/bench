@@ -329,7 +329,7 @@ struct ConversationMenuTests {
         menu.hear(["unplaced": true], accepted: true)
         #expect(store.last?.miss == .figureMenuNotUnderstood)
         #expect(store.last?.miss.feature == .shelfMenu)
-        #expect(lines.all == ["Claude Science may have changed: Add to Shelf from a figure or a file link in the conversation: the figure menu didn't look as Capsid expects"])
+        #expect(lines.all == ["Claude Science may have changed: Add to Shelf from a figure, file link or document tile: the figure menu didn't look as Capsid expects"])
         #expect(ran == 0)
     }
 

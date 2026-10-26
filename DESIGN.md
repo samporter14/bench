@@ -5727,7 +5727,8 @@ session's history. You asked: “…”"). The legend comment and fine print say
   characters; anything else gets no items. The page's words are only a
   stand-in name until the daemon's facts give the file's own; nothing read from
   the page is logged. Both are in the compatibility inventory, checked only
-  when used. Board 10's in-page "Shelf" pill on a file chip is left out: there
+  when used. Since 1.0.7, the menu breadcrumb is "Add to Shelf from a figure, file link or document tile".
+  Board 10's in-page "Shelf" pill on a file chip is left out: there
   is no verified stable hook on the page's chips.
 
   **Claude Science's own figure menu** (since 1.0's walkthrough, Sam: "2 I
