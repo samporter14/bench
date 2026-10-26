@@ -323,6 +323,50 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## Capsid 1.0.7 (Codex): Keep provenance and immediate note Undo — 2026-10-26
+
+- ✅ **Build and focused checks.** The package and tests build with two jobs. After restoring both mutation checks:
+  `✔ Test run with 101 tests in 13 suites passed after 0.180 seconds.` These cover Keep records, plans, versions,
+  source replies and README parsing, note adds and Undo, figure duplicates, removal and restore.
+- ✅ **Keep's source reply.** A new test round-trips a known source row into a Shelf item, checks legend eligibility
+  and source navigation, accepts row zero, and excludes pinned, fallback, missing and different-version answers.
+  Leaving the quoted answer unticked still retains a known source row.
+- ✅ **Immediate note Undo.** The existing temporary-disk test now checks the count before another scan. Removals
+  track folders, so notes and duplicate figure folders both count correctly.
+- ✅ **Mutation checks.** Setting Keep's source row back to nil fails the new test. Removing folder tombstones
+  fails the immediate-count assertion. The two tests report seven issues with those mutations; production code
+  was restored and the focused run above passed.
+- ✅ **Offscreen captures.** Two conditional snapshot tests passed and produced 28 PNGs: short/long note cards at
+  normal/narrow widths, and ten Ask states, all in light and dark. Each was inspected for personal names and paths;
+  only synthetic fixture content is shown. README adds one image, `docs/ask-another-model.png` (215,051 bytes),
+  from `ask-answered-light.png`. No picture was taken of a live window.
+- ⚠️ **Capture limits.** This sandbox cannot decode the seeded figure/table previews, which show placeholders.
+  The narrow harness also clips the mock title bar. These captures are useful for reading-card review, but are
+  not evidence that live thumbnails or minimum window sizing work. The public README uses only the clear Ask
+  capture. Its old Shelf picture is unchanged.
+- ⚠️ **Full suite did not complete.** The required full run exited 1, with `unexpected signal code 5` and
+  `BenchTests/ShelfThumbnailsTests.swift:287: Fatal error: Unexpectedly found nil while unwrapping an Optional value`.
+  `aLargeImageIsKeptSmallNotAtFullSize` also crashes alone after decoding returns nil. There is no final
+  `✔ Test run with` line for the full suite, and no full-suite pass is claimed.
+- ⚠️ **Other environment-sensitive failures.** The full run recorded 21 failing test names before its abort,
+  including pasteboard, image/type, preferences, file-watch, signature, asset-catalog and swap-script checks.
+  A small follow-up still failed `aSuiteLivesInThisProcessesFolderAndNeverInPreferences`,
+  `theNewCopyGoesInPlaceAndTheOldOneWaitsForTheCleanUp`,
+  `aLogThatAppearsIsPickedUpAtOnceWithoutWaitingForTheTimer` and
+  `aLogThatComesBackAfterTheDaemonRestartsIsWatchedAgain`. No load flake has been confirmed. Rerun the suite in
+  the ordinary development environment; these failures have not been waved away as product passes.
+- Build/test commands used separate temporary compiler/package caches and SwiftPM's `--disable-sandbox` to avoid
+  its nested manifest sandbox. The enclosing execution sandbox remained active. There were existing compiler
+  warnings. No dependencies, version, installed app or live services changed.
+- The README now covers Shelf text, Claude's legend, Ask Another Model and the Mac/phone message limits. Its local
+  links resolve; release download, install-script and Nidus targets were checked against GitHub, and Tailscale
+  resolved. The download size is updated to 18 MB; the historical idle measurement is labelled as such.
+- ⏳ **Pending approval:** the diagnostic breadcrumb wording, ordinary document reading card, and brand/UI
+  suggestions. No app view, visual token or layout changed. No merge, push, tag, install or release.
+- ⏳ **Live:** Keep-to-Shelf legend and exact reply landing; conversation-menu note Undo; duplicate folders and
+  external/iCloud disks; keyboard, VoiceOver, scrolling, drag and Quick Look. No real conversations or Kept files
+  were used. The separate code review documents outstanding draft/reload races and response-size bounds.
+
 ## 2026-10-26, Capsid 1.0.6 released and installed
 
 - ✅ Released as v1.0.6 (tag on 3339a43, "Capsid 1.0.6", by Sam with `gh release create`), marked Latest:
