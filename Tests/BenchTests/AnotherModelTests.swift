@@ -150,6 +150,51 @@ struct AnotherModelSettingTests {
         #expect(request?.value(forHTTPHeaderField: "Authorization") == "Bearer \(madeUpModelKey)")
     }
 
+    @Test func aChoiceTheListNoLongerHasGivesWayToTheFirstModel() async {
+        let rig = Rig(answer: { _ in .reply(200, #"{"data":[{"id":"vendor/newest"},{"id":"vendor/older"}]}"#) })
+        rig.model.choose("vendor/retired")
+        rig.model.setOn(true)
+        rig.model.saveKey(madeUpModelKey)
+        await rig.waitForList()
+        #expect(rig.model.model == "vendor/newest")
+        // A choice the list still has is kept, and none chosen yet takes the first.
+        rig.model.choose("vendor/older")
+        rig.model.listModels()
+        await rig.waitForList()
+        #expect(rig.model.model == "vendor/older")
+        rig.defaults.defaults.removeObject(forKey: SettingsKey.anotherModelName)
+        #expect(rig.model.model == nil)
+        rig.model.listModels()
+        await rig.waitForList()
+        #expect(rig.model.model == "vendor/newest")
+    }
+
+    @Test func anIdTheListLeavesOutIsChosenOnReturnAndAskedAsTyped() async {
+        let rig = Rig(answer: { request in
+            request.url?.path().hasSuffix("/models") == true
+                ? .reply(200, #"{"data":[{"id":"vendor/newest"},{"id":"vendor/older"}]}"#)
+                : .reply(200, #"{"choices":[{"message":{"content":"Rerun plate 3 with HEPES."}}]}"#)
+        })
+        rig.model.setOn(true)
+        rig.model.saveKey(madeUpModelKey)
+        await rig.waitForList()
+        let names = ["vendor/newest", "vendor/older"]
+        // What Return does with the field's text: the unlisted id is chosen, and the list stays as it was.
+        let typed = AnotherModelRules.choice(typed: "  vendor/unlisted-preview ", listed: names)
+        #expect(typed == "vendor/unlisted-preview")
+        rig.model.choose(typed ?? "")
+        #expect(rig.model.model == "vendor/unlisted-preview")
+        #expect(rig.model.listing == .listed(names))
+        let answer = await rig.model.ask([ChatTurn(role: .user, text: "Which buffer?")])
+        #expect(answer.result == .success("Rerun plate 3 with HEPES."))
+        let body = FakeModelProtocol.seen(rig.host).bodies.last
+        #expect(String(decoding: body ?? Data(), as: UTF8.self).contains("vendor/unlisted-preview"))
+        // A listing that follows keeps it: the choice isn't one the list lacks only until the list is read.
+        rig.model.listModels()
+        await rig.waitForList()
+        #expect(rig.model.model == "vendor/newest")
+    }
+
     @Test func aRefusedKeyIsSaidAndKept() async {
         let rig = Rig(answer: { _ in .reply(401, "{}") })
         rig.model.setOn(true)

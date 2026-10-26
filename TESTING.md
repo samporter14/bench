@@ -333,7 +333,7 @@ Everything ran offscreen on made-up sessions, a made-up page (JavaScriptCore, as
 scratch Kept folders under the temporary folder: no window shown, no menu opened, the real Kept folder untouched, nothing read
 under `~/.claude-science`, nothing launched, installed, merged or pushed.
 
-- ✅ **The whole suite**: `✔ Test run with 4299 tests in 554 suites passed` (4,178 in 538 at 1.0.5).
+- ✅ **The whole suite**: `✔ Test run with 4308 tests in 555 suites passed` (4,178 in 538 at 1.0.5).
 - ✅ **One load flake, found and fixed**: `fiveHundredItemsWithAMadeUpReaderAreIndexedAndSearchedQuickly` took 16 s in the full
   suite under load, against 0.2 s alone: its budget for the reading was a speed check, which a loaded run misses. It is now
   relaxed to a guard against a stall, and the typing's budget (the search over what is read) still guards speed.
@@ -360,6 +360,19 @@ under `~/.claude-science`, nothing launched, installed, merged or pushed.
 - ⏳ **Live, a note's passage with real notes**: that a long real note scrolls inside the detail card and fades at its foot,
   that its words can be selected and Copy puts the passage on the pasteboard as text, and that a note edited in another app
   shows the new words when the folders are read again.
+- ✅ **Ask Another Model, a list of hundreds** (Settings → Another model): the model list keeps 1,000 names (`maxModels`, was 200;
+  the 1,001st is dropped, a repeat or a too-long name doesn't use one up), and a made-up 466-name OpenRouter-shaped body reads whole.
+  The Model pop-up became a text field with the system's `textInputSuggestions` (12 at most); `AnotherModelRules.matches` (every word,
+  case and accents aside, the list's order, the limit) and `.choice` (what Return chooses: a listed name in the list's spelling, an
+  id the list leaves out as typed, nothing from empty text or words) are pure and tested alone; the first model is still chosen when
+  none is, or the chosen one is gone; an unlisted id is chosen, kept through the list and sent as the request's model. Mutations (break,
+  see it fail, restore): cap back to 200, "any word" for "every word", accents not folded, the limit ignored, an unlisted id refused,
+  and the first-model rule dropped. Captures `settings-ask-on-466-*` and `settings-ask-on-unlisted-*` in `shots-106/`; the suggestion
+  list itself is the system's and isn't drawn off screen.
+- ⏳ **Live, with a real OpenRouter key and address** (`https://openrouter.ai/api/v1`; nothing here ran against it): that the list of
+  about 470 names is read whole; that typing narrows the system's suggestion list under the field and choosing a line fills the field
+  with that id; Return on an id the list leaves out chooses it and the line says "Not listed by the address"; the real answer comes
+  from the model chosen; and that the field takes focus and gives it up (the typed text is put back) without a stray keystroke.
 
 ## 2026-10-24, Capsid 1.0.5 released and installed
 

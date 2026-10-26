@@ -6543,7 +6543,7 @@ the Keychain out of the folder, the word `Authorization` in one file, and one
 `Logger` with one call.
 
 **The address and the model.** Both are in Settings, under the key: the address
-prefilled with Abliteration.ai's, and "Model", a pop-up filled from `GET
+prefilled with Abliteration.ai's, and "Model", a search field filled from `GET
 /models` once a key is saved (asked when a key is saved, when the switch goes
 on with a key, when Settings opens on one, on Return in the address field, and
 from "List Models" or "Try Again"; never while the address is being typed: any
@@ -6551,11 +6551,27 @@ edit drops the old list until it is asked for again). Model names differ
 between sources (`abliterated-model`, `abliterated-model-large`, with or
 without an `abliteration-ai/` prefix), so Capsid takes the address's own
 list: `{"data": [{"id"}]}`, `{"models": […]}` or a bare array, each name once,
-200 at most, each 1 to 200 characters with no control character. With none
-chosen yet, or the chosen one gone from the list, the first is chosen; a model chosen before and
-not listed now stays in the pop-up as "… (not listed)". The choice is kept as
-the string the address gave (`anotherModelName`, not registered: absent means
-none chosen, and the window says so and keeps Ask off).
+1,000 at most (since 1.0.6; an aggregator's list, such as OpenRouter's at
+`https://openrouter.ai/api/v1`, runs to hundreds), each 1 to 200 characters
+with no control character. With none chosen yet, or the chosen one gone from
+the list, the first is chosen. The choice is kept as the string the address
+gave (`anotherModelName`, not registered: absent means none chosen, and the
+window says so and keeps Ask off).
+
+**Finding a model** (since 1.0.6). Hundreds of names are searched, not
+scrolled: Model is a text field with the system's own suggestions
+(`textInputSuggestions`, each with `textInputCompletion`), showing at most 12
+names. Every word typed must be in the id, in any order, with case and accents
+aside ("sonnet", "anthropic sonnet"), and the names keep the list's order
+(`AnotherModelRules.matches`, pure). Choosing a suggestion, or typing a name
+the list has, chooses it as the list spelled it. Return on an id the list
+leaves out chooses that id as typed, since an address can serve models it
+doesn't list; the line under "Model" then says "Not listed by the address;
+asked for as typed." (`AnotherModelRules.choice`). Words with a space in them
+are a search, so Return chooses nothing from them. Empty text never clears a
+choice: Return on it, or leaving the field with words not yet chosen, puts
+the chosen model back in the field. The line under "Model" says how many
+names the address listed ("Search the address's 466 models.").
 
 **Where it appears** (`AskMenu`, `AskCommands`, `AskToolbarButton`, `ModelPickerMenu`), only while it is
 available. Sam's first cut had it in File and at the top of the Mac's right-click menu on the conversation; he turned
@@ -6784,8 +6800,8 @@ name, the host or the key; tests look for each in every line.
 points taller for it, `settingsPage(height: 1190)`): the switch with one line
 under it; with it on, the key (a secure field and Save; once saved, eight dots
 and Remove), the address (a bordered field, https only; it says so while it
-isn't), the model pop-up (a spinner while it lists, the failure's sentence and
-Try Again, "The address lists no models."), and the fine print. A key that was
+isn't), the model search field (a spinner while it lists, the failure's sentence and
+Try Again, "The address lists no models."; Finding a model, above), and the fine print. A key that was
 refused keeps its file: the person may have pasted the right one for another
 address.
 

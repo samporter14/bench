@@ -254,6 +254,27 @@ struct AskModelSnapshotTests {
         for _ in 0..<300 where model.listing == .loading { try await Task.sleep(for: .milliseconds(10)) }
         try await draw(off.frame(width: 600, height: 340).background(Color(nsColor: .windowBackgroundColor)),
                        size: NSSize(width: 600, height: 340), name: "settings-ask-on", to: directory)
+        // On, a list of hundreds (an OpenRouter-shaped one, made up) with a model chosen from it, and one chosen that it leaves out.
+        let ids = (1...466).map { "vendor-\($0 % 40)/model-\($0)" }
+        _ = FakeModelProtocol.host(named: "openrouter.ai") { _ in
+            .reply(200, #"{"data":["# + ids.map { #"{"id":"\#($0)"}"# }.joined(separator: ",") + "]}")
+        }
+        defaults.defaults.set("https://openrouter.ai/api/v1", forKey: SettingsKey.anotherModelAddress)
+        defaults.defaults.set("vendor-3/model-43", forKey: SettingsKey.anotherModelName)
+        let long = AnotherModel(store: MemoryDeviceStore(), defaults: defaults.defaults,
+                                client: AnotherModelClient(configuration: FakeModelProtocol.configuration()), log: { _ in })
+        long.setOn(true)
+        long.saveKey(madeUpModelKey)
+        for _ in 0..<300 where long.listing == .loading { try await Task.sleep(for: .milliseconds(10)) }
+        let searched = Form { AnotherModelSection(model: long) }.formStyle(.grouped).toggleStyle(.switch).tint(Theme.clay)
+        try await draw(searched.frame(width: 600, height: 340).background(Color(nsColor: .windowBackgroundColor)),
+                       size: NSSize(width: 600, height: 340), name: "settings-ask-on-466", to: directory)
+        long.choose("vendor/unlisted-preview")
+        let unlisted = Form { AnotherModelSection(model: long) }.formStyle(.grouped).toggleStyle(.switch).tint(Theme.clay)
+        try await draw(unlisted.frame(width: 600, height: 340).background(Color(nsColor: .windowBackgroundColor)),
+                       size: NSSize(width: 600, height: 340), name: "settings-ask-on-unlisted", to: directory)
+        defaults.defaults.set(AnotherModelAddress.usual, forKey: SettingsKey.anotherModelAddress)
+        defaults.defaults.removeObject(forKey: SettingsKey.anotherModelName)
         // On, a key the address refused: the list's failure in its own words, and Try Again.
         _ = FakeModelProtocol.host(named: "api.abliteration.ai") { _ in .reply(401, "{}") }
         let second = AnotherModel(store: MemoryDeviceStore(), defaults: defaults.defaults,
