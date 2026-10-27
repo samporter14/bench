@@ -52,3 +52,23 @@ public enum SessionState: String, Sendable, Equatable, Codable {
         }
     }
 }
+
+/// How a turn that is over ended, when the frame's own status says: the one
+/// thing `SessionState.finished` leaves out, since "cancelled" and "replaced"
+/// read as finished there too. Only `completed` is a success.
+public enum SessionEnding: Sendable, Equatable {
+    case completed
+    case cancelled
+    case replaced
+
+    /// Nil for a status that is not an ending, or one the daemon has not
+    /// told us of: nothing is guessed from the state or from the time.
+    public init?(frameStatus: String) {
+        switch frameStatus {
+        case "completed", "success": self = .completed
+        case "cancelled": self = .cancelled
+        case "replaced": self = .replaced
+        default: return nil
+        }
+    }
+}

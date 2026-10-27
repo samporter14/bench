@@ -150,7 +150,8 @@ public final class CombinedScienceSource: ScienceSource, @unchecked Sendable {
                     waitingReason: WaitingReason(signal: frame.waitingSignal),
                     // The tree's latest write as read, not the turn's end:
                     // what says whether anything in it still happens.
-                    activeAt: frame.activeMs.map { date(max($0, frame.updatedMs)) }
+                    activeAt: frame.activeMs.map { date(max($0, frame.updatedMs)) },
+                    ending: SessionEnding(frameStatus: frame.status)
                 )
             }
             // Counted from the rows, not the CLI's `active_frames`, which
