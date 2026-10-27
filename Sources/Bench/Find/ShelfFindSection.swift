@@ -230,13 +230,12 @@ struct ShelfFindPage: View {
         .scrollBounceBehavior(.basedOnSize)
     }
 
-    /// What the shelf's own search found, said once; none for an empty shelf.
+    /// What the shelf's own search found, said once; none for an empty shelf. While files are still being read it
+    /// says "yet": the line at the end of the chips says how many are left.
     private var shelfLine: String? {
         guard !model.isEmpty else { return nil }
         let typed = model.search.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let kind = model.kind, !model.scoped.isEmpty {
-            return "No \(kind.noun) on your shelf match \u{201C}\(typed)\u{201D}."
-        }
-        return "Nothing on your shelf matches \u{201C}\(typed)\u{201D}."
+        return ShelfRules.shelfFoundLine(typed: typed, kindNoun: model.scoped.isEmpty ? nil : model.kind?.noun,
+                                         stillReading: model.stillReadingFiles != nil)
     }
 }

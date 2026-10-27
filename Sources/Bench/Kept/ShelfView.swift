@@ -134,7 +134,12 @@ struct ShelfView: View {
                     .accessibilityLabel("\(kind?.chip ?? "All"), \(counts.of(kind))")
                     .accessibilityAddTraits(model.kind == kind ? .isSelected : [])
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 12)
+            // A search still reading files says so here, at the end of the row, where there is room and nothing
+            // moves: it goes when the reading is done. The empty state says it itself when it is up.
+            if let line = model.stillReadingLine, !showsEmptyState {
+                ShelfReadingLine(sentence: line)
+            }
         }
         .padding(.horizontal, ShelfRules.gutter)
         .padding(.top, 16)
@@ -288,12 +293,15 @@ struct ShelfView: View {
         }
     }
 
+    /// The empty state of a search that found nothing is up (not the Find page, which says it its own way).
+    private var showsEmptyState: Bool { model.searchFoundNothing && !model.finder.isWanted }
+
     /// Items on the shelf, none of them shown: the search or a chip is the reason.
     @ViewBuilder
     private var empty: some View {
-        if !model.search.isEmpty, model.scoped.isEmpty {
-            KeptEmpty(title: "Nothing on your shelf matches \u{201C}\(model.search)\u{201D}",
-                      sentence: "Search covers names, sessions, legends and Claude\u{2019}s words.",
+        if model.searchFoundNothing {
+            // While files are still being read, what they say may yet match: "yet", and the line about the reading.
+            KeptEmpty(title: model.nothingFoundTitle, sentence: model.nothingFoundSentence,
                       action: ("Clear Search", { model.search = "" }))
         } else if let kind = model.kind {
             KeptEmpty(title: ShelfRules.emptyKindTitle(kind), sentence: ShelfRules.emptyKindSentence(kind),
@@ -1157,6 +1165,28 @@ struct ShelfChipStyle: ButtonStyle {
             .overlay(Capsule().fill(Solanum.hairline).opacity(configuration.isPressed && !selected ? 1 : 0))
             .overlay(Capsule().strokeBorder(selected ? Color.clear : Solanum.strong, lineWidth: 1))
             .contentShape(Capsule())
+    }
+}
+
+/// The quiet line at the end of the chips while the search is still reading files: a caption in the muted ink, with
+/// shorter words when the chips leave it no room (the narrowest window, counts in the hundreds).
+struct ShelfReadingLine: View {
+    let sentence: String
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            ForEach([sentence] + ShelfRules.stillReadingShorter, id: \.self) { words in
+                Text(words)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Solanum.muted)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        // The count changes under it, so VoiceOver gets the words without it, and is told once when the line appears
+        // (ShelfModel.refreshReading).
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(ShelfRules.stillReadingLabel)
     }
 }
 

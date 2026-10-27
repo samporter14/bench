@@ -323,6 +323,77 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, the Shelf's search says when it is still reading (`g/search-hint`, from main 8e35826, Capsid 1.0.7)
+
+Since 1.0.6 the search also reads inside notes, documents and kept legend files, off the main actor, finding more as each
+file is read, so the first results of a search could look final when more matches were on the way. While files that
+could match are still being read, one quiet line now says so, and the empty state no longer says "no matches" for good.
+Everything ran offscreen on made-up notes and scratch folders: no window shown, nothing launched, installed, merged or
+pushed, the real Kept folder and `~/.claude-science` untouched.
+
+- ✅ **The whole suite**: `✔ Test run with 4416 tests in 575 suites passed` (27 new tests, 26 checks and one capture test that
+  does nothing without `CAPSID_SNAPSHOT_DIR`). No test failed in either full run (the first, before the gone-file fix below,
+  had 4415), so there is no flake to name; the machine was under load from two other agents' builds (load 7 to 11).
+  One test is timing-sensitive by nature, `theLastChangeInAnIntervalIsPublishedWhenItIsUp`: three gated reads must all
+  land inside one publishing interval, so its interval is 1.5 s (it was 0.8 s) and it takes that long; a machine that
+  starved utility work for longer than that could fail it, and it would pass alone.
+- ✅ **The line**: "Still reading 12 files; more may match." ("1 file" for one), 11 pt in the muted ink, one line, at the end
+  of the chips row, in the room the row's spacer already leaves, so the grid does not move when it comes or goes and nothing
+  animates. With less room (the narrowest window, counts in the hundreds) the same place says "Still reading; more may
+  match." and then "More may match." (`ViewThatFits`; found in the first captures, where two digits cut the long form at
+  620 points). VoiceOver gets one label without the count, "Still reading files; more may match.", and one low-priority
+  announcement of the same words when the line appears (a hook on the model, as the toast's, so a test counts it); the
+  count falling under the label says nothing more.
+- ✅ **What it counts**: the prose files still to be read that **could** add to what the search finds: those of items in the
+  chosen project that the search does not already find (by the card's words and the text read so far), each once. A rescan that
+  finds nothing new names nothing (no flash every time the folders are read), a file read before and changed since is read
+  again without a line, and a file that couldn't be read (a disk that didn't answer, gone, put away in iCloud) is not
+  waited for. No search shows nothing, at once when it is cleared while reading goes on.
+- ✅ **No match while reading**: the Find page, which is what a search of two letters or more shows when nothing is found,
+  says "Nothing on your shelf matches “x” yet." (the full stop is what it said before), with the line at the end of the chips
+  beside it. A one-letter search is too short for the sessions, so it gets the Shelf's own empty state, "Nothing matches “x”
+  yet" with "Still reading 10 files; more may match." in place of "Search covers names, sessions, legends and Claude’s
+  words."; the chips then leave their line out, so it is said once. Both go back to the old words when reading is done.
+- ✅ **Throttle**: `ShelfTextIndex.unread` is published at once when it fills or empties (the line appears and goes
+  without delay) and at most once in 250 ms between (`publishEvery`, the last change in an interval always follows), and
+  the model counts again only then and when the search, the project or the shelf changes, never for each file read. Also
+  changed: a file read that adds nothing to what is shown no longer redraws the window (the model compares the ids shown
+  before and after); before, every file read sent a redraw, so 500 files meant 500 of them.
+- ✅ **New tests** (`ShelfTextIndexTests.swift`, which has the fakes: `MadeFiles`, now with a `Steps` that lets reads
+  through a few at a time): the words (plural, the label without a number, the shorter forms in order, the empty state's
+  and the Find page's lines with and without "yet"); the count's rules (an item already found, by its card or by text
+  already read, gains nothing; one project; no search or only blanks); the index's `unread` (counted when asked for, one
+  fewer as each file finishes, the sequence of publications with a long interval is fill and empty and nothing between, the
+  last change in an interval is published when it is up, a rescan publishes nothing, a new file is named until read, a file
+  taken off the shelf is let go, a read that throws, a gone file and a put-away file are not waited for, and a note whose
+  file is gone is looked at again on each rescan without the line coming up each time); and the model on
+  real scratch folders with an index held by hand (nothing without a search, shown while searching with files unread and
+  gone when reading finishes, the count following each file and VoiceOver told once, nothing left to read shows nothing,
+  clearing the search takes it away at once and typing again says it again, the count by project and by items found, the
+  empty state saying yet and then the final words, and the redraws for 30 files that add nothing against one that adds a match).
+- ✅ **Mutation checks** (break it, see the test fail, restore it; twelve, all caught): a finished file no longer counted off
+  (three tests); the initial count one short (eight); project scoping dropped (two); items already found still counted
+  (three); the line ignoring whether there is a search (three); the empty state never saying yet (two); no throttle
+  between publishes (three); every file read redrawing (one); VoiceOver told on every change (three); the last change in an
+  interval dropped (one); the line going only after the interval (two); a gone file named again on each rescan (one). One guard is not mutation-tested because it cannot
+  differ: clearing `pending` when the task ends, which every file has already done one by one; it is there so a file
+  that somehow was not looked at can never keep the line up.
+- ✅ **Offscreen captures**, light and dark, in `shots-hint/` beside the worktree (`ShelfReadingSnapshotTests`, through the
+  window stand-in the other snapshot tests use, `NSHostingView.cacheDisplay`, not `ImageRenderer`): `shelf-reading-*` (two
+  figures found by name and a note by its text, "Still reading 4 files; more may match." at the chips' end) and `-small-*`
+  (620 × 480); `shelf-reading-done-*` (the same search when reading is done: the line gone, the notes wearing "in its text");
+  `shelf-reading-empty-*` and `-small-*` (the Find page's "yet", the line beside the chips, with "Still reading; more may
+  match." at 620); `shelf-reading-empty-done-*`; and `shelf-reading-empty-short-*` and `-small-*` (the one-letter search's
+  own empty state). Refined after the first look: the long form was cut at 620 points with two digits, which is the
+  fallback to shorter words; and the first capture had read only notes with nothing to find, which showed the line
+  and no results, so it now reads six files and one note is found while the rest are still to come.
+- ⏳ **Live, in a real window** (nothing here ran in one): that VoiceOver says the announcement once, quietly, while a
+  search is being typed, and reads the label when the line is reached; the line on a real shelf of hundreds of notes, how
+  long it stays and that its number falls steadily about four times a second without the window flickering; no flash on
+  the periodic rescan; the line fitting or shortening as the window's edge is dragged across 620 points; the toolbar's
+  look over the chips (the captures draw a stand-in for the title bar); and Increase Contrast and Reduce Transparency
+  (the line is muted ink on the page, which they do not touch).
+
 ## 2026-10-26, merging 1.0.7: Codex's branch with the right-pane fix
 
 - ✅ **Codex's branch validated where its sandbox couldn't** (`g/codex-107` at 4225954, eight commits from 1.0.6).

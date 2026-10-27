@@ -9,7 +9,10 @@
 // with the file's date and size, so a file is read again only when it is not the
 // one read before. Reading starts when a search is first typed and goes on
 // whenever the folders are read again; typing never waits for it: a search runs
-// on what has been read so far, and finds more as the reading finishes.
+// on what has been read so far, and finds more as the reading finishes. While
+// files are still to be read, `unread` names them, so the Shelf can say that more
+// may match (`ShelfRules.stillReadingSentence`); it is published at once when it
+// fills or empties and at most a few times a second in between.
 import Foundation
 import OSLog
 
@@ -59,6 +62,12 @@ final class ShelfTextIndex: ObservableObject {
 
     /// What is read so far, published as each file finishes.
     @Published private(set) var texts = ShelfTexts.none
+    /// The prose files on the shelf that have never been read and that the reading under way has not come to yet:
+    /// empty when nothing is being read, and when a pass finds every file already read. A file read before and
+    /// changed since is not named here: it has its old text to search meanwhile. Published at once when it fills
+    /// or empties, and between those at most once in `publishEvery`, so a long read doesn't redraw the window for
+    /// each file; the files themselves are counted off as they finish.
+    @Published private(set) var unread: Set<String> = []
     /// Reading has been asked for: a search was typed. From then on, every read of the folders refreshes it.
     private(set) var isActive = false
 
@@ -73,9 +82,19 @@ final class ShelfTextIndex: ObservableObject {
     private var again = false
     private let inspect: Inspect
     private let read: Read
+    /// `unread` as it stands now; `unread` itself is what was last published.
+    private var pending: Set<String> = []
+    /// Files a pass found not to be there (a note whose file was moved away): they are looked at again each pass, but
+    /// not named in `unread`, which would put the line up for the moment each read of the folders takes to find them gone.
+    private var missing: Set<String> = []
+    private var publishedAt: ContinuousClock.Instant?
+    private var trailing: Task<Void, Never>?
+    private let publishEvery: Duration
 
-    init(inspect: @escaping Inspect = KeptDisk.fileFacts(of:), read: @escaping Read) {
+    init(inspect: @escaping Inspect = KeptDisk.fileFacts(of:), publishEvery: Duration = .milliseconds(250),
+         read: @escaping Read) {
         self.inspect = inspect
+        self.publishEvery = publishEvery
         self.read = read
     }
 
@@ -105,6 +124,10 @@ final class ShelfTextIndex: ObservableObject {
             entries = entries.filter { seen.contains($0.key) }
             texts.folded = texts.folded.filter { seen.contains($0.key) }
         }
+        // What this pass is going to read, that nothing has been read of yet.
+        missing.formIntersection(seen)
+        pending = Set(seen.filter { entries[$0] == nil && !missing.contains($0) })
+        publishUnread()
         guard task == nil else {
             again = true
             return
@@ -116,7 +139,45 @@ final class ShelfTextIndex: ObservableObject {
                 await pass()
             } while again
             task = nil
+            // Reading is over, whatever became of each file: nothing is left to wait for.
+            pending = []
+            publishUnread()
         }
+    }
+
+    /// A file has been dealt with, read or not: it is no longer to come.
+    private func settled(_ path: String) {
+        guard pending.remove(path) != nil else { return }
+        publishUnread()
+    }
+
+    /// Makes `unread` what `pending` is: at once when it fills or empties (the line appears and goes without delay),
+    /// else at most once in `publishEvery`, the last change always following when that time is up.
+    private func publishUnread() {
+        if pending.isEmpty != unread.isEmpty {
+            flushUnread()
+            return
+        }
+        // A set of another size differs at once; one of the same size is looked through, which happens only when the
+        // shelf's files changed under a pass, not as each file finishes.
+        guard pending != unread else { return }
+        let due = publishedAt.map { $0.advanced(by: publishEvery) } ?? .now
+        if ContinuousClock.now >= due {
+            flushUnread()
+        } else if trailing == nil {
+            trailing = Task { [weak self] in
+                try? await Task.sleep(until: due, clock: .continuous)
+                guard !Task.isCancelled else { return }
+                self?.flushUnread()
+            }
+        }
+    }
+
+    private func flushUnread() {
+        trailing?.cancel()
+        trailing = nil
+        publishedAt = .now
+        if unread != pending { unread = pending }
     }
 
     private func pass() async {
@@ -124,11 +185,14 @@ final class ShelfTextIndex: ObservableObject {
         var count = 0
         for url in files {
             let path = url.path
+            defer { settled(path) }
             guard let facts = await inspect(url) else {
                 // Not there, or not to be looked at: nothing of it is held.
                 drop(path)
+                missing.insert(path)
                 continue
             }
+            missing.remove(path)
             let stamp = facts.stamp
             if let held = entries[path], held.stamp == stamp { continue }
             if facts.putAway {

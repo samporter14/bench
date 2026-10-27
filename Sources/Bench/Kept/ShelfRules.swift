@@ -299,6 +299,58 @@ enum ShelfRules {
     /// What a card adds to its caption when the search found the item only in its text.
     static let inTextSentence = "in its text"
 
+    // MARK: A search that is still reading
+
+    /// How many prose files are still to be read that could add to what `query` finds: those of items in the chosen
+    /// project that the search does not find yet, by their card's words and what `texts` has read (an item found
+    /// already gains nothing from its other files). `unread` is what the text index has not come to
+    /// (`ShelfTextIndex.unread`). Each file once.
+    static func filesStillToRead(in items: [ShelfItem], project: String?, query: String, texts: ShelfTexts,
+                                 unread: Set<String>) -> Int {
+        let words = searchWords(query)
+        guard !words.isEmpty, !unread.isEmpty else { return 0 }
+        var paths: Set<String> = []
+        for item in items {
+            if let project, item.collection != project { continue }
+            let coming = proseFiles(of: item).map(\.path).filter(unread.contains)
+            if coming.isEmpty || matches(item, words, texts: texts) { continue }
+            paths.formUnion(coming)
+        }
+        return paths.count
+    }
+
+    /// The quiet line while files are still being read: "Still reading 12 files; more may match."
+    static func stillReadingSentence(_ files: Int) -> String {
+        "Still reading \(files) \(files == 1 ? "file" : "files"); more may match."
+    }
+
+    /// The same line when the chips leave it less room: without the count, then in three words.
+    static let stillReadingShorter = ["Still reading; more may match.", "More may match."]
+
+    /// What VoiceOver is told once when the line appears, and what the line is labelled: without the count, which
+    /// changes under it.
+    static let stillReadingLabel = "Still reading files; more may match."
+
+    /// The title of the empty state of a search that found nothing: "yet" while files are still being read, since
+    /// what they say may still match.
+    static func nothingFoundTitle(for query: String, stillReading: Bool) -> String {
+        stillReading ? "Nothing matches \u{201C}\(query)\u{201D} yet" : "Nothing on your shelf matches \u{201C}\(query)\u{201D}"
+    }
+
+    /// The Find page's line over "In your sessions" when the shelf's own search found nothing to show: "Nothing on your
+    /// shelf matches “x”.", or "No tables on your shelf match “x”." when other kinds matched; with "yet" in place of
+    /// the full stop while files are still being read.
+    static func shelfFoundLine(typed: String, kindNoun: String?, stillReading: Bool) -> String {
+        let end = stillReading ? " yet." : "."
+        if let kindNoun { return "No \(kindNoun) on your shelf match \u{201C}\(typed)\u{201D}" + end }
+        return "Nothing on your shelf matches \u{201C}\(typed)\u{201D}" + end
+    }
+
+    /// Under that title: the line about the reading while it goes on, else what a search covers.
+    static func nothingFoundSentence(stillReadingFiles files: Int?) -> String {
+        files.map(stillReadingSentence) ?? "Search covers names, sessions, legends and Claude\u{2019}s words."
+    }
+
     // MARK: The text a search can read
 
     /// The files of an item whose words a search reads (`ShelfPeek.proseExtensions`): its own file when it is Markdown

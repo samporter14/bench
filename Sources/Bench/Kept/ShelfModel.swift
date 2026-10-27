@@ -8,6 +8,7 @@
 // stand under their days (`days`) as many to a row as the window's width holds.
 import Combine
 import Foundation
+import SwiftUI
 
 @MainActor
 final class ShelfModel: ObservableObject {
@@ -42,7 +43,7 @@ final class ShelfModel: ObservableObject {
     let documents: ShelfDocumentReadings
 
     @Published private(set) var items: [ShelfItem] = [] { didSet { scopedStale = true } }
-    @Published var project: String? { didSet { if project != oldValue { scopedStale = true; reconcile(); findScopeChanged() } } }
+    @Published var project: String? { didSet { if project != oldValue { scopedStale = true; refreshReading(); reconcile(); findScopeChanged() } } }
     @Published var kind: ShelfKind? { didSet { if kind != oldValue { reconcile(); findScopeChanged() } } }
     @Published var search = "" {
         didSet {
@@ -50,6 +51,7 @@ final class ShelfModel: ObservableObject {
             scopedStale = true
             // The first search starts the reading; what is read so far is searched at once.
             if !search.isEmpty, !textIndex.isActive { textIndex.update(for: items) }
+            refreshReading()
             reconcile()
             findScopeChanged()
         }
@@ -83,8 +85,15 @@ final class ShelfModel: ObservableObject {
 
     private var subscription: AnyCancellable?
     private var textSubscription: AnyCancellable?
+    private var unreadSubscription: AnyCancellable?
     /// What the search has read of the prose files; replaced as reading finishes.
     private var texts = ShelfTexts.none
+    /// The prose files the index has yet to read, as last published (Kept/ShelfTextIndex.swift).
+    private var unread: Set<String> = []
+    /// How many of them could add to what the search finds, as last counted: only when the index publishes, the
+    /// search or the project changes or the shelf is read again, never for each file read.
+    private var stillReading = 0
+    private let announce: @MainActor (String) -> Void
     /// `scoped` as last made, and whether a choice, the items or the text read has changed since.
     private var scopedItems: [ShelfItem] = []
     private var scopedStale = true
@@ -101,8 +110,10 @@ final class ShelfModel: ObservableObject {
 
     init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() }, calendar: Calendar = .current,
          pdf: ShelfPDFMaker? = nil, legendDelay: Duration = .seconds(1), claudeLegend: ShelfClaudeLegend? = nil,
-         textIndex: ShelfTextIndex? = nil, passages: ShelfPassages? = nil, documents: ShelfDocumentReadings? = nil) {
+         textIndex: ShelfTextIndex? = nil, passages: ShelfPassages? = nil, documents: ShelfDocumentReadings? = nil,
+         announce: @escaping @MainActor (String) -> Void = ShelfModel.announceQuietly) {
         self.shelf = shelf
+        self.announce = announce
         self.passages = passages ?? ShelfPassages(disk: shelf.index.disk)
         self.documents = documents ?? ShelfDocumentReadings(disk: shelf.index.disk)
         self.textIndex = textIndex ?? ShelfTextIndex(disk: shelf.index.disk)
@@ -132,18 +143,31 @@ final class ShelfModel: ObservableObject {
                 self.items = ShelfRules.items(from: results)
                 // The folders were read again: the files read for the search are looked at again too.
                 if self.textIndex.isActive { self.textIndex.update(for: self.items) }
+                self.refreshReading()
                 self.reconcile()
             }
         }
-        // A file's text was read: the search runs again on it, when there is one.
+        // A file's text was read: the search runs again on it, when there is one. The window is drawn again only when
+        // that changes what the search finds: a file that adds nothing (a word already found elsewhere, a file with
+        // no match in it) costs a search and no redraw.
         textSubscription = self.textIndex.$texts.dropFirst().sink { [weak self] texts in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.texts = texts
                 guard !self.search.isEmpty else { return }
+                let before = self.scopedStale ? nil : self.scopedItems.map(\.id)
                 self.scopedStale = true
+                guard self.scoped.map(\.id) != before else { return }
                 self.objectWillChange.send()
                 self.reconcile()
+            }
+        }
+        // The files still to be read were counted again (at once when they begin and end, a few times a second between).
+        unreadSubscription = self.textIndex.$unread.dropFirst().sink { [weak self] unread in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.unread = unread
+                self.refreshReading()
             }
         }
         reconcile()
@@ -217,6 +241,37 @@ final class ShelfModel: ObservableObject {
     var selected: ShelfItem? { shown.first { $0.id == selection } }
     var isEmpty: Bool { items.isEmpty }
     var isFiltered: Bool { project != nil || kind != nil || !search.isEmpty }
+
+    // MARK: A search that is still reading
+
+    /// The Shelf's quiet line while the search is still reading files that could add to what it finds, or nil: no
+    /// search, or nothing left that could match. The count is the files that could match, in the chosen project.
+    var stillReadingFiles: Int? { stillReading == 0 ? nil : stillReading }
+    var stillReadingLine: String? { stillReadingFiles.map(ShelfRules.stillReadingSentence) }
+
+    /// The search found nothing, so far: the empty state in place of the grid (the Find page, when it is wanted,
+    /// says it its own way). While files are still being read it says "yet", and the line about the reading.
+    var searchFoundNothing: Bool { !search.isEmpty && scoped.isEmpty }
+    var nothingFoundTitle: String { ShelfRules.nothingFoundTitle(for: search, stillReading: stillReadingFiles != nil) }
+    var nothingFoundSentence: String { ShelfRules.nothingFoundSentence(stillReadingFiles: stillReadingFiles) }
+
+    /// Counts again the files that could still add to the search. VoiceOver is told once when the line appears; the
+    /// count changing under it says nothing more.
+    private func refreshReading() {
+        let files = search.isEmpty ? 0 : ShelfRules.filesStillToRead(in: items, project: project, query: search, texts: texts, unread: unread)
+        guard files != stillReading else { return }
+        let appears = stillReading == 0
+        stillReading = files
+        objectWillChange.send()
+        if appears { announce(ShelfRules.stillReadingLabel) }
+    }
+
+    /// Says `words` to VoiceOver without cutting off what it is saying: a search is typed beside it.
+    static func announceQuietly(_ words: String) {
+        var text = AttributedString(words)
+        text.accessibilitySpeechAnnouncementPriority = .low
+        AccessibilityNotification.Announcement(text).post()
+    }
 
     /// A choice or the folders changed: the selection stays on what it was on
     /// when that is still shown, else goes to the first thing shown.
