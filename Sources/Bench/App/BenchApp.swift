@@ -57,6 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainWindowController.shared.show()
         // The first launch only, in front of the main window (App/Welcome.swift).
         WelcomeWindowController.shared.showIfFirstLaunch()
+        // A fresh install started on this release, so its notes are not news (App/WhatsNew.swift).
+        WhatsNewGate.settleAtLaunch(isDemo: false)
         WebContainer.shared.start()
         // Started here, not by its toolbar item: the item only exists once
         // the model has a reading.
@@ -89,6 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MenuBarHome.shared.start()
         // The projects with a workspace, read once, a few seconds on, for History → Return to Project (Workspace/).
         WorkspaceStore.shared.start()
+        // What's New, for someone updating: only while Capsid is the app in use, and never over a
+        // card or a sheet, so it starts after the panel's model has (App/WhatsNewWindow.swift).
+        WhatsNewPresenter.live.start()
         // Quick Start's and Reply's keys from any app, and Finder's Services
         // (QuickStart/). A demo returned above and registers none of it.
         GlobalKeys.shared.actions = [
@@ -433,6 +438,9 @@ struct BenchCommands: Commands {
         CommandGroup(after: .help) {
             // A demo has its own welcome (`--demo welcome`), which records nothing.
             Button("Welcome to Capsid") { WelcomeWindowController.shared.show() }
+                .disabled(Demo.mode != nil)
+            // The same, for the release the app is on; a demo has its own (`--demo whatsnew`).
+            Button("What’s New in Capsid") { WhatsNewWindowController.shared.show() }
                 .disabled(Demo.mode != nil)
             Button("Capsid Diagnostics…") { DiagnosticsWindowController.shared.show() }
         }

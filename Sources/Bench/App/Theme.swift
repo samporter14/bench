@@ -102,6 +102,11 @@ enum SettingsKey {
     /// The welcome window has been shown (or was skipped for someone who used
     /// Bench before it existed).
     static let hasSeenWelcome = "hasSeenWelcome"
+    /// The newest release whose What's New the user has seen (or that Capsid
+    /// started on, for a fresh install): "1.1", major.minor, as the table in
+    /// App/WhatsNew.swift is keyed. Absent means none. Never registered, and
+    /// not one of the keys that make `WelcomeGate` take a Mac for a used one.
+    static let whatsNewSeen = "whatsNewSeen"
     /// Which Settings tab is showing: "general", "phone" or "scenes".
     static let settingsTab = "settingsTab"
     /// "system" (follow the Mac), "light" or "dark": see `BenchAppearance`.

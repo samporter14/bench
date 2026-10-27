@@ -22,6 +22,8 @@ final class ReplyWindowController: NSObject, NSWindowDelegate {
     static let shared = ReplyWindowController()
 
     private var windows: [String: NSWindow] = [:]
+    /// Whether a reply window is on screen (What's New waits for none).
+    var isOpen: Bool { windows.values.contains { $0.isVisible } }
     /// The window's size before its content reports one.
     private static let size = NSSize(width: 440, height: 460)
 
