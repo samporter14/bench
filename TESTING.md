@@ -323,6 +323,45 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-27, batch S: six specimens, nine more stories and their closing gestures (`g/batch-s`, from main 2299d41)
+
+The catalogue's suggestions, made: six specimens, nine stories that use them or the ones already there, and a closing
+gesture for each new specimen so What's New stays true. Everything ran offscreen: no app launched, no window shown, no
+daemon asked.
+
+- ✅ **Six specimens** (555 now): Sanger chromatogram and Posterior predictive check (data), Contact angle (physics),
+  Confocal z-stack (bench), Pollination (plants), Paramecium (microbes). Each was drawn in the specimen harness at 88 pt,
+  light and dark, and looked at; Contact angle (the tangent now crosses the baseline, a pear-shaped pendant drop),
+  Pollination (cupped flowers, a bigger bee) and Paramecium (even cilia, a contractile vacuole with its canals, the oral
+  groove) were redrawn once after review. Seams under 0.001.
+- ✅ **Cost**, one second of frames at 88 pt 2x, best of three, debug build (`BatchRSnapshotTests.batchSIsDrawnWhenAsked`):
+  Sanger 5.1 ms, Paramecium 3.2, Posterior predictive check 1.8, Pollination 1.7, Contact angle 1.4, Confocal 1.2;
+  Flask, an older one, is 1.9. Sanger was 32 ms at first: its trace now reads one precomputed period of peaks instead of
+  summing Gaussians per point, and its ink is clipped by plain rectangles between the called stretches instead of an
+  even-odd mask. Same picture (coverage 0.239 before and after).
+- ✅ **Nine more stories**, twelve in all: A Western blot, A nanopore read, Sorting cells, Energy in a cell, A Sanger
+  read, A flower pollinated, Checking the model, Imaging a cell, A drop at rest. Every member is a real specimen; each
+  story was drawn offscreen as its run of changes, light and dark, and looked at. With everything on, 36 specimens are
+  members, 519 play alone, and the stories get 25 places in a round of about 45 minutes; From solution to crystal is
+  told three times, the others twice.
+- ✅ **Closing gestures** for the six: Sanger and Paramecium slow to a stop (both loop); the posterior check comes to
+  rest just after a replicate is drawn when one is near; Contact angle, Confocal and Pollination never settle inside
+  their reset (Contact angle not before its tangent and arc are drawn; Confocal dissolves to the finished stack when
+  caught a section short). Three new tests in `FinishingGestureTests`.
+- ✅ Mutation checks, each undone after and the tests green again:
+  - Contact angle's arrivals removed: `aSettleNeverDrawsInAnAnnotationOrASectionThatHadNotBegun` fails;
+  - Confocal's dissolve removed: `batchSResetsDissolveToAFinishedPicture` fails;
+  - Pollination's reset removed: `batchSResetsDissolveToAFinishedPicture` fails;
+  - the posterior check's rests emptied: `thePosteriorCheckComesToRestOnAReplicateJustDrawnWhenOneIsNear` fails;
+  - Paramecium's spec removed: `onlyTheNewSpecimensHaveAGestureAndEveryOtherKeepsItsFinish` fails and the gesture
+    tests stop on the missing spec.
+- ✅ What's New page 3 is now "Fourteen new specimens" and names all fourteen; `WhatsNewTests` checks each name is a real
+  specimen with a gesture. README and DESIGN say 555 and twelve stories.
+- ✅ `Finishing|WhatsNewTests`: 103 tests in 10 suites pass; with the sequence, notes, scene, topics, poster, settings
+  and rotation suites, 190 tests in 28 suites passed before the three new gesture tests.
+- ⏳ **Live**: the six in the real panel and menu bar, a story playing in the real rotation, and a session finishing on
+  each new specimen.
+
 ## 2026-10-27, Compare With: Compare from one card (`g/compare-with`, from main 2299d41)
 
 Sam opened the Shelf and couldn't find Compare: the only way in was to pick two cards and right-click one, and nothing
