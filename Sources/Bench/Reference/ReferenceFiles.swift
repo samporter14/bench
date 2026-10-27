@@ -178,6 +178,19 @@ struct ReferenceDocument {
     /// The file was longer than the window reads, and the end is not here.
     let cut: Bool
     let isEmpty: Bool
+    /// The reply it was opened from (`ReferenceAnswer.start`) and when Claude last spoke in it. Copy with Source
+    /// names that time, not the time of whatever reply the page is on. Nil start: no reply is known (a demo's).
+    var answerStart: Int?
+    var answerAt: Date?
+
+    init(file: HistoryFile, rendered: NSAttributedString, cut: Bool, isEmpty: Bool, answerStart: Int? = nil, answerAt: Date? = nil) {
+        self.file = file
+        self.rendered = rendered
+        self.cut = cut
+        self.isEmpty = isEmpty
+        self.answerStart = answerStart
+        self.answerAt = answerAt
+    }
 }
 
 // MARK: Quick Look's items
@@ -254,6 +267,11 @@ final class ReferenceFiles: NSObject, ObservableObject {
     private var observation: NSKeyValueObservation?
     /// Bumped by `close`: a read that lands afterwards changes nothing.
     private var token = 0
+    /// The Markdown documents being read for the window, by version, each with the opening it belongs to. An opening
+    /// that finds its entry gone or changed (a newer document opened, Back, another reply, the window closed) was
+    /// left behind: what it reads or renders is dropped, and it publishes nothing. `token` is only the window's.
+    private var documentOpenings: [String: Int] = [:]
+    private var openings = 0
     /// The folder's deletion, once the window has closed.
     private(set) var removal: Task<Void, Never>?
 
@@ -271,15 +289,25 @@ final class ReferenceFiles: NSObject, ObservableObject {
     /// the panel pages through them); a Markdown document goes into the
     /// window. A second press on a file being read does nothing. Failing
     /// leaves one sentence for the file (`problems`) until the next try.
-    func open(_ file: HistoryFile, among quickLook: [HistoryFile]) {
+    ///
+    /// A document for the window is read for one place only: the reply it was
+    /// opened from (`answer`, whose start and time the document keeps). Each
+    /// opening has its own number, and it is left behind, its read stopped and
+    /// whatever lands dropped, by a newer document opening, by Back
+    /// (`closeDocument`, which another reply calls too) and by the window
+    /// closing. The older of two documents pressed one after the other can no
+    /// longer arrive last and replace the newer, and a document being read when
+    /// the page goes to another reply never turns up under it.
+    func open(_ file: HistoryFile, among quickLook: [HistoryFile], from answer: ReferenceAnswer? = nil) {
         guard fetches[file.v] == nil else { return }
         problems[file.v] = nil
         preparing.insert(file.v)
         let token = self.token
+        let opening = ReferenceFileRules.readsInWindow(file) ? beginDocumentOpening(file.v) : nil
         fetches[file.v] = Task { [weak self] in
             guard let self else { return }
             let outcome = await self.fetch(file, copyAlready: true)
-            guard self.token == token else { return }
+            guard self.token == token, self.isCurrent(opening, for: file) else { return }
             switch outcome {
             case .cancelled: break
             case .failed(let sentence): self.problems[file.v] = sentence
@@ -287,34 +315,64 @@ final class ReferenceFiles: NSObject, ObservableObject {
                 self.showInPanel(file, among: quickLook)
             case .bytes(let data):
                 if ReferenceFileRules.readsInWindow(file), let text = ReferenceFileRules.text(from: data) {
-                    await self.read(file, text: text.text, cut: text.cut, token: token)
-                } else if let url = await self.write(data, for: file, token: token) {
+                    await self.read(file, text: text.text, cut: text.cut, token: token, opening: opening, from: answer)
+                } else if let url = await self.write(data, for: file, token: token), self.isCurrent(opening, for: file) {
                     self.copies[file.v] = url
                     self.showInPanel(file, among: quickLook)
                 }
             }
             // The spinner goes when the file is up, or why not is said.
-            guard self.token == token else { return }
+            guard self.token == token, self.isCurrent(opening, for: file) else { return }
             self.fetches[file.v] = nil
             self.preparing.remove(file.v)
+            if opening != nil { self.documentOpenings[file.v] = nil }
         }
     }
 
-    /// The reading view's way back.
+    /// The reading view's way back (and the page going to another reply): the
+    /// document goes, and so does any document still being read for it.
     func closeDocument() {
+        abandonDocumentOpenings()
         document = nil
     }
 
     /// Shows a document already read (tests and the demo).
     func show(_ document: ReferenceDocument) {
+        abandonDocumentOpenings()
         self.document = document
     }
 
-    private func read(_ file: HistoryFile, text: String, cut: Bool, token: Int) async {
+    private func read(_ file: HistoryFile, text: String, cut: Bool, token: Int, opening: Int?, from answer: ReferenceAnswer?) async {
         let rendered = await dependencies.renderDocument(text)
-        guard self.token == token else { return }
+        guard self.token == token, isCurrent(opening, for: file) else { return }
         document = ReferenceDocument(file: file, rendered: rendered.text, cut: cut,
-                                     isEmpty: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                     isEmpty: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                                     answerStart: answer?.start, answerAt: answer?.at)
+    }
+
+    /// A document starts being read for the window: every other one still being read is left behind first.
+    private func beginDocumentOpening(_ version: String) -> Int {
+        abandonDocumentOpenings()
+        openings += 1
+        documentOpenings[version] = openings
+        return openings
+    }
+
+    /// Stops every document being read for the window and clears its spinner: what it reads is not wanted, and the
+    /// card can be pressed again at once.
+    private func abandonDocumentOpenings() {
+        for version in documentOpenings.keys {
+            fetches[version]?.cancel()
+            fetches[version] = nil
+            preparing.remove(version)
+        }
+        documentOpenings = [:]
+    }
+
+    /// Whether `opening` is still the one that may publish `file` (a file that isn't for the window has none).
+    private func isCurrent(_ opening: Int?, for file: HistoryFile) -> Bool {
+        guard let opening else { return true }
+        return documentOpenings[file.v] == opening
     }
 
     // MARK: Reading and writing
@@ -411,6 +469,7 @@ final class ReferenceFiles: NSObject, ObservableObject {
         token += 1
         for task in fetches.values { task.cancel() }
         fetches = [:]
+        documentOpenings = [:]
         preparing = []
         document = nil
         closePanel()

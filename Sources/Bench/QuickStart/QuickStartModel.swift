@@ -137,9 +137,12 @@ final class QuickStartModel: ObservableObject {
     /// `files` and `text` filled when something handed them over. Everything
     /// the person had typed is kept when `keeping`. A `project` (and a
     /// `planFirst`) handed over, by the menu bar's field, is chosen as if its
-    /// chip had been pressed.
+    /// chip had been pressed, and its `retry` (the id of a start that field
+    /// could not confirm, and what it was) becomes this panel's own, so the
+    /// same request sent from here is the same request to the daemon.
     func open(files urls: [URL] = [], text start: String? = nil, keeping: Bool = false,
-              project handed: QuickStartProject? = nil, planFirst handedPlan: Bool? = nil) {
+              project handed: QuickStartProject? = nil, planFirst handedPlan: Bool? = nil,
+              retry: IntentLedger.Pending? = nil) {
         openCount += 1
         lingering?.cancel()
         // A request on its way isn't taken back by opening the panel again: it
@@ -182,6 +185,8 @@ final class QuickStartModel: ObservableObject {
         if projectID == nil { projectID = recents.first?.id }
         // What a Service or a Shortcut hands over while a send is in flight waits: the request on its way is kept.
         if let start, !underway { self.text = start }
+        // After the fresh start above has made a new id: the handed request keeps the one it was sent under.
+        if let retry, !underway { ledger.adopt(retry) }
         addFiles(urls)
         Task { [weak self] in
             guard let self else { return }
@@ -196,6 +201,14 @@ final class QuickStartModel: ObservableObject {
             // the session in view, when that is one it knows.
             if !projectChosen, let session, known(session.projectID) != nil { projectID = session.projectID }
         }
+    }
+
+    /// Whether the menu bar's field can hand its words over now (⌘↩). Not while a request of this panel's own is
+    /// on its way: that one is kept, and what is handed over while it goes is not taken (`open` leaves it out), so
+    /// the field it came from has to keep it. A hand-over with no words in it (↩ on an empty field) loses nothing
+    /// and is always taken.
+    func accepts(_ handOff: CompanionStart.HandOff) -> Bool {
+        !(handOff.carriesWords && phase == .sending)
     }
 
     // MARK: What it holds

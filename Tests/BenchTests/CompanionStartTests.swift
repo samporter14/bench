@@ -134,7 +134,10 @@ private final class Pressed {
         actions.open = { [self] in log.append("open \($0.title)") }
         actions.reference = { [self] in log.append("reference \($0.title)") }
         actions.copyLink = { [self] in log.append("copy \($0.title)") }
-        actions.quickStart = { [self] in log.append("quick start \($0.text) in \($0.project?.name ?? "none"), plan \($0.planFirst)") }
+        actions.quickStart = { [self] in
+            log.append("quick start \($0.text) in \($0.project?.name ?? "none"), plan \($0.planFirst)")
+            return true
+        }
         return actions
     }
 }
@@ -439,6 +442,207 @@ struct CompanionStartTests {
         await rig.settle()
         #expect(rig.read.recents == 1 && rig.read.everything == 1 && rig.read.plan == 1)
     }
+
+    // MARK: ⌘↩ and Quick Start's own ledger and send
+
+    /// A Quick Start panel on the same made-up projects, with its own sender.
+    private func quickStart(_ rig: StartRig, sender: FakeSender = FakeSender()) -> QuickStartModel {
+        QuickStartModel(dependencies: QuickStartModel.Dependencies(
+            recipes: { [] }, recentProjects: { rig.recents }, allProjects: { nil }, viewed: { nil }, sender: sender, close: {},
+            sleep: { _ in }))
+    }
+
+    @Test func aStartThatMayHaveGoneThroughKeepsItsIntentWhenMovedToQuickStartUnchanged() async throws {
+        let rig = StartRig()
+        rig.sender.outcomes = [.failed(sentence: QuickStartFlow.Sentence.startNotThere)]
+        rig.start.open()
+        await rig.settle()
+        rig.start.text = "QC the plate"
+        rig.start.start()
+        await rig.waitForSend()
+        let sent = try #require(rig.sender.requests.first)
+        let handOff = try #require(rig.start.handOff())
+        let panel = quickStart(rig)
+        panel.open(text: handOff.text, project: handOff.project, planFirst: handOff.planFirst, retry: handOff.retry)
+        await rig.settle()
+        let retry = try #require(panel.request(toViewed: false))
+        #expect(retry.signature == sent.signature, "the same request")
+        #expect(retry.intentID == sent.intentID, "so the daemon finds the first one and nothing starts twice")
+    }
+
+    @Test func anEditAfterTheHandOffOrASuccessMakesANewIntent() async throws {
+        let rig = StartRig()
+        rig.sender.outcomes = [.failed(sentence: QuickStartFlow.Sentence.startNotThere)]
+        rig.start.open()
+        await rig.settle()
+        rig.start.text = "QC the plate"
+        rig.start.start()
+        await rig.waitForSend()
+        let sent = try #require(rig.sender.requests.first)
+        let handOff = try #require(rig.start.handOff())
+        let panel = quickStart(rig)
+        panel.open(text: handOff.text, project: handOff.project, planFirst: handOff.planFirst, retry: handOff.retry)
+        await rig.settle()
+        panel.text = "QC the plate again"
+        let edited = try #require(panel.request(toViewed: false))
+        #expect(edited.intentID != sent.intentID, "an edit is a new request")
+        // Edited back, it is the new request's again, not the first one's.
+        panel.text = "QC the plate"
+        #expect(panel.request(toViewed: false)?.intentID != sent.intentID)
+        // A start that went through leaves nothing to carry.
+        let done = StartRig()
+        done.start.open()
+        await done.settle()
+        done.start.text = "QC the plate"
+        done.start.start()
+        await done.waitForSend()
+        done.start.text = "QC the plate"
+        let fresh = try #require(done.start.handOff())
+        #expect(fresh.retry == nil, "a start that worked leaves nothing waiting on an answer")
+        let other = quickStart(done)
+        other.open(text: fresh.text, project: fresh.project, planFirst: fresh.planFirst, retry: fresh.retry)
+        await done.settle()
+        let again = try #require(other.request(toViewed: false))
+        #expect(again.intentID != done.sender.requests[0].intentID, "the same words after a start are a new session")
+    }
+
+    @Test func theHandOffCarriesTheIntentOfARequestWaitingOnAnAnswerAndNothingElse() async throws {
+        let rig = StartRig()
+        rig.sender.outcomes = [.failed(sentence: QuickStartFlow.Sentence.startNotThere),
+                               .started(sessionID: "00000000-0000-4000-8000-0000000000d1", sentence: "Started in Assay development.")]
+        rig.start.open()
+        await rig.settle()
+        rig.start.text = "QC the plate"
+        #expect(rig.start.handOff()?.retry == nil, "nothing has been sent")
+        rig.start.start()
+        await rig.waitForSend()
+        let first = try #require(rig.sender.requests.first)
+        let waiting = try #require(rig.start.handOff()?.retry)
+        #expect(waiting.id == first.intentID && waiting.signature == first.signature)
+        // Edited, the field still holds the first request's identity: the receiver compares signatures.
+        rig.start.text = "QC the plate again"
+        #expect(rig.start.handOff()?.retry == waiting)
+        // Sent again and it worked: nothing is waiting any more.
+        rig.start.text = "QC the plate"
+        rig.start.start()
+        await rig.waitForSend()
+        #expect(rig.sender.requests[1].intentID == first.intentID, "the same request, retried")
+        rig.start.text = "QC the plate"
+        #expect(rig.start.handOff()?.retry == nil)
+    }
+
+    @Test func aLedgerAdoptsTheRequestAnotherCouldNotConfirm() throws {
+        var menu = IntentLedger()
+        #expect(menu.pending == nil)
+        let id = menu.id(for: "new:proj_assay\u{1F}QC the plate\u{1F}plan")
+        let waiting = try #require(menu.pending)
+        #expect(waiting == IntentLedger.Pending(id: id, signature: "new:proj_assay\u{1F}QC the plate\u{1F}plan"))
+        var quick = IntentLedger()
+        quick.adopt(waiting)
+        #expect(quick.id(for: waiting.signature) == id, "the same request keeps the id")
+        #expect(quick.id(for: waiting.signature + "!") != id, "a changed request has a new one")
+        menu.sent()
+        #expect(menu.pending == nil)
+    }
+
+    /// ⌘↩ as the app does it: Quick Start takes the words if it can (`QuickStartController.receive` and `show`).
+    private func hand(_ rig: StartRig, to panel: QuickStartModel) -> Bool {
+        rig.start.handOver { handOff in
+            guard panel.accepts(handOff) else { return false }
+            panel.open(text: handOff.text.isEmpty ? nil : handOff.text, project: handOff.project, planFirst: handOff.planFirst,
+                       retry: handOff.retry)
+            return true
+        }
+    }
+
+    /// A Quick Start panel with a request of its own on its way.
+    private func sendingPanel(_ rig: StartRig) async -> (panel: QuickStartModel, sender: FakeSender) {
+        let sender = FakeSender()
+        sender.hold = true
+        let panel = quickStart(rig, sender: sender)
+        panel.open(text: "First request")
+        await rig.settle()
+        panel.submit(toViewed: false)
+        await rig.settle()
+        return (panel, sender)
+    }
+
+    @Test func wordsQuickStartCantTakeWhileItSendsStayInTheFieldAndSayWhy() async throws {
+        let rig = StartRig()
+        rig.start.open()
+        await rig.settle()
+        let (panel, busy) = await sendingPanel(rig)
+        #expect(panel.phase == .sending)
+        rig.start.text = "Second request"
+        #expect(rig.start.line == .hint("↩ starts it with a plan first"))
+        // ⌘↩ while Quick Start sends: not taken, nothing leaves the field, and the field says so.
+        #expect(!hand(rig, to: panel))
+        #expect(rig.start.text == "Second request")
+        #expect(rig.start.line == .kept("Quick Start is sending; your words are kept here."))
+        #expect(panel.text == "First request" && busy.requests.count == 1, "Quick Start keeps the request on its way")
+        // The popover goes before it is read, and comes back: the words are there once, with the line.
+        rig.start.close()
+        rig.start.open()
+        await rig.settle()
+        #expect(rig.start.text == "Second request" && rig.start.line == .kept("Quick Start is sending; your words are kept here."))
+        // Any later opening is clean, as it always was.
+        rig.start.close()
+        rig.start.open()
+        #expect(rig.start.text.isEmpty && rig.start.line == nil)
+        busy.release()
+    }
+
+    @Test func theLineGoesWhenTheWordsChangeAndTheWordsGoWhenQuickStartTakesThem() async throws {
+        let rig = StartRig()
+        rig.start.open()
+        await rig.settle()
+        let (panel, busy) = await sendingPanel(rig)
+        rig.start.text = "Second request"
+        #expect(!hand(rig, to: panel))
+        // Typing on takes the line away.
+        rig.start.text = "Second request, longer"
+        #expect(rig.start.line == .hint("↩ starts it with a plan first"))
+        rig.start.text = "Second request"
+        #expect(!hand(rig, to: panel))
+        // Quick Start finishes its own; the same press now hands them over, and only now does the field clear.
+        busy.release()
+        for _ in 0..<200 where panel.phase == .sending { await Task.yield() }
+        await rig.settle()
+        #expect(hand(rig, to: panel))
+        #expect(rig.start.text.isEmpty && rig.start.line == nil)
+        #expect(panel.text == "Second request")
+        #expect(busy.requests.count == 1, "nothing was sent by the hand-over")
+    }
+
+    @Test func aHandOverWithNoWordsLosesNothingAndIsTakenEvenWhileQuickStartSends() async throws {
+        let rig = StartRig()
+        rig.start.open()
+        await rig.settle()
+        let (panel, busy) = await sendingPanel(rig)
+        rig.start.text = "   "
+        #expect(hand(rig, to: panel), "↩ on an empty field only opens Quick Start")
+        #expect(rig.start.line == nil)
+        #expect(panel.text == "First request", "its own request is still what it holds")
+        #expect(panel.accepts(CompanionStart.HandOff(text: "", project: nil, planFirst: true)))
+        #expect(!panel.accepts(CompanionStart.HandOff(text: "Words", project: nil, planFirst: true)))
+        busy.release()
+    }
+
+    @Test func anAcceptedHandOverTakesTheRetryIdentityOutOfTheField() async throws {
+        let rig = StartRig()
+        rig.sender.outcomes = [.failed(sentence: QuickStartFlow.Sentence.startNotThere)]
+        rig.start.open()
+        await rig.settle()
+        rig.start.text = "QC the plate"
+        rig.start.start()
+        await rig.waitForSend()
+        let sent = try #require(rig.sender.requests.first)
+        let panel = quickStart(rig)
+        #expect(hand(rig, to: panel))
+        #expect(rig.start.text.isEmpty && rig.start.handOff()?.retry == nil, "the id is Quick Start's now")
+        #expect(panel.request(toViewed: false)?.intentID == sent.intentID)
+    }
+
 }
 
 // MARK: The popover reads nothing while closed

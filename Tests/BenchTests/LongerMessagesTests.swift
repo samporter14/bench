@@ -243,8 +243,11 @@ struct LongMessagePathTests {
         .init(role: .you, at: page.now.addingTimeInterval(seconds), text: text, intent: intent)
     }
 
+    /// The turns the reader shows, with a reply from before the send among them: rows that begin before the send are
+    /// what lets "not there" be said (`MessageSeen`).
     private func processing(_ turns: [SessionProjection.Turn]) -> SessionProjection {
-        SessionProjection(status: "processing", agentName: "made-up-agent", projectID: "proj-made-up", turns: turns)
+        let earlier = SessionProjection.Turn(role: .claude, at: page.now.addingTimeInterval(-60), text: "Here is the plan.")
+        return SessionProjection(status: "processing", agentName: "made-up-agent", projectID: "proj-made-up", turns: [earlier] + turns)
     }
 
     /// The reader shows a turn cut at 2,000 characters and ends it "…": a long message is only ever seen by its opening.

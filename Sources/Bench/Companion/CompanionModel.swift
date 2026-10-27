@@ -197,8 +197,10 @@ struct CompanionActions {
     var copyLink: @MainActor (SessionStatus) -> Void = { _ in }
     /// Recent's "N more": Quick Open, which lists every session.
     var showQuickOpen: @MainActor () -> Void = {}
-    /// ⌘↩ in the field (and ↩ with nothing typed): opens Quick Start with the words, the project and the plan setting.
-    var quickStart: @MainActor (CompanionStart.HandOff) -> Void = { _ in }
+    /// ⌘↩ in the field (and ↩ with nothing typed): opens Quick Start with the words, the project, the plan setting
+    /// and the retry identity. True when Quick Start took them; false when it is sending something of its own and
+    /// keeps that, and then nothing is opened and the words stay in the field.
+    var quickStart: @MainActor (CompanionStart.HandOff) -> Bool = { _ in true }
     /// Open beside "Started in …": the session the field just started (its id, its project's).
     var openStarted: @MainActor (String, String) -> Void = { _, _ in }
     var showResults: @MainActor () -> Void = {}

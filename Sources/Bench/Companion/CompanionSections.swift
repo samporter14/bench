@@ -46,6 +46,8 @@ enum CompanionText {
 
     static let fullPanelHint = "⌘↩ Quick Start"
     static let starting = "Starting…"
+    /// Under the field when ⌘↩ could not hand the words to Quick Start, which was sending: they stay here.
+    static let quickStartBusy = "Quick Start is sending; your words are kept here."
     /// The project pill with no project to start in yet.
     static let chooseProject = "Choose a project"
 

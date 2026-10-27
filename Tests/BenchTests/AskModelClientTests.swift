@@ -185,6 +185,12 @@ private func client(wait: @escaping @MainActor (Duration) async -> Void = WriteD
 
 private func address(_ host: String) -> URL { URL(string: "https://\(host)/v1")! }
 
+/// What a list came to, once it has.
+@MainActor
+private final class Done {
+    var result: Result<[String], AnotherModelFailure>?
+}
+
 private let answerJSON = #"{"id":"chatcmpl-1","choices":[{"index":0,"message":{"role":"assistant","content":"Use **HEPES** at 25 mM."}}]}"#
 
 // MARK: The requests
@@ -390,6 +396,42 @@ struct AskModelFailureTests {
         #expect(AnotherModelFailure.status(500).sentence(host: "api.abliteration.ai", limit: .seconds(120))
             == "api.abliteration.ai answered with an error (500). Try again in a moment.")
         #expect(AnotherModelClient.result(status: 200, data: Data(count: AnotherModelClient.maxBody + 1)) == .failure(.unreadable))
+    }
+
+    @Test func aListBiggerThanTheLimitIsStoppedWhileItComesNotAfterItIsAllHere() async {
+        // Five MiB of a list that never ends: the 4 MiB limit is met on the way, the request is cancelled, and the
+        // clock (which never fires here) is not what ends the list.
+        let feed = StreamFeed()
+        let host = FakeModelProtocol.host { _ in .stream(200, "application/json", feed) }
+        let finished = Done()
+        let task = Task { @MainActor in
+            finished.result = await client(wait: { await ManualClock().wait($0) }).models(address: address(host), key: madeUpModelKey)
+        }
+        feed.send(#"{"data":["#)
+        let block = Data(repeating: 0x20, count: 64 * 1024)
+        for _ in 0..<80 { feed.send(block) }
+        for _ in 0..<1_000 where finished.result == nil { try? await Task.sleep(for: .milliseconds(5)) }
+        let result = finished.result
+        if result == nil {
+            task.cancel()
+            await task.value
+        }
+        #expect(result == .failure(.unreadable))
+        for _ in 0..<1_000 where FakeModelProtocol.seen(host).stops < 1 { try? await Task.sleep(for: .milliseconds(5)) }
+        #expect(FakeModelProtocol.seen(host).stops == 1, "the transport is cancelled as soon as the limit is crossed")
+    }
+
+    @Test func aListThatFitsIsReadFromTheStreamAndAnErrorBodyIsNotRead() async {
+        let list = FakeModelProtocol.host { _ in .stream(200, "application/json", StreamFeed([#"{"data":[{"id":"a-model"},"#, #"{"id":"b-model"}]}"#])) }
+        #expect(await client().models(address: address(list), key: madeUpModelKey) == .success(["a-model", "b-model"]))
+        // An error's body, however large, is never read: the status says it.
+        let feed = StreamFeed()
+        let broken = FakeModelProtocol.host { _ in .stream(500, "text/html", feed) }
+        feed.send(Data(repeating: 0x20, count: 64 * 1024))
+        let soon = client(wait: { _ in try? await Task.sleep(for: .seconds(1)) })
+        #expect(await soon.models(address: address(broken), key: madeUpModelKey) == .failure(.status(500)))
+        let refused = FakeModelProtocol.host { _ in .stream(401, "application/json", StreamFeed([#"{"error":"no"}"#])) }
+        #expect(await client().models(address: address(refused), key: madeUpModelKey) == .failure(.keyRefused))
     }
 
     @Test func aRedirectIsRefusedAndTheKeyNeverReachesTheOtherHost() async {

@@ -1392,7 +1392,7 @@ today's results' missing lists and pictures (`CompanionResults`,
 `readsListsWhenOpen`: at most 8 sessions, one at a time through the typing
 gate, only while open, cancelled on close; on by the lead's call, since board
 1 draws pictures and kind labels alone read as broken). `--demo menubar`
-(`--step board|since|empty|busy|unread|panel|recent|typing|started|failed`;
+(`--step board|since|empty|busy|unread|panel|recent|typing|started|failed|kept`;
 no demo step opens a menu, since a menu makes the quiet panel key and it once
 took four of Sam's keystrokes).
 
@@ -1406,7 +1406,23 @@ Start's box last asked for one. A line under the field says what Return does and
 that ⌘Return is Quick Start; then "Starting…", then "Started in Assay
 development." with Open, or the flow's own sentence with the words kept. ⌘Return,
 and Return on an empty field, open Quick Start with the words, the project and
-the plan setting. A send that ends while the popover is closed shows its outcome
+the plan setting, and with the intent id of a start the field could not confirm
+(since Codex's review of 1.0.7): the two have ledgers of their own
+(`IntentLedger`), so the hand-over carries the id and the request's signature
+(target, words, plan setting, files), and Quick Start's ledger takes them. The
+same request sent from Quick Start is the same request to the daemon, so a start
+whose answer was lost and which went through is found, not made twice; a request
+edited since, or any request after one that worked, has a new id. **Quick Start
+has to take the words** (since Codex's review of 1.0.7). It does not while a
+request of its own is on its way, which it keeps (`QuickStartModel.accepts`); the
+hand-over then does nothing at all, the panel is not brought forward and the
+popover stays, the words stay in the field, and the line under it says "Quick
+Start is sending; your words are kept here." Only words Quick Start has taken
+leave the field (and the request's id with them); a hand-over with no words in
+it (Return on an empty field) loses nothing and is always taken. If the popover
+closes before that, the words are there at the next opening, once, with the
+line, as an outcome not yet seen is; any later opening is clean. Typing takes
+the line away. A send that ends while the popover is closed shows its outcome
 once, at the next opening. **Recent**, after Working and before Results today,
 holds the five sessions active latest that are in neither list (one put off with
 Later among them, its dot clay): a dot, the title, and "project · when" in the
@@ -1766,7 +1782,18 @@ since the send the answer is "Not sure", not "didn't go through". A turn with no
 intent id is this message only when all of it agrees: the same words whole, the
 same files by id, and a time no earlier than the send. A queue that grew says
 nothing of whose message joined it, so it leaves the answer "Not sure", and the
-phone keeps the words. A photo's turn that runs out of time stops at its next
+phone keeps the words. **Absence needs proof** (since Codex's review of 1.0.7).
+The reader sees only the newest twelve rows, and the turns it keeps are those
+rows less tool calls, their results and the rows Claude Science hides, so a
+message delivered while Claude works can be pushed out of them by the rows after
+it and leave no turn behind. "That didn't go through" is therefore said
+only when the turns include one dated before the send began: the rows then run
+on from before the send to now, and a message that landed is among them. No
+turns, turns all dated after the send, one at the send's own millisecond, or
+turns with no time prove nothing, and the answer is "Not sure that went
+through" (the words kept, nothing sent again on its own). A message is still
+found by its intent id wherever the rows start, and a plan change's words by
+the same rule. A photo's turn that runs out of time stops at its next
 step: one given up on while it reads the session uploads nothing, and an upload
 never starts for a caller already given up on.
 
@@ -6649,11 +6676,11 @@ too. Add to Shelf and Keep… wait up to 2 s for reads under way.
 
 *Documents.* They are listed under the figures, as quiet small cards in board 11's style: a kind tile (the file's ending in capitals, "MD", "CSV", the way Since You Left draws a file without a picture), the name over "Markdown · 4 KB", and Add to Shelf as the small pill (ringed in ink once it is on the shelf). Pressing one opens it: a Markdown document in the window, everything else (a table, a PDF, a page, a script) in Quick Look like the figures.
 
-*The reading view.* A Markdown document replaces the page: a small "‹ Answer" pill, a title row (the kind tile, the file's name in 15-point semibold, Add to Shelf), a hairline, then the document drawn by the window's own renderer (`AnswerMarkdown`, `AnswerStyle.reference`, 14 on 21, selectable). Esc and ⌘[ go back, as the pill does (the window takes them in `performKeyEquivalent` and `cancelOperation`, ahead of the History menu's Back, and only while a document is open); the answer stays under the document (the document is laid over it), so back is the same place, selection and all. Another reply (Earlier, Later) is the answer again. The foot is the reply's own: Copy with Source copies the selection or the whole document with a source line that names the file ("— plate_qc_notes.md, Claude, in “Plate reader QC” (Assay development), 22 October 2026, 8:47") and the same link. A document is read whole to 2 MiB (the history reads' own cap, `HistoryReaderScript.bodyCap`), cut back to a whole character and then to the end of a line, and the page says "Only the first 2 MB are shown. Add it to your shelf for the whole file." under it. Bytes that aren't UTF-8 text go to Quick Look instead; an empty one says "This document is empty." A table in a document is the renderer's placeholder, "Not shown here: a table."
+*The reading view.* A Markdown document replaces the page: a small "‹ Answer" pill, a title row (the kind tile, the file's name in 15-point semibold, Add to Shelf), a hairline, then the document drawn by the window's own renderer (`AnswerMarkdown`, `AnswerStyle.reference`, 14 on 21, selectable). Esc and ⌘[ go back, as the pill does (the window takes them in `performKeyEquivalent` and `cancelOperation`, ahead of the History menu's Back, and only while a document is open); the answer stays under the document (the document is laid over it), so back is the same place, selection and all. Another reply (Earlier, Later) is the answer again. A document is read for the reply it was pressed in, and each opening has a number of its own (`ReferenceFiles.documentOpenings`; the window's `token` only changes when the window closes): pressing another document, Back, going to another reply and closing the window leave an opening behind, so a read or a drawing still under way when one of them happens is stopped or dropped, its card's spinner goes at once and the card can be pressed again. A document therefore never turns up under another reply, and an older one whose drawing ends last never replaces a newer (since Codex's review of 1.0.7). The same reply grown by a row keeps its document. The document keeps the time of the reply it came from (`ReferenceDocument.answerAt`), and Copy with Source names that time, not the time of whatever reply the page is on. The foot is the reply's own: Copy with Source copies the selection or the whole document with a source line that names the file ("— plate_qc_notes.md, Claude, in “Plate reader QC” (Assay development), 22 October 2026, 8:47") and the same link. A document is read whole to 2 MiB (the history reads' own cap, `HistoryReaderScript.bodyCap`), cut back to a whole character and then to the end of a line, and the page says "Only the first 2 MB are shown. Add it to your shelf for the whole file." under it. Bytes that aren't UTF-8 text go to Quick Look instead; an empty one says "This document is empty." A table in a document is the renderer's placeholder, "Not shown here: a table."
 
 *Reads and writes* (`ReferenceFiles.swift`). One read path, the Results shelf's: `ArtifactRead.download`, through the reference windows' own one-at-a-time queue (`ReferenceWindowController.transfers`), within 8 MB by the listing and again by the bytes, and each read through the reading gate (one at a time, none within 400 ms of typing in the main window; the figures' pictures on the cards don't go through it). No route and no page script is new. Quick Look wants files, so the bytes are written to `<temporary folder>/Capsid Reference Files/<UUID>/<version id>/<name>` (0700 folders, 0600 files, the real name kept, the shelf's `ShelfTemporaryCopies`), one run to a window; the panel is closed and the run's folder deleted when the window closes, and a window that never closed leaves its folder for the next launch's first window to delete. A Markdown document is never written. The Results shelf's own folder ("Capsid Quick Look") is untouched.
 
-*Tests.* `ReferenceFileRulesTests` (figures against documents, a reply's documents, hidden names, the Quick Look list, the kind tile), `ReferenceReadBoundsTests` (the 2 MiB limit and the cut, a split character, a byte-order mark, bytes that aren't text, the cap and the sentences of a failed read), `ReferenceQuickLookTests` (the items and the data source, the copy's name and permissions, the arrow keys, the folder gone on close, a late read dropped), `ReferenceOpeningTests` (a failed read's sentence, the size refusals, the gate's waiting and its order), `ReferenceReadingViewTests` (the reading view, the cut and its note, Add to Shelf on a document, Copy with Source, Esc and ⌘[ on a window), and `ReferenceFilesSnapshotTests`. Only a person can confirm the panel itself (its arrow keys and the temporary copy it shows).
+*Tests.* `ReferenceFileRulesTests` (figures against documents, a reply's documents, hidden names, the Quick Look list, the kind tile), `ReferenceReadBoundsTests` (the 2 MiB limit and the cut, a split character, a byte-order mark, bytes that aren't text, the cap and the sentences of a failed read), `ReferenceQuickLookTests` (the items and the data source, the copy's name and permissions, the arrow keys, the folder gone on close, a late read dropped), `ReferenceOpeningTests` (a failed read's sentence, the size refusals, the gate's waiting and its order), `ReferenceReadingViewTests` (the reading view, the cut and its note, Add to Shelf on a document, Copy with Source and the reply's own time, a document left behind by Back, another reply or a newer document, Esc and ⌘[ on a window), and `ReferenceFilesSnapshotTests`. Only a person can confirm the panel itself (its arrow keys and the temporary copy it shows).
 
 *Two fixes found on the way, in the same window.* A landing's scroll (Show Where It Came From) waited one yield for the page to be laid out, which was too soon: in a real window it stayed at the top. It waits 120 ms. And the title bar's band was drawn behind the page, so a picture scrolled under the title showed through it; it is drawn over the page now, on the page's own colour. `--step documents` opens the demo scrolled to the documents.
 
@@ -6679,7 +6706,8 @@ sending.
 ↩ starts a session in the chosen project through the phone's new-session
 writer (`RemoteBrowser.start`), with an intent id kept the same across a retry
 of an unchanged request, so a session whose answer was lost is found, not made
-twice. ⇧↩ sends the same words as a message to the session the main window
+twice (also for a request the menu bar's field began and moved here with ⌘↩,
+which brings its id with it, `IntentLedger.adopt`). ⇧↩ sends the same words as a message to the session the main window
 shows (`RemoteSessions`: a fresh read, `RemoteDecide.message`, queued when
 Claude is busy). The foot says which: "A new session in Assay development, on
 your plan. ⇧↩ sends it to the session you're viewing." or, with ⇧ down, "A
@@ -6737,7 +6765,8 @@ during a send.)
 
 While a request is on its way the panel holds still: a recipe, ⌘1 to ⌘9, a
 project chip, a dropped file or a × change nothing, ↩ sends nothing a second
-time, and a Service's text waits. The global key brings the panel forward and
+time, and a Service's text waits (so do the menu bar field's words, which stay
+in that field). The global key brings the panel forward and
 never hides it mid-send. If a send ends while the panel is hidden, its sentence
 and request are there at the next opening.
 
@@ -6981,7 +7010,7 @@ Top to bottom:
     failure's own sentence in clay (below).
 
 **The request** (`AnotherModelClient`, `AnotherModelStream.swift`): an ephemeral `URLSession`;
-`GET /models` (20 seconds) and `POST /chat/completions` with `{"model", "messages":
+`GET /models` (20 seconds, and 4 MiB of body counted as it comes) and `POST /chat/completions` with `{"model", "messages":
 [{"role", "content"}], "stream": true}` and nothing more, asking for `Accept: text/event-stream`.
 Nothing is ever tried again on its own; the request is one, never retried, whatever ends it.
 - **The stream** is server-sent events, read as bytes by `AskStreamLines`, which cuts a line at LF, CR
@@ -6999,6 +7028,17 @@ Nothing is ever tried again on its own; the request is one, never retried, whate
   is read whole (4 MiB at most) as the same `choices[0].message.content` as before. A server that ignores
   `stream` answers JSON, and that is that. A body of lines under another content type is read as the
   stream, whole, after the JSON has failed to be an answer.
+- **Bytes are bounded as they arrive** (since Codex's review of 1.0.7), not once they are all here, and
+  whatever they are. A line is held to 4 MiB (`AskStreamLines`: the bytes past it are dropped, the part
+  that fitted is never read as a line, and the ask ends), the stream to 64 MiB in all, every byte counted:
+  words, reasoning, `:` keepalives, lines that read as nothing (`AnotherModelClient.maxStream`), and an
+  answer's own words to 4 MiB as before. The list (`GET /models`) and a JSON answer are read through the
+  same bounded reader, to 4 MiB, and a response that says by its `Content-Length` it is bigger is not read
+  at all; an error status's body is never read. At the first limit crossed the request is cancelled on the
+  spot (`URLSession.AsyncBytes.task`), the ask ends as `.cutOff(.overran)` ("The answer ran on for too
+  long, so Capsid stopped it.", logged as "ran too long") with the words that came, and a list as
+  `.unreadable`. Before, a line with no end was held for as long as it came, a flood of reasoning or
+  keepalives was bounded only by the clock, and `/models` was held whole before its size was looked at.
 - **A status is read first**: 401, 403, 429 and the rest keep their sentences, and the body is never
   read as an answer (a 302 is refused as before, and the key never follows it).
 - **Three deadlines on one clock** (the tests' `ManualClock`), none retried:
@@ -7008,8 +7048,8 @@ Nothing is ever tried again on its own; the request is one, never retried, whate
   - **then a minute** with no chunk (`.cutOff(.stalled)`): each chunk starts it over, and a `:`
     keepalive line starts it over too, once a chunk has come. The request's own timeout (two minutes of
     no data) is only a backstop under it;
-  - **ten minutes in all** (`.cutOff(.overran)`), however the chunks keep coming. An answer past 4 MiB
-    ends the same way.
+  - **ten minutes in all** (`.cutOff(.overran)`), however the chunks keep coming. An answer past 4 MiB,
+    a line past 4 MiB and a stream past 64 MiB end the same way.
   The run (`AskStreamRun`) ends exactly once, with the words that arrived whatever ended it, stops the
   request, and delivers nothing after. Cancel ends it at once (`.cancelled`, the words kept); a Cancel
   or a window close before the ask began cannot hang it.
@@ -7025,7 +7065,7 @@ Failures are plain sentences (`AnotherModelFailure`):
 - no first chunk: "No answer came within 2 minutes. Ask again, or ask something shorter.";
 - no network: "This Mac isn't connected to the internet."; the host not reached: "Couldn't reach api.abliteration.ai. Check the address in Settings → General.";
 - anything else (a 500, a redirect): "api.abliteration.ai answered with an error (500). Try again in a moment."; a 2xx that holds no answer: "… sent back something that isn't an answer.";
-- after the answer began (`.cutOff`, the words kept): "The answer stopped coming. Ask again, or ask something shorter." (a minute with no chunk); "The answer ran on for too long, so Capsid stopped it." (ten minutes, or 4 MiB); "api.abliteration.ai closed the connection before the answer was done. Ask again."; "api.abliteration.ai reported an error while it was answering. Try again in a moment." (an `{"error": …}` chunk; its words are never shown).
+- after the answer began (`.cutOff`, the words kept): "The answer stopped coming. Ask again, or ask something shorter." (a minute with no chunk); "The answer ran on for too long, so Capsid stopped it." (ten minutes, 4 MiB of words, a line over 4 MiB, or a stream over 64 MiB); "api.abliteration.ai closed the connection before the answer was done. Ask again."; "api.abliteration.ai reported an error while it was answering. Try again in a moment." (an `{"error": …}` chunk; its words are never shown).
 
 **Send to Session** posts the answer into that session as the user's next
 message: "Another model (abliterated-model) answered:", a blank line, the answer.
