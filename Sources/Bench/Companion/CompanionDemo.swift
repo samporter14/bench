@@ -14,7 +14,8 @@
 // backdrop of our own, with no menu bar item and without taking the keyboard),
 // then `recent` (nothing needs you or works: Recent's five), `typing` (words in
 // the field and the line under it), `started` ("Started in …" and Open),
-// and `failed` (a start Capsid can't confirm). The field's ↩ goes to a sender of
+// `failed` (a start Capsid can't confirm) and `kept` (⌘↩ found Quick Start
+// sending, and the words stayed). The field's ↩ goes to a sender of
 // its own that waits a moment and says it started: nothing is sent anywhere.
 // (No step opens the project pill's menu: a menu opened in a background demo
 // makes its panel key, and the panel would take the typing of whoever is at
@@ -35,6 +36,8 @@ enum CompanionDemo {
         case started
         /// A start Capsid can't confirm, in the flow's words.
         case failed
+        /// Quick Start was sending, so ⌘↩ left the words here and says so.
+        case kept
     }
 
     /// What the popover sits on in a plain window or a picture: a stand-in for the blurred wallpaper the
@@ -177,7 +180,7 @@ enum CompanionDemo {
         var asking = [made.question, made.plan]
         var quiet = made.quiet
         switch step {
-        case .board, .since, .unread, .panel, .typing, .started, .failed: break
+        case .board, .since, .unread, .panel, .typing, .started, .failed, .kept: break
         case .empty:
             working = []
             asking = []
@@ -246,6 +249,8 @@ enum CompanionDemo {
         case .failed:
             start.showDemo(text: "Compare the Z′ across the last three plates",
                            phase: .failed(QuickStartFlow.Sentence.startNotThere))
+        case .kept:
+            start.showDemo(text: "Compare the Z′ across the last three plates", phase: .editing, held: true)
         default:
             break
         }

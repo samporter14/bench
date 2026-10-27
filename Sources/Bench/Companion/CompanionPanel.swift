@@ -245,10 +245,7 @@ final class CompanionPanelController: NSObject {
                 self?.close()
                 QuickOpenPresenter.shared.show()
             },
-            quickStart: { handOff in
-                QuickStartController.shared.show(text: handOff.text.isEmpty ? nil : handOff.text, project: handOff.project,
-                                                 planFirst: handOff.planFirst, retry: handOff.retry)
-            },
+            quickStart: { handOff in QuickStartController.shared.receive(handOff) },
             openStarted: { [weak self] sessionID, projectID in
                 self?.close()
                 // The Lab may have read it already; if not, its address opens it all the same.

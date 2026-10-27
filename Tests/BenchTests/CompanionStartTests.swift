@@ -134,7 +134,10 @@ private final class Pressed {
         actions.open = { [self] in log.append("open \($0.title)") }
         actions.reference = { [self] in log.append("reference \($0.title)") }
         actions.copyLink = { [self] in log.append("copy \($0.title)") }
-        actions.quickStart = { [self] in log.append("quick start \($0.text) in \($0.project?.name ?? "none"), plan \($0.planFirst)") }
+        actions.quickStart = { [self] in
+            log.append("quick start \($0.text) in \($0.project?.name ?? "none"), plan \($0.planFirst)")
+            return true
+        }
         return actions
     }
 }
@@ -540,6 +543,104 @@ struct CompanionStartTests {
         #expect(quick.id(for: waiting.signature + "!") != id, "a changed request has a new one")
         menu.sent()
         #expect(menu.pending == nil)
+    }
+
+    /// ⌘↩ as the app does it: Quick Start takes the words if it can (`QuickStartController.receive` and `show`).
+    private func hand(_ rig: StartRig, to panel: QuickStartModel) -> Bool {
+        rig.start.handOver { handOff in
+            guard panel.accepts(handOff) else { return false }
+            panel.open(text: handOff.text.isEmpty ? nil : handOff.text, project: handOff.project, planFirst: handOff.planFirst,
+                       retry: handOff.retry)
+            return true
+        }
+    }
+
+    /// A Quick Start panel with a request of its own on its way.
+    private func sendingPanel(_ rig: StartRig) async -> (panel: QuickStartModel, sender: FakeSender) {
+        let sender = FakeSender()
+        sender.hold = true
+        let panel = quickStart(rig, sender: sender)
+        panel.open(text: "First request")
+        await rig.settle()
+        panel.submit(toViewed: false)
+        await rig.settle()
+        return (panel, sender)
+    }
+
+    @Test func wordsQuickStartCantTakeWhileItSendsStayInTheFieldAndSayWhy() async throws {
+        let rig = StartRig()
+        rig.start.open()
+        await rig.settle()
+        let (panel, busy) = await sendingPanel(rig)
+        #expect(panel.phase == .sending)
+        rig.start.text = "Second request"
+        #expect(rig.start.line == .hint("↩ starts it with a plan first"))
+        // ⌘↩ while Quick Start sends: not taken, nothing leaves the field, and the field says so.
+        #expect(!hand(rig, to: panel))
+        #expect(rig.start.text == "Second request")
+        #expect(rig.start.line == .kept("Quick Start is sending; your words are kept here."))
+        #expect(panel.text == "First request" && busy.requests.count == 1, "Quick Start keeps the request on its way")
+        // The popover goes before it is read, and comes back: the words are there once, with the line.
+        rig.start.close()
+        rig.start.open()
+        await rig.settle()
+        #expect(rig.start.text == "Second request" && rig.start.line == .kept("Quick Start is sending; your words are kept here."))
+        // Any later opening is clean, as it always was.
+        rig.start.close()
+        rig.start.open()
+        #expect(rig.start.text.isEmpty && rig.start.line == nil)
+        busy.release()
+    }
+
+    @Test func theLineGoesWhenTheWordsChangeAndTheWordsGoWhenQuickStartTakesThem() async throws {
+        let rig = StartRig()
+        rig.start.open()
+        await rig.settle()
+        let (panel, busy) = await sendingPanel(rig)
+        rig.start.text = "Second request"
+        #expect(!hand(rig, to: panel))
+        // Typing on takes the line away.
+        rig.start.text = "Second request, longer"
+        #expect(rig.start.line == .hint("↩ starts it with a plan first"))
+        rig.start.text = "Second request"
+        #expect(!hand(rig, to: panel))
+        // Quick Start finishes its own; the same press now hands them over, and only now does the field clear.
+        busy.release()
+        for _ in 0..<200 where panel.phase == .sending { await Task.yield() }
+        await rig.settle()
+        #expect(hand(rig, to: panel))
+        #expect(rig.start.text.isEmpty && rig.start.line == nil)
+        #expect(panel.text == "Second request")
+        #expect(busy.requests.count == 1, "nothing was sent by the hand-over")
+    }
+
+    @Test func aHandOverWithNoWordsLosesNothingAndIsTakenEvenWhileQuickStartSends() async throws {
+        let rig = StartRig()
+        rig.start.open()
+        await rig.settle()
+        let (panel, busy) = await sendingPanel(rig)
+        rig.start.text = "   "
+        #expect(hand(rig, to: panel), "↩ on an empty field only opens Quick Start")
+        #expect(rig.start.line == nil)
+        #expect(panel.text == "First request", "its own request is still what it holds")
+        #expect(panel.accepts(CompanionStart.HandOff(text: "", project: nil, planFirst: true)))
+        #expect(!panel.accepts(CompanionStart.HandOff(text: "Words", project: nil, planFirst: true)))
+        busy.release()
+    }
+
+    @Test func anAcceptedHandOverTakesTheRetryIdentityOutOfTheField() async throws {
+        let rig = StartRig()
+        rig.sender.outcomes = [.failed(sentence: QuickStartFlow.Sentence.startNotThere)]
+        rig.start.open()
+        await rig.settle()
+        rig.start.text = "QC the plate"
+        rig.start.start()
+        await rig.waitForSend()
+        let sent = try #require(rig.sender.requests.first)
+        let panel = quickStart(rig)
+        #expect(hand(rig, to: panel))
+        #expect(rig.start.text.isEmpty && rig.start.handOff()?.retry == nil, "the id is Quick Start's now")
+        #expect(panel.request(toViewed: false)?.intentID == sent.intentID)
     }
 
 }

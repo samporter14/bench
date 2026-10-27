@@ -203,6 +203,14 @@ final class QuickStartModel: ObservableObject {
         }
     }
 
+    /// Whether the menu bar's field can hand its words over now (⌘↩). Not while a request of this panel's own is
+    /// on its way: that one is kept, and what is handed over while it goes is not taken (`open` leaves it out), so
+    /// the field it came from has to keep it. A hand-over with no words in it (↩ on an empty field) loses nothing
+    /// and is always taken.
+    func accepts(_ handOff: CompanionStart.HandOff) -> Bool {
+        !(handOff.carriesWords && phase == .sending)
+    }
+
     // MARK: What it holds
 
     /// The project of the chip row's selection, by name.

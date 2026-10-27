@@ -13,6 +13,12 @@
 // plan first" is what Quick Start's box last said (on until it has been
 // unticked there). Nothing is kept on disk.
 //
+// ⌘↩ hands the words to Quick Start only if Quick Start takes them. It does not
+// while a request of its own is on its way (it keeps that one), and then the
+// words stay in this field with one line saying so; if the popover closes, they
+// are here at the next opening, once. Only words Quick Start has taken leave the
+// field.
+//
 // It reads nothing while the popover is closed. A send in flight when the
 // popover closes goes on, and its outcome is there at the next opening; any
 // other opening starts clean, as Quick Start's does.
@@ -37,6 +43,8 @@ final class CompanionStart: ObservableObject {
         case sending(String)
         case started(String)
         case failed(String)
+        /// The words were not taken by Quick Start, which was sending, and are kept here: "Quick Start is sending; your words are kept here."
+        case kept(String)
     }
 
     /// What ⌘↩ hands Quick Start. `retry` is the intent id of the last request this field made and could not
@@ -48,6 +56,9 @@ final class CompanionStart: ObservableObject {
         let project: QuickStartProject?
         let planFirst: Bool
         var retry: IntentLedger.Pending? = nil
+
+        /// There is something to say (more than white space): the part of the hand-over that can be lost.
+        var carriesWords: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
     struct Dependencies {
@@ -85,6 +96,7 @@ final class CompanionStart: ObservableObject {
     @Published var text = "" {
         didSet {
             guard text != oldValue else { return }
+            held = false
             // Typing again: what the last send said no longer stands.
             switch phase {
             case .failed, .started: phase = .editing
@@ -99,6 +111,8 @@ final class CompanionStart: ObservableObject {
     @Published private(set) var phase: Phase = .editing
     @Published private(set) var progress: QuickStartFlow.Progress?
     @Published private(set) var isOpen = false
+    /// Quick Start was sending when ⌘↩ handed it the words, so they are still here: the line says so until they change.
+    @Published private(set) var held = false
 
     private let dependencies: Dependencies
     private var ledger = IntentLedger()
@@ -106,6 +120,8 @@ final class CompanionStart: ObservableObject {
     private var sending: Task<Void, Never>?
     /// A send that ended while the popover was closed: its outcome hasn't been seen.
     private var outcomeUnseen = false
+    /// The popover closed with words Quick Start had not taken: the next opening keeps them, once.
+    private var wordsKept = false
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
@@ -117,15 +133,17 @@ final class CompanionStart: ObservableObject {
         guard !isOpen else { return }
         isOpen = true
         let underway = phase == .sending
-        if !underway && !outcomeUnseen {
+        if !underway && !outcomeUnseen && !(wordsKept && hasText) {
             // A fresh start, as Quick Start's is.
             text = ""
+            held = false
             phase = .editing
             progress = nil
             projectID = nil
             ledger.sent()
         }
         outcomeUnseen = false
+        wordsKept = false
         recents = dependencies.recentProjects()
         if !underway { planFirst = dependencies.planFirst() }
         if projectID == nil || known(projectID ?? "") == nil { projectID = recents.first?.id }
@@ -256,8 +274,29 @@ final class CompanionStart: ObservableObject {
         return HandOff(text: text, project: project, planFirst: planFirst, retry: ledger.pending)
     }
 
+    /// ⌘↩: hands the words over through `take`, which says whether Quick Start took them. Taken, the field is
+    /// clear (the words and the request's id are Quick Start's now) and the popover can go. Not taken, because
+    /// Quick Start is sending something of its own, nothing leaves: the words stay, a line says so, and they are
+    /// here at the next opening too if the popover closes first. False also while this field's own send is on
+    /// its way (there is nothing to hand over then).
+    @discardableResult
+    func handOver(through take: @MainActor (HandOff) -> Bool) -> Bool {
+        guard let handOff = handOff() else { return false }
+        guard take(handOff) else {
+            held = true
+            wordsKept = true
+            return false
+        }
+        text = ""
+        held = false
+        wordsKept = false
+        ledger.sent()
+        return true
+    }
+
     /// The line under the field, or nil for none (nothing typed, nothing sent).
     var line: Line? {
+        if held, phase != .sending { return .kept(CompanionText.quickStartBusy) }
         switch phase {
         case .sending:
             return .sending(progress == .checking ? RemoteDecide.Sentence.checking : CompanionText.starting)
@@ -278,10 +317,11 @@ final class CompanionStart: ObservableObject {
     // MARK: Demos and pictures
 
     /// Puts the field in a state without sending anything. Only demos and snapshots call it.
-    func showDemo(text: String, phase: Phase, progress: QuickStartFlow.Progress? = nil) {
+    func showDemo(text: String, phase: Phase, progress: QuickStartFlow.Progress? = nil, held: Bool = false) {
         self.text = text
         self.phase = phase
         self.progress = progress
+        self.held = held
     }
 }
 

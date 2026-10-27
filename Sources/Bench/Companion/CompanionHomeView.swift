@@ -202,9 +202,8 @@ struct CompanionHomeView: View {
         case .start:
             start.start()
         case .quickStart:
-            guard let handOff = start.handOff() else { return }
-            actions.close()
-            actions.quickStart(handOff)
+            // The popover goes only once Quick Start has the words; if it can't take them they stay here.
+            if start.handOver(through: actions.quickStart) { actions.close() }
         }
     }
 
@@ -288,6 +287,9 @@ struct CompanionHomeView: View {
                 Text(sentence)
                     .foregroundStyle(Theme.clayText)
                     .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            case .kept(let sentence):
+                Text(sentence).foregroundStyle(Solanum.muted)
                 Spacer(minLength: 0)
             }
         }

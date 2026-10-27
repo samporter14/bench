@@ -1,7 +1,7 @@
 // CompanionSnapshotTests.swift — not a check: when `CAPSID_SNAPSHOT_DIR` names
 // a folder, draws the home popover (board 1's state, a return waiting, nothing
-// to do, more rows than fit, Recent alone, the field typed in, started and
-// failed) and the menu bar item's faces into it as PNGs,
+// to do, more rows than fit, Recent alone, the field typed in, started,
+// failed and kept) and the menu bar item's faces into it as PNGs,
 // light and dark, so they can be looked at without opening a window. Without
 // it the test does nothing.
 //
@@ -117,13 +117,14 @@ struct CompanionSnapshotTests {
         recent.model.open()
         #expect(recent.model.sections.isQuiet && recent.model.sections.recent.count == 5 && recent.model.sections.recentHidden == 0)
         recent.model.close()
-        for step in [CompanionDemo.Step.typing, .started, .failed] {
+        for step in [CompanionDemo.Step.typing, .started, .failed, .kept] {
             let made = CompanionDemo.made(step)
             made.model.open()
             CompanionDemo.fill(made, step: step)
             switch step {
             case .typing: #expect(made.model.start.line == .hint("↩ starts it with a plan first"))
             case .started: #expect(made.model.start.line == .started("Started in Assay development."))
+            case .kept: #expect(made.model.start.line == .kept("Quick Start is sending; your words are kept here."))
             default: #expect(made.model.start.line == .failed(QuickStartFlow.Sentence.startNotThere))
             }
             made.model.close()

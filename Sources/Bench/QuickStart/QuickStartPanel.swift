@@ -62,6 +62,16 @@ final class QuickStartController: NSObject {
         window.makeKey()
     }
 
+    /// The menu bar's field hands its words over (⌘↩): whether Quick Start took them. It does not while a request
+    /// of its own is on its way (`QuickStartModel.accepts`), and then nothing happens here, not even bringing the
+    /// panel forward: the popover the words are in stays where it is, and keeps them.
+    func receive(_ handOff: CompanionStart.HandOff) -> Bool {
+        guard model?.accepts(handOff) ?? true else { return false }
+        show(text: handOff.text.isEmpty ? nil : handOff.text, project: handOff.project, planFirst: handOff.planFirst,
+             retry: handOff.retry)
+        return true
+    }
+
     /// What the global key does: puts the panel away when it is up, except mid-send, when the request on its
     /// way is what the panel is showing and the outcome has to be read there: the key brings it forward
     /// (or keeps it) and never hides it.

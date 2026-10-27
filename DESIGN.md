@@ -1392,7 +1392,7 @@ today's results' missing lists and pictures (`CompanionResults`,
 `readsListsWhenOpen`: at most 8 sessions, one at a time through the typing
 gate, only while open, cancelled on close; on by the lead's call, since board
 1 draws pictures and kind labels alone read as broken). `--demo menubar`
-(`--step board|since|empty|busy|unread|panel|recent|typing|started|failed`;
+(`--step board|since|empty|busy|unread|panel|recent|typing|started|failed|kept`;
 no demo step opens a menu, since a menu makes the quiet panel key and it once
 took four of Sam's keystrokes).
 
@@ -1412,7 +1412,17 @@ the plan setting, and with the intent id of a start the field could not confirm
 (target, words, plan setting, files), and Quick Start's ledger takes them. The
 same request sent from Quick Start is the same request to the daemon, so a start
 whose answer was lost and which went through is found, not made twice; a request
-edited since, or any request after one that worked, has a new id. A send that ends while the popover is closed shows its outcome
+edited since, or any request after one that worked, has a new id. **Quick Start
+has to take the words** (since Codex's review of 1.0.7). It does not while a
+request of its own is on its way, which it keeps (`QuickStartModel.accepts`); the
+hand-over then does nothing at all, the panel is not brought forward and the
+popover stays, the words stay in the field, and the line under it says "Quick
+Start is sending; your words are kept here." Only words Quick Start has taken
+leave the field (and the request's id with them); a hand-over with no words in
+it (Return on an empty field) loses nothing and is always taken. If the popover
+closes before that, the words are there at the next opening, once, with the
+line, as an outcome not yet seen is; any later opening is clean. Typing takes
+the line away. A send that ends while the popover is closed shows its outcome
 once, at the next opening. **Recent**, after Working and before Results today,
 holds the five sessions active latest that are in neither list (one put off with
 Later among them, its dot clay): a dot, the title, and "project · when" in the
@@ -6676,7 +6686,8 @@ during a send.)
 
 While a request is on its way the panel holds still: a recipe, ⌘1 to ⌘9, a
 project chip, a dropped file or a × change nothing, ↩ sends nothing a second
-time, and a Service's text waits. The global key brings the panel forward and
+time, and a Service's text waits (so do the menu bar field's words, which stay
+in that field). The global key brings the panel forward and
 never hides it mid-send. If a send ends while the panel is hidden, its sentence
 and request are there at the next opening.
 
