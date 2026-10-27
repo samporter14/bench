@@ -313,6 +313,8 @@ struct BenchCommands: Commands {
     @ObservedObject private var reference = ReferenceCommands.shared
     /// Ask Another Model…: there only while it is on with a key (AskModel/AskModelMenu.swift).
     @ObservedObject private var ask = AskCommands.shared
+    /// The key Compare window, for its View commands (Kept/CompareWindow.swift).
+    @ObservedObject private var compare = CompareCommands.shared
     /// The key shown beside Quick Start… (QuickStart/GlobalHotKey.swift).
     @AppStorage(SettingsKey.quickStartKey) private var quickStartKey = GlobalHotKey.Slot.quickStart.fallback.rawValue
 
@@ -395,6 +397,8 @@ struct BenchCommands: Commands {
                 defaults.set(!defaults.bool(forKey: SettingsKey.showPanel), forKey: SettingsKey.showPanel)
             }
             .keyboardShortcut("l", modifiers: [.command, .shift])
+            // Swap Sides, Fit, Link Zoom, Wipe, Previous and Next Change: only while a Compare window is key.
+            CompareMenu(commands: compare)
         }
         CommandGroup(after: .textEditing) {
             Button("Find…") { ActiveWebPage.current?.showFind() }

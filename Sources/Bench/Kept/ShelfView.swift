@@ -261,6 +261,8 @@ struct ShelfView: View {
             Button("Copy") { ShelfActions.copy(item, disk: model.index.disk) }
             // On the picks when this card is one of them, else on this card alone: the name says which.
             Button(model.exportName(from: item)) { model.exportPDF(from: item) }
+            // With exactly two picked, this card among them: Compare (Kept/CompareWindow.swift).
+            ShelfCompareItem(model: model, item: item)
             Divider()
             Button("Open") { NSWorkspace.shared.open(item.fileURL) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.folder]) }
