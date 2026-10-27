@@ -139,7 +139,8 @@ clay-text (Look).
     tabs, below).
   - View: Reload ⌘R, Zoom In ⌘+, Zoom Out ⌘−, Actual Size ⌘0, Find ⌘F,
     Show Lab Panel ⌘⇧L.
-  - History: Back ⌘[, Forward ⌘].
+  - History: Back ⌘[, Forward ⌘], then Project Workspace ⌥⌘P and the Return
+    to Project submenu (Project Workspaces, since 1.1.0).
   - Reload, Zoom, Find and Back/Forward act on **the page in front**
     (Web/WebPageWindow.swift), not always the main window's. That is the key
     window's web page if it has one: the main window's, a Browser or Preview
@@ -6650,7 +6651,8 @@ and Code… and Open Conversation in its context menu); then Claude's words as s
 ink (`AnswerStyle.reference`; links in ink, underlined in clay) in an
 `NSTextView` sized to its text and lined up with the figures (no inset), so the
 page scrolls as one (`ReferenceTextView.sizeThatFits`). At the foot, under a
-hairline, two pills: Copy with Source (⇧⌘C) and Open Conversation. The first
+hairline, two pills: Copy with Source (⇧⌘C) and Open Conversation, with a quiet
+round ⋯ between them for Pin to Project (Project Workspaces, since 1.1.0). The first
 version said "Open in Claude Science", which named the wrong app: the
 conversation opens in Capsid's own window. Nothing in it is in the clay: the
 window reads, it never asks. Window → Keep on Top (`ReferenceCommands`) floats
