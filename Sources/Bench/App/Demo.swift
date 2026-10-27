@@ -17,6 +17,7 @@
 //   build/Capsid.app/Contents/MacOS/Capsid --demo toolbar
 //   build/Capsid.app/Contents/MacOS/Capsid --demo settings -settingsTab scenes -ApplePersistenceIgnoreState YES
 //   build/Capsid.app/Contents/MacOS/Capsid --demo welcome --page 2
+//   build/Capsid.app/Contents/MacOS/Capsid --demo whatsnew --page 3
 //   build/Capsid.app/Contents/MacOS/Capsid --demo remote --quiet
 //   build/Capsid.app/Contents/MacOS/Capsid --demo quick-start
 //   open -g -n build/Capsid.app --args --demo phone-settings --step 3 --quiet -ApplePersistenceIgnoreState YES
@@ -72,6 +73,10 @@ enum Demo {
         /// The first-run welcome in its plain window. Closing it doesn't mark
         /// it as seen. Its updates switch is the real setting, so leave it be.
         case welcome
+        /// What's New in Capsid in the same plain window, on the newest
+        /// release's pages. Closing it doesn't mark them as seen. Page 3's
+        /// switch is the real setting, so leave it be.
+        case whatsNew = "whatsnew"
         /// Capsid on your phone with the activity list's made-up sessions, on
         /// http://127.0.0.1:<port> (printed), pairing code 000000. No window,
         /// no Tailscale, no Keychain, no setting saved.
@@ -154,11 +159,16 @@ enum Demo {
 
     /// `--page N` with `--demo welcome`: starts on page N of 4, counting from
     /// 1, for a screenshot of each.
-    static let welcomePage: Int? = {
+    static let welcomePage: Int? = pageArgument(for: .welcome)
+
+    /// `--page N` with `--demo whatsnew`, the same way.
+    static let whatsNewPage: Int? = pageArgument(for: .whatsNew)
+
+    private static func pageArgument(for expected: Mode) -> Int? {
         let arguments = CommandLine.arguments
-        guard mode == .welcome, let flag = arguments.firstIndex(of: "--page") else { return nil }
+        guard mode == expected, let flag = arguments.firstIndex(of: "--page") else { return nil }
         return arguments.dropFirst(flag + 1).first.flatMap { Int($0) }
-    }()
+    }
 
     /// `--step N` with `--demo phone-settings`: 1 to 6 opens step N of the
     /// checklist, 7 is ready. 1 when missing.
@@ -308,6 +318,8 @@ enum Demo {
             showPage(UsageSettingsView(), title: "Usage")
         case .welcome?:
             WelcomeWindowController.shared.showDemo(page: welcomePage, quiet: isQuiet)
+        case .whatsNew?:
+            WhatsNewWindowController.shared.showDemo(page: whatsNewPage, quiet: isQuiet)
         case .remote?:
             showRemote()
         case .phoneSettings?:

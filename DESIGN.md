@@ -3362,10 +3362,116 @@ main Claude Science window opens behind it as usual.
 - **Look.** System controls: `.glass` Back, and the one `.glassProminent` in
   clay for Next / Get Started. Clay is also the current switch's tint; the page
   dots are neutral. Nothing animates but the specimen.
+- **Shared with What's New** (since 1.1.0). The window, the footer, the heading
+  and text styles, the glass well and the switch row are `App/TourWindow.swift`;
+  What's New (below) is the same window around other pages. `WelcomeFlow` is a
+  `TourFlow` of four.
 - **Demo.** `--demo welcome` shows the real window, with `--page N` (1 to 4)
   to start on a page. As with the other plain-window demos, `--quiet` keeps
   it from activating Capsid, and closing it records nothing: it never writes
   `hasSeenWelcome`. Its switch is the real setting, so don't click it.
+
+## What's New window (since 1.1.0)
+
+A short "what's new" for someone who has updated Capsid (`App/WhatsNew.swift`,
+`App/WhatsNewWindow.swift`), in the Welcome's own window: the same plain titled,
+closable 560 × 460 window, the same Back, Next and page dots, the one clay
+`.glassProminent` button and the same glass well for a picture. It is the
+Welcome's sibling, not a copy: the window, its footer, the headings and text, the
+well and the switch row are `App/TourWindow.swift` (`TourWindow`, `TourChrome`,
+`TourFlow`, `TourWell`, `TourSwitchRow`), which the Welcome uses too. The two
+differ in the pages they hold and in when they open.
+
+- **A table, keyed by release.** `WhatsNew.releases` (oldest first): an entry
+  per release, keyed by major.minor ("1.1"), each a list of `WhatsNewPage`: a
+  short title, one or two plain sentences, one picture (a SF Symbol, or a list of
+  specimens), and optionally one real setting as a switch. A later release adds
+  an entry and changes nothing else. A version belongs to the release of its major
+  and minor, so 1.1.0 and 1.1.1 are both "1.1" (`WhatsNew.releaseNumber(of:)`).
+- **Who sees it** (`WhatsNewGate`, pure but for three thin wrappers over a
+  `UserDefaults`; tested with throwaway suites). The key is `whatsNewSeen`, the last
+  release seen, "1.1".
+  - A version whose release has no entry shows nothing (1.0.7, and 1.2.0 until it
+    has one). A release at or below the one in `whatsNewSeen` shows nothing: a patch
+    release (1.1.1) after 1.1, an older build put back on a Mac that has gone on
+    since. Someone who updates 1.0.7 straight to 1.1.1 still sees 1.1's pages.
+    Someone who skips a release sees the one they are on, not both.
+  - Only someone who has used an earlier Capsid: `hasSeenWelcome` is true, or
+    `WelcomeGate.isExistingUser` finds one of the settings only a used Capsid
+    stores. A fresh install is shown the Welcome and never What's New for the
+    release it started on: at launch it records that release in `whatsNewSeen`
+    (`settleAtLaunch`) and shows nothing, now or later. A fresh install of a
+    release with no entry records nothing, so the next release with one shows.
+  - Never in a demo: the launch hook is past the demo's early return, and the
+    gate takes `isDemo` and answers nothing, writes nothing.
+- **When it shows** (`WhatsNewTiming.decide`, `WhatsNewPresenter`). Capsid must
+  never steal focus, so it is shown only while Capsid is the app in use and never
+  activates the app to show it: at launch if Capsid is already active, otherwise
+  the first time the user brings Capsid to the front
+  (`NSApplication.didBecomeActiveNotification`). Either way it looks 1.5 s
+  after, so the panel's cards, which are read just after launch, have had a
+  moment to appear. It waits, for the next activation (it does not poll), while
+  anything of Capsid's that wants the user first is up: a card asking for something
+  (a question, a plan, a request, a failure; a finished card or a notice asks for
+  nothing and doesn't hold it back), Capsid kept quiet for a presentation, Quick Open, Since You Left,
+  Quick Start, the home popover, a reply window, the Welcome, any sheet on any
+  window (Keep, an open or save panel, an alert) or anything modal. It does not
+  show over itself. The presenter starts last in `applicationDidFinishLaunching`,
+  after the panel's model has, and listens only when the running version has
+  an entry that isn't seen; it stops once there is nothing to show.
+  - The window comes up in place (`TourActivation.inPlace`): `orderFront` and no
+    `NSApp.activate()`, and it takes the keyboard only when no window of Capsid
+    has it, so a message being typed in the main window is not interrupted. (Help
+    and the Welcome's first launch are asked for, and do activate.)
+- **Marked as seen** when the window closes, by Continue, Esc or the close button
+  alike (`windowWillClose`), exactly as the Welcome is, and never when it opens.
+  Quit with it still open and it shows again at the next activation of the next
+  launch. What is recorded is the release the window showed, and never an earlier
+  one than is recorded.
+- **Help → What's New in Capsid**, next to Help → Welcome to Capsid, opens it from
+  page 1 and, already open, only brings it forward. It shows the entry for the
+  release the app is on; failing that the newest entry up to it (1.2 before it has
+  an entry); failing that the newest there is (a build older than every entry, which
+  only a developer's has: a 1.0.7 build with this code). Closing it records
+  that release, so opening it first from Help keeps the automatic one away. Dimmed
+  in a demo.
+- **Pages for 1.1.** Primary button: Next, and Continue on the last page.
+  1. *Compare two things on the Shelf.* A split-panes symbol. "Pick two pictures or
+     two text files on the Shelf, right-click one and choose Compare. Pictures sit
+     side by side, or one wipes over the other; for text, you see what changed,
+     line by line."
+  2. *Project Workspaces.* A folder. "Each project keeps its last conversation, the
+     references you pin to it and a small working note. History → Return to Project
+     brings them back together. There’s nothing to save."
+  3. *Eight new specimens.* The eight new specimens (Capillary electrophoresis,
+     Microtome ribbon, Droplet coalescence, Slime mold maze, Möbius strip,
+     Bayesian update, Fern unfurling, Diatom) playing in turn in the glass well,
+     in the panel's own glyph at 88 pt; under Reduce Motion the first rests as a
+     still, as the Welcome's panel page shows a still flask. "Capillary
+     electrophoresis, a Möbius strip, a fern unfurling and five more. Turn on Play
+     short sequences and now and then a few play in order, like a little story." Under
+     it the real setting, a native switch "Play short sequences" ("Also in Settings →
+     Specimens."; `SceneSettings.shared.playSequences`, clay when on). Showing the
+     page writes nothing. Finishing gestures (the specimen that was playing
+     settling to rest when a session finishes) are not on the page yet: the table
+     has a marked place for their sentence.
+  4. *Show Where It Came From.* A speech bubble. "From the Shelf, it now opens the
+     conversation at the exact reply something came from, with its results in view."
+- **Look.** The Welcome's. A page is a heading, the glass well (120 pt square, the
+  panel's surface), the text and, on page 3, the switch row. The symbols pages 1, 2
+  and 4 are one SF Symbol at 40 pt, light, in ink (`.primary`), not clay: no
+  screenshot, no picture in the bundle, no gradient, no shadow. Nothing animates but
+  the specimens.
+- **Keys.** Return is the default action (Next, Continue). Esc closes.
+- **Demo.** `--demo whatsnew` shows the real window on the newest release's pages,
+  with `--page N` (1 to 4) to start on a page and `--quiet` to keep Capsid from
+  activating. Closing it records nothing: it never writes `whatsNewSeen`. Page 3's
+  switch is the real setting, so don't click it.
+- **Checks.** `WhatsNewTests` (the table; the gate on a fresh install, an updater,
+  a patch release, a release with no entry and a demo; the timing; what is recorded
+  on close and not on open; the presenter on made-up answers).
+  `WhatsNewSnapshotTests` draws every page, page 3 playing and under Reduce Motion,
+  in both themes when `CAPSID_SNAPSHOT_DIR` is set.
 
 ## Efficiency (measured 2026-10-20)
 
@@ -3549,7 +3655,7 @@ phone, above), so the page's fetch for it stops.
 
 ```
 Package.swift, DESIGN.md, Scripts/build-app.sh, Resources/Info.plist   (planner)
-Sources/Bench/App/        BenchApp, Router, Theme, TimeSpan, SharedShims, SheetCost, PosterCost, Demo, Settings, AppIconChoice and AppIconPicker (the Dock icon choice), Welcome, Diagnose and Compat* (inventory, probes, breadcrumbs)   (planner)
+Sources/Bench/App/        BenchApp, Router, Theme, TimeSpan, SharedShims, SheetCost, PosterCost, Demo, Settings, AppIconChoice and AppIconPicker (the Dock icon choice), Welcome, TourWindow (the window the Welcome and What's New share), WhatsNew and WhatsNewWindow, Diagnose and Compat* (inventory, probes, breadcrumbs)   (planner)
 Sources/Bench/Web/        daemon, web view, routing, pop-ups, browser/preview windows, downloads, find, notification bridge, page tabs (Close Other Tabs, Close All Tabs), LastSession (reopen where you were)   (web agent)
 Sources/Bench/Lab/        LabModel, LabCard, LabPanelController, LabPanelView, LabStatusCapsule, SpecimenHold,
                           QuestionReply and ReplyWindow (a question, a permission request or a plan's
@@ -3621,6 +3727,7 @@ Each item gets checked live, and the result goes in TESTING.md:
 - [ ] reopen where you were: open a session, ⌘Q, launch: that session; go to the home page, ⌘Q, launch: the home page; `kill -9` Capsid while in a session, launch: that session; launch from a `bench://session?…` link of another session: that one, not the remembered; the remembered session gone (deleted, or another org active): the home page; sign out and back in on a remembered session: still on it
 - [ ] Ask another model (off by default; needs a real key, Sam's own): Settings → General → Another model off shows no toolbar button, no File item and no item in Claude Science's model menu; on with no key still none; paste the key and Save: the model list fills and the first model is chosen; the toolbar button (beside Results and the Shelf) appears, dim with no session in the main window and on in one, and a click opens the window with the session's last question; File → Ask Another Model… does the same; the page's model menu (the picker beside the message box) ends with a rule and "Ask Another Model…", in the menu's own look, lit under the pointer, and choosing it opens the window with what is typed in the message box (and with the session's last question when the box is empty), and the page's menu closes; Include the conversation so far lists the turns before it; Ask streams the answer in with Markdown and "Answering…" over it, then "Answered in N s"; the view follows the end and stops when you scroll up; "Thinking…" shows while only reasoning has come; Cancel (Esc) while it asks or streams keeps the words ("Stopped after N s", Copy on, Send to Session dim); a wrong key says "didn't accept your key"; the main window's right-click has no Ask item (on selected text, a figure or a tab); the reference window's right-click on Claude's words has it; Send to Session posts "Another model (…) answered:" and the answer into the session as the next message, once; the key file is 0600 in Application Support/Bench and Remove deletes it; the log (`another-model`) has counts and no words (and "Model menu: armed → … → placed" for each press of the picker); Settings → off closes nothing but the open window then refuses to send
 - [ ] the welcome: shows on a first launch (defaults deleted) and not on the next; not to a Mac with Capsid settings already stored; Help → Welcome to Capsid shows it again; Return and Esc work; the updates switch stays off until turned on
+- [ ] what's new (1.1): on a Mac that has used Capsid (`hasSeenWelcome` true) with `whatsNewSeen` deleted, launching 1.1.x with Capsid in front shows it after a moment, in front of the main window, with the keyboard where it was; launched in the background (`open -g`) it shows nothing until Capsid is brought to the front, and then only after a second; with a card on the panel, or a sheet open, it waits for the next time Capsid is brought to the front; Next, Back, Return and Esc work; closing it by Continue, Esc and the close button each stop it showing again (`defaults read local.sam.bench whatsNewSeen` is 1.1) and quitting with it open shows it again; a fresh install (all defaults deleted) shows the Welcome and no What's New, and `whatsNewSeen` is 1.1 from the first launch; 1.1.1 on top of 1.1 shows nothing; Help → What's New in Capsid shows it again from page 1, dimmed in a demo; page 3's specimens play, rest as a still with Reduce Motion on, and its switch is the real Play short sequences setting (off until turned on)
 
 ## Results (Results/, since 0.7.0)
 
