@@ -6913,7 +6913,7 @@ Top to bottom:
     failure's own sentence in clay (below).
 
 **The request** (`AnotherModelClient`, `AnotherModelStream.swift`): an ephemeral `URLSession`;
-`GET /models` (20 seconds) and `POST /chat/completions` with `{"model", "messages":
+`GET /models` (20 seconds, and 4 MiB of body counted as it comes) and `POST /chat/completions` with `{"model", "messages":
 [{"role", "content"}], "stream": true}` and nothing more, asking for `Accept: text/event-stream`.
 Nothing is ever tried again on its own; the request is one, never retried, whatever ends it.
 - **The stream** is server-sent events, read as bytes by `AskStreamLines`, which cuts a line at LF, CR
@@ -6931,6 +6931,17 @@ Nothing is ever tried again on its own; the request is one, never retried, whate
   is read whole (4 MiB at most) as the same `choices[0].message.content` as before. A server that ignores
   `stream` answers JSON, and that is that. A body of lines under another content type is read as the
   stream, whole, after the JSON has failed to be an answer.
+- **Bytes are bounded as they arrive** (since Codex's review of 1.0.7), not once they are all here, and
+  whatever they are. A line is held to 4 MiB (`AskStreamLines`: the bytes past it are dropped, the part
+  that fitted is never read as a line, and the ask ends), the stream to 64 MiB in all, every byte counted:
+  words, reasoning, `:` keepalives, lines that read as nothing (`AnotherModelClient.maxStream`), and an
+  answer's own words to 4 MiB as before. The list (`GET /models`) and a JSON answer are read through the
+  same bounded reader, to 4 MiB, and a response that says by its `Content-Length` it is bigger is not read
+  at all; an error status's body is never read. At the first limit crossed the request is cancelled on the
+  spot (`URLSession.AsyncBytes.task`), the ask ends as `.cutOff(.overran)` ("The answer ran on for too
+  long, so Capsid stopped it.", logged as "ran too long") with the words that came, and a list as
+  `.unreadable`. Before, a line with no end was held for as long as it came, a flood of reasoning or
+  keepalives was bounded only by the clock, and `/models` was held whole before its size was looked at.
 - **A status is read first**: 401, 403, 429 and the rest keep their sentences, and the body is never
   read as an answer (a 302 is refused as before, and the key never follows it).
 - **Three deadlines on one clock** (the tests' `ManualClock`), none retried:
@@ -6940,8 +6951,8 @@ Nothing is ever tried again on its own; the request is one, never retried, whate
   - **then a minute** with no chunk (`.cutOff(.stalled)`): each chunk starts it over, and a `:`
     keepalive line starts it over too, once a chunk has come. The request's own timeout (two minutes of
     no data) is only a backstop under it;
-  - **ten minutes in all** (`.cutOff(.overran)`), however the chunks keep coming. An answer past 4 MiB
-    ends the same way.
+  - **ten minutes in all** (`.cutOff(.overran)`), however the chunks keep coming. An answer past 4 MiB,
+    a line past 4 MiB and a stream past 64 MiB end the same way.
   The run (`AskStreamRun`) ends exactly once, with the words that arrived whatever ended it, stops the
   request, and delivers nothing after. Cancel ends it at once (`.cancelled`, the words kept); a Cancel
   or a window close before the ask began cannot hang it.
@@ -6957,7 +6968,7 @@ Failures are plain sentences (`AnotherModelFailure`):
 - no first chunk: "No answer came within 2 minutes. Ask again, or ask something shorter.";
 - no network: "This Mac isn't connected to the internet."; the host not reached: "Couldn't reach api.abliteration.ai. Check the address in Settings → General.";
 - anything else (a 500, a redirect): "api.abliteration.ai answered with an error (500). Try again in a moment."; a 2xx that holds no answer: "… sent back something that isn't an answer.";
-- after the answer began (`.cutOff`, the words kept): "The answer stopped coming. Ask again, or ask something shorter." (a minute with no chunk); "The answer ran on for too long, so Capsid stopped it." (ten minutes, or 4 MiB); "api.abliteration.ai closed the connection before the answer was done. Ask again."; "api.abliteration.ai reported an error while it was answering. Try again in a moment." (an `{"error": …}` chunk; its words are never shown).
+- after the answer began (`.cutOff`, the words kept): "The answer stopped coming. Ask again, or ask something shorter." (a minute with no chunk); "The answer ran on for too long, so Capsid stopped it." (ten minutes, 4 MiB of words, a line over 4 MiB, or a stream over 64 MiB); "api.abliteration.ai closed the connection before the answer was done. Ask again."; "api.abliteration.ai reported an error while it was answering. Try again in a moment." (an `{"error": …}` chunk; its words are never shown).
 
 **Send to Session** posts the answer into that session as the user's next
 message: "Another model (abliterated-model) answered:", a blank line, the answer.

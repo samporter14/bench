@@ -10,9 +10,12 @@
 // AnotherModelStream.swift): two minutes for the first chunk, a minute with none
 // after that, ten minutes in all; a server that ignores `stream` and answers
 // JSON is read whole, as it was. Cancel ends either at once, keeping the words
-// that came; nothing is ever tried again on its own. A failure is one plain
-// sentence (`AnotherModelFailure.sentence`). Nothing here logs: the callers log
-// fixed words and counts (AnotherModel.swift).
+// that came; nothing is ever tried again on its own. What comes back is bounded
+// as it arrives, not once it is all here: the list and a JSON answer 4 MiB, a
+// stream's line 4 MiB and the stream 64 MiB, and the request is cancelled the
+// moment one is crossed. A failure is one plain sentence
+// (`AnotherModelFailure.sentence`). Nothing here logs: the callers log fixed
+// words and counts (AnotherModel.swift).
 import Foundation
 
 // MARK: The address and the key
@@ -183,6 +186,9 @@ final class AnotherModelClient {
     nonisolated static let overallLimit: Duration = .seconds(600)
     /// A body over this (4 MiB), or an answer longer, isn't read as an answer.
     nonisolated static let maxBody = 4 * 1024 * 1024
+    /// Everything one stream may send in all (64 MiB): the words, the reasoning, the comments and whatever else
+    /// arrives. An answer's words are held to `maxBody` on their own.
+    nonisolated static let maxStream = 64 * 1024 * 1024
     /// The most models a list gives, and the longest name taken. 1,000 holds
     /// the largest public lists (OpenRouter's has about 470; since 1.0.6).
     nonisolated static let maxModels = 1000
@@ -192,6 +198,7 @@ final class AnotherModelClient {
     let listLimit: Duration
     let idleLimit: Duration
     let overallLimit: Duration
+    let streamLimit: Int
     private let session: URLSession
     private let wait: @MainActor (Duration) async -> Void
 
@@ -200,12 +207,14 @@ final class AnotherModelClient {
     init(configuration: URLSessionConfiguration = AnotherModelClient.configuration(),
          askLimit: Duration = AnotherModelClient.askLimit, listLimit: Duration = AnotherModelClient.listLimit,
          idleLimit: Duration = AnotherModelClient.idleLimit, overallLimit: Duration = AnotherModelClient.overallLimit,
+         streamLimit: Int = AnotherModelClient.maxStream,
          wait: @escaping @MainActor (Duration) async -> Void = WriteDeadline.sleep) {
         session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
         self.askLimit = askLimit
         self.listLimit = listLimit
         self.idleLimit = idleLimit
         self.overallLimit = overallLimit
+        self.streamLimit = streamLimit
         self.wait = wait
     }
 
@@ -240,7 +249,8 @@ final class AnotherModelClient {
         guard let request = Self.askRequest(address: address, key: key, model: model, turns: turns, limit: askLimit) else {
             return .failed(.unreadable)
         }
-        let run = AskStreamRun(progress: progress, wait: wait, first: askLimit, idle: idleLimit, overall: overallLimit)
+        let run = AskStreamRun(progress: progress, wait: wait, first: askLimit, idle: idleLimit, overall: overallLimit,
+                               streamLimit: streamLimit)
         return await run.start(session: session, request: request)
     }
 
@@ -250,9 +260,7 @@ final class AnotherModelClient {
         let session = session
         let raced = await WriteDeadline.race(limit, wait: wait, cancel: .finish) { () async -> Result<Data, AnotherModelFailure> in
             do {
-                let (data, response) = try await session.data(for: request)
-                guard let http = response as? HTTPURLResponse else { return .failure(.unreadable) }
-                return Self.result(status: http.statusCode, data: data)
+                return try await Self.fetch(request, with: session)
             } catch let error as URLError {
                 return .failure(AnotherModelFailure.of(error))
             } catch is CancellationError {
@@ -266,6 +274,35 @@ final class AnotherModelClient {
         case .timedOut: return .failure(.timedOut)
         case .cancelled: return .failure(.cancelled)
         }
+    }
+
+    /// The answer to a request for a list, its body read as it comes, off the
+    /// main actor (as the stream is), to `maxBody` and no further: past it the
+    /// request is cancelled on the spot, not read to its end and then refused.
+    /// A body that says it is too big is not read at all, and neither is an
+    /// error status's.
+    @concurrent
+    private nonisolated static func fetch(_ request: URLRequest, with session: URLSession) async throws
+        -> Result<Data, AnotherModelFailure> {
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else { return .failure(.unreadable) }
+        guard (200..<300).contains(http.statusCode) else {
+            bytes.task.cancel()
+            return result(status: http.statusCode, data: Data())
+        }
+        if http.expectedContentLength > maxBody {
+            bytes.task.cancel()
+            return .failure(.unreadable)
+        }
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count > maxBody {
+                bytes.task.cancel()
+                return .failure(.unreadable)
+            }
+        }
+        return result(status: http.statusCode, data: data)
     }
 
     /// A status and its body: a 2xx within `maxBody`, or why not.

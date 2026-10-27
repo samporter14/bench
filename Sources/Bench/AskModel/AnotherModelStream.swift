@@ -20,8 +20,13 @@
 //   keepalive line renews the minute once a chunk has come, and does not meet
 //   the two minutes.
 // - The words that arrived are kept whatever ends it: Cancel, a deadline, an
-//   error chunk, a lost connection. The run ends exactly once and delivers
-//   nothing after it.
+//   error chunk, a lost connection, a limit. The run ends exactly once and
+//   delivers nothing after it.
+// - Bytes are bounded as they come, not after: a line may be 4 MiB, the stream
+//   64 MiB in all, whatever the bytes are (words, reasoning, keepalive
+//   comments, lines that read as nothing), and the answer's own words 4 MiB.
+//   Past any of them the request is cancelled at once and the ask ends as
+//   `.cutOff(.overran)`, the words that came kept.
 // - The reading itself is off the main actor (`@concurrent`); each line hops
 //   to the main actor once. Lines end at LF, CR or CRLF and nowhere else
 //   (`AskStreamLines`): Foundation's own `bytes.lines` also breaks at U+2028,
@@ -65,9 +70,22 @@ struct AnotherModelAnswer: Equatable, Sendable {
 /// or CRLF, and nowhere else. A line is decoded once it is whole, so a
 /// character that arrived in two reads is whole by then. Blank lines are
 /// dropped (they only separate events, and an event here is one line).
+///
+/// A line is held to `limit` bytes (4 MiB, `AnotherModelClient.maxBody`, as
+/// an answer is): a stream with no line end at all would otherwise be kept
+/// whole for as long as it came. Past the limit the bytes are dropped and
+/// `overflowed` is set; such a line is not a line (the part that fitted is
+/// never read as one), and the caller ends the ask.
 struct AskStreamLines: Sendable {
     private var line: [UInt8] = []
     private var afterReturn = false
+    private let limit: Int
+    /// A line grew past the limit.
+    private(set) var overflowed = false
+
+    init(limit: Int = AnotherModelClient.maxBody) {
+        self.limit = limit
+    }
 
     /// The next byte; the line it ends, if it ends one.
     mutating func take(_ byte: UInt8) -> String? {
@@ -81,7 +99,7 @@ struct AskStreamLines: Sendable {
             afterReturn = true
             return finished()
         default:
-            line.append(byte)
+            if line.count < limit { line.append(byte) } else { overflowed = true }
             return nil
         }
     }
@@ -91,7 +109,7 @@ struct AskStreamLines: Sendable {
 
     private mutating func finished() -> String? {
         defer { line.removeAll(keepingCapacity: true) }
-        return line.isEmpty ? nil : String(decoding: line, as: UTF8.self)
+        return line.isEmpty || overflowed ? nil : String(decoding: line, as: UTF8.self)
     }
 }
 
@@ -162,6 +180,8 @@ final class AskStreamRun {
     private let first: Duration
     private let idle: Duration
     private let overall: Duration
+    /// The most bytes the stream may send in all, whatever they are.
+    private let streamLimit: Int
 
     private var text = ""
     /// A chunk has come: the first-chunk deadline is met.
@@ -175,7 +195,8 @@ final class AskStreamRun {
     private var reader: Task<Void, Never>?
 
     init(progress: @escaping @MainActor (AskProgress) -> Void, wait: @escaping @MainActor (Duration) async -> Void,
-         first: Duration, idle: Duration, overall: Duration) {
+         first: Duration, idle: Duration, overall: Duration, streamLimit: Int = AnotherModelClient.maxStream) {
+        self.streamLimit = streamLimit
         self.progress = progress
         self.wait = wait
         self.first = first
@@ -197,8 +218,9 @@ final class AskStreamRun {
                     guard !Task.isCancelled else { return }
                     self?.end(.cutOff(.overran))
                 }
+                let limit = streamLimit
                 reader = Task { [self] in
-                    await Self.read(session: session, request: request, run: self)
+                    await Self.read(session: session, request: request, run: self, streamLimit: limit)
                 }
                 if Task.isCancelled { end(.cancelled) }
             }
@@ -321,9 +343,13 @@ final class AskStreamRun {
     // MARK: Reading, off the main actor
 
     /// The request, its status, then the stream line by line (or the JSON body
-    /// whole).
+    /// whole). Every byte that arrives is counted, whatever it is: a line may
+    /// be 4 MiB at most (`AskStreamLines`) and the stream `streamLimit` in all.
+    /// Past either the request is cancelled at once and the ask ends as
+    /// `.cutOff(.overran)`, with the words that came.
     @concurrent
-    private nonisolated static func read(session: URLSession, request: URLRequest, run: AskStreamRun) async {
+    private nonisolated static func read(session: URLSession, request: URLRequest, run: AskStreamRun,
+                                         streamLimit: Int) async {
         do {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse else {
@@ -338,22 +364,40 @@ final class AskStreamRun {
             }
             if AnotherModelClient.isEventStream(http) {
                 var lines = AskStreamLines()
+                var received = 0
                 for try await byte in bytes {
+                    received += 1
+                    if received > streamLimit {
+                        bytes.task.cancel()
+                        await run.end(.cutOff(.overran))
+                        return
+                    }
                     if let line = lines.take(byte) { await run.deliver(line) }
+                    if lines.overflowed {
+                        bytes.task.cancel()
+                        await run.end(.cutOff(.overran))
+                        return
+                    }
                 }
                 if let rest = lines.rest() { await run.deliver(rest) }
                 await run.streamEnded()
             } else {
+                // A body that says it is too big is not read at all.
+                if http.expectedContentLength > AnotherModelClient.maxBody {
+                    bytes.task.cancel()
+                    await run.end(.unreadable)
+                    return
+                }
                 var data = Data()
                 for try await byte in bytes {
                     data.append(byte)
-                    if data.count > AnotherModelClient.maxBody { break }
+                    if data.count > AnotherModelClient.maxBody {
+                        bytes.task.cancel()
+                        await run.end(.unreadable)
+                        return
+                    }
                 }
-                if data.count > AnotherModelClient.maxBody {
-                    await run.end(.unreadable)
-                } else {
-                    await run.body(data)
-                }
+                await run.body(data)
             }
         } catch is CancellationError {
             // The ask ended some other way, and cancelled this.

@@ -70,9 +70,10 @@ private func pieces(_ text: String, every size: Int? = nil, midCharacter: Bool =
 // MARK: Rigs
 
 @MainActor
-private func client(_ clock: ManualClock? = nil, started: StartedWaits? = nil) -> AnotherModelClient {
-    guard let clock else { return AnotherModelClient(configuration: FakeModelProtocol.configuration()) }
-    return AnotherModelClient(configuration: FakeModelProtocol.configuration(), wait: { duration in
+private func client(_ clock: ManualClock? = nil, started: StartedWaits? = nil,
+                    streamLimit: Int = AnotherModelClient.maxStream) -> AnotherModelClient {
+    guard let clock else { return AnotherModelClient(configuration: FakeModelProtocol.configuration(), streamLimit: streamLimit) }
+    return AnotherModelClient(configuration: FakeModelProtocol.configuration(), streamLimit: streamLimit, wait: { duration in
         started?.note(duration)
         await clock.wait(duration)
     })
@@ -131,6 +132,20 @@ struct AskStreamLinesTests {
         for byte in bytes { if let line = splitter.take(byte) { found.append(line) } }
         if let rest = splitter.rest() { found.append(rest) }
         return found
+    }
+
+    @Test func aLineThatNeverEndsHasABoundedBufferAndIsNotALine() {
+        var lines = AskStreamLines()
+        for _ in 0...AnotherModelClient.maxBody { _ = lines.take(65) }
+        #expect(lines.overflowed)
+        #expect((lines.rest()?.utf8.count ?? 0) <= AnotherModelClient.maxBody)
+        // A line that grew past the limit is cut off, not a shorter line to read.
+        #expect(lines.rest() == nil)
+        // A line of exactly the limit is a line.
+        var exact = AskStreamLines()
+        for _ in 0..<AnotherModelClient.maxBody { _ = exact.take(65) }
+        #expect(!exact.overflowed)
+        #expect(exact.take(0x0A)?.utf8.count == AnotherModelClient.maxBody)
     }
 
     @Test func linesEndAtLfCrOrCrlfAndNowhereElse() {
@@ -430,6 +445,96 @@ struct AskStreamEndingsTests {
         #expect(heard.words == answer.text)
         await stops(host)
         #expect(FakeModelProtocol.seen(host).stops == 1)
+    }
+}
+
+// MARK: Bytes
+
+/// What an ask came to, once it has: the test never waits on an ask that does not end.
+@MainActor
+private final class Finished {
+    var answer: AnotherModelAnswer?
+}
+
+/// Floods the stream cannot send at its end: nothing is finished, nothing is closed, the clocks never fire.
+@MainActor
+struct AskStreamBytesTests {
+    /// The ask, started on a feed that stays open; the answer, if it ends within five seconds (else the ask is
+    /// cancelled, and the answer is nil).
+    private func run(_ feed: StreamFeed, streamLimit: Int = AnotherModelClient.maxStream, host: String,
+                     send: () -> Void) async -> (answer: AnotherModelAnswer?, heard: Heard) {
+        let heard = Heard(), finished = Finished()
+        let task = Task { @MainActor in finished.answer = await ask(host, client(ManualClock(), streamLimit: streamLimit), heard) }
+        send()
+        await until { finished.answer != nil }
+        let ended = finished.answer
+        if ended == nil {
+            task.cancel()
+            await task.value
+        }
+        return (ended, heard)
+    }
+
+    @Test func aLineThatNeverEndsIsStoppedAtTheLimitAndTheWordsBeforeItAreKept() async {
+        let feed = StreamFeed()
+        let host = FakeModelProtocol.host { _ in .stream(200, sse, feed) }
+        let block = String(repeating: "x", count: 60_000)
+        let (answer, heard) = await run(feed, host: host) {
+            feed.send(chunk("Use HEPES"))
+            // Four and a half MiB with no line end at all.
+            for _ in 0..<80 { feed.send(block) }
+        }
+        #expect(answer == AnotherModelAnswer(text: "Use HEPES", failure: .cutOff(.overran)))
+        #expect(heard.words == "Use HEPES")
+        await stops(host)
+        #expect(FakeModelProtocol.seen(host).stops == 1, "the request is cancelled as soon as the line is too long")
+    }
+
+    @Test func reasoningThatNeverStopsIsCountedAndTheAskEndsAtTheLimit() async {
+        let feed = StreamFeed()
+        let host = FakeModelProtocol.host { _ in .stream(200, sse, feed) }
+        let thought = chunk(reasoning: String(repeating: "Tris drifts. ", count: 300))
+        let (answer, heard) = await run(feed, streamLimit: 1_000_000, host: host) {
+            for _ in 0..<400 { feed.send(thought) }
+        }
+        #expect(answer == AnotherModelAnswer(text: "", failure: .cutOff(.overran)))
+        #expect(heard.words.isEmpty && heard.thinking == 1)
+        await stops(host)
+        #expect(FakeModelProtocol.seen(host).stops == 1)
+    }
+
+    @Test func keepaliveCommentsAndLinesThatAreNotJSONAreCountedToo() async {
+        let comments = StreamFeed()
+        let commentHost = FakeModelProtocol.host { _ in .stream(200, sse, comments) }
+        let (kept, _) = await run(comments, streamLimit: 1_000_000, host: commentHost) {
+            comments.send(chunk("Use HEPES"))
+            for _ in 0..<200 { comments.send(String(repeating: ": keep-alive\n", count: 500)) }
+        }
+        #expect(kept == AnotherModelAnswer(text: "Use HEPES", failure: .cutOff(.overran)), "the words that came are kept")
+        let junk = StreamFeed()
+        let junkHost = FakeModelProtocol.host { _ in .stream(200, sse, junk) }
+        let (answer, _) = await run(junk, streamLimit: 1_000_000, host: junkHost) {
+            for _ in 0..<200 { junk.send(String(repeating: "data: {not json\n", count: 500)) }
+        }
+        #expect(answer == AnotherModelAnswer(text: "", failure: .cutOff(.overran)))
+        await stops(commentHost)
+        await stops(junkHost)
+        #expect(FakeModelProtocol.seen(commentHost).stops == 1 && FakeModelProtocol.seen(junkHost).stops == 1)
+    }
+
+    @Test func aStreamWithinTheLimitIsWholeAndOneBeyondItIsCutWhereItCrosses() async throws {
+        let size = wholeStream().utf8.count
+        for limit in [size, size + 1, AnotherModelClient.maxStream] {
+            let host = FakeModelProtocol.host { _ in .stream(200, sse, StreamFeed([wholeStream()])) }
+            let answer = await ask(host, client(ManualClock(), streamLimit: limit), Heard())
+            #expect(answer == AnotherModelAnswer(text: streamedAnswer, failure: nil), "\(limit)")
+        }
+        // A limit that falls inside the line after "Use ": that word is kept, the rest is not read.
+        let head = try #require(wholeStream().range(of: "event: message")).lowerBound
+        let limit = wholeStream()[..<head].utf8.count + 3
+        let host = FakeModelProtocol.host { _ in .stream(200, sse, StreamFeed([wholeStream()])) }
+        let answer = await ask(host, client(ManualClock(), streamLimit: limit), Heard())
+        #expect(answer == AnotherModelAnswer(text: "Use ", failure: .cutOff(.overran)))
     }
 }
 
