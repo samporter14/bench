@@ -101,6 +101,17 @@ struct SpecimenSequenceEligibilityTests {
         #expect(SpecimenSequence.eligible([story("Ghost", [everything[0].name, "Not a specimen"])], in: everything).isEmpty)
         #expect(SpecimenSequence.eligible([story("Real", [everything[0].name, everything[1].name])], in: everything).count == 1)
     }
+
+    /// Every story told names real specimens, so with everything on, all of them can play.
+    @Test func theCuratedStoriesAreAllInTheCatalogue() {
+        let everything = LabScenes.catalogue
+        let names = Set(everything.map(\.name))
+        for story in SpecimenSequence.curated {
+            #expect(story.members.allSatisfy(names.contains), "\(story.title)")
+            #expect(Set(story.members).count == story.members.count, "\(story.title) repeats a member")
+        }
+        #expect(SpecimenSequence.eligible(SpecimenSequence.curated, in: everything) == SpecimenSequence.curated)
+    }
 }
 
 // MARK: - The weave
