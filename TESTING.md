@@ -323,6 +323,46 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-27, Compare With: Compare from one card (`g/compare-with`, from main 2299d41)
+
+Sam opened the Shelf and couldn't find Compare: the only way in was to pick two cards and right-click one, and nothing
+said two could be picked. Now a right-click on one card is enough. Everything ran offscreen on made-up shelves: no app
+launched, no window, menu or popover shown, no daemon asked.
+
+- ✅ **Compare With ▸** in the menu of a picture or a text file, after Export … as PDF…: the other cards shown that pair with
+  it, in the Shelf's order (the search, the project and the kind chip narrow it), never the card itself, at most twelve.
+  Each entry is the card's name and its caption in brackets, "z_prime_by_plate.png (Plate reader QC · 8:47 AM)"; one that
+  would read the same as another, or as the card, adds its version. This card opens on the left. With nothing to pair
+  with, Compare With is dimmed with a help line saying why; a PDF, table or SVG has no item. Built only from what the
+  Shelf holds in memory (`CompareRules.offer`). A throwaway offscreen probe (not committed) drew 20 cards with context
+  menus and SwiftUI built none of their menu content, so the list is made when a menu opens, not as the grid draws.
+- ✅ **Two picked** behave as before: Compare on either pick, or the dimmed "Compare (Two Pictures or Two Text Files)". A
+  card outside the two keeps its Compare With.
+- ✅ **The Compare pill** in the title bar for exactly two picks that pair, just before Export as PDF…, same small hairline
+  pill; none for one, three or more, or a pair Compare can't read. Under 760 points the search narrows to 120 beside both
+  pills, so the bar fits at the window's least width (the stand-in bar needs 588 of 620 points; 548 with Export alone).
+- ✅ Words: What's New page 1, the Compare window's empty state, README and DESIGN (the way in, the page-1 quote, the
+  tests) now teach Compare With first.
+- ✅ `CompareWithTests`, 11 tests: pairing only and never itself, shown order, search and project, the cap of twelve, the
+  dimmed state and its help, no item for a kind Compare can't read, two picks unchanged, this card on the left, each
+  entry's words, the pill's rules and left/right order, and the wiring in ShelfView. With `CompareRulesTests`,
+  `ShelfExportPillTests`, `WhatsNewTests` and `ShelfDaysTests`, 88 tests in 9 suites pass.
+- ✅ Mutation checks, each undone after and the suite green again:
+  - the card itself not left out: 7 of the 11 tests fail;
+  - no cap of twelve: 1 fails (`compareWithFollowsTheShownOrderAndStopsAtItsLimit`);
+  - left and right swapped in an entry: 6 fail;
+  - the pill shown for any two picks: 1 fails (`thePillShowsOnlyForExactlyTwoPicksThatPairInTheShelfsOrder`);
+  - the two-pick case dropped: 2 fail (`twoPickedWithThisCardAmongThemIsCompareAsBeforeAndNotCompareWith`,
+    `onTheShelfTwoPicksKeepTheirCompareAndOtherCardsTheirCompareWith`).
+- ✅ Captures (`CompareSnapshotTests`, with `CAPSID_SNAPSHOT_DIR`): the Shelf with two pictures picked and its title bar
+  alone, at 940 and 620 points, light and dark; the bar at 620 with a picture and a note picked (no Compare pill); Compare
+  With's entries for every card of the demo shelf and of a made-up shelf with one file name in several sessions, as text
+  and as a stand-in menu. Each PNG looked at.
+- ✅ The whole suite: 4,783 tests in 609 suites pass (`swift test --jobs 2`).
+- ⏳ **Live**: the real context menu and its Compare With submenu (width, the dimmed item's help as a tooltip, choosing an
+  entry opening the window with this card on the left); the Compare pill in the real title bar, at the least width too,
+  with a long project name in the project pill.
+
 ## 2026-10-27, Capsid 1.1.0 released and installed
 
 - ✅ Released as v1.1.0 (tag on 0520653, "Capsid 1.1.0", by Sam with `gh release create`), marked Latest:
