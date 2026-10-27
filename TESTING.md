@@ -323,6 +323,19 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-27, Capsid 1.1.1 released and installed
+
+- ✅ Released as v1.1.1 (tag on 0ef56a5, "Capsid 1.1.1", with `gh release create` at Sam's word), marked Latest:
+  `Bench.zip` with Capsid.app 1.1.1 (58) inside, 18,974,453 bytes, sha256 9d7f2b285423a5e8…. GitHub's asset digest
+  matches the file built from that commit. It carries Compare With and the Compare pill (`g/compare-with`) and batch S.
+- ✅ Installed from that same build before the release (CDHash 3d4de04b; the unzipped copy's signature checks and its
+  CDHash is the same). Two 401s and a failed load at 09:21:54 while signing in, then no errors from 09:21:55 to
+  09:27:22, a span that takes in the five-minute usage read and the Dock menu building with 11 items. `--diagnose`
+  passes against Claude Science 0.1.70.
+- The whole suite before the push: 4,787 tests in 609 suites pass.
+- ⏳ **Live**: Compare With's real submenu and the Compare pill in the real title bar (the Compare With entry below has
+  the list), the six new specimens and a story in the real panel, and a session finishing on one of them.
+
 ## 2026-10-27, batch S: six specimens, nine more stories and their closing gestures (`g/batch-s`, from main 2299d41)
 
 The catalogue's suggestions, made: six specimens, nine stories that use them or the ones already there, and a closing
