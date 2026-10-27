@@ -311,6 +311,12 @@ final class LabModel: ObservableObject {
     /// The card for a return, asked for when finishes held for a focus session or a
     /// presentation are released: it comes in place of the batched "N finished" card.
     var sinceCard: () -> LabNotice? = { nil }
+    /// Finishing gestures (Lab/FinishingGestures.swift) listen here. Told of each
+    /// finish that raised its Finished card for the first time (never one held for
+    /// a focus session or a presentation, never the first read's), and whether the
+    /// session's specimen was the one the panel was playing just before it. They do
+    /// nothing until `LabPanelController` attaches them.
+    var finishRaised: (SessionStatus, _ onShow: Bool) -> Void = { _, _ in }
 
     private let source = CombinedScienceSource()
     private var engine = ScienceEngine(minDuration: LabModel.minDuration)
@@ -692,6 +698,9 @@ final class LabModel: ObservableObject {
     func update(from snapshot: ScienceSnapshot) {
         // The sounds of the cards this read raises: one is played, the most urgent.
         var sounds: [PanelSound] = []
+        // What the panel was playing before this read: a finish closes that, and
+        // only that (Lab/FinishingGestures.swift).
+        let head = working.first, hidden = workingHidden, cardUp = !cards.isEmpty, unreadable = problem != nil
         for transition in engine.advance(to: snapshot) {
             switch transition {
             case .needsInput(let session):
@@ -713,6 +722,10 @@ final class LabModel: ObservableObject {
                     if !heldFinishes.contains(where: { $0.id == session.id }) { heldFinishes.append(session) }
                 } else if let sound = raiseWithSound(.finished(session)) {
                     sounds.append(sound)
+                    if !firstRead {
+                        finishRaised(session, FinishingGestures.wasOnShow(
+                            session, head: head, hidden: hidden, cardUp: cardUp, unreadable: unreadable))
+                    }
                 }
             case .started:
                 break

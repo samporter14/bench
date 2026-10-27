@@ -109,6 +109,8 @@ final class LabPanelController {
         let center = NotificationCenter.default
         // A note Claude sent mid-run comes as a quiet card (Lab/MidRunNoteCards.swift).
         MidRunNoteCards.shared.start(model: model)
+        // A finish may close the specimen the panel was playing (Lab/FinishingGestures.swift).
+        model.finishRaised = { FinishingGestures.shared.finishRaised($0, onShow: $1) }
 
         // Any change to any default posts this, from any thread; the map is cheap.
         let preferences = center.publisher(for: UserDefaults.didChangeNotification)
