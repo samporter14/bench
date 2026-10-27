@@ -31,15 +31,46 @@ final class FakeDownloads {
         for waiter in waiting { waiter.resume() }
     }
 
+    /// Reads of this one version wait until `release(_:)`; the others go on.
+    private var heldVersions: Set<String> = []
+    private var heldWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    func hold(_ version: String) { heldVersions.insert(version) }
+
+    func release(_ version: String) {
+        heldVersions.remove(version)
+        for waiter in heldWaiters.removeValue(forKey: version) ?? [] { waiter.resume() }
+    }
+
     func download(_ version: String) async -> ReferenceDownload {
         reads.append(version)
         log.append("read \(version)")
         if holding { await withCheckedContinuation { waiters.append($0) } }
+        if heldVersions.contains(version) { await withCheckedContinuation { heldWaiters[version, default: []].append($0) } }
         if let failure = failures[version] { return failure }
         return bytes[version].map { .bytes($0) } ?? .failed(.missing)
     }
 
     func note(_ event: String) { log.append(event) }
+}
+
+/// Renders wait here, the ones asked to, until `release()`: a document that is slow to draw.
+actor RenderHold {
+    private var open = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var waiting = 0
+
+    func wait() async {
+        guard !open else { return }
+        waiting += 1
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        open = true
+        for waiter in waiters { waiter.resume() }
+        waiters = []
+    }
 }
 
 /// A made-up reply with two pictures and two documents, one made-up disk, and a model on them.
@@ -70,7 +101,8 @@ struct FilesRig {
         var presented: [(files: [String], index: Int)] = []
     }
 
-    init(rows: [HistoryItem]? = nil, gate: ReadingGate? = nil) {
+    init(rows: [HistoryItem]? = nil, gate: ReadingGate? = nil,
+         render: (@Sendable (String) async -> AnswerDocument)? = nil) {
         let rows = rows ?? ReferenceModelTests.history(
             30, you: [0: "Run the QC.", 20: "Plot Z′ by plate."], claude: [5: "Eleven passed.", 28: "Plate 7 is low."],
             figures: [24: [Self.chart1], 25: [Self.chart2], 26: [Self.notes], 27: [Self.table]])
@@ -81,6 +113,7 @@ struct FilesRig {
         var dependencies = history.dependencies
         let downloads = downloads
         dependencies.download = { await downloads.download($0) }
+        if let render { dependencies.renderDocument = render }
         dependencies.storage = storage
         dependencies.shelf = shelf.access
         model = ReferenceModel(session: ReferenceModelTests.session, dependencies: dependencies,
@@ -652,6 +685,172 @@ struct ReferenceReadingViewTests {
         await ReferenceModelTests.settle(rig.model)
         #expect(rig.model.files.document == nil)
         #expect(rig.model.scrollRequest == nil)
+    }
+
+    // MARK: A document that is opened and then left behind
+
+    /// Until the held read has started.
+    private func untilRead(_ rig: FilesRig) async {
+        for _ in 0..<1_000 where rig.downloads.reads.isEmpty { try? await Task.sleep(for: .milliseconds(5)) }
+    }
+
+    @Test func leavingDocumentModeWhileItLoadsDropsItsLateDownload() async throws {
+        let rig = FilesRig()
+        defer { rig.cleanUp() }
+        await rig.open()
+        rig.downloads.holding = true
+        rig.model.files.open(FilesRig.notes, among: [])
+        await untilRead(rig)
+        #expect(!rig.downloads.reads.isEmpty)
+        rig.model.files.closeDocument()
+        rig.downloads.release()
+        await rig.settle()
+        #expect(rig.model.files.document == nil, "what Back left is not shown again when the read lands")
+        #expect(rig.model.files.preparing.isEmpty)
+        rig.model.close()
+    }
+
+    @Test func aDocumentStillBeingReadWhenTheWindowGoesToAnotherReplyNeverAppearsThere() async throws {
+        let rows = ReferenceModelTests.history(
+            40, you: [0: "First.", 20: "Second."], claude: [10: "One.", 30: "Two."],
+            figures: [5: [FilesRig.table], 25: [FilesRig.notes]])
+        let rig = FilesRig(rows: rows)
+        defer { rig.cleanUp() }
+        await rig.open()
+        let newest = rig.model.shownID
+        rig.downloads.holding = true
+        rig.model.openFile(FilesRig.notes)
+        await untilRead(rig)
+        rig.model.earlier()
+        await ReferenceModelTests.settle(rig.model)
+        #expect(rig.model.shownID != newest, "the window is on the other reply")
+        rig.downloads.release()
+        await rig.settle()
+        #expect(rig.model.files.document == nil, "the old reply's document does not turn up under the new one")
+        #expect(rig.model.files.preparing.isEmpty && rig.model.files.problems.isEmpty)
+        // And it can be opened again where it belongs.
+        rig.model.later()
+        rig.model.openFile(FilesRig.notes)
+        await rig.settle()
+        #expect(rig.model.files.document?.file == FilesRig.notes)
+        rig.model.close()
+    }
+
+    /// A reply with two Markdown documents.
+    private static func twoDocuments() -> (rows: [HistoryItem], second: HistoryFile) {
+        let second = FilesRig.file(5, "assay_readme.md", .markdown, size: 700)
+        let rows = ReferenceModelTests.history(
+            30, you: [0: "Run the QC.", 20: "Plot Z\u{2032} by plate."], claude: [5: "Eleven passed.", 28: "Plate 7 is low."],
+            figures: [26: [FilesRig.notes, second]])
+        return (rows, second)
+    }
+
+    @Test func aSecondDocumentPressedWhileTheFirstIsBeingReadLeavesTheFirstBehind() async throws {
+        let (rows, second) = Self.twoDocuments()
+        let rig = FilesRig(rows: rows)
+        defer { rig.cleanUp() }
+        rig.downloads.bytes[second.v] = Data("# Assay readme\n\nThe second one.\n".utf8)
+        await rig.open()
+        rig.downloads.hold(FilesRig.notes.v)
+        rig.model.openFile(FilesRig.notes)
+        await untilRead(rig)
+        rig.model.openFile(second)
+        #expect(!rig.model.files.preparing.contains(FilesRig.notes.v), "the first one's spinner goes when it is left behind")
+        // The first one's read comes in late: it is dropped, and the second is what the window shows.
+        rig.downloads.release(FilesRig.notes.v)
+        for _ in 0..<1_000 where rig.model.files.document == nil { try? await Task.sleep(for: .milliseconds(5)) }
+        await rig.settle()
+        #expect(rig.model.files.document?.file == second)
+        #expect(rig.model.files.preparing.isEmpty && rig.model.files.problems.isEmpty)
+        // The first can be pressed again once the second is left.
+        rig.model.closeDocument()
+        rig.model.openFile(FilesRig.notes)
+        await rig.settle()
+        #expect(rig.model.files.document?.file == FilesRig.notes)
+        rig.model.close()
+    }
+
+    @Test func theDocumentOpenedLastIsTheOneShownEvenWhenTheOlderOneIsSlowToDraw() async throws {
+        let (rows, second) = Self.twoDocuments()
+        let slow = RenderHold()
+        let rig = FilesRig(rows: rows, render: { markdown in
+            if markdown.hasPrefix("# Plate reader QC") { await slow.wait() }
+            return AnswerMarkdown.render(markdown, style: .reference)
+        })
+        defer { rig.cleanUp() }
+        rig.downloads.bytes[second.v] = Data("# Assay readme\n\nThe second one.\n".utf8)
+        await rig.open()
+        // The first document is read and is being drawn; the second is pressed, read and drawn at once.
+        rig.model.openFile(FilesRig.notes)
+        for _ in 0..<1_000 { if await slow.waiting > 0 { break }; try? await Task.sleep(for: .milliseconds(5)) }
+        #expect(await slow.waiting == 1)
+        rig.model.openFile(second)
+        for _ in 0..<1_000 where rig.model.files.document == nil { try? await Task.sleep(for: .milliseconds(5)) }
+        #expect(rig.model.files.document?.file == second)
+        // Now the first one is drawn.
+        await slow.release()
+        await rig.settle()
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(rig.model.files.document?.file == second, "the older document does not replace the newer when its drawing ends last")
+        #expect(rig.model.files.preparing.isEmpty && rig.model.files.problems.isEmpty)
+        rig.model.close()
+    }
+
+    @Test func theSameReplyGrownByARowKeepsTheDocumentOpenAndItsReply() async throws {
+        let you: [Int: String] = [0: "Run the QC.", 20: "Plot Z\u{2032} by plate."]
+        let said: [Int: String] = [5: "Eleven passed.", 24: "Working on the heatmap."]
+        let rig = FilesRig(rows: ReferenceModelTests.history(28, you: you, claude: said, figures: [22: [FilesRig.notes]]))
+        defer { rig.cleanUp() }
+        await rig.open()
+        rig.model.openFile(FilesRig.notes)
+        await rig.settle()
+        let opened = try #require(rig.model.files.document)
+        let reply = try #require(rig.model.current)
+        // Claude finishes: the reply's last row moves, and it is the same reply.
+        rig.history.rows = ReferenceModelTests.history(34, you: you, claude: said.merging([33: "Here it is."]) { $1 },
+                                                       figures: [22: [FilesRig.notes]])
+        rig.history.total = 34
+        rig.model.refresh(afterFinish: true)
+        for _ in 0..<1_000 where rig.model.current?.text.contains("Here it is.") != true { try? await Task.sleep(for: .milliseconds(5)) }
+        #expect(rig.model.current?.text.contains("Here it is.") == true && rig.model.current?.start == reply.start)
+        #expect(rig.model.files.document?.file == FilesRig.notes, "the reading view stays for the same reply")
+        #expect(rig.model.files.document?.answerStart == opened.answerStart)
+        rig.model.close()
+    }
+
+    @Test func aDocumentKeepsTheReplyItCameFromAndCopyWithSourceNamesThatRepliesTime() async throws {
+        let rows = ReferenceModelTests.history(
+            40, you: [0: "First.", 20: "Second."], claude: [10: "One.", 30: "Two."],
+            figures: [5: [FilesRig.table], 25: [FilesRig.notes]])
+        let rig = FilesRig(rows: rows)
+        defer { rig.cleanUp() }
+        await rig.open()
+        let newest = try #require(rig.model.current)
+        rig.model.openFile(FilesRig.notes)
+        await rig.settle()
+        let opened = try #require(rig.model.files.document)
+        #expect(opened.answerStart == newest.start && opened.answerAt == newest.at && newest.at != nil)
+        #expect(rig.model.copy("Plate 7 failed.", from: opened))
+        #expect(rig.history.copied.last == ReferenceRules.copyText("Plate 7 failed.", session: ReferenceModelTests.session,
+                                                                   at: newest.at, file: "plate_qc_notes.md"))
+        // A document of the older reply, with the page on the newer one: its copy is the older reply's.
+        let older = try #require(rig.model.answers.first { $0.start != newest.start })
+        #expect(older.at != nil && older.at != newest.at)
+        let elsewhere = ReferenceDocument(file: FilesRig.notes, rendered: ReferenceRules.plainText("Plate 7 failed."), cut: false,
+                                          isEmpty: false, answerStart: older.start, answerAt: older.at)
+        rig.model.files.show(elsewhere)
+        #expect(rig.model.copy("Plate 7 failed.", from: elsewhere))
+        let copied = try #require(rig.history.copied.last)
+        #expect(copied == ReferenceRules.copyText("Plate 7 failed.", session: ReferenceModelTests.session, at: older.at,
+                                                  file: "plate_qc_notes.md"))
+        #expect(copied != ReferenceRules.copyText("Plate 7 failed.", session: ReferenceModelTests.session, at: newest.at,
+                                                  file: "plate_qc_notes.md"))
+        // A document with no reply known (a demo's) takes the page's.
+        let unplaced = ReferenceDocument(file: FilesRig.notes, rendered: ReferenceRules.plainText("x"), cut: false, isEmpty: false)
+        #expect(rig.model.copy("x", from: unplaced))
+        #expect(rig.history.copied.last == ReferenceRules.copyText("x", session: ReferenceModelTests.session, at: newest.at,
+                                                                   file: "plate_qc_notes.md"))
+        rig.model.close()
     }
 
     @Test func addToShelfOnADocumentKeepsItWithTheWordsAroundIt() async throws {

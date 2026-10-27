@@ -621,7 +621,7 @@ struct ReferenceView: View {
 
     private func copy() {
         if let document = files.document {
-            model.copy(documentSelection.selectedText ?? document.rendered.string, file: document.file.name)
+            model.copy(documentSelection.selectedText ?? document.rendered.string, from: document)
             return
         }
         guard let answer = model.current else { return }

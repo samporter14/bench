@@ -983,7 +983,22 @@ final class ReferenceModel: ObservableObject {
     @discardableResult
     func copy(_ text: String, file: String? = nil) -> Bool {
         guard let answer = current else { return false }
-        let done = dependencies.pasteboard(ReferenceRules.copyText(text, session: session, at: answer.at, file: file))
+        return put(text, at: answer.at, file: file)
+    }
+
+    /// Copy with Source on a document being read: its source line names the
+    /// file and the time of the reply it was opened from, which is the
+    /// document's own, whatever reply the page is on (a document without a
+    /// known reply, a demo's, takes the page's).
+    @discardableResult
+    func copy(_ text: String, from document: ReferenceDocument) -> Bool {
+        if document.answerStart != nil { return put(text, at: document.answerAt, file: document.file.name) }
+        guard let answer = current else { return false }
+        return put(text, at: answer.at, file: document.file.name)
+    }
+
+    private func put(_ text: String, at: Date?, file: String?) -> Bool {
+        let done = dependencies.pasteboard(ReferenceRules.copyText(text, session: session, at: at, file: file))
         if done {
             copied = true
             copiedTask?.cancel()
@@ -1013,7 +1028,7 @@ final class ReferenceModel: ObservableObject {
     /// then its documents; a Markdown document opens in the window.
     func openFile(_ file: HistoryFile) {
         guard let reply = answer(showing: file) else { return }
-        files.open(file, among: ReferenceFileRules.quickLookFiles(figures: figures(of: reply), documents: documents(of: reply)))
+        files.open(file, among: ReferenceFileRules.quickLookFiles(figures: figures(of: reply), documents: documents(of: reply)), from: reply)
     }
 
     /// "‹ Answer": the reading view is left. The answer was under it all the
