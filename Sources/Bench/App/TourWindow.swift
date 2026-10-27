@@ -71,8 +71,13 @@ final class TourWindow: NSObject, NSWindowDelegate {
         makeContent = content
     }
 
-    private lazy var window: NSWindow = {
-        let window = TourNSWindow(contentViewController: makeContent { [weak self] in self?.window.close() })
+    /// Made when first needed, not before: asking whether it is on screen
+    /// (`isVisible`) must not build a window.
+    private var made: NSWindow?
+
+    private var window: NSWindow {
+        if let made { return made }
+        let window = TourNSWindow(contentViewController: makeContent { [weak self] in self?.made?.close() })
         window.title = title
         window.styleMask = [.titled, .closable]
         window.setContentSize(Self.size)
@@ -80,10 +85,11 @@ final class TourWindow: NSObject, NSWindowDelegate {
         window.isRestorable = false
         window.tabbingMode = .disallowed
         window.delegate = self
+        made = window
         return window
-    }()
+    }
 
-    var isVisible: Bool { window.isVisible }
+    var isVisible: Bool { made?.isVisible == true }
 
     /// Brings the window up. `prepare` runs first, and only when the window
     /// was not already open (an open one only comes forward), to put it on its
