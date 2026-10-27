@@ -6531,8 +6531,8 @@ or working anything out again.
 
 What is compared is the text as the Shelf's reading card reads it
 (`ShelfDocumentReading.normalized`, shared now): UTF-8, a leading byte order
-mark set aside, and Windows (CRLF) and old Mac (CR) line ends read as LF; one
-quiet line at the foot says so. Lines are compared by their bytes, so "é" as
+mark set aside, and Windows (CRLF) and old Mac (CR) line ends read as LF.
+Nothing on screen explains this; "source text, not rendered" is enough. Lines are compared by their bytes, so "é" as
 one character and as e with an accent are two lines, as they are two files.
 Byte for byte the same: **No text changes**. Every line the same and only one
 file ending with a line break: "Every line is the same", and which one ends

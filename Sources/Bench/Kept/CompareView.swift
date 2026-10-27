@@ -475,8 +475,8 @@ struct CompareWipeImages: View {
 
 // MARK: Text Changes
 
-/// Two text files as one column: the sides' headers (− and +, the column's legend), "Text Changes", what changed or why
-/// it can't be said, and the normalization in one quiet line.
+/// Two text files as one column: the sides' headers (− and +, the column's legend), "Text Changes", and what changed
+/// or why it can't be said.
 struct CompareTextPane: View {
     @ObservedObject var model: CompareModel
 
@@ -508,11 +508,6 @@ struct CompareTextPane: View {
             }
             .accessibilityElement(children: .combine)
             card
-            Text(CompareRules.normalization)
-                .font(.system(size: 11))
-                .foregroundStyle(Solanum.muted)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

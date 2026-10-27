@@ -104,8 +104,6 @@ enum CompareRules {
         "\u{201C}\(name)\u{201D} changed while Capsid read it, so both sides were read again."
     }
 
-    /// Text Changes says what it compares, once, at its foot.
-    static let normalization = "Compared as source text, line by line. A byte order mark is set aside, and Windows line endings count as plain ones."
     static let textTitle = "Text Changes"
     static let textSubtitle = "source text, not rendered"
 
