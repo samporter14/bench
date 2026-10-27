@@ -6,6 +6,7 @@
 // and typing never waits for it; and 500 items stay quick. A made-up reader and
 // made-up file dates for the rules, the real `KeptDisk` on a folder made for each
 // test for the rest. The words are the made-up kind.
+import Combine
 import Foundation
 import Testing
 @testable import Bench
@@ -49,14 +50,15 @@ private func index(_ files: MadeFiles) -> ShelfTextIndex {
 }
 
 private func result(_ file: String, folder: String, legend legendFile: String? = nil, said: String = "", version: String? = nil,
-                    session: String = "Plate reader QC", at keptAt: Date = Date(timeIntervalSince1970: 1_792_674_000)) -> KeptResult {
+                    session: String = "Plate reader QC", project: String = "Assay development",
+                    at keptAt: Date = Date(timeIntervalSince1970: 1_792_674_000)) -> KeptResult {
     let record = KeptRecord(
-        name: (file as NSString).deletingPathExtension, keptAt: keptAt, projectID: "p", projectName: "Assay development", sessionID: "s",
+        name: (file as NSString).deletingPathExtension, keptAt: keptAt, projectID: "p", projectName: project, sessionID: "s",
         sessionTitle: session,
         figure: KeptFile(path: file, role: .figure, artifact: nil, version: version, index: nil, of: nil, sha256: nil, bytes: 10),
         files: legendFile.map { [KeptFile(path: $0, role: .legend, bytes: 10)] } ?? [], missing: [],
         claudeScience: "0.1.70", capsid: "1.0")
-    return KeptResult(folder: root.appending(path: "Assay development/\(folder)", directoryHint: .isDirectory), collection: "Assay development",
+    return KeptResult(folder: root.appending(path: "\(project)/\(folder)", directoryHint: .isDirectory), collection: project,
                       record: record, text: KeptText(legend: "", claudeSaid: said, attribution: "", origin: ""))
 }
 
@@ -607,5 +609,514 @@ struct ShelfTextModelTests {
         #expect(!model.foundOnlyInText(item))
         model.search = "axolotl"
         #expect(model.shown.isEmpty)
+    }
+}
+
+// MARK: A search that is still reading
+
+/// Lets reads through a few at a time: `allow(2)` frees the next two, however soon they come.
+private final class Steps: @unchecked Sendable {
+    private let lock = NSLock()
+    private var credits = 0
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let go = lock.withLock { () -> Bool in
+                if credits > 0 {
+                    credits -= 1
+                    return true
+                }
+                waiting.append(continuation)
+                return false
+            }
+            if go { continuation.resume() }
+        }
+    }
+
+    func allow(_ count: Int = 1) {
+        for _ in 0..<count {
+            let next = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                if waiting.isEmpty {
+                    credits += 1
+                    return nil
+                }
+                return waiting.removeFirst()
+            }
+            next?.resume()
+        }
+    }
+}
+
+@MainActor
+private func waitFor(_ what: String, _ condition: () -> Bool) async throws {
+    for _ in 0..<1000 {
+        if condition() { return }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    Issue.record("Still waiting: \(what)")
+    throw CancellationError()
+}
+
+/// Made-up notes, one prose file each, in one project or another.
+@MainActor
+private func notes(_ count: Int, project: String = "Assay development", from first: Int = 0) -> (results: [KeptResult], files: MadeFiles) {
+    let files = MadeFiles()
+    let results = (first..<first + count).map { number -> KeptResult in
+        let made = result("notes_\(number).md", folder: "notes_\(number)", version: "v-\(number)", session: "Run notes", project: project)
+        files.set(file(made, "notes_\(number).md"), "Note \(number) is about plate \(number % 7).")
+        return made
+    }
+    return (results, files)
+}
+
+struct ShelfStillReadingWordsTests {
+    @Test func theLineSaysHowManyFilesAndThatMoreMayMatch() {
+        #expect(ShelfRules.stillReadingSentence(12) == "Still reading 12 files; more may match.")
+        #expect(ShelfRules.stillReadingSentence(2) == "Still reading 2 files; more may match.")
+        #expect(ShelfRules.stillReadingSentence(1) == "Still reading 1 file; more may match.")
+    }
+
+    @Test func whatVoiceOverIsToldHasNoCountInIt() {
+        #expect(ShelfRules.stillReadingLabel == "Still reading files; more may match.")
+        #expect(!ShelfRules.stillReadingLabel.contains { $0.isNumber })
+    }
+
+    @Test func theLineHasShorterWordsForWhenTheChipsLeaveItNoRoom() {
+        let all = [ShelfRules.stillReadingSentence(128)] + ShelfRules.stillReadingShorter
+        #expect(all == ["Still reading 128 files; more may match.", "Still reading; more may match.", "More may match."])
+        #expect(zip(all, all.dropFirst()).allSatisfy { $0.count > $1.count })
+    }
+
+    @Test func theFindPagesLineSaysYetWhileReadingAndEndsWithAFullStopOnceItIsDone() {
+        #expect(ShelfRules.shelfFoundLine(typed: "zebrafish", kindNoun: nil, stillReading: false) == "Nothing on your shelf matches \u{201C}zebrafish\u{201D}.")
+        #expect(ShelfRules.shelfFoundLine(typed: "zebrafish", kindNoun: nil, stillReading: true) == "Nothing on your shelf matches \u{201C}zebrafish\u{201D} yet.")
+        #expect(ShelfRules.shelfFoundLine(typed: "zebrafish", kindNoun: "tables", stillReading: false) == "No tables on your shelf match \u{201C}zebrafish\u{201D}.")
+        #expect(ShelfRules.shelfFoundLine(typed: "zebrafish", kindNoun: "tables", stillReading: true) == "No tables on your shelf match \u{201C}zebrafish\u{201D} yet.")
+    }
+
+    @Test func theEmptyStateSaysYetWhileReadingAndNothingMatchesOnceItIsDone() {
+        #expect(ShelfRules.nothingFoundTitle(for: "zebrafish", stillReading: false) == "Nothing on your shelf matches \u{201C}zebrafish\u{201D}")
+        #expect(ShelfRules.nothingFoundTitle(for: "zebrafish", stillReading: true) == "Nothing matches \u{201C}zebrafish\u{201D} yet")
+        #expect(ShelfRules.nothingFoundSentence(stillReadingFiles: nil) == "Search covers names, sessions, legends and Claude\u{2019}s words.")
+        #expect(ShelfRules.nothingFoundSentence(stillReadingFiles: 12) == "Still reading 12 files; more may match.")
+    }
+}
+
+struct ShelfFilesStillToReadTests {
+    private let session = "Run notes"
+
+    @Test func countsTheUnreadFilesOfItemsTheSearchHasNotFoundYet() {
+        let found = result("plate_log.md", folder: "plate_log", session: session)
+        let other = result("seal_repeat.md", folder: "seal_repeat", session: session)
+        let figure = result("z_prime.png", folder: "z_prime", legend: "z_prime_legend.md", session: session)
+        let items = ShelfRules.items(from: [found, other, figure])
+        let all = Set([file(found, "plate_log.md"), file(other, "seal_repeat.md"), file(figure, "z_prime_legend.md")].map(\.path))
+        // "plate" is in a file's name already: reading its text can add nothing to it.
+        #expect(ShelfRules.filesStillToRead(in: items, project: nil, query: "plate", texts: .none, unread: all) == 2)
+        // A word on no card: all three could match.
+        #expect(ShelfRules.filesStillToRead(in: items, project: nil, query: "zebrafish", texts: .none, unread: all) == 3)
+        // Only the files not read yet.
+        #expect(ShelfRules.filesStillToRead(in: items, project: nil, query: "zebrafish", texts: .none,
+                                            unread: [file(other, "seal_repeat.md").path]) == 1)
+        #expect(ShelfRules.filesStillToRead(in: items, project: nil, query: "zebrafish", texts: .none, unread: []) == 0)
+    }
+
+    @Test func noSearchAndASearchOfBlanksCountNothing() {
+        let made = result("seal_repeat.md", folder: "seal_repeat", session: session)
+        let all: Set<String> = [file(made, "seal_repeat.md").path]
+        let items = [item(made)]
+        #expect(ShelfRules.filesStillToRead(in: items, project: nil, query: "", texts: .none, unread: all) == 0)
+        #expect(ShelfRules.filesStillToRead(in: items, project: nil, query: "   ", texts: .none, unread: all) == 0)
+    }
+
+    @Test func onlyTheChosenProjectsFilesCount() {
+        let here = result("seal_repeat.md", folder: "seal_repeat", session: session)
+        let there = result("cold_room.md", folder: "cold_room", session: session, project: "Paper draft")
+        let items = ShelfRules.items(from: [here, there])
+        let all: Set<String> = [file(here, "seal_repeat.md").path, file(there, "cold_room.md").path]
+        #expect(ShelfRules.filesStillToRead(in: items, project: nil, query: "zebrafish", texts: .none, unread: all) == 2)
+        #expect(ShelfRules.filesStillToRead(in: items, project: "Assay development", query: "zebrafish", texts: .none, unread: all) == 1)
+        #expect(ShelfRules.filesStillToRead(in: items, project: "Paper draft", query: "zebrafish", texts: .none, unread: all) == 1)
+        #expect(ShelfRules.filesStillToRead(in: items, project: "Nowhere", query: "zebrafish", texts: .none, unread: all) == 0)
+    }
+
+    @Test @MainActor func anItemTheTextReadSoFarAlreadyFindsGainsNothingFromItsOtherFiles() async {
+        // A figure with two legend files: one is read and has the word, the other is not read yet.
+        let first = result("z_prime.png", folder: "z_prime", legend: "z_prime_legend.md", version: "v-1", session: session)
+        let second = result("z_prime.png", folder: "Fig 2B", legend: "z_prime_legend.md", version: "v-1", session: session)
+        let items = ShelfRules.items(from: [first, second])
+        #expect(items.count == 1)
+        let made = MadeFiles()
+        made.set(file(first, "z_prime_legend.md"), "mentions zebrafish")
+        made.set(file(second, "z_prime_legend.md"), "mentions axolotl")
+        let texts = ShelfTextIndex(inspect: { made.inspect($0) }, read: { url in
+            url.path == file(second, "z_prime_legend.md").path ? nil : made.text(url)
+        })
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        let left: Set<String> = [file(second, "z_prime_legend.md").path]
+        #expect(ShelfRules.filesStillToRead(in: items, project: nil, query: "zebrafish", texts: texts.texts, unread: left) == 0)
+        #expect(ShelfRules.filesStillToRead(in: items, project: nil, query: "zebrafish axolotl", texts: texts.texts, unread: left) == 1)
+    }
+}
+
+@MainActor
+struct ShelfUnreadTests {
+    private func counts(of index: ShelfTextIndex, into seen: Seen) -> AnyCancellable {
+        index.$unread.sink { seen.add($0.count) }
+    }
+
+    @Test func theFilesStillToReadAreCountedWhileTheyAreHeldAndGoWhenReadingFinishes() async throws {
+        let made = notes(5)
+        let steps = Steps()
+        let texts = ShelfTextIndex(inspect: { made.files.inspect($0) }, publishEvery: .zero, read: { url in await steps.wait(); return made.files.text(url) })
+        #expect(texts.unread.isEmpty)
+        texts.update(for: ShelfRules.items(from: made.results))
+        #expect(texts.unread.count == 5, "counted as soon as the reading is asked for")
+        steps.allow(5)
+        await texts.waitUntilRead()
+        #expect(texts.unread.isEmpty)
+        #expect(!texts.isReading)
+    }
+
+    @Test func eachFileThatFinishesTakesOneOffTheCount() async throws {
+        let made = notes(4)
+        let steps = Steps()
+        let texts = ShelfTextIndex(inspect: { made.files.inspect($0) }, publishEvery: .zero, read: { url in await steps.wait(); return made.files.text(url) })
+        let seen = Seen()
+        let watch = counts(of: texts, into: seen)
+        texts.update(for: ShelfRules.items(from: made.results))
+        for left in [3, 2, 1, 0] {
+            steps.allow()
+            try await waitFor("\(left) left") { texts.unread.count == left }
+        }
+        await texts.waitUntilRead()
+        #expect(seen.values == [0, 4, 3, 2, 1, 0])
+        withExtendedLifetime(watch) {}
+    }
+
+    @Test func fileReadsBetweenPublishesAreNotEachPublished() async throws {
+        let made = notes(20)
+        // A long interval: the count is published when it fills and when it empties, and in between not at all.
+        let texts = ShelfTextIndex(inspect: { made.files.inspect($0) }, publishEvery: .seconds(30), read: { made.files.text($0) })
+        let seen = Seen()
+        let watch = counts(of: texts, into: seen)
+        texts.update(for: ShelfRules.items(from: made.results))
+        await texts.waitUntilRead()
+        #expect(seen.values == [0, 20, 0])
+        #expect(made.files.reads == 20)
+        withExtendedLifetime(watch) {}
+    }
+
+    @Test func theLastChangeInAnIntervalIsPublishedWhenItIsUp() async throws {
+        let made = notes(6)
+        let steps = Steps()
+        // Timing-sensitive by nature: the three reads must all come inside one interval, so it is long.
+        let texts = ShelfTextIndex(inspect: { made.files.inspect($0) }, publishEvery: .milliseconds(1_500),
+                                   read: { url in await steps.wait(); return made.files.text(url) })
+        let seen = Seen()
+        let watch = counts(of: texts, into: seen)
+        texts.update(for: ShelfRules.items(from: made.results))
+        steps.allow(3)
+        try await waitFor("three files read") { texts.texts.folded.count == 3 }
+        // Three have finished, and one interval has not gone by: still the six published, then the three.
+        #expect(seen.values.first == 0 && seen.values.dropFirst().first == 6)
+        try await waitFor("the count catches up") { texts.unread.count == 3 }
+        #expect(seen.values.count <= 4, "a few at most, not one for each file: \(seen.values)")
+        steps.allow(3)
+        await texts.waitUntilRead()
+        #expect(texts.unread.isEmpty, "empty at once when the reading ends")
+        withExtendedLifetime(watch) {}
+    }
+
+    @Test func aRescanThatFindsNothingNewNamesNothingAndPublishesNothing() async throws {
+        let made = notes(3)
+        let texts = ShelfTextIndex(inspect: { made.files.inspect($0) }, publishEvery: .zero, read: { made.files.text($0) })
+        let items = ShelfRules.items(from: made.results)
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        let seen = Seen()
+        let watch = counts(of: texts, into: seen)
+        texts.update(for: items)
+        #expect(texts.unread.isEmpty)
+        await texts.waitUntilRead()
+        #expect(seen.values == [0], "no line flashes on the periodic read of the folders")
+        // A file changed since is read again, but it has its old words meanwhile, so it is not named.
+        made.files.set(file(made.results[0], "notes_0.md"), "Another word", modified: 2_000)
+        texts.update(for: items)
+        #expect(texts.unread.isEmpty)
+        await texts.waitUntilRead()
+        #expect(seen.values == [0])
+        withExtendedLifetime(watch) {}
+    }
+
+    @Test func aFileThatIsGoneDoesNotPutTheLineUpAgainOnEachRescan() async throws {
+        let made = notes(3)
+        made.files.remove(file(made.results[1], "notes_1.md"))
+        let texts = ShelfTextIndex(inspect: { made.files.inspect($0) }, publishEvery: .zero, read: { made.files.text($0) })
+        let items = ShelfRules.items(from: made.results)
+        // The first read of the folders has to look to find it gone.
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        #expect(texts.unread.isEmpty)
+        let seen = Seen()
+        let watch = counts(of: texts, into: seen)
+        texts.update(for: items)
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        #expect(seen.values == [0], "looked at again, but never named: no flash on each rescan of a shelf with a note whose file is gone")
+        // It comes back: read when it is looked at, and found.
+        made.files.set(file(made.results[1], "notes_1.md"), "Note 1 mentions zebrafish.")
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        #expect(ShelfRules.matching(items, project: nil, query: "zebrafish", texts: texts.texts).count == 1)
+        withExtendedLifetime(watch) {}
+    }
+
+    @Test func aNewFileOnTheShelfIsNamedUntilItIsRead() async throws {
+        let made = notes(3)
+        let more = notes(1, from: 3)
+        let steps = Steps()
+        let texts = ShelfTextIndex(inspect: { made.files.inspect($0) ?? more.files.inspect($0) }, publishEvery: .zero,
+                                   read: { url in await steps.wait(); return made.files.text(url) ?? more.files.text(url) })
+        let items = ShelfRules.items(from: made.results)
+        texts.update(for: items)
+        steps.allow(3)
+        await texts.waitUntilRead()
+        #expect(texts.unread.isEmpty)
+        texts.update(for: ShelfRules.items(from: made.results + more.results))
+        #expect(texts.unread == [file(more.results[0], "notes_3.md").path])
+        steps.allow()
+        await texts.waitUntilRead()
+        #expect(texts.unread.isEmpty)
+    }
+
+    @Test func aFileTakenOffTheShelfWhileReadingIsNoLongerWaitedFor() async throws {
+        let made = notes(4)
+        let steps = Steps()
+        let texts = ShelfTextIndex(inspect: { made.files.inspect($0) }, publishEvery: .zero, read: { url in await steps.wait(); return made.files.text(url) })
+        let items = ShelfRules.items(from: made.results)
+        texts.update(for: items)
+        #expect(texts.unread.count == 4)
+        texts.update(for: Array(items.prefix(2)))
+        #expect(texts.unread.count == 2)
+        steps.allow(4)
+        await texts.waitUntilRead()
+        #expect(texts.unread.isEmpty)
+    }
+
+    @Test func aFileThatCouldNotBeReadDoesNotKeepTheLineUp() async throws {
+        let made = notes(3)
+        let texts = ShelfTextIndex(inspect: { made.files.inspect($0) }, publishEvery: .zero, read: { url in
+            if url.lastPathComponent == "notes_1.md" { throw KeptDiskError.notResponding("read") }
+            return made.files.text(url)
+        })
+        texts.update(for: ShelfRules.items(from: made.results))
+        await texts.waitUntilRead()
+        #expect(texts.unread.isEmpty, "a disk that didn't answer is tried again next time, not waited for now")
+        // A file that is gone, and one iCloud has put away, are not waited for either.
+        made.files.remove(file(made.results[2], "notes_2.md"))
+        made.files.set(file(made.results[0], "notes_0.md"), "away", modified: 5, putAway: true)
+        texts.update(for: ShelfRules.items(from: made.results))
+        await texts.waitUntilRead()
+        #expect(texts.unread.isEmpty)
+    }
+}
+
+private final class Seen: @unchecked Sendable {
+    private let lock = NSLock()
+    private var counts: [Int] = []
+    func add(_ count: Int) { lock.withLock { counts.append(count) } }
+    var values: [Int] { lock.withLock { counts } }
+}
+
+// MARK: The window's model, while the search is still reading
+
+@MainActor
+private final class Said {
+    var lines: [String] = []
+}
+
+@MainActor
+private final class Redraws {
+    var count = 0
+    var watch: AnyCancellable?
+}
+
+@MainActor
+struct ShelfStillReadingModelTests {
+    /// A shelf of made-up notes on a real disk, searched through an index whose reads are let through by hand.
+    /// Each note is (project, file name without its extension, what it says).
+    private struct Rig {
+        let model: ShelfModel
+        let steps: Steps
+        let said: Said
+        let scratch: URL
+    }
+
+    private func rig(_ notes: [(project: String, name: String, text: String)], publishEvery: Duration = .zero) async throws -> Rig {
+        let scratch = FileManager.default.temporaryDirectory.appending(path: "capsid-tests-reading-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let kept = scratch.appending(path: "Kept", directoryHint: .isDirectory)
+        var says: [String: String] = [:]
+        for note in notes {
+            let made = result("\(note.name).md", folder: note.name, session: "Run notes", project: note.project)
+            let there = kept.appending(path: "\(note.project)/\(note.name)", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: there, withIntermediateDirectories: true)
+            try Data(note.text.utf8).write(to: there.appending(path: "\(note.name).md", directoryHint: .notDirectory))
+            try Data(KeptReadme.render(made.record, text: made.text).utf8).write(to: there.appending(path: "README.md", directoryHint: .notDirectory))
+            says["\(note.name).md"] = note.text
+        }
+        let disk = KeptDisk(root: { kept })
+        let index = KeptIndex(disk: disk, root: { kept })
+        let shelf = KeptDemo.shelf(index: index, root: kept)
+        await index.refreshAndWait()
+        let steps = Steps(), said = Said()
+        let texts = ShelfTextIndex(inspect: { _ in KeptFileFacts(modified: Date(timeIntervalSince1970: 1), size: 10) }, publishEvery: publishEvery,
+                                   read: { [says] url in await steps.wait(); return says[url.lastPathComponent] })
+        let model = ShelfModel(shelf: shelf, pdf: ShelfPDFMaker(dependencies: .declining), textIndex: texts, announce: { said.lines.append($0) })
+        #expect(model.items.count == notes.count)
+        return Rig(model: model, steps: steps, said: said, scratch: scratch)
+    }
+
+    private static let three: [(project: String, name: String, text: String)] = [
+        ("Assay development", "plate_log", "Plate 7 drifts after the midpoint."),
+        ("Assay development", "seal_repeat", "Repeat it with a fresh seal. The zebrafish plate is the one to watch."),
+        ("Paper draft", "cold_room", "The cold room ran two degrees warm overnight."),
+    ]
+
+    @Test func nothingShowsWithoutASearch() async throws {
+        let rig = try await rig(Self.three)
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        #expect(!rig.model.textIndex.isActive, "nothing is read until a search is typed")
+        #expect(rig.model.stillReadingFiles == nil && rig.model.stillReadingLine == nil)
+        #expect(rig.said.lines.isEmpty)
+        // Reading started for another reason, with no search typed, still shows nothing.
+        rig.model.textIndex.update(for: rig.model.items)
+        #expect(rig.model.textIndex.isReading)
+        #expect(rig.model.stillReadingFiles == nil)
+        rig.steps.allow(3)
+        await rig.model.textIndex.waitUntilRead()
+    }
+
+    @Test func theLineShowsWhileASearchHasFilesToReadAndGoesWhenReadingFinishes() async throws {
+        let rig = try await rig(Self.three)
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        rig.model.search = "zebrafish"
+        #expect(rig.model.stillReadingFiles == 3)
+        #expect(rig.model.stillReadingLine == "Still reading 3 files; more may match.")
+        rig.steps.allow(3)
+        await rig.model.textIndex.waitUntilRead()
+        #expect(rig.model.stillReadingFiles == nil && rig.model.stillReadingLine == nil)
+        #expect(rig.model.shown.count == 1, "and the note that says it is found")
+    }
+
+    @Test func theCountFollowsTheFilesAndVoiceOverIsToldOnce() async throws {
+        let rig = try await rig(Self.three)
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        rig.model.search = "zebrafish"
+        #expect(rig.said.lines == [ShelfRules.stillReadingLabel])
+        rig.steps.allow()
+        try await waitFor("one file read") { rig.model.textIndex.unread.count == 2 }
+        #expect(rig.model.stillReadingFiles == 2)
+        rig.steps.allow()
+        try await waitFor("two files read") { rig.model.textIndex.unread.count == 1 }
+        #expect(rig.model.stillReadingLine == "Still reading 1 file; more may match.")
+        rig.steps.allow()
+        await rig.model.textIndex.waitUntilRead()
+        #expect(rig.said.lines == [ShelfRules.stillReadingLabel], "said when it appeared, not as it counted down or went")
+    }
+
+    @Test func aSearchWithNothingLeftToReadShowsNoLine() async throws {
+        let rig = try await rig(Self.three)
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        rig.model.search = "zebrafish"
+        rig.steps.allow(3)
+        await rig.model.textIndex.waitUntilRead()
+        // Everything is read: another search, and the folders read again, find nothing to wait for.
+        rig.model.search = "axolotl"
+        #expect(rig.model.stillReadingFiles == nil)
+        rig.model.textIndex.update(for: rig.model.items)
+        await rig.model.textIndex.waitUntilRead()
+        #expect(rig.model.stillReadingFiles == nil)
+        #expect(rig.said.lines.count == 1)
+    }
+
+    @Test func clearingTheSearchTakesTheLineAwayAtOnceWhileReadingGoesOn() async throws {
+        let rig = try await rig(Self.three)
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        rig.model.search = "zeb"
+        #expect(rig.model.stillReadingFiles == 3)
+        rig.model.search = ""
+        #expect(rig.model.textIndex.isReading)
+        #expect(rig.model.stillReadingFiles == nil)
+        rig.model.search = "zebra"
+        #expect(rig.model.stillReadingFiles == 3)
+        #expect(rig.said.lines.count == 2, "it appeared twice")
+        rig.steps.allow(3)
+        await rig.model.textIndex.waitUntilRead()
+    }
+
+    @Test func theCountIsTheFilesThatCouldStillMatch() async throws {
+        let rig = try await rig(Self.three)
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        // "plate" is in a file name already, so that note gains nothing from its text; the other two could.
+        rig.model.search = "plate"
+        #expect(rig.model.stillReadingFiles == 2)
+        rig.model.project = "Paper draft"
+        #expect(rig.model.stillReadingFiles == 1)
+        rig.model.project = "Assay development"
+        #expect(rig.model.stillReadingFiles == 1)
+        rig.model.project = nil
+        #expect(rig.model.stillReadingFiles == 2)
+        rig.steps.allow(3)
+        await rig.model.textIndex.waitUntilRead()
+        #expect(rig.model.stillReadingFiles == nil)
+    }
+
+    @Test func theEmptyStateSaysMatchesMayStillComeWhileReadingAndNothingMatchesOnceDone() async throws {
+        let rig = try await rig(Self.three)
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        rig.model.search = "zebrafish"
+        #expect(rig.model.shown.isEmpty && rig.model.searchFoundNothing)
+        #expect(rig.model.nothingFoundTitle == "Nothing matches \u{201C}zebrafish\u{201D} yet")
+        #expect(rig.model.nothingFoundSentence == "Still reading 3 files; more may match.")
+        rig.steps.allow(3)
+        await rig.model.textIndex.waitUntilRead()
+        #expect(!rig.model.searchFoundNothing, "the note that says it has come")
+        // A word no file has: once reading is done, the empty state is final.
+        rig.model.search = "axolotl"
+        #expect(rig.model.searchFoundNothing)
+        #expect(rig.model.nothingFoundTitle == "Nothing on your shelf matches \u{201C}axolotl\u{201D}")
+        #expect(rig.model.nothingFoundSentence == "Search covers names, sessions, legends and Claude\u{2019}s words.")
+    }
+
+    @Test func filesThatAddNothingDoNotRedrawTheWindowAndOneThatAddsAMatchDoes() async throws {
+        // 30 notes that say nothing of the search: reading them changes nothing that is shown, so the window is
+        // redrawn for the line going, not for each file.
+        let plain = (0..<30).map { (project: "Assay development", name: "plain_\($0)", text: "Nothing to see in note \($0).") }
+        let quiet = try await rig(plain, publishEvery: .seconds(30))
+        defer { try? FileManager.default.removeItem(at: quiet.scratch) }
+        let redraws = Redraws()
+        redraws.watch = quiet.model.objectWillChange.sink { [redraws] _ in MainActor.assumeIsolated { redraws.count += 1 } }
+        quiet.model.search = "zebrafish"
+        let typed = redraws.count
+        quiet.steps.allow(30)
+        await quiet.model.textIndex.waitUntilRead()
+        #expect(quiet.model.shown.isEmpty)
+        #expect(redraws.count - typed <= 1, "\(redraws.count - typed) redraws while 30 files were read")
+
+        // The same with one note that does say it: that one is a change to what is shown, and is drawn.
+        let loud = try await rig(plain + [("Assay development", "match", "mentions zebrafish")], publishEvery: .seconds(30))
+        defer { try? FileManager.default.removeItem(at: loud.scratch) }
+        let found = Redraws()
+        found.watch = loud.model.objectWillChange.sink { [found] _ in MainActor.assumeIsolated { found.count += 1 } }
+        loud.model.search = "zebrafish"
+        let before = found.count
+        loud.steps.allow(31)
+        await loud.model.textIndex.waitUntilRead()
+        #expect(loud.model.shown.count == 1)
+        #expect(found.count > before)
+        #expect(found.count - before < 31, "\(found.count - before) redraws while 31 files were read")
     }
 }

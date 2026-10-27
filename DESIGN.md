@@ -6249,6 +6249,38 @@ items or the text read changed. The log has one line when files were read, under
 files for the Shelf's search"). The Find section below, "In your sessions", is
 not changed: it matches names and sessions in Claude Science's database, not text.
 
+**While the search is still reading** (after 1.0.7). The first results of a search
+can be short of what is on the way, so the window says so, once, quietly. While
+the index has prose files it has never read (`ShelfTextIndex.unread`) and a search
+is typed, one line stands at the **end of the chips row**, where the row has room
+and nothing moves: "Still reading 12 files; more may match." (11 pt, the muted
+ink, one line, "1 file" for one; when the chips leave it no room, as at the
+narrowest window with counts in the hundreds, it says "Still reading; more may
+match." and then "More may match."). The number is the files that **could** add to
+what the search finds: those of items in the chosen project that the search does
+not find already, by their card's words and the text read so far, each file once;
+an item already found, and every item of another project, do not count. Nothing
+shows with no search, or when nothing is left to read: a read of the folders that
+finds nothing new names nothing (no flash on each rescan), a file read before and
+changed since is read again without a line (it has its old text to search
+meanwhile), and a file that can't be read (a disk that didn't answer, a file gone,
+one iCloud has put away) is not waited for. The line goes when the last file is
+done, with no animation. Where the search finds nothing while reading goes on, the
+empty state does not say so for good: the Find page's line says "Nothing on your
+shelf matches “x” yet." (the full stop was the end of it before), and a
+one-letter search, too short for the sessions, gets the Shelf's own empty state
+titled "Nothing matches “x” yet" with the line itself in place of "Search
+covers names, sessions, legends and Claude’s words.", the chips then leaving
+theirs out so it is said once. VoiceOver is told once when the line appears (a
+low-priority announcement, "Still reading files; more may match.") and the line is
+labelled with those words without the count, so nothing is read again as the
+number falls. The count is **throttled**: the index publishes the files still to
+read at once when the set fills or empties and at most once in 250 ms between
+(`publishEvery`; the last change in an interval always follows), the model counts
+again only then and when the search, the project or the shelf changes, never for
+each file read, and a file read that adds nothing to what is shown (a word already
+found, no match in it) no longer redraws the window.
+
 **Lab-meeting PDF** (Kept/ShelfPDF.swift, ShelfPDFRules.swift,
 ShelfPDFCommand.swift, ShelfPicking.swift; since 1.0). Pick figures on the
 Shelf and make one page for each, for lab meeting or a quick send. ⌘-click
