@@ -6432,6 +6432,164 @@ Since 1.0.6, for Keep's row: `KeepPlanTests` (the row only with a candidate and 
 
 Since 1.0.6, for the rest of this section: `ShelfTextIndexTests` (which files an item's search reads, the search and its caption, the caps, a file read again when changed, reading off the main actor, five hundred items searched quickly, the model's use of it), `ShelfPassageTests` (the passage's rules, the held passages and the disk), `ShelfDocumentTests` (the several-file match, the menu's lines and what each does, no ask for one file or for Show in Results, a closed menu doing nothing) and `TileSelectionItemTests` (the script in JavaScriptCore against a made-up page: the item first only for a passage wholly inside the tile's region and left alone by the right-click, the selection put back, the words read once and dropped, the count posted and never the words; the Swift half on made-up menus; `FigureMenuSnapshotTests` has the captures). Only a real right-click in a real tile confirms the page's own menu.
 
+## Compare (Kept/Compare*.swift, since 1.1.0)
+
+The question is "what changed between these two saved results?", across
+sessions and across kept copies, without reopening either conversation. Claude
+Science compares an artifact's own versions; this is for files on the Shelf.
+Compare only reads: nothing in it writes, renames or moves a source file
+(`CompareModelTests` checks every byte and date afterwards), and nothing is
+fetched from iCloud.
+
+**The way in.** Pick exactly two cards on the Shelf (⌘-click, ⇧-click) and
+right-click either: after Export … as PDF… the card's menu has **Compare**.
+Two pictures or two text files open the Compare window; any other pair (a
+picture and a note, a table, a PDF, an SVG) has the item dimmed as **Compare
+(Two Pictures or Two Text Files)**, and opens nothing. One
+pick, three or more, or a card outside the picks: no item. No card gains a
+button. There is no menu-bar entry: no menu in the bar carries the Shelf's
+picks (File's Add to Shelf and Keep with Data and Code… act on the Results
+window's selection, and the Shelf's ⌘P is a key of its own), so the card's
+menu is the one place (`ShelfCompareItem`, one line in ShelfView). Pictures
+are the raster kinds ImageIO decodes (png, jpg, jpeg, gif, webp, tif, tiff,
+bmp, heic, avif); text is the Shelf's prose kinds (md, markdown, txt, text,
+rst), a note made by Add Selection to Shelf among them (`CompareRules`).
+
+**The window** (`CompareWindowController`): one native window, reused (a new
+Compare replaces its pair), 1080 × 760 at first, 720 × 480 at least, frame
+`CapsidCompare`, on the 1.0 windows' surfaces as the Shelf is: "Compare" at the
+leading edge of the bar and one quiet row of hairline pills at the trailing
+edge, nothing in clay (the window only reads). The left side is the card shown
+first on the Shelf, the right the other; nothing is called old or new, and no
+order is guessed from names. Each side says its file's name (extension in
+grey) and, under it, its own source line when known, "Plate reader QC ·
+version 3" (`CompareRules.sourceLine`: the session and the version, each only
+when the README has it), and has a round ⋯ with that item's **Show Where It
+Came From** and **Show in Finder** (the file; its folder when the file is
+gone). **Swap Sides** moves whole sides, the provenance with its picture or
+text, a read still out landing on its own item wherever that now stands.
+
+**Commands.** While the Compare window is key, the View menu has the ones its
+pair has, and none otherwise (as Ask Another Model… comes and goes): **Swap
+Sides** ⇧⌘X; for pictures **Fit** ⌘9 (Preview's Zoom to Fit), **Link Zoom**
+(no key) and, when it is offered, **Wipe** ⌃⌘W; for text **Previous Change**
+⌃⌘↑ and **Next Change** ⌃⌘↓. None is another menu item's key (⌘0 stays
+Actual Size, ⌥⌘↓ Next Waiting Session, ⌥⌘W Close Other Tabs).
+
+**Pictures, side by side.** Each in a well (the page's ground, a hairline
+edge) on white paper, whole at Fit with its aspect kept, and under it its own
+pixel size, "1,600 × 1,200 px". Zoom and pan are **linked** by default: one
+scale relative to each picture's own fit (1 is Fit, up to 32 times) and one
+centre as a fraction of each picture, held inside each picture's bounds, so
+two sizes show the same part of themselves (`CompareViewport`,
+`CompareGeometry`). **Link Zoom** off gives each its own; on again, both
+follow the left. A pinch zooms about the fingers, a double-click goes twice as
+close (or back to Fit), a drag pans, **Fit** puts both back, and VoiceOver's
+adjust zooms a picture by a quarter. Drawn smaller than its pixels a picture
+is smoothed; past them its pixels show as squares, unsmoothed. Nothing is
+stretched, registered, brightened or marked as a difference.
+
+**Wipe** is offered only when the two pictures' upright pixel sizes match;
+otherwise it isn't there at all (not dimmed). It draws both in one rectangle,
+the left picture left of the divider and the right one right of it, so
+neither moves as the divider does (`CompareWipeImages`), with the names at
+either end above and "Both 1,600 × 1,200 px" under. The divider is dragged, or
+moved with ← and → by 5% (Option, 1%) once it has the keyboard; VoiceOver
+reads it as "Wipe divider, 50%" and adjusts it. In Wipe there is one viewport,
+so Link Zoom goes from the row.
+
+**Decoding and its limits** (`CompareImages`). The bytes come through the disk
+layer (`KeptDisk.pictureBytes`: a file under the Kept folder, on this Mac and
+not put away by iCloud, at most 8 MB, the most a keep copies), and are decoded
+off the main actor as the Results shelf's thumbnails are
+(`ShelfThumbnails.decode`): the header first, and more than 64 megapixels
+(Claude Science's own limit) is refused unread; then upright, with the EXIF
+orientation applied, and never more than 3,072 pixels on the long side. So a
+side holds at most 3,072 × 3,072 × 4 bytes, about 38 MB, two at once, let go
+when the window closes or the pair changes; a pair's two are read one after
+the other, so they are not decoded at once. A larger picture is shown at 3,072 on
+its long side and says so, "6,000 × 4,000 px · shown at 3,072 × 2,048"; its own
+size is still the one stated and the one Wipe compares, and zooming past the
+3,072 shows the decoded pixels larger, not more of them.
+
+**Text Changes.** Two text files are one column of their **source text**,
+labelled "Text Changes · source text, not rendered", monospaced (12.5 on 19),
+every line of both once: Markdown's links, tables and marks are compared as
+written. The sides' headers stand above it as its legend, **−** before the
+left's name and **+** before the right's. A line only on the left is marked −
+in a gutter, its words in the muted ink on a faint ink ground; a line only on
+the right is marked + in clay-text on a faint clay ground; each change shows
+its removed lines before its added ones. The marks are drawn, not typed, so
+selecting and ⌘C copy the words alone (a plain, read-only text view on TextKit
+1, `CompareChangesTextView`), and VoiceOver reads a changed line as "Removed,
+…" or "Added, …". At the right of the heading, "3 changes · 5 lines added, 2
+removed". **Previous** and **Next Change** (round chevrons in the row, and the
+menu) select the change, scroll it a third of the way down, give it the
+keyboard and say "Change 2 of 5. Removed 1 line, added 2." Swap shows the same
+changes from the other side (added and removed trade places) without reading
+or working anything out again.
+
+What is compared is the text as the Shelf's reading card reads it
+(`ShelfDocumentReading.normalized`, shared now): UTF-8, a leading byte order
+mark set aside, and Windows (CRLF) and old Mac (CR) line ends read as LF; one
+quiet line at the foot says so. Lines are compared by their bytes, so "é" as
+one character and as e with an accent are two lines, as they are two files.
+Byte for byte the same: **No text changes**. Every line the same and only one
+file ending with a line break: "Every line is the same", and which one ends
+with it. An empty file is text with no lines.
+
+**Bounds** (`CompareDiff`). The reader's 256 KiB per side is reused for
+Compare alone (`ShelfDocumentReading.byteLimit`; no other read is widened).
+The changes are Myers' O(ND) difference on the lines, numbered by their
+bytes, after the common head and tail are set aside, off the main actor and
+stopped when its task is cancelled (checked every 32 rounds). At most 20,000
+lines a side, 2,000 changed lines (Myers' D) and 30 million steps; past any,
+the card says **Too many lines to compare line by line** or **Too many changes
+to list line by line**, with each file's line count and the bounds, and never
+shows part of a list as the whole. Two 3,000-line files with no line in common
+stop in about 0.25 s, and 20,000 lines with a change every eight in about
+0.25 s (a debug build, measured 2026-10-26).
+
+**Requests and the disk.** Compare freezes the two items it was given (their
+identities, files, names and sources); each read looks at the file's date and
+size first and again after (`KeptDisk.fileFacts`), and every answer carries
+the request it was asked for (`CompareModel.generation`): a later Compare, a
+reread or a close moves it on, and a read, a decode or text changes that come
+back for an older one are dropped, whatever order they arrive in. A file that
+changed during its read has the pair read again (twice at most, then that side
+says it "kept changing"). When the Shelf's folders are read again, the two
+files are looked at; if either is not the file read (changed, gone, back, or
+brought down from iCloud), both sides are read again together, showing
+nothing of the old pair meanwhile, and a quiet line says why: "“qc_notes.md”
+changed on disk, so both sides were read again."
+
+**A side that can't be shown** says why on its own side, with Show in Finder:
+gone from its folder; in iCloud and not on this Mac ("Capsid doesn't download
+it to compare"; never read); larger than the 8 MB or 256 KB Compare reads; more
+than 64 megapixels; not a picture Capsid can read; not UTF-8 text (a NUL, or
+bytes that aren't UTF-8); kept changing; or the disk layer's own sentence. Two
+text files with such a side say "The text can't be compared" with the side's
+sentence, never "No text changes".
+
+**Not in 1.1.0**: PDF pages, tables, registration, difference maps and editing.
+
+**Tests.** `CompareRulesTests` (which pairs, the menu's words, the sides'
+lines, pictures decoded upright and within their bounds, an EXIF-turned JPEG,
+Wipe's sizes and divider, Fit, zoom and pan, linked panes of two sizes, the
+column's marks, VoiceOver's words and a copy that is the words alone, the pair
+from two Shelf picks), `CompareDiffTests` (identical, a line added or taken
+away, repeated lines, Unicode, a byte order mark and Windows line ends, empty
+texts, a last line break, the shortest script rebuilding both texts, the other
+side's view, each bound, a pathological pair and a cancelled one),
+`CompareModelTests` (a stale reread's or read's answer dropped, close, Swap
+with a read out, the text changes from the other side, linked and unlinked
+views through Swap, a rescan's reread, a file changing while read, every side
+that can't be read, Wipe only for one size, Previous and Next Change, and the
+live reader on a real Kept folder changing nothing) and `CompareSnapshotTests`
+(Wipe's pixels at 0%, 50% and 100%, and, with `CAPSID_SNAPSHOT_DIR`, each state
+in light and dark). Live checks still owed: the gestures, keyboard and
+VoiceOver in the real window, the menu items, and files in iCloud.
+
 ## Find any figure (Find/, since 1.0)
 
 Sam's first problem, in his words: Claude Science makes so many figures,
