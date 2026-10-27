@@ -323,6 +323,55 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, five rare bugs from Codex's review of 1.0.7 (`g/fix-rare`, from main 8e35826, Capsid 1.0.7)
+
+Codex's findings 4 to 8, the medium ones. Each was written first as a test that failed on 8e35826, then fixed, then
+broken on purpose and put back. Everything ran on made-up sessions, a fake `URLProtocol`, fake writers and senders,
+and offscreen drawing: no daemon touched, no window shown, the app not launched, nothing in /Applications.
+
+- **Finding 4, a late Reference document.** Reproduced. Four tests failed before the fix: Back while the download is
+  held and the late bytes land, another reply while it is held, a second document pressed while the first is read
+  (the first's spinner stayed), and a first document whose drawing ends last (it replaced the second). After:
+  each opening has its own number and is left behind by a newer document, Back, another reply or the window
+  closing, with its read cancelled and its spinner gone; the same reply grown by a row keeps its document; the
+  document keeps its reply's time and Copy with Source names that. Breaking the opening check, `closeDocument`'s
+  abandon, the newer-opening abandon and the copy's own time each failed tests (3, 2, 2 and 1) and was put back.
+- **Finding 5, an uncertain menu-bar start moved to Quick Start.** Reproduced: a start that came back "didn't go
+  through, as far as Capsid can see", moved unchanged, retried under a new id. Now the hand-over carries the id and
+  the request's signature and Quick Start's ledger adopts them. The same request keeps the id; an edit, or any
+  request after one that worked, has a new one. Dropping the adopt, or the carrying, failed 1 and 2 of these tests.
+- **Finding 6, a hand-over dropped while Quick Start sends.** Reproduced as the second request being in neither
+  place after the popover closed and came back. Now Quick Start says whether it accepts (`accepts`), the controller
+  returns that and, when it is no, does nothing, not even bringing the panel forward (that would resign and close the
+  popover the words are in); the field clears only on acceptance. The line under the field says "Quick Start is
+  sending; your words are kept here." (my wording; new demo step `kept`, offscreen picture checked in both themes:
+  one muted line, no clipping); the words are there once more if the popover closes first. Four breaks (ignore the
+  answer, always accept, no keep on reopen, no line) failed 2, 3, 1 and 1 tests.
+- **Finding 7, delivery recovery.** Reproduced: after the message, a burst of tool rows leaves the last twelve rows
+  with no turn, and recovery said "That didn't go through". Four tests failed before (a burst of tool rows for a
+  message and for a plan change's words, twelve turns all after the send, the send's own millisecond and a turn
+  with no time). A fifth, the reader's own projection of twelve tool rows, also failed but for the wrong reason
+  (its fixture's queued message was already "unclear"); its fixture was corrected, and a break of the proof failed it
+  for the right one. Now "didn't go through" needs a turn dated strictly before the send among the turns read;
+  otherwise "Not sure that went through", the words kept, nothing resent. Eleven existing tests that expected
+  "didn't go through" from sparse turns now carry a reply from before the send. Not covered: a message whose own words start with a marker the reader hides
+  ("[System]" and the like) is never seen at all; nothing was changed for it.
+- **Finding 8, bytes.** Reproduced for the stream's line and, with the fake, for `/models` held whole. Seven tests
+  failed before: the line buffer itself, no line end at all after some words, a reasoning flood, a keepalive flood
+  with a flood of lines that are not JSON, the cut where a stream limit falls, an oversized list that never ends,
+  and an error status with a large body. Now a line is held to 4 MiB, the stream to 64 MiB counting every byte (a test
+  can pass a small limit), the list is read to 4 MiB off the main actor (first run on the main actor took 31 s for
+  4 MiB in a debug build; moved), and the transport is cancelled the moment one is crossed, the ask ending as the
+  existing "ran too long" with the words that came. Removing the line cap, the stream count or the list cap each
+  failed 2, 3 and 1 tests.
+- **Full suite**, ordinary environment, two jobs: `✔ Test run with 4417 tests in 571 suites passed after 28.262
+  seconds.` No test failed alone or under load; no flake seen.
+- **Live checks still needed.** The menu-bar field with a real Quick Start mid-send (⌘↩ refused, the line, the
+  popover staying, the words after a click-away and a reopen); a real ⌘↩ of an uncertain start into Quick Start;
+  a real long Reference document pressed and then Earlier or another document; a real recovery of a message sent
+  to a session that is busy (whether the daemon's rows carry `_ts`, which the proof reads); a real provider's list
+  and a long streamed answer. Findings 1 to 3 are not in this branch.
+
 ## 2026-10-26, merging 1.0.7: Codex's branch with the right-pane fix
 
 - ✅ **Codex's branch validated where its sandbox couldn't** (`g/codex-107` at 4225954, eight commits from 1.0.6).
