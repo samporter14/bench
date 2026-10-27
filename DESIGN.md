@@ -4301,6 +4301,19 @@ session afresh and keeps your words, so a second try is the same message.
 While it waits, 22 seconds without an answer (85 for a photo) it says "Not
 sure that went through. Checking…".
 
+A message that went leaves the composer at the moment the composer opens
+again, before the session is read afresh (`doAction` hands the result to its
+`settled` step, `clearSent` in `RemoteWeb/app.js`). It takes out what was sent
+and nothing else: the words (if they are still the draft), the id they carried
+and the photo that went with them (if it is still that photo). What is typed
+or picked while the session is read afresh is the next message's and stays, and
+a second message sent in that time keeps its own words and its own id when the
+first one's read ends. (Before, the composer was cleared only after the read,
+and took those words and that photo with it.) A message that did not go keeps
+its words and its id. The composer is open during the read as it was; nothing
+about it is held longer. `PhoneComposerLifetimeTests` holds the read and the
+second post.
+
 #### How the server does it (Phase 2 actions)
 
 Files: `Remote/SessionReader.swift` (the in-page projection and Swift's

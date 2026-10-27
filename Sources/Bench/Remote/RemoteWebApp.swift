@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "71a8eaa66465",
+        "/app.js": "0469e65521ee",
         "/app.css": "b948887bc2c7",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=71a8eaa66465"></script>
+<script type="module" src="/app.js?v=0469e65521ee"></script>
 </body>
 </html>
 """#
@@ -1848,7 +1848,7 @@ return { ok: false, refetch: true, open: true, text: sentence || 'Couldn’t do 
 }
 const WRITE_SLOW_MS = 22000;
 const PHOTO_SLOW_MS = 85000;
-async function doAction(id, kind, path, body, slowMs = WRITE_SLOW_MS) {
+async function doAction(id, kind, path, body, slowMs = WRITE_SLOW_MS, settled = null) {
 const u = ui(id);
 if (u.busy[kind]) return null;
 u.busy[kind] = true;
@@ -1863,6 +1863,7 @@ if (e instanceof Unauth) { u.busy[kind] = false; showPair(); return null; }
 result = { ok: false, refetch: false, text: 'Couldn’t reach your Mac. Try again.' };
 }
 clearTimeout(slow);
+if (settled) settled(result);
 u.busy[kind] = false;
 setNote(id, { text: result.text, open: !!result.open }, result.open ? 12000 : result.ok ? 5000 : 9000);
 if (result.refetch) await loadSession(id, true);
@@ -1880,17 +1881,18 @@ return;
 }
 if (!text) return;
 if (!u.msg || u.msg.text !== text) u.msg = { id: uuid(), text }; // a retry of the same words keeps its id
-const result = await doAction(id, 'message', '/api/sessions/' + id + '/message', { text, id: u.msg.id });
-if (result && result.ok) clearComposer(id);
+const sent = { text, msg: u.msg, photo: null };
+await doAction(id, 'message', '/api/sessions/' + id + '/message', { text, id: sent.msg.id }, WRITE_SLOW_MS, (r) => { if (r.ok) clearSent(id, sent); });
 }
-function clearComposer(id) {
+function clearSent(id, sent) {
 const u = ui(id);
-u.draft = '';
-u.msg = null;
-u.photo = null;
+const words = u.draft.trim() === sent.text;
+if (words) u.draft = '';
+if (words || (sent.msg && u.msg === sent.msg)) u.msg = null;
+if (sent.photo && u.photo === sent.photo) u.photo = null;
 const dock = root.querySelector('.dock');
 const ta = dock && dock.dataset.sess === id ? dock.querySelector('.composer-ta') : null;
-if (ta) ta.value = '';
+if (ta && words) ta.value = '';
 paintDock(id);
 }
 async function sendPhoto(id, text, photo) {
@@ -1902,8 +1904,8 @@ let image = '';
 try { image = await blobBase64(photo.blob); } catch { /* handled below */ }
 u.sending = false;
 if (!image) return setNote(id, { text: 'Couldn’t read the photo. Remove it and pick it again.' }, 9000);
-const result = await doAction(id, 'message', '/api/sessions/' + id + '/photo', { image, text, id: photo.sent.id }, PHOTO_SLOW_MS);
-if (result && result.ok) clearComposer(id);
+const sent = { text, msg: null, photo };
+await doAction(id, 'message', '/api/sessions/' + id + '/photo', { image, text, id: photo.sent.id }, PHOTO_SLOW_MS, (r) => { if (r.ok) clearSent(id, sent); });
 }
 const quiet = (t) => h('p', { class: 'quiet', text: t });
 const isBrowseOff = (x) => !!x && x.status === 403 && !!x.data && x.data.error === 'browseOff';
