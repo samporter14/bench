@@ -185,7 +185,7 @@ struct SpecimenTopicMatchTests {
     }
 }
 
-/// The real field guide: what a title finds among the 541 specimens.
+/// The real field guide: what a title finds among the 549 specimens.
 struct SpecimenTopicCatalogueTests {
     private let everyone = LabScenes.catalogue.map(\.name)
 

@@ -38,7 +38,7 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   your Documents, each with a README that names its session).
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
-- **Know when it needs you.** While a session works, one of 541 little
+- **Know when it needs you.** While a session works, one of 549 little
   animated lab specimens plays in a glass panel in the corner of your screen.
   When a session needs your input, a card there takes you straight to it.
   Later can remind you in 5 or 15 minutes, or after a Nidus focus session.
@@ -130,8 +130,9 @@ dark. Hover a specimen to see it play big, with a few words about it. Search
 matches what a specimen is about as well as its name, and the Topics menu
 beside the search field finds a whole subject at once, "microscopy" say. Turn
 on Settings → Panel → Name the specimen that's playing for its name and a
-caption under the session in the panel. Tired of the one playing right
-now? Right-click the panel and choose Don't Play. The panel can sit in any
+caption under the session in the panel. Turn on **Play short sequences** and,
+now and then, a few specimens play in order, like a little story. Tired of the
+one playing right now? Right-click the panel and choose Don't Play. The panel can sit in any
 corner of your screen, on any display: Settings → Panel → Corner and
 Screen. And Capsid's own icon comes in six of Solanum's colorways (Clay,
 Ivory, Slate, two one-color versions and Ivory with a clay capsid): Settings →
@@ -161,6 +162,11 @@ Where It Came From. For lab meeting, pick several figures (⌘-click) and
 choose **Export Figure as PDF…** (⌘P; "Export 3 Figures as PDF…" with
 several): one 16:9 page each, with its title, legend and where it came from.
 
+**Compare two of them.** Pick two pictures or two text files and right-click
+one: **Compare** puts the pictures side by side with their zoom linked, or one
+over the other with **Wipe** when they're the same size, and shows what changed
+between two text files, line by line, with Previous and Next Change.
+
 **Add Selection to Shelf** keeps selected words as a note. Its card shows the
 passage, with where it came from; Copy copies the words. Search also looks
 inside notes, Markdown and text documents, and the legend files kept beside
@@ -187,6 +193,12 @@ came from and when, and a link that opens the session in Capsid. **Window →
 Keep on Top** floats the window over your document; Open Conversation takes
 you to the session itself. The window reads the conversation the way the
 phone does, a page at a time, waits while you type, and writes nothing.
+
+**Come back to a project.** Each project keeps its last conversation, up to four
+references you pin to it (the ⋯ at the foot of the reference window) and a
+small Working Note. **History → Project Workspace** (⌥⌘P) shows them, and
+**Return to Project** brings them back together, with the Shelf on that
+project. There's nothing to save.
 
 <img src="docs/reference.png" width="300" alt="A reference window titled Plate reader QC, read only: the question, then Claude's figure full width with Add to Shelf under it, and Copy with Source and Open Conversation at the foot">
 
