@@ -1076,6 +1076,21 @@ struct HistoryShowingWalkTests {
         #expect(history.asked.count == HistoryShowing.pages)
     }
 
+    @Test func showWhereItCameFromMayReadMorePagesThanKeepDoes() async throws {
+        // Keep's six stay six; Show Where It Came From (Shelf/ShowSource.swift) has no other way to find an old reply.
+        let history = History(total: 2_000)
+        history.found[1_026] = hit
+        #expect(try await HistoryShowing.walk(near: nil, pages: ShowSourceRules.lookupPages, read: history.read) == .found(hit))
+        #expect(history.asked.count == 22, "\(history.asked.count) pages to the page that starts at row 1026, 44 rows further back each")
+        let none = History(total: 5_000)
+        _ = try await HistoryShowing.walk(near: nil, pages: ShowSourceRules.lookupPages, read: none.read)
+        #expect(none.asked.count == ShowSourceRules.lookupPages)
+        #expect(ShowSourceRules.lookupPages > HistoryShowing.pages && ShowSourceRules.lookupPages <= HistoryShowing.maxPages)
+        let keeps = History(total: 5_000)
+        _ = try await HistoryShowing.walk(near: nil, read: keeps.read)
+        #expect(keeps.asked.count == HistoryShowing.pages)
+    }
+
     @Test func aMessageOnAnOlderPageIsFoundThereAndNothingOlderIsAskedFor() async throws {
         let history = History(total: 1_000)
         history.found[862] = hit

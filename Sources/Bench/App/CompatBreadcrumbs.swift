@@ -53,6 +53,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
     case figureMenuNotUnderstood
     // Ask Another Model in the page's model menu (AskModel/ModelPickerMenu.swift)
     case modelMenuNotUnderstood
+    // Show Where It Came From, at the reply in the conversation (Shelf/ShowSource.swift)
+    case showSourceNoConversation
     // The one look after Claude Science's version changed (App/CompatWatch.swift)
     case probesAfterUpdate
 
@@ -80,6 +82,8 @@ enum CompatMiss: String, CaseIterable, Sendable {
             .shelfMenu
         case .modelMenuNotUnderstood:
             .modelMenu
+        case .showSourceNoConversation:
+            .showSource
         case .probesAfterUpdate:
             .update
         }
@@ -113,6 +117,7 @@ enum CompatMiss: String, CaseIterable, Sendable {
         case .reviewerAnswerNotUnderstood: "the findings answer has no checks and running lists of the shape Capsid reads"
         case .figureMenuNotUnderstood: "the figure menu didn't look as Capsid expects"
         case .modelMenuNotUnderstood: "the model menu didn't look as Capsid expects"
+        case .showSourceNoConversation: "a session's page has no conversation to scroll to a reply"
         case .probesAfterUpdate: "some of what Capsid reads didn't answer as it expects"
         }
     }

@@ -1,10 +1,10 @@
 // FindActions.swift — what a found file offers (DESIGN.md, Find any figure):
 // Add to Shelf, Show Where It Came From and Open in Results. Each is the
-// existing one: the shelf's add (`Shelf.add` with a `ShelfSource`), the
-// reference window at the reply that showed the version
-// (`ReferenceWindowController.show(…at:mark:)`, which with no row reads back
-// to the newest reply that shows it, as the Shelf's own Show Where It Came
-// From does for an item with no row), and the Results window on the session.
+// existing one: the shelf's add (`Shelf.add` with a `ShelfSource`), the main
+// window on the session at the reply that showed the version (`ShowSource`,
+// which with no row looks for the newest reply that shows it, as the Shelf's
+// own Show Where It Came From does for an item with no row; until 1.0.7 this
+// was the reference window), and the Results window on the session.
 // Held apart from the views so tests and the demo stand fakes in.
 import Foundation
 
@@ -24,9 +24,7 @@ struct FindActions {
         FindActions(
             isAvailable: Demo.mode == nil,
             add: { file in await shelf.add(ShelfSource(session: file.session(), entry: file.entry)) },
-            show: { file in
-                ReferenceWindowController.shared.show(file.session(), at: nil, mark: file.version)
-            },
+            show: { file in ShowSource.shared.show(SourceAsk(file)) },
             results: { file in ResultsWindowController.shared.show(focusing: file.session()) },
             onShelf: { shelf.contains(version: $0) },
             isAdding: { shelf.adding.contains($0) })

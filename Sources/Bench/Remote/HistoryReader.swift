@@ -1377,8 +1377,10 @@ enum ShowingPageRead: Equatable, Sendable {
 /// The walk behind `WebContainer.readShowing`: pages from the newest back,
 /// each asked for by `read(before)` (nil for the last page). Pure of the page.
 enum HistoryShowing {
-    /// At most this many pages of 50 rows.
+    /// At most this many pages of 50 rows (Keep's; `readShowing` may be given more, up to `maxPages`).
     static let pages = 6
+    /// The most pages any read may ask for: 2,500 rows.
+    static let maxPages = 50
     /// Each older page covers this many rows of the one before it again, so the
     /// reply after a save that the earlier page ended on is on this one.
     static let overlap = 6
@@ -1395,12 +1397,15 @@ enum HistoryShowing {
     /// The newest message that shows a version, else `.notFound` when six
     /// pages, the start of the history or a page whose newest `_ts` is older
     /// than `near` (the oldest version's time: the reply that shows a figure
-    /// follows its save) ends the walk. Throws `CancellationError` when the
-    /// task is cancelled or a page was aborted.
+    /// follows its save) ends the walk. `pages` is how many pages it may read:
+    /// six for Keep, more for Show Where It Came From (Shelf/ShowSource.swift),
+    /// which has no other way to find an item's reply. Throws
+    /// `CancellationError` when the task is cancelled or a page was aborted.
     @MainActor
-    static func walk(near: Date?, read: @MainActor (_ before: Int?) async throws -> ShowingPageRead) async throws -> ShowingRead {
+    static func walk(near: Date?, pages limit: Int = HistoryShowing.pages,
+                     read: @MainActor (_ before: Int?) async throws -> ShowingPageRead) async throws -> ShowingRead {
         var before: Int?
-        for _ in 0..<pages {
+        for _ in 0..<limit {
             try Task.checkCancellation()
             switch try await read(before) {
             case .unreadable, .lost: return .unreadable
@@ -1516,13 +1521,15 @@ extension WebContainer {
     /// when the page isn't up or an argument is out of shape (a frame id that
     /// isn't 36 characters, no versions or more than 600, a version id that
     /// isn't path-safe, a malformed nonce).
-    func readShowing(frameID: String, versions: [String], near: Date?, nonce: String) async throws -> ShowingRead {
+    func readShowing(frameID: String, versions: [String], near: Date?, nonce: String,
+                     pages: Int = HistoryShowing.pages) async throws -> ShowingRead {
         guard status == .ready else { throw WebAPIError.notReady }
         guard PlanCheck.isFrameID(frameID), HistoryShowing.isNonce(nonce),
               (1...HistoryShowing.maxVersions).contains(versions.count),
-              versions.allSatisfy(PlanCheck.isVersionID) else { throw WebAPIError.notAllowed }
+              versions.allSatisfy(PlanCheck.isVersionID),
+              (1...HistoryShowing.maxPages).contains(pages) else { throw WebAPIError.notAllowed }
         return try await withTaskCancellationHandler {
-            try await HistoryShowing.walk(near: near) { before in
+            try await HistoryShowing.walk(near: near, pages: pages) { before in
                 let value = try await self.webView.callAsyncJavaScript(
                     HistoryReaderScript.showingBody,
                     arguments: ["frameId": frameID, "before": before.map { $0 as Any } ?? NSNull(),

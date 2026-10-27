@@ -5493,8 +5493,8 @@ history row. It shares Add to Shelf's rule (`ShelfRules.sourceRow`): no row
 for a pinned answer (`i == -1`), a last answer used as a fallback, or an answer
 that shows a different version. Leaving the answer's words unticked does not
 remove a known source row. The Shelf can then offer *Use Claude's legend*
-and open *Show Where It Came From* at that reply. Existing READMEs are not
-rewritten.
+and take *Show Where It Came From* to that reply in the conversation. Existing
+READMEs are not rewritten.
 
 **Updating a README keeps the person's words (since Codex's review of 1.0).**
 Try Again changes only what Capsid keeps in README.md: the `files:` and
@@ -6045,8 +6045,9 @@ session's history. You asked: “…”"). The legend comment and fine print say
     words came from is **not named**: the page does not say which reply holds a
     selection, and the selected words are rendered text where the history has
     Markdown, so matching them to a reply would be a guess, and a wrong reply is
-    worse than none. "Show Where It Came From" opens the session in the reference
-    reader at its newest reply, as for an item whose reply wasn't found. No
+    worse than none. "Show Where It Came From" opens the session in the main window
+    at its newest reply, as for an item whose reply wasn't found (and, since after
+    1.0.7, "Open as Reference" in its ⋯ opens the reference reader there). No
     question, row or words of Claude's are written: the passage may be the
     user's, or a tool's, and `note.md` has it.
   - *On the Shelf* it is a document card with its first lines (`ShelfPeek` on
@@ -6101,9 +6102,9 @@ session's history. You asked: “…”"). The legend comment and fine print say
       double-click** (the same file as the grid card's drag, the same Quick Look;
       the tooltip is "Drag the note's file into your manuscript, or double-click
       to preview it"; nothing is drawn as a control); the **⋯ menu opens with Quick
-      Look and Show in Finder** (a note's alone; the ⋯ of every other item is as
-      it was), then Export Figure as PDF…, then Remove after a rule, with no Keep
-      with Data and Code… (no version to keep), and each item is a VoiceOver
+      Look and Show in Finder** (a note's alone), then Open as Reference (after
+      1.0.7, as every card's ⋯ has it), Export Figure as PDF…, then Remove after
+      a rule, with no Keep with Data and Code… (no version to keep), and each item is a VoiceOver
       action on the card as the others are; the **grid card is as it was**: it
       drags, Space and a double-click open Quick Look, and its right-click menu
       has Quick Look and Show in Finder. The label "Preview of note.md" goes with
@@ -6150,15 +6151,156 @@ session's history. You asked: “…”"). The legend comment and fine print say
   reply sit in quiet rows under the words with the same pill. Adding from here
   passes the reply's words and time, its last row and what was asked.
 
-**The way back.** `ReferenceWindowController.show(sessionID:projectID:title:
-projectName:at:mark:)` opens (or moves) the session's reference window to the
-reply that holds history row `at` (a reply's rows run from its user message to
-the row before the next one, so a folded run of tool steps still belongs to
-it), reading back until that reply's question is in, up to 80 pages of 25
-rows, and saying so if it stops short ("That reply is further back than
-Capsid reads at once. Earlier keeps looking."); it scrolls to the marked file.
-With no row, the newest reply that shows the file. A draft that a later
-version replaced shows as that draft.
+**The way back: Show Where It Came From** (Shelf/ShowSource.swift,
+Shelf/SourceSeek.swift; after 1.0.7). Sam: "When I click Show Where It Came From
+I think it should take me to the results/attachments section of that exact reply
+from Claude, not just the overall conversation." Until 1.0.7 the button opened the
+reference reader at the reply. It now takes Capsid's **main window** to the session
+in Claude Science's own page, **scrolled to that exact reply with the files it made
+in view**: the Generated tray under it ("GENERATED · 2" and a card for each file),
+the item's own card outlined for a moment. The reader is **Open as Reference**
+(`ShelfActions.openAsReference`): in the detail card's ⋯ (after Keep with Data and
+Code…, before Export Figure as PDF…; on a note's card after Show in Finder, so a note
+can still be read in the reader at its newest reply), in the grid card's
+right-click menu (right after Show Where It Came From, both off in a demo), as a
+VoiceOver action, and, as before, in the page's own menu on a figure. Find's results
+(the Shelf's "In your sessions" and Quick Open's files) go the same way
+(`FindActions.live`), with no Open as Reference of their own; add the file to the
+shelf and the card has it.
+
+- *Which reply* (`ShowSourceRules`). The README's `source_row` (since 1.0.7), as it
+  stands, when it is a row a history can have. Without one, for a file with a version,
+  the newest reply that shows it: the history reader's own lookup (`ShowingMessage`,
+  `showing(frameID, versions, near)`, the read Keep and Add to Shelf make), but up to
+  24 pages of 50 rows where Keep reads six (`HistoryShowing.walk(pages:)`, at most 50
+  for any read), and for a Find result no earlier than the file's own time less a
+  minute. A **note** (Add Selection to Shelf) has no version, and the page doesn't
+  say which reply holds a selection, so it has no reply: the session opens at the
+  newest reply. So does an item whose version no reply was found for, or whose look
+  failed or took more than twelve seconds. (A shelved item's own time is not given to
+  the look: its README's `answer_at` can be a later answer's when the reply wasn't
+  found at the time, and a look that stopped there would miss the reply; so a long
+  session with no row reads the full 24 pages before it gives up.) Nothing says a reply was found that was
+  not: no word on the card or in the window claims it, and the log's words say which
+  of the three it was (`row-known`, `row-found`, `row-none`).
+- *The window.* The session is opened as every "open this session" is
+  (`Router.open`), and a main window already on it is brought forward and **not
+  reloaded** (a reload loses the place). Capsid in read-only mode (it can't sign
+  in) opens Claude Science's own app, as everything else does, and stops. Nothing
+  is looked for and nothing scrolled until the page is up on the session (signed in,
+  loaded, at its address; up to 20 seconds). A newer click replaces an older one.
+  Ids that don't make a session's address (a README can be written by hand) only
+  bring the window forward.
+- *How 0.1.70 lets a page go to one reply* (read from its web files, the only part
+  of its folder Capsid's work may read: `web-dist/assets/index-DhEuR7nq.js`, 3.4 MB;
+  the numbers are byte offsets into it). **No address names a reply**: the routes are
+  `/projects/:projectId`, `/projects/:projectId/frames/:frameId` and
+  `/projects/:projectId/artifacts/:artifactId` with `?v=` and `?pane=` (1087835 and
+  3351394), `location.hash` is read nowhere, and the query is read only by the
+  sign-in page and a `backdrop` test switch. **The page's own "go to this reply"
+  cannot be called from outside**: a module-private dispatcher (`SOt`/`X7`, 2063989)
+  with one listener in the conversation view (3189545, taking a `toolUseId` or an
+  `artifactVersionId`, and scrolling to `[data-msg-idx~="<n>"]`, 3190626, after
+  loading earlier messages if it must) whose only senders are the compute chip's
+  "jump to cell" (3198574) and "view in context" in a job's dialog (3220379) and in
+  an artifact's own tile (`ArtifactTile-DmtoiOPx.js`, about 63800;
+  `ProjectControlPlane-ZzzhlAui.js`); nothing is on `window`, no event, no message.
+  What that listener and the reviewer's findings (2866926) find a message by
+  (a bookmark goes by the list's own row index) is **`data-msg-idx`** (on every message section, 3064733): the
+  message's number in the session's history (several, with spaces, on a run of tool
+  calls), the same count as the daemon's `/api/frames/<id>/messages?from=` and so as
+  Capsid's history row. The evidence is in the reveal listener: it takes a message's
+  place in the loaded list (the window the page fetched with `from=<base>`) and adds
+  the window's start, `xs = max(floor, base)`, then looks for `data-msg-idx~="<that>"`
+  (3189545 and 3190626), so the page itself treats the attribute as an absolute
+  index; and the jump's own scroll target, `Oc`, counts from the same `base`
+  (3182042). The made-up pages in the tests number their messages that way by
+  construction, so only this reading, and a live click, tell it. The conversation is
+  **a virtual list**:
+  `[data-testid="conversation-scroll"]` over rows (`data-index`, `data-rs-index`,
+  3216816: a user's message, or a turn of Claude's, a `turn_carousel`, that holds its
+  messages and, last, **the tray**, `[data-testid="turn-artifact-tray"]`, 3055986,
+  drawn when the page isn't in its flow layout, with a `turn-tray-card` for each
+  file, 3054333, five before a "+n more" button, `turn-tray-overflow`, 3056354, and
+  not collapsed otherwise), of which only the rows near the screen are drawn (a fast
+  scroll shows `conversation-seek-placeholder` rows for a moment, 3111587). The
+  page keeps the last 200 messages (`xMt`, 2035212) and loads 200 more when a scroll
+  goes up with the scroll position under 1800 pixels (the scroll handler, 3159632);
+  a session continued from another folds its earlier part away (`continued-from`).
+- *The path chosen, and why.* An address would have been best and there is none.
+  The page's own navigation would have been next and can't be reached from a user
+  script (the dispatcher is private to its bundle; pressing its menu items would
+  mean opening tiles, which changes the page's state). So **the script does what a
+  reader does** (`SourceSeek.body`, run once with `callAsyncJavaScript` in Capsid's
+  content world `capsid-shelf`, as the figure menu's script is): it waits for the
+  scroller and for messages to be drawn, lets a page that has only just loaded stop
+  growing, then scrolls toward the reply's number, a jump at a time, by how many
+  pixels a message has taken where it is drawn (at least half a screen, at most forty;
+  further than the top is all that is loaded: the top), waits for the page to draw
+  (placeholders are waited out), and at the top of what is loaded scrolls down a
+  screen and up again so that the page loads earlier messages, until the number
+  is drawn or six seconds have passed. No MutationObserver and no listener of the
+  page's own is used; four capturing listeners on the document (wheel, touch start,
+  key down, mouse down) are taken off at the end. A newer run of the script in the
+  same page replaces an older one (a token in the script's own world).
+- *Landing.* The reply's element is found by its number
+  (`[data-msg-idx]`), its turn is the row it is in (`data-rs-index`) and the tray is
+  the one in that row, never another row's. The scroller is put so that the turn is
+  shown **whole from near the top** (7% down) when it fits (85% of the frame), else
+  **the tray two-fifths down**, so a long reply shows its end and its files; a turn
+  with no tray (it made no files, or the page draws none) is shown with its reply a
+  quarter down, as the page's own jumps place a message. The place is looked at again
+  after the page has measured what it drew, and kept for 1.5 seconds more, since
+  pictures and text arriving change what is above (re-aimed only when it is off by
+  more than 24 points). **The card:** the one whose picture's address names the item's
+  version (as a right-click on it does), else, when no card's picture does (the reply
+  went on to a later draft), the one card whose file-name label's title is the item's
+  file name; it gets a 2-point clay outline that holds for a second and fades over two
+  and a half, drawn with the browser's Web Animations on the card itself, so **no
+  attribute, class or style of the page's is changed and nothing is left behind**
+  (checked in WebKit by comparing the tray's markup with what the page made). A card
+  that isn't there or is folded into "+n more" is **not opened** (that is the page's
+  state): the tray is outlined instead.
+- *Giving up.* If the number isn't drawn within six seconds (the start of the
+  conversation, a session continued from another, earlier messages that fail to
+  load, a message the page draws no element for), or the page has no scroller, the
+  page is **put back where it was opened**: at the end if it was there, else at the
+  place it was when nothing earlier had been loaded; nothing is outlined, nothing
+  said on the screen, and the log has the step. **The user's own wheel, touch, key or
+  mouse press (events the browser made, `isTrusted`) stops it at once** and leaves
+  the page where they put it; events the page makes itself don't.
+- *The trace* (`SourceStep`, one line in the log, category `show-source`; fixed words
+  only, nothing the page says): `Source: opened → row-known → turn-found →
+  tray-shown → card-marked`. Swift's words: `opened` or `already-there`, then
+  `row-known`, `row-found` or `row-none`, or `not-ready` (the page did not come up on
+  the session, or went elsewhere meanwhile), `read-only`, `no-address`. The page's:
+  `top-reached` (it scrolled to the top of what was loaded, where the page loads
+  earlier messages), `turn-found` or `turn-not-found`, `tray-shown`, `tray-none` or
+  `tray-out` (found and not on the screen), `card-marked` or `card-hidden`, `newest`,
+  `no-scroller`, `user-moved`, `gave-up`. Swift drops any other word.
+  `no-scroller` on a page that is up on a session is a change in the markup: it
+  leaves a breadcrumb (`showSourceNoConversation`, Diagnostics' "Last problem");
+  the other ways of not arriving are ordinary states. Read it with `log show --last 5m
+  --predicate 'subsystem == "local.sam.bench" AND category == "show-source"'`.
+- *Compatibility.* `CompatFeature.showSource`; every hook is in the inventory, checked
+  only when used: the scroller, `[data-msg-idx]` and its value's meaning (the history's
+  count), `[data-rs-index]`, the tray, the card and label and thumbnail it shares with
+  the figure menu, the page's loading of earlier messages on a scroll up, and
+  `Element.animate`. If a Claude Science update changes any of them the button still
+  brings the window to the session and the page is left as it was opened.
+- *Tested* with a made-up conversation in JavaScriptCore (`FakeConversationPage`: a
+  virtual list that loads earlier messages when scrolled up, placeholders, trays of
+  one, two and eight files, a turn taller than the screen, a session folded away
+  from message 1000) and, in light and dark, in a real WebKit view offscreen
+  (`SourceSeekSnapshotTests`, when `CAPSID_SNAPSHOT_DIR` is set): a reply with its
+  tray and card outlined, a tray with a card folded into "+n more", and a reply that
+  made no files. **What only a live
+  click can confirm:** that the real page loads earlier messages as the script's
+  scrolls ask (the script does what a reader's scroll does, but the page's handler
+  was read, not run); how long a reply a few thousand messages back takes; that a
+  turn's real height and the tray's real position leave the tray where the figures
+  above say; the card's address on the real tray; and what a session that is still
+  streaming does when the script scrolls away from its end.
 
 **The Shelf window** (board 12, "the same shelf, a little prettier", Sam:
 "2 approved"; board 11 before it): 940 × 820, minimum 620 × 480, frame
@@ -6196,11 +6338,15 @@ version and when Claude answered, each only when known), what was asked in
 quotes, muted, Claude's words (three lines, More; when they are only the
 session's last answer, a muted line says so: "Claude's last answer in the
 session; the one that showed this wasn't found."), then **Show Where It Came
-From** (clay, the one action that asks), Copy, and a round ⋯ with Keep with
-Data and Code… (the Keep sheet pinned to that answer, sized to the window;
-only for an item not kept with its data and code), Export Figure as PDF…, and,
+From** (clay, the one action that asks: the conversation, at that reply), Copy,
+and a round ⋯ with Keep with Data and Code… (the Keep sheet pinned to that
+answer, sized to the window; only for an item not kept with its data and code),
+Open as Reference (the reference window at that reply, as Show Where It Came
+From was until 1.0.7), Export Figure as PDF…, and,
 after a rule, Remove (to the Trash, with a dark Undo pill for eight seconds).
 Each of the ⋯ items is also a VoiceOver action on the card (`ShelfRules.moreMenu`).
+The grid card's right-click menu opens with Show Where It Came From and Open as
+Reference, then Quick Look, Copy, Export… and the rest.
 A note made by Add Selection to Shelf has a card of its own, with no picture and no
 title (a header and its passage, then these controls, and Quick Look and Show in
 Finder at the head of its ⋯: *Add Selection to Shelf*, above).
@@ -6486,9 +6632,11 @@ database lists a few thousand files. A session is the artifact's `root_frame_id`
 Results groups it by. Two optional indexes are used when present. Measured on
 a made-up database from the 0.1.70 migrations (79,688 artifacts): 60–140 ms
 warm; on Sam's Mac, Diagnostics' line said 2,938 files listed and a search
-for today's in 50 ms. Show Where It Came From opens the reference window at
-the newest reply that shows the version (no history row is known, so it reads
-back up to 80 pages, as the Shelf does for an item with no row). Nothing is
+for today's in 50 ms. Show Where It Came From takes the main window to the
+session, scrolled to the newest reply that shows the version (no history row is
+known, so it looks for it, up to 24 pages of 50 rows, and from the file's own
+time; until 1.0.7 this was the reference window, reading back up to 80 pages: see
+*The way back* in Shelf, which also says what happens when no reply is found). Nothing is
 written to disk and nothing typed or found is kept. `CompatFeature.find`: the
 inventory checks the two tables' columns, the exclusions and the indexes, and
 Diagnostics says "Files across sessions read: N listed; a search for today's
@@ -6682,7 +6830,7 @@ too. Add to Shelf and Keep… wait up to 2 s for reads under way.
 
 *Tests.* `ReferenceFileRulesTests` (figures against documents, a reply's documents, hidden names, the Quick Look list, the kind tile), `ReferenceReadBoundsTests` (the 2 MiB limit and the cut, a split character, a byte-order mark, bytes that aren't text, the cap and the sentences of a failed read), `ReferenceQuickLookTests` (the items and the data source, the copy's name and permissions, the arrow keys, the folder gone on close, a late read dropped), `ReferenceOpeningTests` (a failed read's sentence, the size refusals, the gate's waiting and its order), `ReferenceReadingViewTests` (the reading view, the cut and its note, Add to Shelf on a document, Copy with Source and the reply's own time, a document left behind by Back, another reply or a newer document, Esc and ⌘[ on a window), and `ReferenceFilesSnapshotTests`. Only a person can confirm the panel itself (its arrow keys and the temporary copy it shows).
 
-*Two fixes found on the way, in the same window.* A landing's scroll (Show Where It Came From) waited one yield for the page to be laid out, which was too soon: in a real window it stayed at the top. It waits 120 ms. And the title bar's band was drawn behind the page, so a picture scrolled under the title showed through it; it is drawn over the page now, on the page's own colour. `--step documents` opens the demo scrolled to the documents.
+*Two fixes found on the way, in the same window.* A landing's scroll (the reader's landing, Show Where It Came From until 1.0.7, Open as Reference since) waited one yield for the page to be laid out, which was too soon: in a real window it stayed at the top. It waits 120 ms. And the title bar's band was drawn behind the page, so a picture scrolled under the title showed through it; it is drawn over the page now, on the page's own colour. `--step documents` opens the demo scrolled to the documents.
 
 Quick Look draws HTML and SVG in the system's own sandbox, not on Capsid's origin or the page's, so opening one never runs it where Capsid or Claude Science could be reached.
 

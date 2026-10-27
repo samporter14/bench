@@ -323,6 +323,86 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, Show Where It Came From goes to the reply in the conversation (`g/show-source`, from main a37b3fb, Capsid 1.0.7)
+
+Sam: "When I click Show Where It Came From I think it should take me to the results/attachments section of that exact reply
+from Claude, not just the overall conversation." The button opened the reference reader; it now takes the main window to the
+session in Claude Science's own page, scrolled to the reply with its Generated tray in view, and the reader is Open as
+Reference in the ⋯ menus. What was read: Claude Science 0.1.70's web bundle (`web-dist/assets`, the only part of its folder
+touched; no database, no auth, no daemon asked) to see how a page can go to one reply. What ran: the page script in
+JavaScriptCore on a made-up conversation (a virtual list that loads earlier messages when scrolled up, placeholders, trays of
+one, two and eight files, a folded-away start) with the timers on a virtual clock, and the same script in a real WebKit view
+offscreen on a made-up page drawn as the bundle draws one. Nothing else: no daemon started or stopped, the app not launched,
+no window shown (the WebKit view's window sits at -20,000), nothing in /Applications.
+
+- ✅ **How the page lets one reach a reply: it doesn't, so the script scrolls** (DESIGN.md, Shelf → The way back, has the
+  offsets). No address names a message (three routes, `location.hash` read nowhere); the page's own jump is a module-private
+  dispatcher that only its compute chip and its "view in context" call; what its jumps and the reviewer's findings look for is
+  `data-msg-idx`, an absolute index (the reveal listener adds the window's start and looks for exactly that number). The
+  conversation is a virtual list that keeps the last 200 messages and loads 200 more on an upward scroll under 1800 pixels. So
+  `SourceSeek.body` scrolls toward the number, waits out the placeholders, scrolls up at the top, and gives up after six seconds.
+- ✅ **The reply and its tray** (`SourceSeekScriptTests`, 23 tests). A reply on the screen: `turn-found → tray-shown →
+  card-marked`; one 1,000 messages back reached by loading earlier pages (5 or more loads, under 8 seconds of the page's
+  time), with the page keeping the screen where it was after a load and without; one below the screen; placeholders that last
+  longer than the script's pause; a whole turn shown from 7% down when it fits, the tray two-fifths down when the turn is
+  taller than the screen, a turn with no tray with its reply a quarter down; the item's card found by its version, else by its
+  name when exactly one card has it (a later draft of the same figure), never between two of one name; a card folded into
+  "+3 more" is not opened (no click reaches the page's button) and the tray is outlined; the place is put back for a moment
+  after the page moves it.
+- ✅ **Giving up leaves the page as it was opened**: a message the page draws no element for, a start that can't be loaded (the
+  first 1,000 messages folded away, loads that fail), no scroller at all (`no-scroller` within the wait): each ends with
+  `turn-not-found` or `no-scroller` in a few seconds of the page's time, with the page back at the newest reply and nothing
+  outlined. A user's wheel, touch, key or press (`isTrusted`) ends it at once and leaves the page where they put it; the same
+  four events made by the page itself don't. A newer run replaces an older one.
+- ✅ **Nothing of the page is changed**: after a run the tray's markup is what the page made (no attribute, class or style), the
+  four listeners are off the document, no observer is left, and the script's token in its own world is cleared; the outline is the
+  browser's animation. The page's words are guarded in the made-up page (reading a text node throws), so a script that read them
+  would fail. Without `Element.animate` nothing is claimed drawn.
+- ✅ **Which reply, and the window** (`ShowSourceTests`, 26 tests, all on fakes): the README's row as it stands (no look); with no
+  row the newest reply that shows the version (asked for the one version, and from the file's time less a minute for a Find
+  result); none found, unreadable, or a look past its twelve seconds: the newest reply and no more said; a note: no look; a row no
+  history can have is no row; a version that is not an id never reaches the daemon or the page. A window on another page is taken
+  to the session and the scroll waits for the page (up to 20 seconds; `not-ready` after); one already on it is not reloaded;
+  a read-only Capsid opens Claude Science's app and stops; ids that make no address only bring the window forward; a page
+  that went elsewhere during the look is not scrolled; a newer click replaces an older. The page's steps are passed word by
+  word (anything else dropped, 12 at most) and `no-scroller` leaves a breadcrumb.
+- ✅ **Open as Reference** (`ShelfMoreMenuTests`, `ShelfNoteMenuTests`, `ShelfDocumentReadingTests` and the wiring tests): in the
+  detail card's ⋯ after Keep with Data and Code… and before Export Figure as PDF…, on a note's and a document's card too,
+  in the grid card's menu right after Show Where It Came From, a VoiceOver action, off in a demo; the button and Find's Show
+  Where It Came From go to the conversation, the item runs what the button used to. The three existing tests that held the
+  menus' exact arrays were updated, and they are what fails when the item is dropped.
+- ✅ **Compatibility inventory**: `CompatFeature.showSource` and seven hooks (the scroller, `[data-msg-idx]` and what its value
+  counts, `[data-rs-index]`, the tray, the card, label and thumbnail it shares with the figure menu, the page's loading on an
+  upward scroll, `Element.animate`); the script's selectors are held to the list both ways (`SourceSeek.body` joined the
+  scripts checked, the two files joined the lists of files that read the markup and run a script in the page). `HistoryShowing.walk`
+  and `readShowing` take a page count (24 for this, Keep's six unchanged, 50 at most).
+- ✅ **Captures** (`SourceSeekSnapshotTests`, run with `CAPSID_SNAPSHOT_DIR`, 19 seconds): a made-up conversation in WebKit
+  offscreen with the script in its own content world, light and dark. The steps, the tray on the screen, one animation, the
+  tray's markup unchanged, no style on the card, and, for the reply with no files, the reply a quarter down, were checked
+  in WebKit itself. In `shots-source/` beside the worktree: `source-landed-light.png`, `source-landed-dark.png` (a reply 54
+  exchanges back with its two files and the picture's card outlined), `source-folded-light.png`, `source-folded-dark.png`
+  (eight files, the one asked for folded into "+3 more", the tray outlined, five cards still there), `source-notray-light.png`,
+  `source-notray-dark.png`. Timers in the offscreen view ran at full speed.
+- ✅ **Mutation checks** (each break made, the named tests failed, the break undone). Script, 23 tests: `cardIn` always null: 10
+  failed; no nudge at the top: 1 failed (the page that does not keep the screen where it was after a load; the ones that keep it
+  pass, as they should: the jump to the top is itself an upward scroll that loads); the `isTrusted` guard dropped: 1 (the
+  page's own events); the tray looked for in the whole scroller, not the turn: 13; the newer-run token dropped: 1; no put-back
+  on giving up: 3; tray at 0.1 and not 0.4: 1; no re-aim while it settles: 1; "nothing drawn" taken for giving up, not waited
+  out: 9. Swift: the look ignored: 3; a look made even with a row: 2; the window always reloaded: 1; a reply asked for with no
+  row: 4; no Open as Reference in the menu: 3, in a note's menu: 1; Find back on the reference window: 1; the button back on the
+  reader: 1; no breadcrumb: 1; no wait for the page: 11; the walk ignoring its page count: 1; the `[data-rs-index]` hook
+  missing from the inventory: 1.
+- ✅ **Whole suite:** `✔ Test run with 4524 tests in 581 suites passed after 36.837 seconds.` (`swift test --jobs 2`, one swift process
+  at a time). The made-up DOM gained `removeEventListener`, so the figure menu's, the document tile's and the viewer's script
+  tests ran again with it: they pass. No flake.
+- ⏳ **Only a live click can confirm:** that the real page loads earlier messages when the script scrolls up (its handler was
+  read, not run, and it hears a scroll event that goes up under 1800 pixels; the script's jump to the top and its nudge make
+  one); how long a reply a few thousand messages back takes in the real page, and whether six seconds is enough; where the
+  page's own "last seen" pill and its return anchor leave the scroll; what a session still streaming does when the script
+  scrolls away from its end; a turn's real height and the tray's real place against the fractions above; the real card's
+  address (a thumbnail whose address names the version, from the same hook the figure menu uses) and the outline over the page's
+  own ring; a note's session opening at the newest reply; the main window coming forward from the Shelf window.
+
 ## 2026-10-26, three bugs that could lose a person's words (`g/fix-dataloss`, from main 8e35826, Capsid 1.0.7)
 
 Codex's review of 1.0.7 found and reproduced three ways Capsid could lose words a person had typed or kept. Each was
