@@ -1766,7 +1766,18 @@ since the send the answer is "Not sure", not "didn't go through". A turn with no
 intent id is this message only when all of it agrees: the same words whole, the
 same files by id, and a time no earlier than the send. A queue that grew says
 nothing of whose message joined it, so it leaves the answer "Not sure", and the
-phone keeps the words. A photo's turn that runs out of time stops at its next
+phone keeps the words. **Absence needs proof** (since Codex's review of 1.0.7).
+The reader sees only the newest twelve rows, and the turns it keeps are those
+rows less tool calls, their results and the rows Claude Science hides, so a
+message delivered while Claude works can be pushed out of them by the rows after
+it and leave no turn behind. "That didn't go through" is therefore said
+only when the turns include one dated before the send began: the rows then run
+on from before the send to now, and a message that landed is among them. No
+turns, turns all dated after the send, one at the send's own millisecond, or
+turns with no time prove nothing, and the answer is "Not sure that went
+through" (the words kept, nothing sent again on its own). A message is still
+found by its intent id wherever the rows start, and a plan change's words by
+the same rule. A photo's turn that runs out of time stops at its next
 step: one given up on while it reads the session uploads nothing, and an upload
 never starts for a caller already given up on.
 

@@ -14,8 +14,12 @@
 //
 // The reads are those the actions already make (`SessionProjection`, which is
 // not this file's to change): the frame's status, plan and pending questions,
-// the head of the permission queue, the last twelve turns (a turn of yours
-// with its intent id and its files' ids) and a bare count of queued messages.
+// the head of the permission queue, the turns among the last twelve rows (a
+// turn of yours with its intent id and its files' ids) and a bare count of
+// queued messages. Twelve rows are all there is to look in: a message that was
+// delivered can be pushed out of them by the rows that came after it (a run of
+// tool calls and their results are rows and not turns), so "not there" is said
+// only when the rows are shown to reach back past the send (`MessageSeen`).
 import Foundation
 
 // MARK: A plan
@@ -71,14 +75,25 @@ extension PlanCheck {
 /// whole (not their opening), the same files (by id, not by name), and a time
 /// no earlier than the send. A larger queue says nothing of whose message
 /// joined it: another device's would do the same.
+///
+/// Absence needs proof. The reader sees only the newest twelve rows, and the
+/// turns it keeps are those rows less the tool calls, their results and the
+/// rows Claude Science hides, so a message delivered during a run can sit
+/// behind more rows than that and be in none of them. A message sent now is
+/// the newest row at the moment it lands: if the turns include one dated before
+/// the send began, every row since is among them, and a message that is not is
+/// not there. With none (the turns are empty, every one is dated after the send,
+/// or none has a time), the rows may start after it, and nothing can be said.
 enum MessageSeen: Equatable, Sendable {
     /// A turn that is this message.
     case sent
-    /// Nothing that is this message, and nothing that could be.
+    /// Nothing that is this message, and nothing that could be, in rows shown
+    /// to reach back past the send.
     case absent
     /// Something that could be this message and could be another: a turn of
     /// the same words with no time, cut short, or whose files can't be seen;
-    /// or a queue that grew.
+    /// a queue that grew; or rows that start after the send, in which a
+    /// delivered message may not be.
     case unclear
 
     static func look(text: String, intent: String?, turns: [SessionProjection.Turn], since: Date,
@@ -96,8 +111,15 @@ enum MessageSeen: Equatable, Sendable {
             if likeness == .same, turn.intent == nil, since == true { return .sent }
             if since ?? true { maybe = true }
         }
-        if queuedNow > queuedBefore { return .unclear }
-        return maybe ? .unclear : .absent
+        if queuedNow > queuedBefore || maybe { return .unclear }
+        return reachesBack(turns, past: start) ? .absent : .unclear
+    }
+
+    /// Whether the turns include one dated strictly before the send began: the
+    /// rows read then run on from before it to now. The send's own millisecond
+    /// is not before it, and a turn with no time says nothing.
+    static func reachesBack(_ turns: [SessionProjection.Turn], past start: Date) -> Bool {
+        turns.contains { turn in turn.at.map { $0 < start } ?? false }
     }
 
     /// A request's words and files, as the session reader would show them.

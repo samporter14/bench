@@ -723,8 +723,12 @@ struct RemotePhotosSessionTests {
         [.init(role: .you, at: rig.now.addingTimeInterval(offset), text: text, intent: intent, files: files)]
     }
 
+    /// The turns the reader shows, with a reply from before the send among them: rows that begin before the send are
+    /// what lets "not there" be said (`MessageSeen`).
     private func sessionWithTurns(_ turns: [SessionProjection.Turn]?, status: String = "completed", queued: Int = 0) -> SessionProjection {
-        SessionProjection(status: status, agentName: "made-up-agent", projectID: "proj-1", queued: queued, turns: turns)
+        let earlier = SessionProjection.Turn(role: .claude, at: rig.now.addingTimeInterval(-60), text: "Here is the plan.")
+        return SessionProjection(status: status, agentName: "made-up-agent", projectID: "proj-1", queued: queued,
+                                 turns: turns.map { [earlier] + $0 })
     }
 
     // A turn that runs out of time says what is known of how far it got.

@@ -80,6 +80,13 @@ private final class Rig {
 }
 
 /// What a request comes to, and how many times the checking line was called.
+/// A reply from a minute before the send: the rows it is among begin before the send, which is what lets "not there"
+/// be said (`MessageSeen`).
+@MainActor
+private func earlierTurn(_ rig: Rig) -> SessionProjection.Turn {
+    .init(role: .claude, at: rig.now.addingTimeInterval(-60), text: "Here is the plan.")
+}
+
 @MainActor
 private func run(_ rig: Rig, _ request: RemoteActionRequest, sessions: RemoteSessions? = nil) async -> (result: RemoteActionResult, checking: Int) {
     var checking = 0
@@ -258,7 +265,8 @@ struct UnknownMessageTests {
     }
 
     @Test func aTurnOfClaudesWordsIsNotYours() async {
-        rig.after = projection("completed", turns: [.init(role: .claude, at: rig.now.addingTimeInterval(1), text: "Try one panel per condition.")])
+        rig.after = projection("completed", turns: [earlierTurn(rig),
+                                                    .init(role: .claude, at: rig.now.addingTimeInterval(1), text: "Try one panel per condition.")])
         #expect(await run(rig, message).result == .notThere)
     }
 
@@ -296,8 +304,8 @@ struct UnknownMessageTests {
         #expect(await run(earlier, message).result == .notThere)
         // Other words under another intent: another message.
         let elsewhere = Rig()
-        elsewhere.after = projection("completed", turns: [.init(role: .you, at: elsewhere.now.addingTimeInterval(1),
-                                                                text: "Plot the controls first.", intent: other)])
+        elsewhere.after = projection("completed", turns: [earlierTurn(elsewhere), .init(role: .you, at: elsewhere.now.addingTimeInterval(1),
+                                                                                         text: "Plot the controls first.", intent: other)])
         #expect(await run(elsewhere, message).result == .notThere)
     }
 
@@ -312,16 +320,17 @@ struct UnknownMessageTests {
     }
 
     @Test func wordsThatOnlyShareAnOpeningAreAnotherMessage() async {
-        rig.after = projection("completed", turns: [you("Try one panel per condition. Then plot the means.")])
+        rig.after = projection("completed", turns: [earlierTurn(rig), you("Try one panel per condition. Then plot the means.")])
         #expect(await run(rig, message).result == .notThere)
         // The other way round: this message says more than the turn.
         let longer = Rig()
-        longer.after = projection("completed", turns: [you("Try one panel")])
+        longer.after = projection("completed", turns: [earlierTurn(longer), you("Try one panel")])
         #expect(await run(longer, message).result == .notThere)
         // Two long messages that differ only after their first 200 characters.
         let opening = String(repeating: "Use the made-up buffer series again. ", count: 7)
         let long = Rig()
-        long.after = projection("completed", turns: [.init(role: .you, at: long.now.addingTimeInterval(1), text: opening + "Then stop.")])
+        long.after = projection("completed", turns: [earlierTurn(long),
+                                                     .init(role: .you, at: long.now.addingTimeInterval(1), text: opening + "Then stop.")])
         #expect(await run(long, .message(text: opening + "Then plot.", intentID: intent)).result == .notThere)
     }
 
@@ -338,7 +347,7 @@ struct UnknownMessageTests {
         let request = RemoteActionRequest.message(text: "Look at this.\n\n" + line, intentID: intent)
         // The same words and the same file name, but another file: another message.
         let another = Rig()
-        another.after = projection("completed", turns: [you("Look at this.\n\nAttached: plate.csv", files: [theirs])])
+        another.after = projection("completed", turns: [earlierTurn(another), you("Look at this.\n\nAttached: plate.csv", files: [theirs])])
         #expect(await run(another, request).result == .notThere)
         // The same words and this very file: this message.
         let same = Rig()
@@ -350,13 +359,58 @@ struct UnknownMessageTests {
         #expect(await run(unseen, request).result == .unsure)
         // A turn with a file, for a message without one: another message.
         let plain = Rig()
-        plain.after = projection("completed", turns: [you("Look at this.\n\nAttached: plate.csv", files: [mine])])
+        plain.after = projection("completed", turns: [earlierTurn(plain), you("Look at this.\n\nAttached: plate.csv", files: [mine])])
         #expect(await run(plain, .message(text: "Look at this.", intentID: intent)).result == .notThere)
+    }
+
+    // MARK: A window that can't prove a message absent
+
+    /// A turn of Claude's from before the send: the rows the reader saw start before it.
+    private func before(_ seconds: TimeInterval = -60) -> SessionProjection.Turn {
+        .init(role: .claude, at: rig.now.addingTimeInterval(seconds), text: "Here is the plan.")
+    }
+
+    @Test func aMessageThatLeftTheWindowBehindToolRowsIsNotCalledMissing() async {
+        // Delivered, then a burst of tool rows: the last twelve rows hold none of its turn (tool rows are not turns).
+        rig.after = projection("processing", turns: [])
+        let (result, _) = await run(rig, message)
+        #expect(result == .unsure)
+        #expect(result != .notThere)
+        #expect(rig.writes.count == 1, "settled by a read, never sent again on its own")
+    }
+
+    @Test func twelveTurnsAllAfterTheSendThatAreNotItProveNothing() async {
+        // The window starts after the send began: the message could be a row before it.
+        rig.after = projection("processing", turns: (1...12).map { you("Another message \($0).", after: Double($0)) })
+        #expect(await run(rig, message).result == .unsure)
+    }
+
+    @Test func aWindowThatStartsBeforeTheSendAndHoldsNoSuchMessageProvesItAbsent() async {
+        rig.after = projection("completed", turns: [before(), you("Something else entirely")])
+        #expect(await run(rig, message).result == .notThere)
+        // Even with nothing newer: the rows end where the send began.
+        let quiet = Rig()
+        quiet.after = projection("completed", turns: [.init(role: .claude, at: quiet.now.addingTimeInterval(-60), text: "Done.")])
+        #expect(await run(quiet, message).result == .notThere)
+    }
+
+    @Test func aTurnFromTheSameMomentAsTheSendOrWithNoTimeDoesNotReachBackPastIt() async {
+        rig.after = projection("completed", turns: [.init(role: .claude, at: rig.now, text: "Done.")])
+        #expect(await run(rig, message).result == .unsure, "the same millisecond is ambiguous")
+        let untimed = Rig()
+        untimed.after = projection("completed", turns: [.init(role: .claude, at: nil, text: "Done.")])
+        #expect(await run(untimed, message).result == .unsure, "no time, no proof")
+    }
+
+    @Test func theIntentFindsItWhereverTheWindowStarts() async {
+        // Only the absence needs the window to reach back; the message itself is found by its id.
+        rig.after = projection("processing", turns: [you("Try one panel per…", intent: intent)])
+        #expect(await run(rig, message).result.result == .sent)
     }
 
     @Test func nothingShowingMeansItDidNotGoThrough() async {
         rig.before = projection("processing", queued: 1)
-        rig.after = projection("processing", queued: 1, turns: [you("Something else entirely")])
+        rig.after = projection("processing", queued: 1, turns: [earlierTurn(rig), you("Something else entirely")])
         let (result, _) = await run(rig, message)
         #expect(result == .notThere)
         #expect(rig.writes.count == 1)
@@ -458,15 +512,22 @@ struct UnknownPlanFeedbackTests {
         #expect(rig.writes.count == 1)
     }
 
-    @Test func aPlanStillWaitingAtTheSameVersionWithoutThemDidNotGoThrough() async {
+    @Test func wordsThatLeftTheWindowBehindToolRowsAreNotCalledMissing() async {
+        // The twelve newest rows are tool rows, so no turn of yours is in them: the plan waiting says nothing of the words.
         rig.before = projection("awaiting_plan_approval", version: "ver-1")
         rig.after = projection("awaiting_plan_approval", version: "ver-1", turns: [])
+        #expect(await run(rig, feedback).result == .unsure)
+    }
+
+    @Test func aPlanStillWaitingAtTheSameVersionWithoutThemDidNotGoThrough() async {
+        rig.before = projection("awaiting_plan_approval", version: "ver-1")
+        rig.after = projection("awaiting_plan_approval", version: "ver-1", turns: [earlierTurn(rig)])
         #expect(await run(rig, feedback).result == .notThere)
     }
 
     @Test func aPlanThatMovedOnWithoutThemIsAChange() async {
         rig.before = projection("awaiting_plan_approval", version: "ver-1")
-        rig.after = projection("awaiting_plan_approval", version: "ver-2", turns: [])
+        rig.after = projection("awaiting_plan_approval", version: "ver-2", turns: [earlierTurn(rig)])
         #expect(await run(rig, feedback).result.result == .changed)
     }
 

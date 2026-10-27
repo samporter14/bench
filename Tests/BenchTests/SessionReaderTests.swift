@@ -148,6 +148,28 @@ struct SessionProjectionTests {
         #expect(json?.contains("22222222") == false)
     }
 
+    @Test func aMessageDisplacedByToolRowsIsNotCalledMissing() throws {
+        // Delivered at 19:30:00, then twelve tool rows: the reader's last twelve rows hold no turn at all.
+        let call = #"{"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "bash", "input": {"command": "ls"}}], "_ts": 1791833410000}"#
+        let result = #"{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}], "_ts": 1791833420000}"#
+        let tools = "[" + Array(repeating: [call, result], count: 6).flatMap { $0 }.joined(separator: ",") + "]"
+        let displaced = try #require(project(ReaderFixture.frame(status: "processing"), ReaderFixture.page(tools)).read)
+        #expect(displaced.turns == [])
+        let sent = Date(timeIntervalSince1970: 1_791_833_400)
+        let intent = "1b4e28ba-2fa1-41d2-883f-0016d3cca427"
+        // The frame's one queued message was there before the send too: a queue that grew would say "not sure" by itself.
+        let before = SessionProjection(status: "processing", agentName: "made-up-agent", projectID: "proj-made-up", queued: 1)
+        let verdict = RemoteDecide.settledMessage(text: "Try one panel per condition.", intent: intent, before: before, since: sent,
+                                                  fresh: displaced)
+        #expect(verdict == .unsure, "the rows can't show it is absent")
+        // The same rows with a reply from before the send in them start before it: now absence is shown.
+        let reply = #"{"role": "assistant", "content": "Here is the plan.", "_ts": 1791833300000}"#
+        let reaching = "[" + ([reply] + Array(repeating: [call, result], count: 5).flatMap { $0 }).joined(separator: ",") + "]"
+        let shown = try #require(project(ReaderFixture.frame(status: "processing"), ReaderFixture.page(reaching)).read)
+        #expect(RemoteDecide.settledMessage(text: "Try one panel per condition.", intent: intent, before: before, since: sent,
+                                            fresh: shown) == .notThere)
+    }
+
     @Test func atMostTwelveTurnsOldestFirstEachCut() throws {
         let rows = (0..<20).map { ReaderFixture.userRow("Turn \($0)", at: 1791833000000 + $0 * 1000) }
             + [ReaderFixture.userRow(String(repeating: "é", count: 3000), at: 1791833100000)]

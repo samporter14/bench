@@ -732,7 +732,9 @@ struct QuickStartFlowUnknownTests {
 
     @Test func aMessageWithNoAnswerThatTheSessionDoesntShowCanBeSentAgain() async {
         rig.writeReply = .unknown
-        rig.reads = [FlowRig.session("completed"), SessionProjection(status: "completed", agentName: "made-up-agent", projectID: "proj-1", turns: [])]
+        // The rows begin before the send (a reply from a minute earlier) and hold nothing of it.
+        let earlier = SessionProjection.Turn(role: .claude, at: rig.now.addingTimeInterval(-60), text: "Here is the plan.")
+        rig.reads = [FlowRig.session("completed"), SessionProjection(status: "completed", agentName: "made-up-agent", projectID: "proj-1", turns: [earlier])]
         let outcome = await rig.flow.perform(rig.message())
         #expect(outcome == .failed(sentence: QuickStartFlow.Sentence.sendNotThere))
         #expect(rig.writes.count == 1)
