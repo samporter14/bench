@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct SceneSettingsView: View {
-    @ObservedObject private var settings = SceneSettings.shared
+    @ObservedObject private var settings: SceneSettings
     /// A session's title picks the specimen that plays for it, from the ones
     /// that are on (Lab/SessionSpecimen.swift).
     @AppStorage(SettingsKey.matchSpecimenToSession) private var matchSpecimen = true
@@ -26,6 +26,11 @@ struct SceneSettingsView: View {
     @State private var previewScheme: ColorScheme?
 
     private var shownScheme: ColorScheme { previewScheme ?? colorScheme }
+
+    /// The page uses `SceneSettings.shared`; a capture hosts its own.
+    init(settings: SceneSettings = .shared) {
+        _settings = ObservedObject(wrappedValue: settings)
+    }
 
     /// Which specimens the grid shows.
     private enum Showing: String, CaseIterable {
@@ -117,7 +122,10 @@ struct SceneSettingsView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                matchToSession
+                VStack(alignment: .leading, spacing: 8) {
+                    matchToSession
+                    shortSequences
+                }
                 categories
             }
             .padding(.top, 4)
@@ -168,6 +176,23 @@ struct SceneSettingsView: View {
             Toggle("Match the specimen to the session", isOn: $matchSpecimen)
                 .toggleStyle(.checkbox)
             Text("When a session\u{2019}s title fits a specimen that\u{2019}s on, that one plays.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 20)
+        }
+    }
+
+    // MARK: Short sequences
+
+    /// One checkbox and one line: now and then a few specimens play in order
+    /// (Lab/SpecimenSequences.swift). Only from what plays, so every choice
+    /// above still holds: a story with one specimen missing is left out whole.
+    private var shortSequences: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Play short sequences", isOn: $settings.playSequences)
+                .toggleStyle(.checkbox)
+            Text("Now and then, a few specimens play in order, like a little story.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -37,7 +37,7 @@ struct SessionSpecimen: Equatable {
                         match: Matcher = SpecimenTopics.match) -> SessionSpecimen {
         let words = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard matching, !words.isEmpty, !playing.scenes.isEmpty,
-              let found = match(words, sessionID, playing.scenes.map(\.name)),
+              let found = match(words, sessionID, playing.distinctNames),
               let scene = playing.scenes.first(where: { $0.name == found.name }) else {
             return SessionSpecimen(rotation: playing, picked: nil)
         }
@@ -74,4 +74,14 @@ struct SessionSpecimen: Equatable {
     }
 
     @MainActor private static var memo: [String: (key: Key, value: SessionSpecimen)] = [:]
+}
+
+private extension Rotation {
+    /// The names of the scenes, each once, in the order they first play: a
+    /// short story can come round more than once, and the matcher is offered
+    /// specimens, not slots.
+    var distinctNames: [String] {
+        var seen = Set<String>()
+        return scenes.map(\.name).filter { seen.insert($0).inserted }
+    }
 }

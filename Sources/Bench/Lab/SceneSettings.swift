@@ -27,10 +27,16 @@ final class SceneSettings: ObservableObject {
         static let hidden = "hiddenScenes"
         static let favorites = "favoriteScenes"
         static let onlyFavorites = "onlyFavoriteScenes"
+        static let sequences = "playShortSequences"
     }
 
+    /// Where the choices are kept: the app's own defaults, or a test's.
+    private let defaults: UserDefaults
+    /// The short stories on offer when the setting is on.
+    private let stories: [SpecimenSequence]
+
     @Published var size: SceneSize {
-        didSet { UserDefaults.standard.set(size.rawValue, forKey: Key.size) }
+        didSet { defaults.set(size.rawValue, forKey: Key.size) }
     }
 
     /// Which specimens play (SpecimenChoice has the rules), stored as the
@@ -38,7 +44,6 @@ final class SceneSettings: ObservableObject {
     @Published private(set) var choice: SpecimenChoice {
         didSet {
             guard choice != oldValue else { return }
-            let defaults = UserDefaults.standard
             // In the enum's order, so the stored array doesn't shuffle between writes.
             defaults.set(SceneGroup.allCases.filter(choice.groups.contains).map(\.rawValue), forKey: Key.groups)
             defaults.set(choice.hidden.sorted(), forKey: Key.hidden)
@@ -52,7 +57,7 @@ final class SceneSettings: ObservableObject {
     @Published private(set) var favorites: Set<String> {
         didSet {
             guard favorites != oldValue else { return }
-            UserDefaults.standard.set(favorites.sorted(), forKey: Key.favorites)
+            defaults.set(favorites.sorted(), forKey: Key.favorites)
             cachedRotation = nil
         }
     }
@@ -61,7 +66,18 @@ final class SceneSettings: ObservableObject {
     @Published var onlyFavorites: Bool {
         didSet {
             guard onlyFavorites != oldValue else { return }
-            UserDefaults.standard.set(onlyFavorites, forKey: Key.onlyFavorites)
+            defaults.set(onlyFavorites, forKey: Key.onlyFavorites)
+            cachedRotation = nil
+        }
+    }
+
+    /// Now and then a few specimens play in order, a short story
+    /// (`SpecimenSequence`). Off until asked for. A change rebuilds the
+    /// rotation as the other choices do, so every surface has it at once.
+    @Published var playSequences: Bool {
+        didSet {
+            guard playSequences != oldValue else { return }
+            defaults.set(playSequences, forKey: Key.sequences)
             cachedRotation = nil
         }
     }
@@ -71,20 +87,24 @@ final class SceneSettings: ObservableObject {
     /// nothing is showing it. Views read it on every layout, so it is kept.
     var rotation: Rotation {
         if let cachedRotation { return cachedRotation }
-        let built = choice.rotation(favorites: favorites, onlyFavorites: onlyFavorites)
+        let built = choice.rotation(favorites: favorites, onlyFavorites: onlyFavorites, sequences: playSequences ? stories : [])
         cachedRotation = built
         return built
     }
 
     private var cachedRotation: Rotation?
 
-    private init() {
-        let defaults = UserDefaults.standard
+    /// The app uses `shared`; a test makes its own over a scratch suite, and
+    /// may offer stories of its own.
+    init(defaults: UserDefaults = .standard, stories: [SpecimenSequence] = SpecimenSequence.curated) {
+        self.defaults = defaults
+        self.stories = stories
         let groups = defaults.stringArray(forKey: Key.groups).map { Set($0.compactMap(SceneGroup.init(rawValue:))) }
         choice = SpecimenChoice(groups: groups ?? Set(SceneGroup.allCases), hidden: Set(defaults.stringArray(forKey: Key.hidden) ?? []))
         size = defaults.string(forKey: Key.size).flatMap(SceneSize.init(rawValue:)) ?? .medium
         favorites = Set(defaults.stringArray(forKey: Key.favorites) ?? [])
         onlyFavorites = defaults.bool(forKey: Key.onlyFavorites)
+        playSequences = defaults.bool(forKey: Key.sequences)
     }
 
     // MARK: Reading
