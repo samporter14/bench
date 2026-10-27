@@ -323,6 +323,19 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-27, Capsid 1.1.0 released and installed
+
+- ✅ Released as v1.1.0 (tag on 0520653, "Capsid 1.1.0", by Sam with `gh release create`), marked Latest:
+  `Bench.zip` with Capsid.app 1.1.0 (57) inside, 18,916,174 bytes, sha256 4bb64a7c0ab37b76…. GitHub's asset
+  digest matches the file built from that commit. 1.0.7 was pushed but never published; its changes ship here.
+- ✅ Installed from that same build before the release (CDHash 829c587a; the unzipped copy's signature checks and
+  its CDHash is the same). Three 401s at 00:34:59 while signing in, then no errors from 00:35:00 to 00:41:50, a span
+  that takes in the five-minute usage read and the Dock menu building with 11 items. `--diagnose` passes against
+  Claude Science 0.1.70.
+- The whole suite before the push: 4,771 tests in 608 suites pass.
+- ⏳ **Live**: What's New's first showing after the update, whether Claude Science's page takes ⌥⌘P first, Compare's
+  context-menu item and View menu, and the closing gesture in the real panel (the full list is in the entry below).
+
 ## 2026-10-27, Capsid 1.1.0: Compare, Project Workspaces, eight specimens, short sequences, closing gestures and What's New (`g/compare-workspaces-specimens`, from main a37b3fb, merged with main 4ce62d3)
 
 Sam chose the scope: Compare on the Shelf, Project Workspaces (with nothing to save, his choice over a Save step), eight new
