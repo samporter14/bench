@@ -13,6 +13,14 @@ enum ShelfDocumentReading {
 
     static func markdown(_ url: URL) -> Bool { ["md", "markdown"].contains(url.pathExtension.lowercased()) }
 
+    /// The text as the card reads it: without a leading byte order mark, and with Windows (CRLF) and old Mac (CR) line
+    /// endings as LF. Compare (CompareModel.swift) reads its two sides the same way.
+    static func normalized(_ text: String) -> String {
+        var text = text
+        if text.first == "\u{FEFF}" { text.removeFirst() }
+        return text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+
     static func render(_ text: String, markdown: Bool) -> AnswerDocument {
         if markdown { return AnswerMarkdown.render(text, style: .reference) }
         let style = AnswerStyle.reference
@@ -101,12 +109,11 @@ final class ShelfDocumentReadings: ObservableObject {
             return
         }
         guard current() else { return }
-        guard var text = raw, text.utf8.count <= ShelfDocumentReading.byteLimit, !text.utf8.contains(0) else {
+        guard let raw, raw.utf8.count <= ShelfDocumentReading.byteLimit, !raw.utf8.contains(0) else {
             drop(path)
             return
         }
-        if text.first == "\u{FEFF}" { text.removeFirst() }
-        text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let text = ShelfDocumentReading.normalized(raw)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { drop(path); return }
         let document = await render(text, ShelfDocumentReading.markdown(url))
         guard current() else { return }

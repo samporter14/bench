@@ -92,6 +92,8 @@ struct KeptDiskCallsTests {
             // An SVG is drawn from AppKit's image of it, on the same queue.
             "ShelfPDF.swift: NSImage(contentsOf": 1,
             "ShelfPDFCommand.swift: NSWorkspace": 1,
+            // Compare's Show in Finder on a side's file (a UI call, as above). Its reads go through `KeptDisk`.
+            "CompareView.swift: NSWorkspace": 1,
         ]
         let now = try found()
         #expect(now == allowed, "now: \(now.sorted { $0.key < $1.key })")
