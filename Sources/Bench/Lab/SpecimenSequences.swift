@@ -20,6 +20,15 @@ struct SpecimenSequence: Equatable, Sendable {
         SpecimenSequence(title: "From solution to crystal", members: ["Flask", "Stir bar", "Nucleation", "Crystal"]),
         SpecimenSequence(title: "A section under the lens", members: ["Microtome ribbon", "Histology slide", "Microscope"]),
         SpecimenSequence(title: "Small worlds", members: ["Microscope", "Diatom", "Slime mold maze"]),
+        SpecimenSequence(title: "A Western blot", members: ["Gel", "Western transfer", "ECL detection", "Blot figure"]),
+        SpecimenSequence(title: "A nanopore read", members: ["Nanopore", "Basecalling", "Read mapping", "Variant calling"]),
+        SpecimenSequence(title: "Sorting cells", members: ["Flow cytometry", "Flow dot plot", "FACS", "Sort purity"]),
+        SpecimenSequence(title: "Energy in a cell", members: ["Glycolysis", "Krebs cycle", "ATP synthase"]),
+        SpecimenSequence(title: "A Sanger read", members: ["Thermocycler", "Capillary electrophoresis", "Sanger chromatogram"]),
+        SpecimenSequence(title: "A flower pollinated", members: ["Bloom", "Pollination", "Pollen tube"]),
+        SpecimenSequence(title: "Checking the model", members: ["Bayesian update", "Posterior predictive check"]),
+        SpecimenSequence(title: "Imaging a cell", members: ["Immunofluorescence", "Confocal z-stack"]),
+        SpecimenSequence(title: "A drop at rest", members: ["Droplet coalescence", "Contact angle"]),
     ]
 
     /// Fewest standalone specimens between one story and the next, and the

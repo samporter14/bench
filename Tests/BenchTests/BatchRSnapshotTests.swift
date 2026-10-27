@@ -1,10 +1,12 @@
 // BatchRSnapshotTests.swift — not a check: when `CAPSID_SNAPSHOT_DIR` names a
-// folder, draws batch R's specimens (DESIGN.md, "Scenes settings") into it,
+// folder, draws batch R's specimens, and batch S's (since 1.1.1), (DESIGN.md,
+// "Scenes settings") into it,
 // one sheet each: eight moments through the loop, the moment just before it
 // closes, and the still the field guide shows, at 16, 24, 48 and 96 pt in each
 // theme, all at 2x. It also writes cost.txt: what one second of frames costs
 // to draw at the panel's 88 pt, as the panel's player draws it, beside a few
-// older specimens, and how many bytes those frames hold. Without the folder
+// older specimens, and how many bytes those frames hold (cost-batch-s.txt for
+// batch S). Without the folder
 // the test does nothing.
 import AppKit
 import SwiftUI
@@ -15,6 +17,8 @@ import Testing
 struct BatchRSnapshotTests {
     static let names = ["Capillary electrophoresis", "Microtome ribbon", "Möbius strip", "Bayesian update",
                         "Droplet coalescence", "Slime mold maze", "Fern unfurling", "Diatom"]
+    static let batchS = ["Sanger chromatogram", "Posterior predictive check", "Contact angle", "Confocal z-stack",
+                         "Pollination", "Paramecium"]
     /// Older specimens to measure beside them: plain, busy and in between.
     static let older = ["Flask", "Microscope", "Crystal", "Histology slide", "Nucleation"]
     static let sides: [CGFloat] = [16, 24, 48, 96]
@@ -64,10 +68,20 @@ struct BatchRSnapshotTests {
     }
 
     @Test func batchRIsDrawnWhenAsked() throws {
+        try Self.draw(Self.names, cost: "cost.txt")
+    }
+
+    @Test func batchSIsDrawnWhenAsked() throws {
+        try Self.draw(Self.batchS, cost: "cost-batch-s.txt")
+    }
+
+    /// One sheet for each of `names`, and what a second of their frames costs beside the older ones.
+    static func draw(_ names: [String], cost: String) throws {
         guard let destination = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !destination.isEmpty else { return }
         let directory = URL(fileURLWithPath: destination, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let scenes = Self.names.compactMap { name in LabScenes.catalogue.first { $0.name == name } }
+        let scenes = names.compactMap { name in LabScenes.catalogue.first { $0.name == name } }
+        #expect(scenes.count == names.count)
         for scene in scenes {
             let image = try #require(Self.sheet(for: scene))
             let slug = scene.name.folding(options: .diacriticInsensitive, locale: nil).lowercased().replacingOccurrences(of: " ", with: "-")
@@ -93,9 +107,9 @@ struct BatchRSnapshotTests {
                 bytes = images.reduce(0) { $0 + $1.bytesPerRow * $1.height }
                 best = min(best, Date().timeIntervalSince(start) * 1000)
             }
-            lines.append(String(format: "%@%@: %.1f ms; %d bytes", Self.names.contains(scene.name) ? "" : "(older) ",
+            lines.append(String(format: "%@%@: %.1f ms; %d bytes", names.contains(scene.name) ? "" : "(older) ",
                                 scene.name, best, bytes))
         }
-        try (lines.joined(separator: "\n") + "\n").write(to: directory.appendingPathComponent("cost.txt"), atomically: true, encoding: .utf8)
+        try (lines.joined(separator: "\n") + "\n").write(to: directory.appendingPathComponent(cost), atomically: true, encoding: .utf8)
     }
 }

@@ -33,7 +33,7 @@ struct WhatsNewTests {
     @Test func theTableHasOneEntryFor1_1WithFourPages() throws {
         #expect(WhatsNew.releases.map(\.version) == ["1.1"])
         #expect(release11.pages.map(\.title) == [
-            "Compare two things on the Shelf", "Project Workspaces", "Eight new specimens", "Show Where It Came From",
+            "Compare two things on the Shelf", "Project Workspaces", "Fourteen new specimens", "Show Where It Came From",
         ])
         #expect(release11.number == BenchVersion("1.1"))
     }
@@ -56,14 +56,16 @@ struct WhatsNewTests {
         for release in WhatsNew.releases { #expect(release.version.split(separator: ".").count == 2, "\(release.version)") }
     }
 
-    @Test func theSpecimensPageNamesEightRealSpecimensAndCarriesTheSequencesSwitch() throws {
-        let page = try #require(release11.pages.first { $0.title == "Eight new specimens" })
+    @Test func theSpecimensPageNamesFourteenRealSpecimensAndCarriesTheSequencesSwitch() throws {
+        let page = try #require(release11.pages.first { $0.title == "Fourteen new specimens" })
         guard case .specimens(let names) = page.art else {
             Issue.record("the page's picture isn't specimens")
             return
         }
-        #expect(names.count == 8)
-        #expect(Set(names).count == 8)
+        #expect(names.count == 14)
+        #expect(Set(names).count == 14)
+        // Each settles to a stop when a session finishes, as the page says.
+        for name in names { #expect(FinishingGesture.specs[name] != nil, "\(name)") }
         let catalogue = Set(LabScenes.catalogue.map(\.name))
         for name in names { #expect(catalogue.contains(name), "\(name)") }
         #expect(page.control == .playShortSequences)

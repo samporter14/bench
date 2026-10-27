@@ -38,7 +38,7 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
   your Documents, each with a README that names its session).
 - **One home for Claude Science.** No lost browser tab. Nothing opens in
   Safari unless you ask, and pop-outs and sign-in windows stay in the app.
-- **Know when it needs you.** While a session works, one of 549 little
+- **Know when it needs you.** While a session works, one of 555 little
   animated lab specimens plays in a glass panel in the corner of your screen.
   When a session needs your input, a card there takes you straight to it.
   Later can remind you in 5 or 15 minutes, or after a Nidus focus session.

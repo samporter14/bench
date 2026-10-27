@@ -634,6 +634,11 @@ enum SpecimenNotes {
             note: "Microtomes cut thin sections; in suitable material, successive sections can remain joined as a ribbon.",
             topics: ["sample prep", "microscopy"],
             also: ["rotary microtome", "paraffin", "histology", "sectioning"]),
+        "Confocal z-stack": SpecimenNote(
+            caption: "A cell imaged one slice at a time",
+            note: "A confocal microscope's pinhole blocks out-of-focus light, so each focal plane gives a sharp optical section; stacked, they make a 3D image.",
+            topics: ["microscopy", "imaging"],
+            also: ["z-stack", "pinhole", "confocal", "laser scanning"]),
         "Coffee": SpecimenNote(
             caption: "Filling a mug from the pot",
             note: "Coffee is the unofficial fuel of long lab days: caffeine blocks adenosine receptors in the brain, which wards off sleepiness.",
@@ -2119,6 +2124,11 @@ enum SpecimenNotes {
             note: "Physarum can reorganize its tubular network to connect food sources through a maze.",
             topics: ["microbiology", "model organisms"],
             also: ["slime mould", "Physarum", "maze", "network"]),
+        "Paramecium": SpecimenNote(
+            caption: "A ciliate swimming on beating cilia",
+            note: "Paramecium swims by beating thousands of cilia in coordinated waves, while its contractile vacuoles pump out the water that floods in.",
+            topics: ["microbiology", "cell biology"],
+            also: ["ciliate", "protist", "contractile vacuole", "metachronal wave"]),
         "Sine wave": SpecimenNote(
             caption: "A circle unwinding into a wave",
             note: "A sine wave is the height of a point moving around a circle at constant speed, plotted over time; it is the basic shape of oscillation.",
@@ -2374,6 +2384,11 @@ enum SpecimenNotes {
             note: "Coalescence joins contacting droplets into one; surface tension drives the merged interface toward a smoother shape.",
             topics: ["physics"],
             also: ["surface tension", "droplet", "merging", "capillary"]),
+        "Contact angle": SpecimenNote(
+            caption: "Measuring a drop's contact angle",
+            note: "A goniometer measures the contact angle where a drop meets a surface: below 90 degrees the liquid wets it, above 90 it beads up.",
+            topics: ["physics", "measurement"],
+            also: ["goniometer", "sessile drop", "wettability", "hydrophobic"]),
         "Seedling": SpecimenNote(
             caption: "A seed sprouting into leaves",
             note: "A germinating seed sends a shoot up through the soil and unfolds its first leaves, starting life as a photosynthesizing seedling.",
@@ -2459,6 +2474,11 @@ enum SpecimenNotes {
             note: "Many young fern fronds are coiled and unfold as they grow; this development is called circinate vernation.",
             topics: ["plants", "development"],
             also: ["fiddlehead", "circinate vernation", "frond", "unfurling"]),
+        "Pollination": SpecimenNote(
+            caption: "A bee moving pollen to a new flower",
+            note: "Pollination moves pollen from an anther to a stigma; bees carry it between flowers as they forage, enabling cross-pollination.",
+            topics: ["plants", "ecology"],
+            also: ["pollinator", "bee", "anther", "stigma"]),
         "Clustered heatmap": SpecimenNote(
             caption: "Rows sorted into similar groups",
             note: "A clustered heatmap shows a data matrix as color-coded values, with rows and columns ordered by similarity so related groups stand out.",
@@ -2694,6 +2714,16 @@ enum SpecimenNotes {
             note: "Bayesian inference combines a prior distribution with a likelihood to obtain a posterior distribution.",
             topics: ["statistics", "data", "math"],
             also: ["Bayes", "prior", "posterior", "beta-binomial"]),
+        "Sanger chromatogram": SpecimenNote(
+            caption: "Calling bases from a Sanger trace",
+            note: "In Sanger sequencing, fluorescent fragments reach the detector in order of length, and each peak in the trace is called as A, C, G or T.",
+            topics: ["sequencing", "genomics"],
+            also: ["chromatogram", "base calling", "dideoxy", "electropherogram"]),
+        "Posterior predictive check": SpecimenNote(
+            caption: "Simulated data hugging the real data",
+            note: "A posterior predictive check overlays data simulated from a fitted Bayesian model on the observed data; a good fit reproduces its shape.",
+            topics: ["statistics", "data"],
+            also: ["Bayesian", "model fit", "bayesplot", "replicated data"]),
         "Transit": SpecimenNote(
             caption: "A planet dimming its star",
             note: "In the transit method, a planet crossing its star briefly dims the starlight, revealing the planet's size and orbit.",

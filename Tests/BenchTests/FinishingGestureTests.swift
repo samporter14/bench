@@ -14,6 +14,10 @@ private func specimen(_ name: String) -> LabScene {
 
 private let batchR = ["Capillary electrophoresis", "Microtome ribbon", "Möbius strip", "Bayesian update",
                       "Droplet coalescence", "Slime mold maze", "Fern unfurling", "Diatom"]
+private let batchS = ["Sanger chromatogram", "Posterior predictive check", "Contact angle", "Confocal z-stack",
+                      "Pollination", "Paramecium"]
+/// The specimens with a closing gesture of their own.
+private let gestured = batchR + batchS
 
 // MARK: - The model of time
 
@@ -23,16 +27,16 @@ struct FinishingModelTests {
         (0..<Int(scene.duration * 100)).map { Double($0) / 100 }
     }
 
-    @Test func onlyTheEightNewSpecimensHaveAGestureAndEveryOtherKeepsItsFinish() {
-        #expect(Set(FinishingGesture.specs.keys) == Set(batchR))
+    @Test func onlyTheNewSpecimensHaveAGestureAndEveryOtherKeepsItsFinish() {
+        #expect(Set(FinishingGesture.specs.keys) == Set(gestured))
         for scene in LabScenes.catalogue {
             let plan = FinishingGesture.plan(for: scene, at: scene.duration / 2, poster: 3)
-            #expect((plan != nil) == batchR.contains(scene.name), "\(scene.name)")
+            #expect((plan != nil) == gestured.contains(scene.name), "\(scene.name)")
         }
     }
 
     @Test func aGestureLastsBetweenFourAndNineTenthsOfASecondWhereverTheFinishLands() {
-        for name in batchR {
+        for name in gestured {
             let scene = specimen(name)
             for t in everyMoment(of: scene) {
                 let plan = FinishingGesture.plan(for: scene, at: t, poster: scene.duration * 0.6)!
@@ -42,7 +46,7 @@ struct FinishingModelTests {
     }
 
     @Test func itNeverAdvancesMoreThanItsBudget() {
-        for name in batchR {
+        for name in gestured {
             let scene = specimen(name)
             for t in everyMoment(of: scene) {
                 let plan = FinishingGesture.plan(for: scene, at: t, poster: scene.duration * 0.6)!
@@ -84,7 +88,7 @@ struct FinishingModelTests {
     }
 
     @Test func itBeginsOnTheFrameThatWasShowing() {
-        for name in batchR {
+        for name in gestured {
             let scene = specimen(name)
             for t in stride(from: 0.0, to: scene.duration, by: 0.13) {
                 let plan = FinishingGesture.plan(for: scene, at: t, poster: scene.duration * 0.6)!
@@ -98,7 +102,7 @@ struct FinishingModelTests {
     }
 
     @Test func itRestsOnItsLastFrameForGood() {
-        for name in batchR {
+        for name in gestured {
             let scene = specimen(name)
             for t in stride(from: 0.0, to: scene.duration, by: 0.37) {
                 let plan = FinishingGesture.plan(for: scene, at: t, poster: scene.duration * 0.6)!
@@ -149,7 +153,7 @@ struct FinishingModelTests {
     }
 
     @Test func aFinishWhileTheRotationFadesTheSceneInOrOutDissolvesToo() throws {
-        for name in batchR {
+        for name in gestured {
             let scene = specimen(name)
             for at in [0.0, 0.1, 0.29, scene.duration - 0.29, scene.duration - 0.01] {
                 let plan = try #require(FinishingGesture.plan(for: scene, at: at, poster: scene.duration * 0.6))
@@ -172,7 +176,7 @@ struct FinishingModelTests {
     }
 
     @Test func aSettleNeverRunsIntoAResetOrPastTheEndOfALoopThatDoesNotWrap() {
-        for name in batchR {
+        for name in gestured {
             guard let spec = FinishingGesture.specs[name] else { continue }
             let scene = specimen(name)
             for t in everyMoment(of: scene) {
@@ -214,7 +218,50 @@ struct FinishingModelTests {
         }
     }
 
+    /// Batch S: the contact angle's tangent and arc, and each confocal section,
+    /// never start to draw in during a settle.
+    @Test func aSettleNeverDrawsInAnAnnotationOrASectionThatHadNotBegun() {
+        for (name, count) in [("Contact angle", 2), ("Confocal z-stack", 5)] {
+            let scene = specimen(name)
+            let arrivals = FinishingGesture.specs[name]!.arrivals
+            #expect(arrivals.count == count, "\(name)")
+            for t in everyMoment(of: scene) {
+                let plan = FinishingGesture.plan(for: scene, at: t, poster: 3)!
+                guard plan.kind == .settle else { continue }
+                for arrival in arrivals where arrival > plan.from {
+                    #expect(plan.to < arrival, "\(name) at \(t) would begin what starts at \(arrival)")
+                }
+            }
+        }
+    }
+
+    /// The confocal still is the stack a section short: a finish as the plane
+    /// rises goes on to the whole stack instead. The contact angle's stage and the
+    /// pollination's pan are resets, so a finish there dissolves to the still.
+    @Test func batchSResetsDissolveToAFinishedPicture() throws {
+        for at in [4.05, 4.6, 5.1] {
+            let plan = try #require(FinishingGesture.plan(for: specimen("Confocal z-stack"), at: at, poster: 3.24))
+            #expect(plan.kind == .dissolve, "at \(at)")
+            #expect(plan.rest == .scene(4.0), "at \(at): the whole stack")
+        }
+        for (name, at) in [("Contact angle", 3.9), ("Contact angle", 4.5), ("Pollination", 3.5), ("Pollination", 4.4)] {
+            let plan = try #require(FinishingGesture.plan(for: specimen(name), at: at, poster: 3.0))
+            #expect(plan.kind == .dissolve, "\(name) at \(at)")
+            #expect(plan.rest == .scene(3.0), "\(name) at \(at)")
+        }
+    }
+
     // MARK: Rests
+
+    @Test func thePosteriorCheckComesToRestOnAReplicateJustDrawnWhenOneIsNear() throws {
+        let scene = specimen("Posterior predictive check")
+        // 0.2 s before a replicate is whole (3.0 s): it eases onto it.
+        let near = try #require(FinishingGesture.plan(for: scene, at: 2.8, poster: 3))
+        #expect(near.kind == .settle && abs(near.to - 3.0) < 1e-9)
+        // Just past one, the next (3.625 s) is out of reach: it slows to a stop.
+        let far = try #require(FinishingGesture.plan(for: scene, at: 3.05, poster: 3))
+        #expect(far.kind == .settle && far.to < 3.625 && abs(far.to - (3.05 + FinishingGesture.slowAdvance)) < 1e-9)
+    }
 
     @Test func theDiatomEasesToTheNearestReadableAngleAheadAndNeverStopsEdgeOn() throws {
         /// How much of its face the shell shows at `t` in its loop: |cos| of its turn.
@@ -346,7 +393,7 @@ struct FinishingModelTests {
     @MainActor
     @Test func theLoopsThatWrapCloseOnThemselves() {
         // The end of the loop and its start are one picture, as far as one step of the clock goes.
-        for name in batchR where FinishingGesture.specs[name]!.loops {
+        for name in gestured where FinishingGesture.specs[name]!.loops {
             let scene = specimen(name)
             func image(_ t: Double) -> [Double] {
                 let renderer = ImageRenderer(content: Canvas { context, size in scene.draw(&context, size, t, .black) }.frame(width: 60, height: 60))

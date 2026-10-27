@@ -62,10 +62,12 @@ enum WhatsNew {
             text: "Each project keeps its last conversation, the references you pin to it and a small working note. History → Return to Project brings them back together. There’s nothing to save.",
             art: .symbol("folder")),
         WhatsNewPage(
-            title: "Eight new specimens",
-            text: "Capillary electrophoresis, a Möbius strip, a fern unfurling and five more. When a session finishes, they settle to a stop. Turn on Play short sequences and now and then a few play in order, like a little story.",
-            art: .specimens(["Capillary electrophoresis", "Microtome ribbon", "Droplet coalescence", "Slime mold maze",
-                             "Möbius strip", "Bayesian update", "Fern unfurling", "Diatom"]),
+            title: "Fourteen new specimens",
+            text: "Capillary electrophoresis, a Möbius strip, a paramecium, a fern unfurling and ten more. When a session finishes, they settle to a stop. Turn on Play short sequences and now and then a few play in order, like a little story.",
+            art: .specimens(["Capillary electrophoresis", "Paramecium", "Microtome ribbon", "Pollination",
+                             "Droplet coalescence", "Sanger chromatogram", "Slime mold maze", "Confocal z-stack",
+                             "Möbius strip", "Contact angle", "Bayesian update", "Posterior predictive check",
+                             "Fern unfurling", "Diatom"]),
             control: .playShortSequences),
         WhatsNewPage(
             title: "Show Where It Came From",

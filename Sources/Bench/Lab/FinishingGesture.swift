@@ -43,9 +43,10 @@ struct FinishingSpec: Sendable {
     /// Whether the loop is periodic by construction, so a settle may run across
     /// its end into its start. The others end in a reset, which a settle stops short of.
     let loops: Bool
-    /// Where a dissolve ends when the poster would bring in what a finish must
-    /// not show: the frame the reset is going to, for a scene whose still is
-    /// its fullest moment (more evidence, a whole route). Nil is the poster.
+    /// Where a dissolve ends when the poster is the wrong frame to end on: the
+    /// frame the reset is going to, for a scene whose still is its fullest
+    /// moment (more evidence, a whole route), or the finished picture, for one
+    /// whose still is caught halfway (a stack a section short). Nil is the poster.
     let dissolveTo: Double?
 
     init(_ policy: Policy, resets: [Range<Double>] = [], arrivals: [Double] = [], loops: Bool = false,
@@ -118,7 +119,7 @@ enum FinishingGesture {
     /// Frames a second while it plays.
     static let fps = 30.0
 
-    /// How the eight scenes of batch R close, read from their code (the names
+    /// How the scenes of batches R and S close, read from their code (the names
     /// the code gives are in the comments). Any other specimen has no entry and
     /// keeps the plate.
     static let specs: [String: FinishingSpec] = [
@@ -160,6 +161,33 @@ enum FinishingGesture {
         // the start (5 s is 0 s). A shell caught turning too far from one dissolves.
         "Diatom": FinishingSpec(.easeToRest([0, 0.35, 0.7, 1.05, 1.4, 3.6, 3.95, 4.3, 4.65], otherwise: .dissolve),
                                 loops: true),
+
+        // Batch S.
+        // The trace scrolls exactly five peak spacings a loop and its heights
+        // repeat every five, so the loop is seamless; a call's tick may pop in
+        // as it slows, as the trace really does call the next base.
+        "Sanger chromatogram": FinishingSpec(.slowToStop, loops: true),
+        // A steady state of eight replicates, one begun every `interval`
+        // (0.625 s) and drawn in over `drawFor` (0.5 s). It comes to rest on a
+        // replicate just drawn, lying whole over the bars, when one is near.
+        "Posterior predictive check": FinishingSpec(.easeToRest([0.5, 1.125, 1.75, 2.375, 3.0, 3.625, 4.25, 4.875],
+                                                                otherwise: .slowToStop), loops: true),
+        // The stage slides the drop away from `slideAt` (3.9 s) while the next
+        // bead grows on the needle; the tangent (`tangentAt`, 2 s) and the arc
+        // (`arcAt`, 2.4 s) are what a settle must not draw in.
+        "Contact angle": FinishingSpec(.slowToStop, resets: [3.9..<5.0], arrivals: [2.0, 2.4]),
+        // Each section draws in as the plane comes to its slab (0.05 s before
+        // `arrive`); from `returnAt` (4.05 s) to `returnEnd` (5.15 s) the plane
+        // rises and they fade. Its still (3.24 s) is the stack a section short,
+        // so a finish in the rise goes on to the whole stack (4 s).
+        "Confocal z-stack": FinishingSpec(.slowToStop, resets: [4.05..<5.15],
+                                          arrivals: [0.7, 1.4, 2.1, 2.8, 3.5], dissolveTo: 4.0),
+        // The view pans one flower along from `panAt` (3.5 s) for `panFor`
+        // (1.6 s), the bee riding the next flower back to where it began.
+        "Pollination": FinishingSpec(.slowToStop, resets: [3.5..<5.1]),
+        // The weave, the cilia and the vacuoles are all whole cycles of the
+        // loop; nothing new ever appears.
+        "Paramecium": FinishingSpec(.slowToStop, loops: true),
     ]
 
     /// The loop time into the scene's own length.
