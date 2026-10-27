@@ -16,6 +16,14 @@
 // whole when it can't be saved, `list` copies Claude's file beside the figure and lists it in the README in the same
 // queue of writes, and `undoPut` puts the legend back unless the person has changed it since.
 //
+// A read of the README can come back out of date. The field is shown again for an item whose editor was kept, and
+// the README is read once more while the field already takes typing; the person types (or Claude's legend is put
+// in) before the read returns. What it brings back is then older than what the field holds: it changes nothing (not
+// the field, not the README the next save is compared with, not a sentence), and the next save finds out whether
+// another app really changed the README. A save asked for meanwhile waits its turn behind the read on the disk's
+// one-at-a-time queue, so it never finishes before a read that began earlier. A read that was cancelled (the card
+// went away) changes nothing either: it learned nothing about the README.
+//
 // An editor outlives its field. The Shelf's model keeps one for each item (keyed
 // by its folder) for as long as it holds a draft: text a save hasn't taken, a
 // save that failed, a README changed elsewhere. Moving to another item hides the
@@ -28,7 +36,11 @@ import Foundation
 final class ShelfLegendEditor: ObservableObject {
     /// The text in the field. Typing in it starts the wait before a save.
     @Published var legend = "" {
-        didSet { if legend != oldValue, !loading { typed() } }
+        didSet {
+            guard legend != oldValue, !loading else { return }
+            if canEdit { revision &+= 1 }
+            typed()
+        }
     }
     /// Whether the field takes typing: only once the README has been read.
     @Published private(set) var canEdit = false
@@ -52,6 +64,9 @@ final class ShelfLegendEditor: ObservableObject {
 
     /// The README as last read or written, so an edit made elsewhere is never written over.
     private var lastRead: String?
+    /// What makes a read out of date when it returns: the field changed (typed in, or set by `put`) or a newer read
+    /// began. A read that finds it moved changes nothing.
+    private var revision = 0
     /// The field is being set from the README: that is not typing.
     private var loading = false
     private var waiting: Task<Void, Never>?
@@ -88,18 +103,25 @@ final class ShelfLegendEditor: ObservableObject {
         flush()
     }
 
-    /// Reads the README into the field. A README that can't be read turns the field off, with the reason.
+    /// Reads the README into the field. A README that can't be read turns the field off, with the reason. A read that
+    /// is out of date when it returns, or was cancelled, changes nothing (see the top of this file): the field keeps
+    /// its words and the next save is compared with the README it was made from.
     func load() async {
-        changedOutside = false
-        problem = nil
+        revision &+= 1
+        let started = revision
         do {
             let read = try await disk.readme(at: folder)
+            guard revision == started else { return }
+            changedOutside = false
+            problem = nil
             lastRead = read.markdown
             loading = true
             legend = read.text.legend
             loading = false
             canEdit = true
         } catch {
+            guard revision == started, !(error is CancellationError) else { return }
+            changedOutside = false
             lastRead = nil
             canEdit = false
             problem = Self.unreadable(KeptDiskError.sentence(error))

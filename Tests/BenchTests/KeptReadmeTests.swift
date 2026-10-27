@@ -1000,3 +1000,271 @@ struct KeptReadmeShapeTests {
         #expect(KeptReadme.parse(plain)?.text.legend == "Plate 3 was re-run.")
     }
 }
+
+// MARK: A person's bullets beside Capsid's rows
+
+/// Try Again changes Capsid's rows in "Not copied" and "Checksums", and nothing else in them. The 1.0.7 review found
+/// that Capsid took every bullet at the top of either section for its own, so a bullet a person put before, between or
+/// after the rows was replaced, or taken out, and the README still read. Capsid's rows are the lines it wrote last time,
+/// as the record says it wrote them, exactly: any other line is the person's, whatever it looks like.
+struct KeptReadmeOwnRowsTests {
+    private let plateReader = KeptMissing(role: .input, name: "plate_reader.xlsx", reason: "too big to keep here (over 8 MB)")
+    private let plateMap = KeptMissing(role: .data, name: "plate_map.csv", reason: "The folder didn\u{2019}t respond")
+    private let plateNotes = KeptMissing(role: .input, name: "plate_notes.txt", reason: "it isn\u{2019}t there any more")
+    private let layout = KeptFile(path: "input/plate_layout.csv", role: .input, artifact: "art_5", version: "ver_2",
+                                  sha256: "eeee", bytes: 12, expectedSha256: "ffff0000")
+    private let notes = KeptFile(path: "input/plate_notes.csv", role: .input, artifact: "art_6", version: "ver_3",
+                                 sha256: "1111", bytes: 7, expectedSha256: "22220000")
+    private let landed = KeptFile(path: "input/plate_reader.xlsx", role: .input, artifact: "art_4", version: "ver_1",
+                                  sha256: "dddd", bytes: 9)
+
+    // Capsid's rows, as the renderer writes them.
+    private let rowReader = "- The raw input, plate_reader.xlsx: too big to keep here (over 8 MB)."
+    private let rowMap = "- The data file, plate_map.csv: The folder didn\u{2019}t respond."
+    private var rowLayout: String { "- " + KeptReadme.checksumSentence(layout) }
+    private var rowNotes: String { "- " + KeptReadme.checksumSentence(notes) }
+
+    // A person's, made up.
+    private let missingAhead = "- Ask the vendor about the export."
+    private let missingBetween = "- plate_map.csv is on the old drive."
+    private let missingBehind = "- Chase on Monday."
+    private let checksumAhead = "- layout was edited by hand in March."
+    private let checksumBetween = "- notes: ignore the second column."
+    private let checksumBehind = "- Check both again before the figure goes in."
+
+    /// Two rows missing, two files whose checksums don't match.
+    private func before() -> KeptRecord {
+        var kept = record(missing: false)
+        kept.missing = [plateReader, plateMap]
+        kept.files += [layout, notes]
+        return kept
+    }
+
+    /// `before()` with the first missing input copied: its file listed, its row gone.
+    private func readerLanded() -> KeptRecord {
+        var kept = before()
+        kept.missing = [plateMap]
+        kept.files.append(landed)
+        return kept
+    }
+
+    /// The README `kept` has, with a person's bullet ahead of, between and behind Capsid's two rows in each section.
+    private func withBullets(_ kept: KeptRecord? = nil) throws -> String {
+        let plain = render(kept ?? before(), text(legend: "Plate 3 was re-run."))
+        let withMissing = plain.replacingOccurrences(
+            of: "\(rowReader)\n\(rowMap)\n",
+            with: "\(missingAhead)\n\(rowReader)\n\(missingBetween)\n\(rowMap)\n\(missingBehind)\n")
+        let both = withMissing.replacingOccurrences(
+            of: "\(rowLayout)\n\(rowNotes)\n",
+            with: "\(checksumAhead)\n\(rowLayout)\n\(checksumBetween)\n\(rowNotes)\n\(checksumBehind)\n")
+        #expect(both != plain)
+        #expect(KeptReadme.parse(both)?.record == (kept ?? before()))
+        return both
+    }
+
+    private func update(_ markdown: String, to kept: KeptRecord) -> String? {
+        KeptReadme.updating(markdown, files: kept.files, missing: kept.missing)
+    }
+
+    /// Everything before the title: the front matter, which Try Again rewrites for the new record.
+    private func head(_ markdown: String) throws -> String {
+        let at = try #require(markdown.range(of: "\n# Fig 2B"))
+        return String(markdown[..<at.lowerBound])
+    }
+
+    private func body(_ markdown: String) throws -> String {
+        let at = try #require(markdown.range(of: "\n# Fig 2B"))
+        return String(markdown[at.lowerBound...])
+    }
+
+    /// What Try Again must write for `kept`: the front matter the renderer writes for it, then the README as the person
+    /// left it with only `changes` made to it (each: the lines now there, the lines to put in their place).
+    private func wanted(from edited: String, for kept: KeptRecord, _ changes: [(String, String)]) throws -> String {
+        var rest = try body(edited)
+        for (old, new) in changes {
+            #expect(rest.contains(old), "\(old.debugDescription)")
+            rest = rest.replacingOccurrences(of: old, with: new)
+        }
+        return try head(render(kept, text())) + rest
+    }
+
+    private func windows(_ markdown: String) -> String { markdown.replacingOccurrences(of: "\n", with: "\r\n") }
+
+    /// A README as a Mac editor leaves it, as a Windows one does, and with a byte order mark as well.
+    private var shapes: [(String, (String) -> String)] {
+        [("plain line ends", { $0 }), ("Windows line ends", { self.windows($0) }),
+         ("a byte order mark and Windows line ends", { "\u{FEFF}" + self.windows($0) })]
+    }
+
+    // MARK: One row goes
+
+    @Test func aCopiedFilesRowGoesAndEveryBulletOfAPersonsStaysWhereItWas() throws {
+        let edited = try withBullets()
+        let after = readerLanded()
+        let expected = try wanted(from: edited, for: after, [
+            ("\(missingAhead)\n\(rowReader)\n\(missingBetween)\n", "\(missingAhead)\n\(missingBetween)\n"),
+        ])
+        for (label, shape) in shapes {
+            let result = try #require(update(shape(edited), to: after), "\(label)")
+            #expect(result == shape(expected), "\(label)")
+            for mine in [missingAhead, missingBetween, missingBehind, checksumAhead, checksumBetween, checksumBehind] {
+                #expect(result.contains(mine + (label == "plain line ends" ? "\n" : "\r\n")), "\(label): \(mine)")
+            }
+            let back = try #require(KeptReadme.parse(result), "\(label)")
+            #expect(back.record.missing == [plateMap], "\(label)")
+        }
+    }
+
+    @Test func aFileWhoseChecksumNowMatchesLosesItsRowAndNoBulletOfAPersonsBesideIt() throws {
+        let edited = try withBullets()
+        var after = before()
+        after.files = after.files.map { file in
+            var fixed = file
+            if fixed.path == layout.path { fixed.expectedSha256 = nil }
+            return fixed
+        }
+        let expected = try wanted(from: edited, for: after, [
+            ("\(checksumAhead)\n\(rowLayout)\n\(checksumBetween)\n", "\(checksumAhead)\n\(checksumBetween)\n"),
+        ])
+        for (label, shape) in shapes {
+            let result = try #require(update(shape(edited), to: after), "\(label)")
+            #expect(result == shape(expected), "\(label)")
+        }
+    }
+
+    // MARK: Every row goes
+
+    @Test func whenNothingIsLeftToSayTheHeadingsStayForTheBulletsOfAPersonsAndOnlyCapsidsRowsGo() throws {
+        let edited = try withBullets()
+        var after = record(missing: false)
+        after.files += [landed, KeptFile(path: "input/plate_layout.csv", role: .input, artifact: "art_5", version: "ver_2", sha256: "eeee", bytes: 12),
+                        KeptFile(path: "input/plate_notes.csv", role: .input, artifact: "art_6", version: "ver_3", sha256: "1111", bytes: 7)]
+        let expected = try wanted(from: edited, for: after, [
+            ("\(missingAhead)\n\(rowReader)\n\(missingBetween)\n\(rowMap)\n\(missingBehind)\n", "\(missingAhead)\n\(missingBetween)\n\(missingBehind)\n"),
+            ("\(checksumAhead)\n\(rowLayout)\n\(checksumBetween)\n\(rowNotes)\n\(checksumBehind)\n", "\(checksumAhead)\n\(checksumBetween)\n\(checksumBehind)\n"),
+        ])
+        for (label, shape) in shapes {
+            let result = try #require(update(shape(edited), to: after), "\(label)")
+            #expect(result == shape(expected), "\(label)")
+            #expect(result.contains("## Not copied") && result.contains("## Checksums"), "\(label)")
+            #expect(!result.contains("plate_reader.xlsx: too big") && !result.contains("doesn\u{2019}t match"), "\(label)")
+        }
+    }
+
+    // MARK: Nothing changes, a reason changes, a row is new
+
+    @Test func aTryAgainThatChangesNothingLeavesTheFileAsItWasByteForByte() throws {
+        let edited = try withBullets()
+        for (label, shape) in shapes {
+            let once = try #require(update(shape(edited), to: before()), "\(label)")
+            #expect(once == shape(edited), "\(label)")
+            #expect(update(once, to: before()) == once, "\(label)")
+        }
+    }
+
+    @Test func aRowWhoseReasonChangesIsWrittenAgainInPlaceBetweenThePersonsBullets() throws {
+        let edited = try withBullets()
+        var after = before()
+        after.missing[1].reason = "The share was offline"
+        let changed = "- The data file, plate_map.csv: The share was offline."
+        let expected = try wanted(from: edited, for: after, [
+            ("\(missingBetween)\n\(rowMap)\n\(missingBehind)\n", "\(missingBetween)\n\(changed)\n\(missingBehind)\n"),
+        ])
+        for (label, shape) in shapes {
+            let result = try #require(update(shape(edited), to: after), "\(label)")
+            #expect(result == shape(expected), "\(label)")
+        }
+        // And the first row, which has a bullet of the person's ahead of it and one behind.
+        var first = before()
+        first.missing[0].reason = "The share was offline"
+        let result = try #require(update(edited, to: first))
+        #expect(result.contains("\(missingAhead)\n- The raw input, plate_reader.xlsx: The share was offline.\n\(missingBetween)\n\(rowMap)\n"))
+    }
+
+    @Test func aNewRowGoesAfterCapsidsLastRowAndNotAfterThePersonsBulletBehindIt() throws {
+        let edited = try withBullets()
+        var after = before()
+        after.missing.append(plateNotes)
+        let newRow = "- The raw input, plate_notes.txt: it isn\u{2019}t there any more."
+        let expected = try wanted(from: edited, for: after, [
+            ("\(rowMap)\n\(missingBehind)\n", "\(rowMap)\n\(newRow)\n\(missingBehind)\n"),
+        ])
+        for (label, shape) in shapes {
+            let result = try #require(update(shape(edited), to: after), "\(label)")
+            #expect(result == shape(expected), "\(label)")
+        }
+    }
+
+    @Test func aNewChecksumRowGoesAfterCapsidsLastChecksumRow() throws {
+        // A README with one checksum row and a bullet of the person's ahead of it and one behind; then a second file
+        // whose checksum doesn't match.
+        var small = before()
+        small.files.removeLast()
+        let plain = render(small, text())
+        let around = plain.replacingOccurrences(of: "\(rowLayout)\n", with: "\(checksumAhead)\n\(rowLayout)\n\(checksumBehind)\n")
+        #expect(around != plain)
+        let after = before()
+        for (label, shape) in shapes {
+            let result = try #require(update(shape(around), to: after), "\(label)")
+            let want = try wanted(from: around, for: after, [
+                ("\(rowLayout)\n\(checksumBehind)\n", "\(rowLayout)\n\(rowNotes)\n\(checksumBehind)\n"),
+            ])
+            #expect(result == shape(want), "\(label)")
+            #expect(KeptReadme.parse(result)?.record == after, "\(label)")
+        }
+    }
+
+    // MARK: What isn't Capsid's row, though it looks like one
+
+    @Test func aRowAPersonRewordedIsTheirsAndStaysWhenTheFileItNamesLands() throws {
+        let reworded = "- The data file, plate_map.csv: the folder didn\u{2019}t respond. I looked, it is offline."
+        let plain = render(before(), text())
+        let edited = plain.replacingOccurrences(of: rowMap, with: reworded)
+        #expect(edited != plain)
+        var after = before()
+        after.missing = [plateReader]
+        let result = try #require(update(edited, to: after))
+        #expect(result.contains("\(rowReader)\n\(reworded)\n"), "their words stay, and Capsid's other row too")
+        #expect(KeptReadme.parse(result)?.record.missing == [plateReader])
+    }
+
+    @Test func aRowAPersonRewordedStaysAndCapsidsRowForTheRecordIsWrittenBesideItWhenTheFileIsStillMissing() throws {
+        let reworded = "- The data file, plate_map.csv: the folder didn\u{2019}t respond. I looked, it is offline."
+        let plain = render(before(), text())
+        let edited = plain.replacingOccurrences(of: rowMap, with: reworded)
+        let result = try #require(update(edited, to: before()))
+        #expect(result.contains(reworded + "\n"))
+        #expect(result.contains(rowMap + "\n"), "the section lists what the record says is missing")
+        // Once it is there it is Capsid's row, and a second try changes nothing more.
+        #expect(update(result, to: before()) == result)
+    }
+
+    @Test func aBulletBeginningLikeCapsidsRowButLongerIsNotItsRow() throws {
+        let longer = rowMap + " Recheck later."
+        let plain = render(before(), text())
+        let edited = plain.replacingOccurrences(of: "\(rowMap)\n", with: "\(rowMap)\n\(longer)\n")
+        var after = before()
+        after.missing = [plateReader]
+        let result = try #require(update(edited, to: after))
+        #expect(result.contains("\(longer)\n"))
+        #expect(!result.contains("\(rowMap)\n"))
+    }
+
+    // MARK: The same, in a section made by hand
+
+    @Test func aSectionOfBulletsAPersonWroteAloneIsNeverTakenForCapsids() throws {
+        // "Not copied" is Capsid's section, but a person may keep notes in it before Capsid has anything to say there.
+        let plain = render(record(missing: false), text())
+        let own = "- Nothing was left out.\n- Ask Dana.\n"
+        let edited = plain.replacingOccurrences(of: "---\n\nCapsid updates", with: "## Not copied\n\n\(own)\n---\n\nCapsid updates")
+        #expect(KeptReadme.parse(edited) != nil)
+        var after = record(missing: false)
+        after.missing = [plateMap]
+        let result = try #require(update(edited, to: after))
+        #expect(result.contains(own), "both of the person's bullets are as they were")
+        #expect(result.contains(rowMap))
+        #expect(KeptReadme.parse(result)?.record.missing == [plateMap])
+        // And with no row to write, nothing of theirs is touched.
+        #expect(update(edited, to: record(missing: false)) == edited)
+    }
+}

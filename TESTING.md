@@ -323,6 +323,43 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-26, three bugs that could lose a person's words (`g/fix-dataloss`, from main 8e35826, Capsid 1.0.7)
+
+Codex's review of 1.0.7 found and reproduced three ways Capsid could lose words a person had typed or kept. Each was
+reproduced first by a test that failed on the code as it was, then fixed, then the fix was broken on purpose and the test
+failed again. Everything ran on made-up content: the phone's own script in JavaScriptCore against a made-up page, READMEs
+as strings, and the legend editor on a temporary Kept folder with a disk whose reads a test can hold. No daemon touched, no
+window shown, the app not launched, nothing in /Applications or the real Kept folder.
+
+- ✅ **A successful phone send no longer erases the next draft and photo** (`RemoteWeb/app.js`, `PhoneComposerLifetimeTests`).
+  Held: the session's read after a send, and a second message's post. Before the fix 7 of the 8 tests failed (the 8th, a
+  send that could not be told, passed throughout, as it should). The words, the photo and the id that went are now cleared
+  at the moment the composer opens, before the read; what is typed or picked after that, a second send started in the
+  read, and words changed while the post was out, all survive.
+- ✅ **Keep's Try Again keeps a person's bullets in the README** (`KeptReadme.updating`, `KeptReadmeOwnRowsTests`). All 11
+  tests failed before the fix. Bullets ahead of, between and behind Capsid's rows, in both sections, with plain line ends,
+  Windows line ends, and a byte order mark; a row going, changing, being new, nothing changing (byte for byte, twice); a row
+  a person reworded; a section of their own bullets.
+- ✅ **A late legend reload no longer overwrites words just typed** (`ShelfLegendEditor`, `ShelfLegendTests`). Typing during a
+  held reload, away and back, a save asked for meanwhile, Claude's legend put in meanwhile, another app's change meanwhile (the
+  conflict rule still applies at the save), a cancelled read, and a README that can't be read (still turns the field off).
+  Eight of the ten failed before the fix (the tenth: a dropped read leaves a sentence the field was saying, such as a
+  conflict, where Use Theirs is cancelled); the other two (a clean reload, a README that can't be read) are controls and
+  passed throughout.
+- ✅ **Mutation checks:** each fix was broken on purpose and its tests failed, then it was restored. The phone: the cleanup
+  moved after the read (2 tests fail), the cleanup made unconditional (2 fail). The README: any "- " line taken for
+  Capsid's (8 fail), a row never taken out (11 fail, six of them older tests). The legend: the stale-read check removed
+  (5 fail), the cancelled-read check removed (1 fails).
+- ✅ **Whole suite:** `✔ Test run with 4418 tests in 572 suites passed after 28.795 seconds.` (`swift test --jobs 2`).
+  Before the last refinement above (one more test, 4417), two full runs each had a timing test fail while the Mac was
+  busy with another build (load average 17): `LabInsightsGateTests.bothOfTheFailureCardsSwitchesMustBeOn` and
+  `QueryCancellationTests.aCancelledReadLeavesTheConnectionForTheNextRead` in the first,
+  `ReadingGateTests.cancellingTheCallerCancelsTheRead` in the second. The first two passed alone and the third run passed
+  everything, so they are load flakes, not these changes.
+- ⏳ **Only a live run can confirm:** the phone page in a real Safari (typing and picking a photo during a slow refresh on a
+  slow Mac link, and that iOS leaves the field editable then); the Shelf's field under a real, slow README read (returning to an
+  item and typing at once); Try Again on a README a person edited in an editor on Windows.
+
 ## 2026-10-26, merging 1.0.7: Codex's branch with the right-pane fix
 
 - ✅ **Codex's branch validated where its sandbox couldn't** (`g/codex-107` at 4225954, eight commits from 1.0.6).

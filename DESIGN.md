@@ -4301,6 +4301,19 @@ session afresh and keeps your words, so a second try is the same message.
 While it waits, 22 seconds without an answer (85 for a photo) it says "Not
 sure that went through. Checking…".
 
+A message that went leaves the composer at the moment the composer opens
+again, before the session is read afresh (`doAction` hands the result to its
+`settled` step, `clearSent` in `RemoteWeb/app.js`). It takes out what was sent
+and nothing else: the words (if they are still the draft), the id they carried
+and the photo that went with them (if it is still that photo). What is typed
+or picked while the session is read afresh is the next message's and stays, and
+a second message sent in that time keeps its own words and its own id when the
+first one's read ends. (Before, the composer was cleared only after the read,
+and took those words and that photo with it.) A message that did not go keeps
+its words and its id. The composer is open during the read as it was; nothing
+about it is held longer. `PhoneComposerLifetimeTests` holds the read and the
+second post.
+
 #### How the server does it (Phase 2 actions)
 
 Files: `Remote/SessionReader.swift` (the in-page projection and Swift's
@@ -5468,6 +5481,24 @@ is left as it is, and the sheet says "The files landed, but README.md couldn't
 be updated to list them. README.md was changed in another app, so Capsid left it
 alone." Try Again then reads it as it is now.
 
+*Capsid's rows are the lines it wrote, and no others.* In "Not copied" and
+"Checksums", `updating` finds Capsid's own rows by their text: they are the
+lines that are exactly the rows the README's own record says Capsid wrote there
+(the record as it stands in the file, before this update), wherever in the
+section they stand. It takes out those it no longer needs, writes a changed row
+where the old one stood and a new one after the last of Capsid's, and leaves
+every other line as it was, byte for byte: a bullet a person put ahead of,
+between or behind the rows, a row they reworded, a note. (It used to take every
+bullet at the top of the section for its own, so a person's bullet beside the
+rows was replaced or lost on a retry, and the README still read.) A row a
+person reworded or took out is no longer found: the record's row, if still
+wanted, is written again, beside their words or at the top of the section, and
+a second retry then finds it and changes nothing. Nothing in this is guessed
+at, so nothing is refused for it; two identical lines are the same bytes, and
+the first is taken as Capsid's. Line ends and the byte order mark are handled
+as before (`KeptReadmeOwnRowsTests` runs each case plain, with Windows line
+ends, and with a byte order mark as well).
+
 **What a person may do to the file and still have it read (since the second
 README review, after 1.0.2).** The parser is strict about what Capsid writes
 and no stricter about the rest, because a folder that fails to parse leaves the
@@ -6298,6 +6329,22 @@ the item to see why; your text is kept."), and choosing the item again shows
 the draft with its Use Mine and Use Theirs, not the README's old words. An
 editor with nothing left to save or say is let go; with the field on screen a
 failure is the field's to say and the pill says nothing.
+
+**A read that comes back late changes nothing (since the 1.0.7 review).**
+Choosing an item whose editor was kept shows its field at once and reads the
+README once more, and the field takes typing meanwhile. If the person types
+(or Claude's legend is put in) before that read returns, the read is out of
+date: it is dropped whole. It does not replace the words, it does not become
+the README the next save is compared with, and it clears nothing the editor was
+saying. The next save is made from the README the editor last read or wrote,
+so it is a change "in another app" only if another app really changed the
+file, and then the field offers Use Mine and Use Theirs as ever. A read that was
+cancelled (the card went away while it was out) is dropped the same way, and
+does not turn the field off or say the README couldn't be read; a README that
+truly can't be read still does both. (`ShelfLegendEditor.revision` counts the
+typing and the reads that begin; a save asked for meanwhile waits behind the
+read on the disk's one-at-a-time queue.) Nothing on the card changes: no
+loading state, and the field takes typing as it did.
 
 **Claude's legend** (Kept/ShelfClaudeLegend.swift, ShelfClaudeLegendView.swift; after 1.0.4). When Claude makes a figure, the same answer often makes a legend file too: `FIGURE_LEGENDS_final.md`, or a `.md` that shares the figure's name. The detail card offers it in one quiet line in its legend area, **Use Claude's legend** · `FIGURE_LEGENDS_final.md`: the card's quiet-link style (12 points, muted, underlined, as More and Less are), no clay (the card's one clay action is Show Where It Came From). A figure shelved alone has no legend field (the field is for an item kept with data and code, or with a legend), so for it the line sits alone under a hairline, and once Claude's legend is in, the card shows what any item with a legend shows: its Files (the figure and Claude's file) and the legend field with the words in it.
 
