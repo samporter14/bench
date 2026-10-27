@@ -164,6 +164,14 @@ struct CompareSnapshotTests {
         model.compare(before, square)
         await model.settle()
         try await capture(model, "unequal", to: directory)
+        // A PNG beside a PDF of the same figure (three pages, the first shown): side by side, sizes in their units.
+        let paper = CompareFixtures.item("z_prime_by_plate.pdf", session: "Plate reader QC, repeat", version: 3)
+        disk.put(CompareFixtures.chartPDF(low: 0.66, pages: 3), at: paper.fileURL)
+        model.compare(before, paper)
+        await model.settle()
+        #expect(model.sides.last?.content.image?.unit == .points && !model.canWipe)
+        try await capture(model, "png-beside-pdf", to: directory)
+        try await capture(model, "png-beside-pdf", minimum: true, to: directory)
         // One side that can't be read.
         model.compare(before, gone)
         await model.settle()
@@ -195,7 +203,7 @@ struct CompareSnapshotTests {
     }
 
     /// The title bar the Shelf window draws, as a stand-in (the toolbar is the window's): the three dots, "Shelf", the
-    /// project pill, and at the right the real pick pills (Compare, Export as PDF…) and the search pill.
+    /// project pill, and at the right the real Export as PDF… pill and the search pill.
     private struct ShelfBar: View {
         @ObservedObject var model: ShelfModel
         let width: CGFloat
@@ -216,9 +224,8 @@ struct CompareSnapshotTests {
                 }
                 .fixedSize()
                 Spacer(minLength: 0)
-                if model.showsExportPill { ShelfPickPills(model: model) }
-                ShelfSearchPill(search: .constant(model.search),
-                                width: ShelfSearchPill.width(forWindow: width, comparing: model.showsComparePill))
+                if model.showsExportPill { ShelfExportPDFButton(model: model) }
+                ShelfSearchPill(search: .constant(model.search), width: ShelfSearchPill.width(forWindow: width))
             }
             .padding(.horizontal, 14)
             .frame(height: 52)
@@ -230,6 +237,15 @@ struct CompareSnapshotTests {
     /// What the stand-in bar needs, in points, at `width`: its pieces side by side with nothing between.
     private func needed(_ model: ShelfModel, at width: CGFloat) -> CGFloat {
         NSHostingView(rootView: ShelfBar(model: model, width: width, measuring: true)).fittingSize.width
+    }
+
+    /// What the picked card's row needs, in points, with its caption wrapped: "2 selected", the least gap, the actions
+    /// (Clear, Compare, Export, never cut short), the card's own padding and the window's gutters.
+    private func pickedCardNeeds(_ model: ShelfModel) -> CGFloat {
+        let title = NSHostingView(rootView: Text("\(model.pickCount) selected").font(.system(size: 16, weight: .semibold))).fittingSize.width
+        let actions = NSHostingView(rootView: ShelfPickedActions(model: model, exportTitle: ShelfPDFRules.exportName(count: model.pickCount),
+                                                                 making: false)).fittingSize.width
+        return title + 12 + actions + 2 * 18 + 2 * ShelfRules.gutter
     }
 
     @Test func theShelfWithTwoPickedIsDrawnWhenAsked() async throws {
@@ -244,45 +260,57 @@ struct CompareSnapshotTests {
         await index.refreshAndWait()
         let model = ShelfModel(shelf: KeptDemo.shelf(index: index, root: root), pdf: ShelfPDFMaker(dependencies: .declining))
         let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
-        model.pick(try #require(model.shown.first { $0.fileName == "z_prime_by_plate.png" }).id, .only)
-        model.pick(try #require(model.shown.first { $0.fileName == "plate_7_heatmap.png" }).id, .toggle)
-        #expect(model.comparePair != nil && model.showsComparePill)
-        // At the least width, with Compare and Export as PDF… beside the search, the bar's pieces still fit.
-        let least: CGFloat = 620
-        let fits = needed(model, at: least)
-        #expect(fits <= least, "the bar needs \(fits) points at \(least)")
-        // The window at its first width and its least (ShelfView's 620), and the title bar alone at both.
-        for width in [KeptWindowController.size.width, 620] {
-            let size = NSSize(width: width, height: 872)
-            let suffix = width < KeptWindowController.size.width ? "-minimum" : ""
-            for dark in [false, true] {
-                let view = VStack(spacing: 0) {
-                    ShelfBar(model: model, width: width)
-                    ShelfView(model: model, thumbnails: thumbnails, quickLook: KeptQuickLook())
+        let chart = try #require(model.shown.first { $0.fileName == "z_prime_by_plate.png" })
+        let heatmap = try #require(model.shown.first { $0.fileName == "plate_7_heatmap.png" })
+
+        func shelf(_ name: String, widths: [CGFloat] = [KeptWindowController.size.width]) async throws {
+            for width in widths {
+                let size = NSSize(width: width, height: 872)
+                let suffix = width < KeptWindowController.size.width ? "-minimum" : ""
+                for dark in [false, true] {
+                    let view = VStack(spacing: 0) {
+                        ShelfBar(model: model, width: width)
+                        ShelfView(model: model, thumbnails: thumbnails, quickLook: KeptQuickLook())
+                    }
+                    .background(Solanum.page)
+                    let rep = try await render(view, size: size, dark: dark)
+                    let png = try #require(rep.representation(using: .png, properties: [:]))
+                    try png.write(to: directory.appendingPathComponent("\(name)\(suffix)-\(dark ? "dark" : "light").png"))
                 }
-                .background(Solanum.page)
-                let rep = try await render(view, size: size, dark: dark)
-                let png = try #require(rep.representation(using: .png, properties: [:]))
-                try png.write(to: directory.appendingPathComponent("shelf-two-picked\(suffix)-\(dark ? "dark" : "light").png"))
-                let bar = try await render(ShelfBar(model: model, width: width), size: NSSize(width: width, height: 52), dark: dark)
-                let barPNG = try #require(bar.representation(using: .png, properties: [:]))
-                try barPNG.write(to: directory.appendingPathComponent("shelf-title-bar-compare\(suffix)-\(dark ? "dark" : "light").png"))
             }
         }
-        // A picture and a note picked: Export as PDF… alone, at the least width.
-        model.pick(try #require(model.shown.first { $0.fileName == "qc_notes.md" }).id, .only)
-        model.pick(try #require(model.shown.first { $0.fileName == "z_prime_by_plate.png" }).id, .toggle)
-        #expect(model.showsExportPill && !model.showsComparePill)
-        let alone = needed(model, at: least)
-        try ["Shelf title bar at \(Int(least)) points wide, as the stand-in draws it",
-             "Compare and Export as PDF\u{2026} picked: needs \(Int(fits.rounded(.up)))",
-             "Export as PDF\u{2026} alone: needs \(Int(alone.rounded(.up)))"].joined(separator: "\n")
-            .write(to: directory.appendingPathComponent("shelf-title-bar-widths.txt"), atomically: true, encoding: .utf8)
+
+        // One card, the pointer on another: that card's open pick circle.
+        model.pick(chart.id, .only)
+        model.hoveredCard = heatmap.id
+        #expect(model.pickCircle(for: heatmap.id) == .open && model.pickCircle(for: chart.id) == .hidden)
+        try await shelf("shelf-pick-hover")
+        // Its circle clicked: two picked, every card with its circle, Compare on the picked card.
+        model.pickCircleClicked(heatmap.id)
+        model.hoveredCard = nil
+        #expect(model.pickCount == 2 && model.showsCompareButton)
+        try await shelf("shelf-two-picked", widths: [KeptWindowController.size.width, 620])
+        // The picked card's row fits the window's least width, Compare among it.
+        let least: CGFloat = 620
+        let card = pickedCardNeeds(model)
+        #expect(card <= least, "the picked card needs \(card) points at \(least)")
+        // And the title bar, with Export as PDF… alone in it.
+        let bar = needed(model, at: least)
+        #expect(bar <= least, "the bar needs \(bar) points at \(least)")
         for dark in [false, true] {
-            let bar = try await render(ShelfBar(model: model, width: 620), size: NSSize(width: 620, height: 52), dark: dark)
-            let png = try #require(bar.representation(using: .png, properties: [:]))
-            try png.write(to: directory.appendingPathComponent("shelf-title-bar-no-pair-minimum-\(dark ? "dark" : "light").png"))
+            let rep = try await render(ShelfBar(model: model, width: 620), size: NSSize(width: 620, height: 52), dark: dark)
+            let png = try #require(rep.representation(using: .png, properties: [:]))
+            try png.write(to: directory.appendingPathComponent("shelf-title-bar-two-picked-minimum-\(dark ? "dark" : "light").png"))
         }
+        // A picture and a note picked: no Compare, Clear and Export alone.
+        model.pick(try #require(model.shown.first { $0.fileName == "qc_notes.md" }).id, .only)
+        model.pick(chart.id, .toggle)
+        #expect(model.showsExportPill && !model.showsCompareButton)
+        try await shelf("shelf-two-picked-no-pair")
+        try ["At \(Int(least)) points wide",
+             "The picked card with Clear, Compare and Export: needs \(Int(card.rounded(.up)))",
+             "The title bar with Export as PDF\u{2026}: needs \(Int(bar.rounded(.up)))"].joined(separator: "\n")
+            .write(to: directory.appendingPathComponent("shelf-picked-widths.txt"), atomically: true, encoding: .utf8)
     }
 
     /// Context menus can't be drawn offscreen, so Compare With's words are written out for review instead: every card

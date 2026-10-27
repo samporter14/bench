@@ -182,6 +182,61 @@ struct ShelfPickingTests {
         #expect(model.picked == picked)
     }
 
+    // MARK: The pick circle
+
+    @Test func thePickCircleShowsOnTheHoveredCardThenOnEveryCardOnceTwoArePicked() async throws {
+        let (model, root) = try await rig()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = model.shown[0].id, third = model.shown[2].id, fifth = model.shown[4].id
+        model.pick(first, .only)
+        // One picked, the pointer nowhere: no circle anywhere.
+        #expect(model.shown.allSatisfy { model.pickCircle(for: $0.id) == .hidden })
+        // The pointer on another card: its open circle, and only its.
+        model.hoveredCard = third
+        #expect(model.pickCircle(for: third) == .open)
+        #expect(model.shown.filter { $0.id != third }.allSatisfy { model.pickCircle(for: $0.id) == .hidden })
+        // On the selected card alone: none, since it is picked already and its circle could do nothing.
+        model.hoveredCard = first
+        #expect(model.pickCircle(for: first) == .hidden && !model.offersPick(first))
+        // A card that isn't shown has none, hovered or not.
+        model.hoveredCard = "nothing"
+        #expect(model.pickCircle(for: "nothing") == .hidden && !model.offersPick("nothing"))
+        // The circle clicked, no key held: picked beside the first, and every card has a circle now.
+        model.hoveredCard = third
+        #expect(model.pickCircleName(for: third) == "Pick" && model.offersPick(third))
+        model.pickCircleClicked(third)
+        model.hoveredCard = nil
+        #expect(model.picked == [first, third] && model.selection == third)
+        #expect(model.pickCircle(for: first) == .number(1) && model.pickCircle(for: third) == .number(2))
+        #expect(model.pickCircle(for: fifth) == .open)
+        #expect(model.shown.allSatisfy { model.pickCircle(for: $0.id) != .hidden })
+        #expect(model.pickCircleName(for: first) == "Unpick" && model.pickCircleName(for: fifth) == "Pick")
+        // The next is one click, and a picked one's number unpicks it.
+        model.pickCircleClicked(fifth)
+        #expect(model.pickCount == 3 && model.pickCircle(for: fifth) == .number(3))
+        model.pickCircleClicked(first)
+        #expect(model.picked == [third, fifth] && model.pickCircle(for: third) == .number(1))
+        // Back to one: the circles go, but for the card under the pointer.
+        model.pickCircleClicked(fifth)
+        #expect(model.picked == [third] && model.shown.allSatisfy { model.pickCircle(for: $0.id) == .hidden })
+        // The last pick stays, from its circle too (VoiceOver isn't offered it).
+        model.pickCircleClicked(third)
+        #expect(model.picked == [third])
+    }
+
+    @Test func theCircleIsWiredToTheCardAndSpaceStaysQuickLook() throws {
+        let view = FindRepo.source("Kept/ShelfView.swift")
+        #expect(view.contains("ShelfPickCircle(model: model, id: item.id)"))
+        #expect(view.contains("model.hoveredCard = item.id"))
+        #expect(view.contains("Button(model.pickCircleName(for: item.id)) { model.pickCircleClicked(item.id) }"))
+        // Space is Quick Look, as in Finder: the circle has no key of its own.
+        #expect(view.contains(".onKeyPress(.space) { previewSelected() ? .handled : .ignored }"))
+        // A plain click on the card keeps picking it alone; ⌘ and ⇧ still read from the click.
+        #expect(view.contains("model.pick(item.id, ShelfModel.Pick(NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags))"))
+        let picking = FindRepo.source("Kept/ShelfPicking.swift")
+        #expect(picking.contains("Button { model.pickCircleClicked(id) } label:"))
+    }
+
     @Test func theModifiersSayHowAClickPicks() {
         #expect(ShelfModel.Pick([]) == .only)
         #expect(ShelfModel.Pick(.command) == .toggle)

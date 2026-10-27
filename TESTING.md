@@ -323,6 +323,36 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-27, Compare reads PDFs and SVGs; Compare on the picked card; the pick circle (`g/compare-figures`, from main 2f87bc2)
+
+Sam's Shelf is mostly PDFs and SVGs, so a PNG and a PDF of one figure showed nothing in Compare, and he couldn't find
+Compare or a way to pick two without ⌘. Everything ran offscreen: no app launched, no window shown, no daemon asked.
+
+- ✅ **PDFs and SVGs are figures to Compare** (`CompareRules.figureExtensions`): Compare With, the two-pick Compare and
+  the picked card's button all follow; a PNG pairs with the PDF of the same figure. Told apart by their first bytes;
+  a PDF's first page and an SVG are drawn on white, long side 3,072 px, by the drawing Export as PDF… uses
+  (`ShelfVectorDrawing`, now shared; `ShelfPDFRenderTests` still pass). Sides say "460 × 307 pt · page 1 of 3".
+  Wipe needs the same size in the same unit. The 8 MB read stays: nothing on the Shelf is larger.
+- ✅ **Compare on the picked card**, a hairline pill between Clear and the clay Export, only for two that pair. The
+  title bar's Compare pill is gone (one place is enough; the picked card is on screen exactly when two are picked), and
+  the search is 160 under 760 points again. At 620 points the card's row needs 504 and the title bar 548.
+- ✅ **The pick circle**: an open hairline circle on the card under the pointer, on every card once two are picked, the
+  page number in it when picked; a plain click picks or unpicks. Not on the lone selected card (picked already). Space
+  stays Quick Look; VoiceOver has Pick and Unpick as the card's action.
+- ✅ New tests: a PDF's and an SVG's aspect, white ground, units and page line; broken PDFs and SVGs refused; Wipe by
+  unit; PDFs and SVGs pair and are listed in Compare With; the button's rule and wiring; the pick circle's rules.
+- ✅ Mutation checks, each undone after: "pdf" out of the figure kinds fails `compareWithListsOnlyTheShownCards…` and
+  `twoPicturesOrTwoTextFilesPair…`; `canWipe` ignoring units fails `wipeNeedsTheSameSizeCountedTheSameWay`; the
+  circle hidden with two picked fails `thePickCircleShowsOnTheHoveredCard…`; the button taken off the card fails
+  `theMenuAndTheButtonAreWiredToTheRules`; the SVG drawn without its white ground fails `anSVGIsDrawnOnWhite…`.
+- ✅ Captures (`CAPSID_SNAPSHOT_DIR`, light and dark), looked at: a PNG beside a three-page PDF at the window's first
+  and least size; the Shelf with the circle on a hovered card; two picked at 940 and 620 points (the clay Export no
+  longer cut short at 620: the caption wraps instead); a picture and a note picked, no Compare.
+- The whole suite: 4,793 tests in 609 suites pass.
+- ⏳ **Live**: the circle under a real pointer (hover, click, not stealing the card's click or drag), Compare on the
+  picked card in the real window, a real Claude Science PDF and SVG side by side (fonts, transparency), a locked PDF,
+  and VoiceOver's Pick and Unpick.
+
 ## 2026-10-27, Capsid 1.1.1 released and installed
 
 - ✅ Released as v1.1.1 (tag on 0ef56a5, "Capsid 1.1.1", with `gh release create` at Sam's word), marked Latest:

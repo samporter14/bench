@@ -5,7 +5,7 @@
 // menu of a card Compare reads (the cards shown that pair with it, or dimmed
 // with the reason when none does), Compare in a card's menu while exactly two
 // are picked and it is one of them (dimmed, with the reason, when the two aren't
-// two pictures or two text files), and the title bar's Compare pill for two
+// two figures or two text files), and the picked card's Compare button for two
 // picks that pair.
 import AppKit
 import Combine
@@ -132,14 +132,14 @@ extension ShelfModel {
         return (items[0], items[1])
     }
 
-    /// The pair the title bar's Compare pill opens: the two picks, in the Shelf's order, only when they pair.
+    /// The pair the picked card's Compare button opens: the two picks, in the Shelf's order, only when they pair.
     var comparablePair: (ShelfItem, ShelfItem)? {
         guard let pair = comparePair, case .comparable = CompareRules.pairing(pair.0, pair.1) else { return nil }
         return pair
     }
 
-    /// The Compare pill beside Export as PDF…: exactly two picked, and two Compare reads.
-    var showsComparePill: Bool { comparablePair != nil }
+    /// The Compare button on the picked card, beside Clear and Export: exactly two picked, and two Compare reads.
+    var showsCompareButton: Bool { comparablePair != nil }
 
     /// What `item`'s card menu offers for Compare (`CompareRules.offer`): the picks only count when exactly two are
     /// picked and this card is one of them; else Compare With, from the cards shown now.
@@ -151,7 +151,7 @@ extension ShelfModel {
 
 /// Compare in a card's menu, after Export … as PDF…. A card Compare reads has Compare With ▸, the cards shown that pair
 /// with it (this card on the left, the one chosen on the right), or Compare With dimmed, with why, when none does. On a
-/// card among exactly two picks it is Compare, as before: two pictures or two text files open the Compare window on
+/// card among exactly two picks it is Compare, as before: two figures or two text files open the Compare window on
 /// them; any other pair has the item dimmed with its reason, and opens nothing. A card Compare can't read has nothing.
 struct ShelfCompareItem: View {
     @ObservedObject var model: ShelfModel
@@ -182,18 +182,19 @@ struct ShelfCompareItem: View {
     }
 }
 
-/// "Compare" in the title bar, beside Export as PDF…, while exactly two picks pair: a quiet pill like it, opening the
-/// Compare window on them, the one shown first on the left.
-struct ShelfComparePill: View {
+/// "Compare" on the picked card, between Clear and the clay Export, while exactly two picks pair: a quiet hairline pill,
+/// opening the Compare window on them, the one shown first on the left. The one place for it: the card stands in for
+/// the detail whenever two are picked, so it is in view exactly when it applies (the title bar's pill of 1.1 is gone).
+struct ShelfCompareButton: View {
     @ObservedObject var model: ShelfModel
 
     var body: some View {
         if let pair = model.comparablePair, case .comparable(let kind) = CompareRules.pairing(pair.0, pair.1) {
-            Button { CompareWindowController.shared.show(pair.0, pair.1, shelf: model.shelf) } label: { Text(CompareRules.pillTitle) }
-                .buttonStyle(SolanumPillStyle(.small))
+            Button(CompareRules.buttonTitle) { CompareWindowController.shared.show(pair.0, pair.1, shelf: model.shelf) }
+                .buttonStyle(SolanumPillStyle(.medium))
                 .fixedSize()
-                .help(CompareRules.pillHelp(kind))
-                .accessibilityLabel(CompareRules.pillSpoken(kind))
+                .help(CompareRules.buttonHelp(kind))
+                .accessibilityLabel(CompareRules.buttonSpoken(kind))
         }
     }
 }

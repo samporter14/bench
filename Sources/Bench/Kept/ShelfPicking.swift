@@ -1,15 +1,17 @@
 // ShelfPicking.swift — choosing several things on the Shelf (DESIGN.md, Shelf →
-// Lab-meeting PDF): ⌘-click adds a card or takes it away, ⇧-click takes the
+// Lab-meeting PDF): the round pick circle at a card's corner (on the card under
+// the pointer, and on every card once two are picked) adds it or takes it away
+// with a plain click, as in Photos; ⌘-click does the same, ⇧-click takes the
 // run from the last one clicked, ⌘A takes all that are shown, and a plain
 // click, an arrow key or Esc goes back to one. The selected item (the one the
 // detail card shows, and the arrows move from) is always among the picks, so
 // everything the Shelf did with one selection works as it did. What is picked
 // is what Export as PDF… makes: one page each, in the order the cards are shown.
 // The rules are an extension of `ShelfModel`; the pieces that draw them
-// (the toolbar's pill, shown once two or more are picked, with Compare beside
-// it for two that pair, the ⌘P that works with one too, the card that stands
-// in for the detail while several are picked, the page numbers on the cards)
-// are here too, so ShelfView only places them.
+// (the toolbar's Export pill, shown once two or more are picked, the ⌘P that
+// works with one too, the card that stands in for the detail while several are
+// picked, with Compare on it for two that pair, the pick circle and page numbers
+// on the cards) are here too, so ShelfView only places them.
 import AppKit
 import SwiftUI
 
@@ -49,6 +51,41 @@ extension ShelfModel {
         guard picked.count > 1, picked.contains(id) else { return nil }
         let ids = shown.map(\.id).filter { picked.contains($0) }
         return ids.firstIndex(of: id).map { $0 + 1 }
+    }
+
+    // MARK: The pick circle
+
+    /// What a card's top-left corner shows: nothing, an open hairline circle to pick it with, or its page number (it is
+    /// picked, among several).
+    enum PickCircle: Equatable {
+        case hidden
+        case open
+        case number(Int)
+    }
+
+    /// The circle on card `id`. Once two or more are picked, every card has one (its number, or open), so the next is
+    /// one plain click. With one, only the card under the pointer does, and never the selected card, which is picked
+    /// already (its ink edge says so): its circle could only do nothing.
+    func pickCircle(for id: String) -> PickCircle {
+        if let page = pageNumber(of: id) { return .number(page) }
+        if pickCount > 1 { return .open }
+        return hoveredCard == id && selection != id && shown.contains { $0.id == id } ? .open : .hidden
+    }
+
+    /// Whether the card can be picked or unpicked from its circle (shown or not, as VoiceOver's action): every card but
+    /// the selected one while it is the only pick.
+    func offersPick(_ id: String) -> Bool {
+        shown.contains { $0.id == id } && (pickCount > 1 || selection != id)
+    }
+
+    /// The circle's words, as a button and as the card's VoiceOver action.
+    func pickCircleName(for id: String) -> String {
+        pageNumber(of: id) == nil ? "Pick" : "Unpick"
+    }
+
+    /// The circle clicked (or its VoiceOver action): the card added to the picks, or taken away, as ⌘-click does.
+    func pickCircleClicked(_ id: String) {
+        pick(id, .toggle)
     }
 
     // MARK: Picking
@@ -177,22 +214,6 @@ struct ShelfExportPDFButton: View {
     }
 }
 
-/// The title bar's pills while two or more are picked: Export as PDF…, and before it Compare (`ShelfComparePill`, in
-/// CompareWindow.swift) while exactly two pair. Compare comes and goes on Export's left, so Export stays put beside the
-/// search as picks are added.
-struct ShelfPickPills: View {
-    @ObservedObject var model: ShelfModel
-    static let spacing: CGFloat = 8
-
-    var body: some View {
-        HStack(spacing: Self.spacing) {
-            if model.showsComparePill { ShelfComparePill(model: model) }
-            ShelfExportPDFButton(model: model)
-        }
-        .fixedSize()
-    }
-}
-
 /// ⌘P: Export as PDF… on what is picked, one card or several, whether or not the pill is in the title bar. A button
 /// nobody sees (no size, no opacity, not hit, not read by VoiceOver: the pill, the card's menu and the detail's ⋯ are
 /// the ways to it that are), so the key needs nothing on screen; the pill has no key of its own, so ⌘P never asks twice.
@@ -232,6 +253,35 @@ extension View {
             }
             // The Edit menu's Select All reaches the grid the same way.
             .onCommand(#selector(NSResponder.selectAll(_:))) { model.pickAll() }
+    }
+}
+
+/// A card's pick circle (`ShelfModel.pickCircle`): an open hairline circle on the raised ground, or the page badge
+/// when picked; a click on either picks or unpicks the card, with no key held. Drawn over the card's top-left corner,
+/// where the page badge always sat.
+struct ShelfPickCircle: View {
+    @ObservedObject var model: ShelfModel
+    let id: String
+
+    var body: some View {
+        let circle = model.pickCircle(for: id)
+        if circle != .hidden {
+            Button { model.pickCircleClicked(id) } label: {
+                switch circle {
+                case .number(let page):
+                    ShelfPageBadge(number: page)
+                default:
+                    Circle()
+                        .fill(Solanum.raised)
+                        .overlay(Circle().strokeBorder(Solanum.muted, lineWidth: 1))
+                        .frame(width: 18, height: 18)
+                }
+            }
+            .buttonStyle(.plain)
+            .contentShape(Circle().inset(by: -4))
+            .help(model.pickCircleName(for: id))
+            .accessibilityLabel(model.pickCircleName(for: id))
+        }
     }
 }
 
@@ -286,13 +336,7 @@ struct ShelfPickedCard: View {
                         .foregroundStyle(Solanum.muted)
                 }
                 Spacer(minLength: 12)
-                Button("Clear") { model.pickOnlySelected() }
-                    .buttonStyle(SolanumPillStyle(.medium))
-                    .help("Back to the one card")
-                Button(exportTitle) { model.exportPDF() }
-                    .buttonStyle(SolanumPillStyle(.medium, prominent: true))
-                    .disabled(maker.isMaking)
-                    .help("One figure on each page, 16:9, for lab meeting")
+                ShelfPickedActions(model: model, exportTitle: exportTitle, making: maker.isMaking)
             }
             HStack(spacing: 8) {
                 ForEach(Array(items.prefix(Self.thumbnailsShown).enumerated()), id: \.element.id) { offset, item in
@@ -315,6 +359,29 @@ struct ShelfPickedCard: View {
         .padding(.bottom, ShelfLook.foot)
         .padding(.top, 8)
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// The picked card's row of actions: Clear, Compare for two that pair, and the one clay action, Export. Never cut
+/// short: at the window's least width the caption beside them wraps instead (`CompareSnapshotTests` checks it fits).
+struct ShelfPickedActions: View {
+    @ObservedObject var model: ShelfModel
+    let exportTitle: String
+    let making: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button("Clear") { model.pickOnlySelected() }
+                .buttonStyle(SolanumPillStyle(.medium))
+                .help("Back to the one card")
+            // Two that pair: Compare, quiet, beside the one clay action (CompareWindow.swift).
+            ShelfCompareButton(model: model)
+            Button(exportTitle) { model.exportPDF() }
+                .buttonStyle(SolanumPillStyle(.medium, prominent: true))
+                .disabled(making)
+                .help("One figure on each page, 16:9, for lab meeting")
+        }
+        .fixedSize()
     }
 }
 

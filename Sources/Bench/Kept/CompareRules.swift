@@ -1,8 +1,8 @@
 // CompareRules.swift — the decisions behind Compare (DESIGN.md, Compare), pure:
-// which two Shelf items make a pair (two pictures ImageIO can read, or two text
-// files read as source), what a Shelf card's menu offers (Compare With and the
+// which two Shelf items make a pair (two figures: pictures ImageIO can read, PDFs
+// and SVGs, in any mix; or two text files read as source), what a Shelf card's menu offers (Compare With and the
 // cards shown that pair with it, or Compare on two picks) and what it says when
-// nothing pairs, when the title bar's Compare pill shows, the words
+// nothing pairs, when the picked card's Compare button shows, the words
 // each side carries (its file's name and its own source line, nothing invented),
 // whether Wipe is offered (the same upright pixel size), and the geometry of a
 // picture in its pane: Fit, a zoom relative to each picture's own fit and a
@@ -13,7 +13,7 @@ import Foundation
 
 /// What two Shelf items are compared as.
 enum CompareKind: Equatable, Sendable {
-    /// Two raster pictures, side by side (and Wipe when their sizes match).
+    /// Two figures (raster pictures, a PDF's first page, SVGs, in any mix), side by side (and Wipe when their sizes match).
     case images
     /// Two text files, as their source text, line by line.
     case text
@@ -22,16 +22,20 @@ enum CompareKind: Equatable, Sendable {
 enum CompareRules {
     // MARK: The pair
 
-    /// Pictures ImageIO decodes. An SVG is a figure on the Shelf but is drawn, not decoded, so it isn't one of these.
+    /// Pictures ImageIO decodes.
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "tif", "tiff", "bmp", "heic", "avif"]
+    /// Figures that are drawn, not decoded: a PDF (its first page) and an SVG (`CompareImages.decodePDF`, `decodeSVG`).
+    static let vectorExtensions: Set<String> = ["pdf", "svg"]
+    /// Everything Compare puts side by side as a figure: a PNG pairs with a PDF of the same figure.
+    static let figureExtensions = imageExtensions.union(vectorExtensions)
     /// The Shelf's prose formats (`ShelfPeek.proseExtensions`), compared as source text. A note made by Add Selection to
     /// Shelf is a `note.md` and compares as one.
     static let textExtensions: Set<String> = ShelfPeek.proseExtensions
 
-    /// What a file is compared as, by its name; nil for a kind Compare doesn't read (a PDF, a table, an SVG…).
+    /// What a file is compared as, by its name; nil for a kind Compare doesn't read (a table, a script, a web page…).
     static func kind(of fileName: String) -> CompareKind? {
         let ext = (fileName as NSString).pathExtension.lowercased()
-        if imageExtensions.contains(ext) { return .images }
+        if figureExtensions.contains(ext) { return .images }
         if textExtensions.contains(ext) { return .text }
         return nil
     }
@@ -43,7 +47,7 @@ enum CompareRules {
         case notComparable
     }
 
-    /// Two items pair when both are pictures or both are text files.
+    /// Two items pair when both are figures (a picture, a PDF or an SVG) or both are text files.
     static func pairing(_ a: ShelfItem, _ b: ShelfItem) -> Pairing {
         guard let first = kind(of: a.fileName), let second = kind(of: b.fileName), first == second else { return .notComparable }
         return .comparable(first)
@@ -52,14 +56,14 @@ enum CompareRules {
     /// The Shelf card's menu item while two are picked: "Compare", or, when the pair isn't one Compare reads, the
     /// same words with the reason, dimmed.
     static let menuTitle = "Compare"
-    static let unavailableTitle = "Compare (Two Pictures or Two Text Files)"
-    static let unavailableHelp = "Compare reads two pictures, or two text or Markdown files, side by side."
+    static let unavailableTitle = "Compare (Two Figures or Two Text Files)"
+    static let unavailableHelp = "Compare reads two figures (pictures, PDFs or SVGs), or two text or Markdown files, side by side."
 
     // MARK: The card's menu
 
     /// What a Shelf card's menu offers for Compare, after Export … as PDF….
     enum Offer: Equatable, Sendable {
-        /// Nothing: a kind Compare doesn't read (a PDF, a table, an SVG…), outside a pair of picks.
+        /// Nothing: a kind Compare doesn't read (a table, a script…), outside a pair of picks.
         case none
         /// Exactly two picked, this card one of them, and they pair: Compare, left and right as the Shelf shows them.
         case compare(left: ShelfItem, right: ShelfItem)
@@ -90,7 +94,7 @@ enum CompareRules {
     /// The dimmed Compare With's help: nothing else of its kind, on the Shelf or among the cards a search, a project or
     /// a kind leaves shown.
     static func nothingToCompareWithHelp(_ kind: CompareKind, filtered: Bool) -> String {
-        let what = kind == .images ? "picture" : "text file"
+        let what = kind == .images ? "figure" : "text file"
         return filtered
             ? "No other \(what) is shown to compare with. Clear the search or the filters to see more."
             : "There\u{2019}s no other \(what) on the Shelf to compare with."
@@ -168,15 +172,15 @@ enum CompareRules {
         return String(text.prefix(head)) + "\u{2026}" + String(text.suffix(tail))
     }
 
-    // MARK: The title bar's pill
+    // MARK: The picked card's button
 
-    /// The Compare pill beside Export as PDF…: shown only for exactly two picks that pair.
-    static let pillTitle = "Compare"
-    static func pillHelp(_ kind: CompareKind) -> String {
-        kind == .images ? "Put the two pictures side by side" : "See what changed between the two text files, line by line"
+    /// The Compare button on the picked card, beside Clear and Export: shown only for exactly two picks that pair.
+    static let buttonTitle = "Compare"
+    static func buttonHelp(_ kind: CompareKind) -> String {
+        kind == .images ? "Put the two figures side by side" : "See what changed between the two text files, line by line"
     }
-    static func pillSpoken(_ kind: CompareKind) -> String {
-        kind == .images ? "Compare the two pictures" : "Compare the two text files"
+    static func buttonSpoken(_ kind: CompareKind) -> String {
+        kind == .images ? "Compare the two figures" : "Compare the two text files"
     }
 
     // MARK: Each side's words
@@ -206,6 +210,24 @@ enum CompareRules {
         "\(Int(source.width)) by \(Int(source.height)) pixels"
     }
 
+    /// The line under a side's figure: `pixelLine` for a picture; for a PDF or an SVG its own size in points, and a PDF
+    /// of several pages says which is shown, "612 × 792 pt · page 1 of 3". `pages` false leaves that out (Wipe's
+    /// "Both …", whose sides may have different counts).
+    static func sizeLine(_ image: CompareImage, pages: Bool = true) -> String {
+        guard image.unit == .points else { return pixelLine(source: image.source, shown: image.shown) }
+        let size = "\(grouped(image.source.width.rounded())) \u{00D7} \(grouped(image.source.height.rounded())) pt"
+        guard pages, let count = image.pages, count > 1 else { return size }
+        return size + " \u{00B7} page 1 of \(grouped(count))"
+    }
+
+    /// The same, for VoiceOver: "612 by 792 points, page 1 of 3".
+    static func sizeSpoken(_ image: CompareImage) -> String {
+        guard image.unit == .points else { return pixelSpoken(source: image.source) }
+        let size = "\(Int(image.source.width.rounded())) by \(Int(image.source.height.rounded())) points"
+        guard let count = image.pages, count > 1 else { return size }
+        return size + ", page 1 of \(count)"
+    }
+
     static func grouped(_ value: CGFloat) -> String { Int(value).formatted(.number.grouping(.automatic)) }
     static func grouped(_ value: Int) -> String { value.formatted(.number.grouping(.automatic)) }
 
@@ -214,6 +236,13 @@ enum CompareRules {
     static func canWipe(_ a: CGSize?, _ b: CGSize?) -> Bool {
         guard let a, let b, a.width > 0, a.height > 0 else { return false }
         return Int(a.width) == Int(b.width) && Int(a.height) == Int(b.height)
+    }
+
+    /// The same for two sides' figures, which must also count their size alike: a 612 × 792 px picture and a
+    /// 612 × 792 pt page are not one size.
+    static func canWipe(_ a: CompareImage?, _ b: CompareImage?) -> Bool {
+        guard let a, let b, a.unit == b.unit else { return false }
+        return canWipe(a.source, b.source)
     }
 
     // MARK: The sentences

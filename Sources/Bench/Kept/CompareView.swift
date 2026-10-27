@@ -31,7 +31,7 @@ struct CompareView: View {
                 CompareTextPane(model: model)
             case nil:
                 KeptEmpty(title: "Nothing to compare",
-                          sentence: "Right-click a picture or a text file on the Shelf and choose Compare With.",
+                          sentence: "Right-click a figure or a text file on the Shelf and choose Compare With.",
                           action: nil)
             }
             if let note = model.note {
@@ -88,19 +88,19 @@ struct CompareControls: View {
             if model.kind == .images {
                 Button("Fit") { model.fit() }
                     .buttonStyle(SolanumPillStyle(.small))
-                    .help("Both pictures whole in their panes (\u{2318}9)")
+                    .help("Both figures whole in their panes (\u{2318}9)")
                 if !model.wiping {
                     Button("Link Zoom") { model.setLinked(!model.linked) }
                         .buttonStyle(CompareTogglePillStyle(on: model.linked))
-                        .help(model.linked ? "The two pictures zoom and pan together. Click to move them apart."
-                                           : "Each picture zooms and pans on its own. Click to move them together.")
+                        .help(model.linked ? "The two figures zoom and pan together. Click to move them apart."
+                                           : "Each figure zooms and pans on its own. Click to move them together.")
                         .accessibilityValue(model.linked ? "On" : "Off")
                         .accessibilityAddTraits(model.linked ? .isSelected : [])
                 }
                 if model.canWipe {
                     Button("Wipe") { model.setWiping(!model.wiping) }
                         .buttonStyle(CompareTogglePillStyle(on: model.wiping))
-                        .help("One picture over the other, with a divider (\u{2303}\u{2318}W)")
+                        .help("One figure over the other, with a divider (\u{2303}\u{2318}W)")
                         .accessibilityValue(model.wiping ? "On" : "Off")
                         .accessibilityAddTraits(model.wiping ? .isSelected : [])
                 }
@@ -264,7 +264,7 @@ struct CompareImageColumn: View {
         VStack(alignment: .leading, spacing: 10) {
             CompareSideHeader(side: side)
             CompareImageWell(model: model, side: side)
-            Text(side.content.image.map { CompareRules.pixelLine(source: $0.source, shown: $0.shown) } ?? " ")
+            Text(side.content.image.map { CompareRules.sizeLine($0) } ?? " ")
                 .font(.system(size: 11))
                 .monospacedDigit()
                 .foregroundStyle(Solanum.muted)
@@ -306,8 +306,8 @@ struct CompareImageWell: View {
         .compareZooming(model: model, id: side.id, size: size, dragged: $dragged, pinched: $pinched,
                         enabled: side.content.image != nil)
         .accessibilityElement(children: side.content.image == nil ? .contain : .ignore)
-        .accessibilityLabel(side.content.image == nil ? "" : "Picture, \(side.fileName)")
-        .accessibilityValue(side.content.image.map { CompareRules.pixelSpoken(source: $0.source) + ", " + Self.zoomSpoken(model.viewport(for: side.id)) } ?? "")
+        .accessibilityLabel(side.content.image == nil ? "" : "Figure, \(side.fileName)")
+        .accessibilityValue(side.content.image.map { CompareRules.sizeSpoken($0) + ", " + Self.zoomSpoken(model.viewport(for: side.id)) } ?? "")
     }
 
     static func zoomSpoken(_ viewport: CompareViewport) -> String {
@@ -385,7 +385,7 @@ struct CompareWipePane: View {
                 CompareSideHeader(side: right, trailing: true)
             }
             well(left, right)
-            Text(left.content.image.map { "Both " + CompareRules.pixelLine(source: $0.source, shown: $0.shown) } ?? " ")
+            Text(left.content.image.map { "Both " + CompareRules.sizeLine($0, pages: false) } ?? " ")
                 .font(.system(size: 11))
                 .monospacedDigit()
                 .foregroundStyle(Solanum.muted)

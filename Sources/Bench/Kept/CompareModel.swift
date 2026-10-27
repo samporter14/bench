@@ -69,7 +69,7 @@ enum CompareProblem: Equatable, Sendable {
         case .tooManyPixels(let size):
             "\u{201C}\(name)\u{201D} is \(CompareRules.grouped(size.width)) \u{00D7} \(CompareRules.grouped(size.height)) pixels, more than the 64 megapixels Capsid compares."
         case .notAPicture:
-            "\u{201C}\(name)\u{201D} isn\u{2019}t a picture Capsid can read."
+            "\u{201C}\(name)\u{201D} isn\u{2019}t a figure Capsid can read."
         case .notText:
             "\u{201C}\(name)\u{201D} isn\u{2019}t UTF-8 text, so it can\u{2019}t be compared line by line."
         case .changing:
@@ -372,7 +372,7 @@ final class CompareModel: ObservableObject {
     /// The two pictures, both read, are the same upright size: Wipe is offered.
     var canWipe: Bool {
         guard kind == .images, sides.count == 2, let a = sides[0].content.image, let b = sides[1].content.image else { return false }
-        return CompareRules.canWipe(a.source, b.source)
+        return CompareRules.canWipe(a, b)
     }
 
     func setWiping(_ on: Bool) {

@@ -16,8 +16,8 @@ import Testing
 struct KeptWindowSnapshotTests {
     /// The title bar the window draws around the content, as the mock-up has it
     /// (the toolbar itself belongs to the window): the three dots, "Shelf", the
-    /// project pill, and at the right Export as PDF… (two or more picked, with
-    /// Compare before it for two that pair) and the search pill, in a band
+    /// project pill, and at the right Export as PDF… (two or more picked) and
+    /// the search pill, in a band
     /// under a hairline.
     private struct Window<Content: View>: View {
         let model: ShelfModel
@@ -33,8 +33,8 @@ struct KeptWindowSnapshotTests {
                     Text("Shelf").font(.system(size: 15, weight: .semibold)).foregroundStyle(Solanum.ink).padding(.leading, 8)
                     ShelfProjectPill(model: model)
                     Spacer()
-                    if model.showsExportPill { ShelfPickPills(model: model) }
-                    ShelfSearchPill(search: .constant(model.search), width: ShelfSearchPill.width(forWindow: width, comparing: model.showsComparePill))
+                    if model.showsExportPill { ShelfExportPDFButton(model: model) }
+                    ShelfSearchPill(search: .constant(model.search), width: ShelfSearchPill.width(forWindow: width))
                 }
                 .padding(.horizontal, 14)
                 .frame(height: 52)

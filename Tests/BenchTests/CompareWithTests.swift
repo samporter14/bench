@@ -36,16 +36,19 @@ struct CompareWithTests {
     @Test func compareWithListsOnlyTheShownCardsThatPairAndNeverTheCardItself() {
         let chart = CompareFixtures.item("z_prime_by_plate.png"), heatmap = CompareFixtures.item("plate_7_heatmap.JPG")
         let notes = CompareFixtures.item("qc_notes.md"), log = CompareFixtures.item("run_log.txt"), note = CompareFixtures.item("note.md", version: nil)
-        let others = ["figure.svg", "receptors.xlsx", "z_prime_by_plate.csv", "methods.pdf", "plot_z_prime.py"].map { CompareFixtures.item($0) }
+        let others = ["receptors.xlsx", "z_prime_by_plate.csv", "plot_z_prime.py"].map { CompareFixtures.item($0) }
+        let svg = CompareFixtures.item("figure.svg"), pdf = CompareFixtures.item("z_prime_by_plate.pdf")
         let blot = CompareFixtures.item("knockdown_blot.png")
-        let shown = [notes, chart] + others + [heatmap, log, note, blot]
-        // A picture: the other pictures, in the order shown; not itself, not a note, a table, a PDF or an SVG.
-        #expect(entries(offer(chart, shown: shown)).map(\.right.id) == [heatmap.id, blot.id])
+        let shown = [notes, chart, svg] + others + [heatmap, pdf, log, note, blot]
+        // A figure: the other figures (pictures, PDFs, SVGs), in the order shown; not itself, not a note or a table.
+        #expect(entries(offer(chart, shown: shown)).map(\.right.id) == [svg.id, heatmap.id, pdf.id, blot.id])
+        // A PDF lists the PNG of the same figure, and the rest.
+        #expect(entries(offer(pdf, shown: shown)).map(\.right.id) == [chart.id, svg.id, heatmap.id, blot.id])
         // A text file: the other text files, a note among them.
         #expect(entries(offer(notes, shown: shown)).map(\.right.id) == [log.id, note.id])
         #expect(CompareRules.candidates(for: note, in: shown).map(\.id) == [notes.id, log.id])
         // Every entry is a pair Compare reads.
-        for item in [chart, notes, heatmap, log, note, blot] {
+        for item in [chart, notes, heatmap, log, note, blot, svg, pdf] {
             for entry in entries(offer(item, shown: shown)) {
                 #expect(entry.right.id != item.id)
                 #expect(CompareRules.pairing(entry.left, entry.right) != .notComparable)
@@ -74,21 +77,21 @@ struct CompareWithTests {
     @Test func nothingToPairWithDimsCompareWithAndSaysWhy() {
         let chart = CompareFixtures.item("z_prime_by_plate.png"), notes = CompareFixtures.item("qc_notes.md")
         let table = CompareFixtures.item("z_prime_by_plate.csv")
-        // The only picture on the Shelf.
-        #expect(offer(chart, shown: [chart, notes, table]) == .nothingToCompareWith(help: "There\u{2019}s no other picture on the Shelf to compare with."))
+        // The only figure on the Shelf.
+        #expect(offer(chart, shown: [chart, notes, table]) == .nothingToCompareWith(help: "There\u{2019}s no other figure on the Shelf to compare with."))
         #expect(offer(notes, shown: [chart, notes, table]) == .nothingToCompareWith(help: "There\u{2019}s no other text file on the Shelf to compare with."))
         // The only one shown, with a search or a filter on: the help says so.
         guard case .nothingToCompareWith(let help) = offer(chart, shown: [chart], filtered: true) else {
             Issue.record("a lone picture should have Compare With dimmed")
             return
         }
-        #expect(help.hasPrefix("No other picture is shown"))
+        #expect(help.hasPrefix("No other figure is shown"))
         #expect(!help.contains("\u{2014}") && !help.contains("'"))
     }
 
     @Test func aCardCompareCantReadHasNoItem() {
         let pictures = [CompareFixtures.item("z_prime_by_plate.png"), CompareFixtures.item("plate_7_heatmap.png")]
-        for file in ["figure.svg", "receptors.xlsx", "z_prime_by_plate.csv", "methods.pdf", "plot_z_prime.py", "page.html", "README"] {
+        for file in ["receptors.xlsx", "z_prime_by_plate.csv", "plot_z_prime.py", "page.html", "README"] {
             let item = CompareFixtures.item(file)
             #expect(offer(item, shown: pictures + [item]) == .none, "\(file)")
         }
@@ -113,7 +116,7 @@ struct CompareWithTests {
         #expect(offer(table, pair: (chart, heatmap), shown: shown) == .none)
         // The menu's words for the two-pick case are the ones it had.
         #expect(CompareRules.menuTitle == "Compare")
-        #expect(CompareRules.unavailableTitle == "Compare (Two Pictures or Two Text Files)")
+        #expect(CompareRules.unavailableTitle == "Compare (Two Figures or Two Text Files)")
     }
 
     // MARK: The entries
@@ -202,7 +205,7 @@ struct CompareWithTests {
             Issue.record("a lone picture in its project should have Compare With dimmed")
             return
         }
-        #expect(help.hasPrefix("No other picture is shown"))
+        #expect(help.hasPrefix("No other figure is shown"))
         model.project = "Assay development"
         #expect(listed(model, try named("z_prime_by_plate.png")) == ["plate_7_heatmap.png"])
         #expect(model.compareOffer(for: try named("qc_notes.md")) == .nothingToCompareWith(help: CompareRules.nothingToCompareWithHelp(.text, filtered: true)))
@@ -232,59 +235,63 @@ struct CompareWithTests {
         #expect(listed(model, chart).contains("plate_7_heatmap.png"))
     }
 
-    // MARK: The pill
+    // MARK: The picked card's button
 
-    @Test func thePillShowsOnlyForExactlyTwoPicksThatPairInTheShelfsOrder() async throws {
+    @Test func theButtonShowsOnlyForExactlyTwoPicksThatPairInTheShelfsOrder() async throws {
         let (model, root) = await demoShelf()
         defer { try? FileManager.default.removeItem(at: root) }
         func named(_ file: String) throws -> ShelfItem { try #require(model.shown.first { $0.fileName == file }) }
         let chart = try named("z_prime_by_plate.png"), heatmap = try named("plate_7_heatmap.png")
-        // One: no pill (and no Export pill either).
+        // One: no button (and no picked card, no Export pill either).
         model.pick(heatmap.id, .only)
-        #expect(!model.showsComparePill && model.comparablePair == nil)
-        // Two pictures, the older picked first: the pill, the newer on the left.
+        #expect(!model.showsCompareButton && model.comparablePair == nil)
+        // Two pictures, the older picked first: the button, the newer on the left.
         model.pick(chart.id, .toggle)
-        #expect(model.showsComparePill && model.showsExportPill)
+        #expect(model.showsCompareButton && model.showsExportPill)
         let pair = try #require(model.comparablePair)
         #expect(pair.0.id == chart.id && pair.1.id == heatmap.id)
         // Three: Export as PDF… alone.
         model.pick(try named("knockdown_blot.png").id, .toggle)
-        #expect(!model.showsComparePill && model.showsExportPill)
+        #expect(!model.showsCompareButton && model.showsExportPill)
         // A picture and a note: two, but they don't pair.
         model.pick(chart.id, .only)
         model.pick(try named("qc_notes.md").id, .toggle)
         #expect(model.pickCount == 2 && model.comparePair != nil)
-        #expect(!model.showsComparePill && model.comparablePair == nil && model.showsExportPill)
+        #expect(!model.showsCompareButton && model.comparablePair == nil && model.showsExportPill)
         // Two text files.
         model.pick(try named("methods_draft.md").id, .toggle)
         model.pick(chart.id, .toggle)
-        #expect(model.showsComparePill)
+        #expect(model.showsCompareButton)
         #expect(model.comparablePair.map { [$0.0.fileName, $0.1.fileName] } == ["qc_notes.md", "methods_draft.md"])
-        #expect(CompareRules.pillHelp(.images) != CompareRules.pillHelp(.text))
+        #expect(CompareRules.buttonHelp(.images) != CompareRules.buttonHelp(.text))
     }
 
     // MARK: The wiring
 
     /// What the rules can't see: the card's menu draws the offer right after Export … as PDF…, each entry opens this
-    /// card on the left, the pill opens the pair as ordered, and the title bar holds the pill beside Export as PDF….
-    @Test func theMenuAndThePillAreWiredToTheRules() throws {
+    /// card on the left, the button opens the pair as ordered and sits on the picked card between Clear and the clay
+    /// Export, and the title bar holds Export as PDF… alone.
+    @Test func theMenuAndTheButtonAreWiredToTheRules() throws {
         let view = FindRepo.source("Kept/ShelfView.swift")
         let export = try #require(view.range(of: "Button(model.exportName(from: item)) { model.exportPDF(from: item) }"))
         let compare = try #require(view.range(of: "ShelfCompareItem(model: model, item: item)"))
         let open = try #require(view.range(of: "Button(\"Open\") { NSWorkspace.shared.open(item.fileURL) }"))
         #expect(export.upperBound < compare.lowerBound && compare.upperBound < open.lowerBound)
         let toolbar = try #require(view.range(of: "if model.showsExportPill {"))
-        #expect(view[toolbar.upperBound...].prefix(300).contains("ShelfPickPills(model: model)"))
+        #expect(view[toolbar.upperBound...].prefix(300).contains("ShelfExportPDFButton(model: model)"))
+        #expect(!view.contains("ShelfComparePill") && !view.contains("comparing:"), "no Compare in the title bar")
         let window = FindRepo.source("Kept/CompareWindow.swift")
         #expect(window.contains("model.compareOffer(for: item)"))
         #expect(window.contains("CompareWindowController.shared.show(entry.left, entry.right, shelf: model.shelf)"))
         #expect(window.contains("CompareWindowController.shared.show(left, right, shelf: model.shelf)"))
         #expect(window.contains("CompareWindowController.shared.show(pair.0, pair.1, shelf: model.shelf)"))
         let picking = FindRepo.source("Kept/ShelfPicking.swift")
-        let pills = try #require(picking.range(of: "struct ShelfPickPills: View"))
-        let body = picking[pills.lowerBound...].prefix(600)
-        let pill = try #require(body.range(of: "if model.showsComparePill { ShelfComparePill(model: model) }"))
-        let exportPill = try #require(body.range(of: "ShelfExportPDFButton(model: model)"))
-        #expect(pill.upperBound < exportPill.lowerBound, "Compare before Export as PDF…, so Export stays put")
+        let card = try #require(picking.range(of: "struct ShelfPickedActions: View"))
+        let body = picking[card.lowerBound...]
+        let clear = try #require(body.range(of: "Button(\"Clear\") { model.pickOnlySelected() }"))
+        let button = try #require(body.range(of: "ShelfCompareButton(model: model)"))
+        let clay = try #require(body.range(of: "Button(exportTitle) { model.exportPDF() }"))
+        #expect(clear.upperBound < button.lowerBound && button.upperBound < clay.lowerBound, "Clear, Compare, then the clay Export")
+        #expect(window.contains("model.comparablePair, case .comparable(let kind)"), "the button keeps the pair rule")
     }
 }

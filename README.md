@@ -158,15 +158,17 @@ from; Remove puts one in the Trash.
 **Search finds figures and files in every session**, not only the ones on the
 shelf: type in the Shelf's search (or Open Session…) and what Claude made
 anywhere shows under your shelf's own matches, with Add to Shelf and Show
-Where It Came From. For lab meeting, pick several figures (⌘-click) and
+Where It Came From. For lab meeting, pick several figures (click the circle
+at a card's corner, or ⌘-click) and
 choose **Export Figure as PDF…** (⌘P; "Export 3 Figures as PDF…" with
 several): one 16:9 page each, with its title, legend and where it came from.
 
-**Compare two of them.** Right-click a picture or a text file and choose
-**Compare With**, then the other one. Pictures sit side by side with their zoom
-linked, or one over the other with **Wipe** when they're the same size; for two
-text files you see what changed, line by line, with Previous and Next Change.
-With two picked, **Compare** in the title bar does the same.
+**Compare two of them.** Right-click a figure or a text file and choose
+**Compare With**, then the other one. Figures (pictures, a PDF's first page,
+SVGs, in any mix) sit side by side with their zoom linked, or one over the
+other with **Wipe** when they're the same size; for two text files you see what
+changed, line by line, with Previous and Next Change. With two picked,
+**Compare** beside Export does the same.
 
 **Add Selection to Shelf** keeps selected words as a note. Its card shows the
 passage, with where it came from; Copy copies the words. Search also looks

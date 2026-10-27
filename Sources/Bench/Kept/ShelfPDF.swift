@@ -282,12 +282,7 @@ enum ShelfPDF {
             guard let image = NSImage(contentsOf: url), image.size.width > 0, image.size.height > 0 else { return false }
             let target = ShelfPDFLayout.fit(image.size, in: box)
             guard target.width > 0 else { return false }
-            context.saveGState()
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
-            image.draw(in: pdf(target), from: .zero, operation: .sourceOver, fraction: 1)
-            NSGraphicsContext.restoreGraphicsState()
-            context.restoreGState()
+            ShelfVectorDrawing.draw(image, in: pdf(target), context: context)
             frame(target)
             return true
         }
@@ -297,22 +292,10 @@ enum ShelfPDF {
             guard let provider = CGDataProvider(url: url as CFURL) else { throw Failure.unreadable(page.fileName) }
             guard let document = CGPDFDocument(provider), document.isUnlocked, document.numberOfPages > 0,
                   let first = document.page(at: 1) else { return false }
-            let media = first.getBoxRect(.cropBox)
-            let sideways = first.rotationAngle % 180 != 0
-            let size = sideways ? CGSize(width: media.height, height: media.width) : media.size
+            let size = ShelfVectorDrawing.uprightSize(of: first)
             let target = ShelfPDFLayout.fit(size, in: box)
             guard target.width > 0 else { return false }
-            context.saveGState()
-            context.setFillColor(ShelfPDF.white)
-            context.fill(pdf(target))
-            context.clip(to: pdf(target))
-            // The page's own turn and crop, then up (or down) to the target: the drawing transform doesn't scale up.
-            context.translateBy(x: pdf(target).minX, y: pdf(target).minY)
-            let scale = target.width / size.width
-            context.scaleBy(x: scale, y: scale)
-            context.concatenate(first.getDrawingTransform(.cropBox, rect: CGRect(origin: .zero, size: size), rotate: 0, preserveAspectRatio: true))
-            context.drawPDFPage(first)
-            context.restoreGState()
+            ShelfVectorDrawing.draw(first, in: pdf(target), context: context)
             frame(target)
             return true
         }
@@ -417,5 +400,45 @@ enum ShelfPDF {
             let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
             drawLine(line, in: CGRect(x: box.midX - width / 2, y: box.minY, width: width, height: box.height), leading: box.height)
         }
+    }
+}
+
+// MARK: - Vector figures
+
+/// A PDF's page or an SVG drawn into a Core Graphics context, at any size: shared by Export as PDF… (`ShelfPDF`, into
+/// the PDF's page) and Compare (`CompareImages`, into a picture), so the two draw a figure the same way. Safe off the
+/// main actor; Export already draws on a queue of its own.
+enum ShelfVectorDrawing {
+    /// A page's upright size in points: its crop box, turned when the page is.
+    nonisolated static func uprightSize(of page: CGPDFPage) -> CGSize {
+        let media = page.getBoxRect(.cropBox)
+        return page.rotationAngle % 180 != 0 ? CGSize(width: media.height, height: media.width) : media.size
+    }
+
+    /// The page in `target` (the context's own coordinates), on white, its own turn and crop applied.
+    nonisolated static func draw(_ page: CGPDFPage, in target: CGRect, context: CGContext) {
+        let size = uprightSize(of: page)
+        guard size.width > 0, size.height > 0 else { return }
+        context.saveGState()
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(target)
+        context.clip(to: target)
+        // The page's own turn and crop, then up (or down) to the target: the drawing transform doesn't scale up.
+        context.translateBy(x: target.minX, y: target.minY)
+        let scale = target.width / size.width
+        context.scaleBy(x: scale, y: scale)
+        context.concatenate(page.getDrawingTransform(.cropBox, rect: CGRect(origin: .zero, size: size), rotate: 0, preserveAspectRatio: true))
+        context.drawPDFPage(page)
+        context.restoreGState()
+    }
+
+    /// An SVG (or any image AppKit draws as paths) in `target`, which ImageIO doesn't read.
+    nonisolated static func draw(_ image: NSImage, in target: CGRect, context: CGContext) {
+        context.saveGState()
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        context.restoreGState()
     }
 }

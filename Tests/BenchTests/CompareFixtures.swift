@@ -35,6 +35,42 @@ enum CompareFixtures {
         encode(image(width: width, height: height, colour: colour), type: .jpeg, orientation: orientation)
     }
 
+    /// A PDF of `pages` pages, each `width` × `height` points with a flat blue bar across its lower half on white, as a
+    /// plotting library's figure would be: a vector, no pixels of its own.
+    static func pdf(width: CGFloat, height: CGFloat, pages: Int = 1) -> Data {
+        let out = NSMutableData()
+        var box = CGRect(x: 0, y: 0, width: width, height: height)
+        let consumer = CGDataConsumer(data: out as CFMutableData)!
+        let context = CGContext(consumer: consumer, mediaBox: &box, nil)!
+        for _ in 0..<pages {
+            context.beginPDFPage(nil)
+            context.setFillColor(CGColor(srgbRed: 0.1, green: 0.3, blue: 0.8, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height / 2))
+            context.endPDFPage()
+        }
+        context.closePDF()
+        return out as Data
+    }
+
+    /// An SVG `width` × `height` with a flat blue bar across its lower half and nothing under the rest (transparent).
+    static func svg(width: Int, height: Int) -> Data {
+        Data("""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="\(width)" height="\(height)" viewBox="0 0 \(width) \(height)">
+          <rect x="0" y="\(height / 2)" width="\(width)" height="\(height / 2)" fill="#1a4dcc"/>
+        </svg>
+        """.utf8)
+    }
+
+    /// The colour at (x, y) of `image` (top-left origin), as 0 to 255.
+    static func pixel(_ image: CGImage, x: Int, y: Int) -> (r: Int, g: Int, b: Int) {
+        var rgba = [UInt8](repeating: 0, count: 4)
+        let context = CGContext(data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
+        return (Int(rgba[0]), Int(rgba[1]), Int(rgba[2]))
+    }
+
     static func image(width: Int, height: Int, colour: (Int, Int) -> (UInt8, UInt8, UInt8)) -> CGImage {
         var pixels = [UInt8](repeating: 255, count: width * height * 4)
         for y in 0..<height {
@@ -77,6 +113,29 @@ enum CompareFixtures {
             if y == bottom || y == bottom + 1, x > left - 8, x < width - 20 { return (36, 36, 34) }
             return (255, 255, 255)
         }
+    }
+
+    /// The same chart as a PDF of `pages` pages, `width` × `height` points, its bars and axis drawn as vectors, as a
+    /// plotting library saves a figure for a paper.
+    static func chartPDF(width: CGFloat = 460, height: CGFloat = 307, low: Double, pages: Int = 1) -> Data {
+        let out = NSMutableData()
+        var box = CGRect(x: 0, y: 0, width: width, height: height)
+        let context = CGContext(consumer: CGDataConsumer(data: out as CFMutableData)!, mediaBox: &box, nil)!
+        let left = width / 10, bar = width * 0.05, gap = width * 0.02, bottom = height / 8
+        for _ in 0..<pages {
+            context.beginPDFPage(nil)
+            for index in 0..<12 {
+                let tall = index == 6 ? low : 0.78 + Double((index * 5) % 7) / 100
+                context.setFillColor(index == 6 ? CGColor(srgbRed: 217 / 255, green: 119 / 255, blue: 87 / 255, alpha: 1)
+                                                : CGColor(srgbRed: 36 / 255, green: 36 / 255, blue: 34 / 255, alpha: 1))
+                context.fill(CGRect(x: left + CGFloat(index) * (bar + gap), y: bottom, width: bar, height: height * 0.7 * tall))
+            }
+            context.setFillColor(CGColor(srgbRed: 36 / 255, green: 36 / 255, blue: 34 / 255, alpha: 1))
+            context.fill(CGRect(x: left - 8, y: bottom - 1.5, width: width - 20 - (left - 8), height: 1.5))
+            context.endPDFPage()
+        }
+        context.closePDF()
+        return out as Data
     }
 }
 

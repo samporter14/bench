@@ -3448,9 +3448,10 @@ differ in the pages they hold and in when they open.
   in a demo.
 - **Pages for 1.1.** Primary button: Next, and Continue on the last page.
   1. *Compare two things on the Shelf.* A split-panes symbol. "Right-click a
-     picture or a text file on the Shelf and choose Compare With. Pictures sit
-     side by side, or one wipes over the other; for text, you see what changed,
-     line by line."
+     figure or a text file on the Shelf and choose Compare With. Pictures, PDFs
+     and SVGs sit side by side, or one wipes over the other; for text, you see
+     what changed, line by line. Or click the circle on two cards and choose
+     Compare." (PDFs, SVGs and the circle since 1.1.2.)
   2. *Project Workspaces.* A folder. "Each project keeps its last conversation, the
      references you pin to it and a small working note. History → Return to Project
      brings them back together. There’s nothing to save."
@@ -6665,12 +6666,20 @@ found, no match in it) no longer redraws the window.
 
 **Lab-meeting PDF** (Kept/ShelfPDF.swift, ShelfPDFRules.swift,
 ShelfPDFCommand.swift, ShelfPicking.swift; since 1.0). Pick figures on the
-Shelf and make one page for each, for lab meeting or a quick send. ⌘-click
-adds a card or takes it away, ⇧-click picks the run from the last card
-clicked, ⌘A takes everything shown; a plain click, an arrow key or Esc goes
-back to one. While several are picked the cards wear their page number, and
-a card in place of the detail says how many, shows the pages small, and holds
-the one clay action, **Export 3 Figures as PDF…** (the number picked; **Export
+Shelf and make one page for each, for lab meeting or a quick send. **The pick
+circle** (since 1.1.2, as in Photos): the card under the pointer shows a small
+hairline circle at its top-left corner, and a plain click on it adds the card
+to the picks; once two are picked every card shows its circle (the picked ones
+their page number in it), so the next is one click, and a click on a number
+takes that card away. The selected card alone has none: it is picked already,
+its ink edge says so, and its circle could only do nothing. VoiceOver has it as
+the card's **Pick** or **Unpick** action. Space stays Quick Look, as in Finder,
+so the circle has no key (`ShelfModel.pickCircle`, `ShelfPickCircle`). ⌘-click
+adds a card or takes it away too, ⇧-click picks the run from the last card
+clicked, ⌘A takes everything shown; a plain click on a card, an arrow key or
+Esc goes back to one. While several are picked a card in place of the detail
+says how many, shows the pages small, has **Clear**, **Compare** for two that
+pair (a quiet hairline pill, see Compare) and the one clay action, **Export 3 Figures as PDF…** (the number picked; **Export
 Figure as PDF…** for one; since 1.0.6, when a note, a document or a table is
 among them, **Export 3 Items as PDF…**, and **Export as PDF…** for one that
 isn't a figure, VoiceOver's action likewise). The same command is a quiet pill in the title bar
@@ -6798,7 +6807,7 @@ fetched from iCloud.
 
 **The way in.** A right-click on one card is enough. (In 1.1.0 you had to
 pick two first, and nothing on screen said you could; Sam didn't find it.) A
-picture or a text file has **Compare With ▸** after Export … as PDF…: the
+figure or a text file has **Compare With ▸** after Export … as PDF…: the
 other cards shown that pair with it, in the Shelf's order (so the search, the
 project and the kind chip narrow it), never the card itself, at most twelve
 and no More…. An entry is one line, the card's name and its caption in
@@ -6807,28 +6816,31 @@ keep a keep's own name, which may hold a "·", apart. One that would read the
 same as another, or as the card, adds its version; a long name is cut in the
 middle, a long session at its end. Choosing one opens Compare, this card on
 the left. With nothing to pair with, **Compare With** is dimmed and its help
-says why: "There's no other picture on the Shelf to compare with", or, with a
-search or filter on, "No other picture is shown to compare with. Clear the
-search or the filters to see more." A card Compare can't read (a PDF, a table,
-an SVG) has no item. The list is made from what the Shelf holds in memory: no
+says why: "There's no other figure on the Shelf to compare with", or, with a
+search or filter on, "No other figure is shown to compare with. Clear the
+search or the filters to see more." A card Compare can't read (a table, a
+script, a web page) has no item. The list is made from what the Shelf holds in memory: no
 disk read, no thumbnail.
 
 With exactly two picked (⌘-click, ⇧-click), either one's menu has **Compare**
-there instead, as in 1.1.0: two pictures or two text files open the Compare
+there instead, as in 1.1.0: two figures or two text files open the Compare
 window, the card shown first on the left; any other pair has it dimmed as
-**Compare (Two Pictures or Two Text Files)**, and opens nothing. A card outside
-the two keeps its Compare With. Two that pair also get a quiet **Compare** pill
-in the title bar, just before Export as PDF… and in its style
-(`ShelfPickPills`); one pick, three or more, or a pair Compare can't read:
-none. Export stays beside the search as Compare comes and goes, and under 760
-points the search narrows to 120 beside both pills (160 beside Export alone),
-so the bar fits at the window's least width, 620. There is no menu-bar entry:
+**Compare (Two Figures or Two Text Files)**, and opens nothing. A card outside
+the two keeps its Compare With. Two that pair also get a quiet **Compare** on
+the picked card that stands in for the detail, between **Clear** and the clay
+Export (`ShelfCompareButton`, hairline, `SolanumPillStyle`); one pick, three
+or more, or a pair Compare can't read: none. Since 1.1.2 that is its only
+button: the title bar's Compare pill of 1.1.0 is gone, since the picked card is
+on screen exactly when two are picked, beside the words about them, and one
+place is enough. The title bar keeps Export as PDF… alone, and its search is
+160 under 760 points again. There is no menu-bar entry:
 no menu in the bar carries the Shelf's picks (File's Add to Shelf and Keep
 with Data and Code… act on the Results window's selection, and the Shelf's ⌘P
 is a key of its own). `CompareRules.offer` and `ShelfModel.comparablePair`
-decide; `ShelfCompareItem` is one line in ShelfView. Pictures are the raster
-kinds ImageIO decodes (png, jpg, jpeg, gif, webp, tif, tiff, bmp, heic, avif);
-text is the Shelf's prose kinds (md, markdown, txt, text, rst), a note made by
+decide; `ShelfCompareItem` is one line in ShelfView. Figures are the raster
+kinds ImageIO decodes (png, jpg, jpeg, gif, webp, tif, tiff, bmp, heic, avif)
+and, since 1.1.2, PDFs and SVGs (`CompareRules.figureExtensions`), in any mix,
+so a PNG pairs with the PDF of the same figure; text is the Shelf's prose kinds (md, markdown, txt, text, rst), a note made by
 Add Selection to Shelf among them (`CompareRules`).
 
 **The window** (`CompareWindowController`): one native window, reused (a new
@@ -6947,11 +6959,27 @@ bytes that aren't UTF-8); kept changing; or the disk layer's own sentence. Two
 text files with such a side say "The text can't be compared" with the side's
 sentence, never "No text changes".
 
-**Not in 1.1.0**: PDF pages, tables, registration, difference maps and editing.
+**PDFs and SVGs** (since 1.1.2, `CompareImages.decodePDF`, `decodeSVG`). Told
+apart by their first bytes, never by the name ("%PDF-" in the first kilobyte;
+text starting with "<" with "<svg" in its first 4 KB), and drawn as Export as
+PDF… draws them (`ShelfVectorDrawing`, shared): a PDF's first page with its own
+crop and turn, an SVG through AppKit, each on white (so a transparent SVG reads
+as the Shelf's cards show it) with its long side at 3,072 pixels, off the main
+actor. The 8 MB read is the same: nothing on the Shelf is larger, since a keep
+copies at most 8 MB. Its side states its own size in points, "460 × 307 pt",
+and a PDF of several pages adds "· page 1 of 3"; VoiceOver says "points". Wipe
+needs the same size counted the same way, so two pages or a page and an SVG of
+one size wipe, but a 460 × 307 pt page and a 460 × 307 px PNG don't. A locked
+PDF, one with no pages, one cut short, or an SVG AppKit can't read or with no
+size, says "“z_prime_by_plate.pdf” isn't a figure Capsid can read." Zooming
+past 3,072 shows the drawn pixels larger; the vector isn't drawn again.
+
+**Not in Compare**: a PDF's other pages, tables, registration, difference maps and editing.
 
 **Tests.** `CompareRulesTests` (which pairs, the menu's words, the sides'
 lines, pictures decoded upright and within their bounds, an EXIF-turned JPEG,
-Wipe's sizes and divider, Fit, zoom and pan, linked panes of two sizes, the
+a PDF and an SVG drawn on white at their aspect, a broken one refused,
+Wipe's sizes (and units) and divider, Fit, zoom and pan, linked panes of two sizes, the
 column's marks, VoiceOver's words and a copy that is the words alone, the pair
 from two Shelf picks), `CompareDiffTests` (identical, a line added or taken
 away, repeated lines, Unicode, a byte order mark and Windows line ends, empty
@@ -6965,15 +6993,17 @@ live reader on a real Kept folder changing nothing), `CompareWithTests` (Compare
 With's cards: only those that pair, never the card itself, the Shelf's order,
 its search and project, at most twelve; the dimmed item and its help; no item
 on a kind Compare can't read; two picks as before, and a card outside them
-keeping its Compare With; each entry's words, this card on the left; the pill
+keeping its Compare With; each entry's words, this card on the left; the button
 only for exactly two that pair, in the Shelf's order; the wiring in ShelfView)
 and `CompareSnapshotTests` (Wipe's pixels at 0%, 50% and 100%, and, with
-`CAPSID_SNAPSHOT_DIR`, each state in light and dark, the Shelf's title bar with
-the Compare pill at 940 and 620 points, a check that the bar's pieces fit at
-620, and Compare With's entries written out for review, since a context menu
+`CAPSID_SNAPSHOT_DIR`, each state in light and dark, a PNG beside a three-page
+PDF, the Shelf with the pick circle on a hovered card and with two picked at 940
+and 620 points, checks that the picked card's row and the title bar fit at 620,
+and Compare With's entries written out for review, since a context menu
 can't be drawn offscreen). Live checks still owed: the gestures, keyboard and
 VoiceOver in the real window, the menu items and the Compare With submenu, the
-pill in the real title bar, and files in iCloud.
+pick circle under a real pointer, real PDFs and SVGs from Claude Science, and
+files in iCloud.
 
 ## Find any figure (Find/, since 1.0)
 

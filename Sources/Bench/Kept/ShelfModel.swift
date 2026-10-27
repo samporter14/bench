@@ -81,6 +81,8 @@ final class ShelfModel: ObservableObject {
     @Published var picked: Set<String> = []
     /// The card a ⇧-click runs from.
     var pickAnchor: String?
+    /// The card under the pointer, which shows its pick circle while only one is picked (ShelfPicking.swift).
+    @Published var hoveredCard: String?
     @Published private(set) var note: Note?
 
     /// Items being taken off right now, by id: Remove pressed again before the first removal is done (a

@@ -79,14 +79,14 @@ struct ShelfView: View {
                 // board 12 has the search at the right of the bar (board 11's window drew it by the project pill).
                 ToolbarSpacer(.flexible)
                 if model.showsExportPill {
-                    // Export as PDF…, with Compare before it while exactly two picks pair (ShelfPicking.swift).
+                    // Export as PDF… (ShelfPicking.swift); Compare is on the picked card, beside it there.
                     ToolbarItem {
-                        ShelfPickPills(model: model)
+                        ShelfExportPDFButton(model: model)
                     }
                     .sharedBackgroundVisibility(.hidden)
                 }
                 ToolbarItem {
-                    ShelfSearchPill(search: $model.search, width: ShelfSearchPill.width(forWindow: size.width, comparing: model.showsComparePill))
+                    ShelfSearchPill(search: $model.search, width: ShelfSearchPill.width(forWindow: size.width))
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
@@ -231,10 +231,12 @@ struct ShelfView: View {
                 .background(Solanum.raised, in: .rect(cornerRadius: ShelfLook.tileRadius))
                 .overlay(RoundedRectangle(cornerRadius: ShelfLook.tileRadius)
                     .strokeBorder(isSelected ? Solanum.ink : ShelfLook.cardEdge, lineWidth: isSelected ? 2 : 1))
-                .overlay(alignment: .topLeading) {
-                    if let page = model.pageNumber(of: item.id) { ShelfPageBadge(number: page).offset(x: -5, y: -5) }
-                }
                 .accessibilityHidden(true)
+                // Pick or unpick with a plain click: on the card under the pointer, and on every card once two are
+                // picked; the page number when picked (ShelfPicking.swift). VoiceOver has it as the card's action.
+                .overlay(alignment: .topLeading) {
+                    ShelfPickCircle(model: model, id: item.id).offset(x: -5, y: -5).accessibilityHidden(true)
+                }
             ShelfName(parts: item.nameParts, size: 13, weight: isSelected ? .semibold : .regular)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -244,6 +246,9 @@ struct ShelfView: View {
                 .lineLimit(1)
         }
         .contentShape(Rectangle())
+        .onHover { inside in
+            if inside { model.hoveredCard = item.id } else if model.hoveredCard == item.id { model.hoveredCard = nil }
+        }
         .onTapGesture(count: 2) {
             model.selection = item.id
             quickLookSelected()
@@ -277,6 +282,12 @@ struct ShelfView: View {
         .accessibilityLabel("\(item.title), \(caption)" + (model.pageNumber(of: item.id).map { ", page \($0)" } ?? ""))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { model.selection = item.id }
+        .accessibilityActions {
+            // Not on the one selected card alone: picked already, Unpick would do nothing.
+            if model.offersPick(item.id) {
+                Button(model.pickCircleName(for: item.id)) { model.pickCircleClicked(item.id) }
+            }
+        }
     }
 
     // MARK: Nothing to show
@@ -386,11 +397,10 @@ struct ShelfSearchPill: View {
     @Binding var search: String
     var width: CGFloat = 200
 
-    /// Board 12's 200 points, and less in a narrow window, where the bar also holds "Shelf", the project pill and,
-    /// with several picked, Export as PDF…: 160, or 120 while Compare is beside it too, so the bar still fits at the
-    /// window's least width.
-    static func width(forWindow width: CGFloat, comparing: Bool = false) -> CGFloat {
-        width < 760 ? (comparing ? 120 : 160) : 200
+    /// Board 12's 200 points, and 160 in a narrow window, where the bar also holds "Shelf", the project pill and,
+    /// with several picked, Export as PDF…, so the bar still fits at the window's least width.
+    static func width(forWindow width: CGFloat) -> CGFloat {
+        width < 760 ? 160 : 200
     }
 
     var body: some View {

@@ -22,11 +22,18 @@ struct CompareRulesTests {
         #expect(CompareRules.pairing(md, txt) == .comparable(.text))
         #expect(CompareRules.pairing(md, note) == .comparable(.text))
         #expect(CompareRules.pairing(png, md) == .notComparable)
-        for other in ["figure.svg", "receptors.xlsx", "z_prime_by_plate.csv", "methods.pdf", "plot.py", "page.html"] {
+        for other in ["receptors.xlsx", "z_prime_by_plate.csv", "plot.py", "page.html"] {
             #expect(CompareRules.pairing(png, CompareFixtures.item(other)) == .notComparable, "\(other)")
             #expect(CompareRules.pairing(CompareFixtures.item(other), md) == .notComparable, "\(other)")
         }
-        #expect(CompareRules.kind(of: "figure.svg") == nil)
+        // PDFs and SVGs are figures: they pair with a picture, and with each other, never with text.
+        #expect(CompareRules.kind(of: "figure.svg") == .images)
+        #expect(CompareRules.kind(of: "Z_PRIME_BY_PLATE.PDF") == .images)
+        let pdf = CompareFixtures.item("z_prime_by_plate.pdf"), svg = CompareFixtures.item("z_prime_by_plate.svg")
+        #expect(CompareRules.pairing(png, pdf) == .comparable(.images))
+        #expect(CompareRules.pairing(pdf, svg) == .comparable(.images))
+        #expect(CompareRules.pairing(svg, jpg) == .comparable(.images))
+        #expect(CompareRules.pairing(pdf, md) == .notComparable && CompareRules.pairing(note, svg) == .notComparable)
         #expect(CompareRules.kind(of: "notes.RST") == .text)
         #expect(CompareRules.kind(of: "scan.heic") == .images)
     }
@@ -112,6 +119,71 @@ struct CompareRulesTests {
         #expect(CompareImages.decode(Data("not a picture".utf8)) == .failure(.notAnImage))
         #expect(CompareImages.decode(Data()) == .failure(.notAnImage))
         #expect(CompareImages.pixelLimit == 64_000_000 && CompareImages.byteLimit == 8 << 20)
+    }
+
+    // MARK: PDFs and SVGs
+
+    @Test func aPDFsFirstPageIsDrawnOnWhiteAtItsOwnAspectAndStatedInPoints() throws {
+        let one = try CompareImages.decode(CompareFixtures.pdf(width: 400, height: 300)).get()
+        #expect(one.unit == .points && one.source == CGSize(width: 400, height: 300) && one.pages == 1)
+        // Its long side at the limit, its aspect kept.
+        #expect(one.shown == CGSize(width: 3_072, height: 2_304))
+        // On white where the page is empty, the bar's blue in the lower half.
+        let top = CompareFixtures.pixel(one.image, x: 1_536, y: 400), bottom = CompareFixtures.pixel(one.image, x: 1_536, y: 2_000)
+        #expect(top.r > 245 && top.g > 245 && top.b > 245, "\(top)")
+        #expect(bottom.b > 150 && bottom.r < 60, "\(bottom)")
+        #expect(CompareRules.sizeLine(one) == "400 \u{00D7} 300 pt")
+        #expect(CompareRules.sizeSpoken(one) == "400 by 300 points")
+        // Several pages: the first is shown, and its side says so.
+        let three = try CompareImages.decode(CompareFixtures.pdf(width: 612, height: 792, pages: 3)).get()
+        #expect(three.pages == 3 && three.shown == CGSize(width: 2_374, height: 3_072))
+        #expect(CompareRules.sizeLine(three) == "612 \u{00D7} 792 pt \u{00B7} page 1 of 3")
+        #expect(CompareRules.sizeLine(three, pages: false) == "612 \u{00D7} 792 pt")
+        #expect(CompareRules.sizeSpoken(three) == "612 by 792 points, page 1 of 3")
+        // A picture's line is as it was.
+        let png = try CompareImages.decode(CompareFixtures.png(width: 480, height: 320, colour: gradient)).get()
+        #expect(png.unit == .pixels && png.pages == nil && CompareRules.sizeLine(png) == "480 \u{00D7} 320 px")
+    }
+
+    @Test func anSVGIsDrawnOnWhiteAtItsOwnAspectAndStatedInPoints() throws {
+        let svg = try CompareImages.decode(CompareFixtures.svg(width: 200, height: 100)).get()
+        #expect(svg.unit == .points && svg.source == CGSize(width: 200, height: 100) && svg.pages == nil)
+        #expect(svg.shown == CGSize(width: 3_072, height: 1_536))
+        // Its transparent top on white, as the Shelf's cards show figures.
+        let top = CompareFixtures.pixel(svg.image, x: 1_536, y: 300), bottom = CompareFixtures.pixel(svg.image, x: 1_536, y: 1_200)
+        #expect(top.r > 245 && top.g > 245 && top.b > 245, "\(top)")
+        #expect(bottom.b > 150 && bottom.r < 60, "\(bottom)")
+        #expect(CompareRules.sizeLine(svg) == "200 \u{00D7} 100 pt")
+        // Told by its bytes, not its name, with a byte order mark or space before it.
+        #expect(CompareImages.vector(Data("\u{FEFF}  <svg width=\"1\" height=\"1\"/>".utf8)) == .svg)
+        #expect(CompareImages.vector(CompareFixtures.pdf(width: 10, height: 10)) == .pdf)
+        #expect(CompareImages.vector(CompareFixtures.png(width: 4, height: 4, colour: gradient)) == nil)
+        #expect(CompareImages.vector(Data("# Notes about <svg> files".utf8)) == nil)
+    }
+
+    @Test func aBrokenPDFOrSVGIsRefusedAsNotAFigure() {
+        // A PDF's header and nothing that makes a page; a PDF cut short.
+        #expect(CompareImages.decode(Data("%PDF-1.7\n%%EOF\n".utf8)) == .failure(.notAnImage))
+        let whole = CompareFixtures.pdf(width: 400, height: 300)
+        #expect(CompareImages.decode(whole.prefix(whole.count / 3)) == .failure(.notAnImage))
+        // An SVG with no size, one cut off in its tag, and one that isn't XML at all.
+        #expect(CompareImages.decode(Data("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".utf8)) == .failure(.notAnImage))
+        #expect(CompareImages.decode(Data("<svg width=\"200\" hei".utf8)) == .failure(.notAnImage))
+        #expect(CompareImages.decode(Data("<svg>>>>< not xml".utf8)) == .failure(.notAnImage))
+        // The side's sentence covers PDFs and SVGs.
+        #expect(CompareProblem.notAPicture.sentence("z_prime_by_plate.pdf") == "\u{201C}z_prime_by_plate.pdf\u{201D} isn\u{2019}t a figure Capsid can read.")
+    }
+
+    @Test func wipeNeedsTheSameSizeCountedTheSameWay() throws {
+        let pageA = try CompareImages.decode(CompareFixtures.pdf(width: 400, height: 300)).get()
+        let pageB = try CompareImages.decode(CompareFixtures.pdf(width: 400, height: 300, pages: 2)).get()
+        let svg = try CompareImages.decode(CompareFixtures.svg(width: 400, height: 300)).get()
+        let png = try CompareImages.decode(CompareFixtures.png(width: 400, height: 300, colour: gradient)).get()
+        // Two pages of one size, and a page and an SVG of it: Wipe.
+        #expect(CompareRules.canWipe(pageA, pageB) && CompareRules.canWipe(pageA, svg))
+        // A 400 × 300 px picture beside a 400 × 300 pt page: not one size, so no Wipe.
+        #expect(!CompareRules.canWipe(pageA, png) && !CompareRules.canWipe(png, svg))
+        #expect(CompareRules.canWipe(png, png) && !CompareRules.canWipe(png, nil))
     }
 
     // MARK: Geometry
