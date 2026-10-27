@@ -79,13 +79,14 @@ struct ShelfView: View {
                 // board 12 has the search at the right of the bar (board 11's window drew it by the project pill).
                 ToolbarSpacer(.flexible)
                 if model.showsExportPill {
+                    // Export as PDF…, with Compare before it while exactly two picks pair (ShelfPicking.swift).
                     ToolbarItem {
-                        ShelfExportPDFButton(model: model)
+                        ShelfPickPills(model: model)
                     }
                     .sharedBackgroundVisibility(.hidden)
                 }
                 ToolbarItem {
-                    ShelfSearchPill(search: $model.search, width: ShelfSearchPill.width(forWindow: size.width))
+                    ShelfSearchPill(search: $model.search, width: ShelfSearchPill.width(forWindow: size.width, comparing: model.showsComparePill))
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
@@ -263,7 +264,8 @@ struct ShelfView: View {
             Button("Copy") { ShelfActions.copy(item, disk: model.index.disk) }
             // On the picks when this card is one of them, else on this card alone: the name says which.
             Button(model.exportName(from: item)) { model.exportPDF(from: item) }
-            // With exactly two picked, this card among them: Compare (Kept/CompareWindow.swift).
+            // Compare With ▸ the cards shown that pair with this one; Compare on two picks, this card among them
+            // (Kept/CompareWindow.swift).
             ShelfCompareItem(model: model, item: item)
             Divider()
             Button("Open") { NSWorkspace.shared.open(item.fileURL) }
@@ -385,8 +387,11 @@ struct ShelfSearchPill: View {
     var width: CGFloat = 200
 
     /// Board 12's 200 points, and less in a narrow window, where the bar also holds "Shelf", the project pill and,
-    /// with several picked, Export as PDF….
-    static func width(forWindow width: CGFloat) -> CGFloat { width < 760 ? 160 : 200 }
+    /// with several picked, Export as PDF…: 160, or 120 while Compare is beside it too, so the bar still fits at the
+    /// window's least width.
+    static func width(forWindow width: CGFloat, comparing: Bool = false) -> CGFloat {
+        width < 760 ? (comparing ? 120 : 160) : 200
+    }
 
     var body: some View {
         HStack(spacing: 6) {

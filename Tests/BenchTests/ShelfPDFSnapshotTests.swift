@@ -183,7 +183,7 @@ struct ShelfPDFSnapshotTests {
                     Text("Shelf").font(.system(size: 15, weight: .semibold)).foregroundStyle(Solanum.ink).padding(.leading, 8)
                     ShelfProjectPill(model: model)
                     Spacer()
-                    if model.showsExportPill { ShelfExportPDFButton(model: model) }
+                    if model.showsExportPill { ShelfPickPills(model: model) }
                     ShelfSearchPill(search: .constant(model.search))
                 }
                 .padding(.horizontal, 14)

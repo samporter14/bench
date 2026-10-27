@@ -55,7 +55,7 @@ enum WhatsNew {
     static let release11 = WhatsNewRelease(version: "1.1", pages: [
         WhatsNewPage(
             title: "Compare two things on the Shelf",
-            text: "Pick two pictures or two text files on the Shelf, right-click one and choose Compare. Pictures sit side by side, or one wipes over the other; for text, you see what changed, line by line.",
+            text: "Right-click a picture or a text file on the Shelf and choose Compare With. Pictures sit side by side, or one wipes over the other; for text, you see what changed, line by line.",
             art: .symbol("square.split.2x1")),
         WhatsNewPage(
             title: "Project Workspaces",

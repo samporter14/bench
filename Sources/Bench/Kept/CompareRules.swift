@@ -1,6 +1,8 @@
 // CompareRules.swift — the decisions behind Compare (DESIGN.md, Compare), pure:
 // which two Shelf items make a pair (two pictures ImageIO can read, or two text
-// files read as source), what the Shelf's menu says when they don't, the words
+// files read as source), what a Shelf card's menu offers (Compare With and the
+// cards shown that pair with it, or Compare on two picks) and what it says when
+// nothing pairs, when the title bar's Compare pill shows, the words
 // each side carries (its file's name and its own source line, nothing invented),
 // whether Wipe is offered (the same upright pixel size), and the geometry of a
 // picture in its pane: Fit, a zoom relative to each picture's own fit and a
@@ -41,7 +43,7 @@ enum CompareRules {
         case notComparable
     }
 
-    /// Two items pair when both are pictures or both are text files. Called only with exactly two picked.
+    /// Two items pair when both are pictures or both are text files.
     static func pairing(_ a: ShelfItem, _ b: ShelfItem) -> Pairing {
         guard let first = kind(of: a.fileName), let second = kind(of: b.fileName), first == second else { return .notComparable }
         return .comparable(first)
@@ -52,6 +54,130 @@ enum CompareRules {
     static let menuTitle = "Compare"
     static let unavailableTitle = "Compare (Two Pictures or Two Text Files)"
     static let unavailableHelp = "Compare reads two pictures, or two text or Markdown files, side by side."
+
+    // MARK: The card's menu
+
+    /// What a Shelf card's menu offers for Compare, after Export … as PDF….
+    enum Offer: Equatable, Sendable {
+        /// Nothing: a kind Compare doesn't read (a PDF, a table, an SVG…), outside a pair of picks.
+        case none
+        /// Exactly two picked, this card one of them, and they pair: Compare, left and right as the Shelf shows them.
+        case compare(left: ShelfItem, right: ShelfItem)
+        /// Exactly two picked, this card one of them, and they don't pair: `unavailableTitle`, dimmed, with its reason.
+        case unavailable
+        /// Compare With ▸ and the other items this card pairs with.
+        case compareWith([Entry])
+        /// Compare With, dimmed: this card is one Compare reads, but nothing shown pairs with it. The help says why.
+        case nothingToCompareWith(help: String)
+    }
+
+    /// One line of Compare With: the card the menu belongs to on the left, the one chosen on the right.
+    struct Entry: Equatable, Identifiable, Sendable {
+        let left: ShelfItem
+        let right: ShelfItem
+        /// "z_prime_by_plate.png (Plate reader QC · 8:47 AM)": the right side's name and its card's caption.
+        let title: String
+        var id: String { right.id }
+    }
+
+    static let compareWithTitle = "Compare With"
+    /// Compare With lists at most this many: the first that pair, in the order the Shelf shows them.
+    static let compareWithLimit = 12
+    /// The longest a name, or a session, runs in an entry before it is cut short, so an entry stays one calm line.
+    static let entryNameLimit = 40
+    static let entrySessionLimit = 36
+
+    /// The dimmed Compare With's help: nothing else of its kind, on the Shelf or among the cards a search, a project or
+    /// a kind leaves shown.
+    static func nothingToCompareWithHelp(_ kind: CompareKind, filtered: Bool) -> String {
+        let what = kind == .images ? "picture" : "text file"
+        return filtered
+            ? "No other \(what) is shown to compare with. Clear the search or the filters to see more."
+            : "There\u{2019}s no other \(what) on the Shelf to compare with."
+    }
+
+    /// The card's offer. `pickedPair` is the two picks, in the Shelf's order, when exactly two are picked and this card
+    /// is one of them (`ShelfModel.comparePair`): then the menu says what it said before Compare With, and nothing
+    /// more. Otherwise a card Compare reads gets Compare With, from `shown` (the cards the Shelf shows now, in their
+    /// order, so the search, the project and the kind chip narrow it), and any other card gets nothing. Only names and
+    /// what the cards already say are read: nothing from disk, no thumbnails.
+    static func offer(for item: ShelfItem, pickedPair: (ShelfItem, ShelfItem)?, shown: [ShelfItem], filtered: Bool,
+                      limit: Int = compareWithLimit, now: Date = Date(), calendar: Calendar = .current,
+                      locale: Locale = .current) -> Offer {
+        if let pair = pickedPair, pair.0.id == item.id || pair.1.id == item.id {
+            guard case .comparable = pairing(pair.0, pair.1) else { return .unavailable }
+            return .compare(left: pair.0, right: pair.1)
+        }
+        guard let kind = kind(of: item.fileName) else { return .none }
+        let others = candidates(for: item, in: shown, limit: limit)
+        guard !others.isEmpty else { return .nothingToCompareWith(help: nothingToCompareWithHelp(kind, filtered: filtered)) }
+        return .compareWith(entries(for: item, others, now: now, calendar: calendar, locale: locale))
+    }
+
+    /// The items Compare With lists for `item`: those shown that pair with it, not itself, in the order shown, at most
+    /// `limit`. Stops reading `shown` once it has them.
+    static func candidates(for item: ShelfItem, in shown: [ShelfItem], limit: Int = compareWithLimit) -> [ShelfItem] {
+        guard let mine = kind(of: item.fileName), limit > 0 else { return [] }
+        var found: [ShelfItem] = []
+        for other in shown where other.id != item.id && kind(of: other.fileName) == mine {
+            found.append(other)
+            if found.count == limit { break }
+        }
+        return found
+    }
+
+    /// The entries for `others`, `item` on the left of each. One that would read the same as another, or as the card
+    /// itself (one name, one session, one day), also says its version, when it is known.
+    static func entries(for item: ShelfItem, _ others: [ShelfItem], now: Date = Date(), calendar: Calendar = .current,
+                        locale: Locale = .current) -> [Entry] {
+        let titles = others.map { entryTitle(for: $0, now: now, calendar: calendar, locale: locale) }
+        var seen: [String: Int] = [entryTitle(for: item, now: now, calendar: calendar, locale: locale): 1]
+        for title in titles { seen[title, default: 0] += 1 }
+        return zip(others, titles).map { other, title in
+            let same = seen[title, default: 0] > 1
+            return Entry(left: item, right: other,
+                         title: same ? entryTitle(for: other, now: now, calendar: calendar, locale: locale, version: true) : title)
+        }
+    }
+
+    /// An entry's words: the name the card shows, then in brackets its caption (the session, and when it was put on the
+    /// Shelf), and the version when asked and known. One line: a long name is cut in the middle (its extension kept),
+    /// a long session at its end. The brackets keep a keep's own name, which may hold a "·" itself, apart from the
+    /// caption: "Fig 2B · Z′ by plate (Plate reader QC · Sun)".
+    static func entryTitle(for item: ShelfItem, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current,
+                           version: Bool = false) -> String {
+        let name = clipped(oneLine(item.title), to: entryNameLimit, middle: true)
+        var caption: [String] = []
+        let session = oneLine(item.record.sessionTitle)
+        if !session.isEmpty { caption.append(clipped(session, to: entrySessionLimit, middle: false)) }
+        caption.append(ShelfRules.when(item.addedAt, now: now, calendar: calendar, locale: locale))
+        if version, let index = item.record.figure.index { caption.append("version \(index)") }
+        return "\(name) (\(caption.joined(separator: " \u{00B7} ")))"
+    }
+
+    /// Line breaks and runs of spaces as one space, trimmed.
+    static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+    }
+
+    /// `text` at most `limit` characters, an ellipsis where it was cut: in the middle, or at the end.
+    static func clipped(_ text: String, to limit: Int, middle: Bool) -> String {
+        guard text.count > limit, limit > 1 else { return text }
+        guard middle else { return String(text.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "\u{2026}" }
+        let tail = (limit - 1) / 2, head = limit - 1 - tail
+        return String(text.prefix(head)) + "\u{2026}" + String(text.suffix(tail))
+    }
+
+    // MARK: The title bar's pill
+
+    /// The Compare pill beside Export as PDF…: shown only for exactly two picks that pair.
+    static let pillTitle = "Compare"
+    static func pillHelp(_ kind: CompareKind) -> String {
+        kind == .images ? "Put the two pictures side by side" : "See what changed between the two text files, line by line"
+    }
+    static func pillSpoken(_ kind: CompareKind) -> String {
+        kind == .images ? "Compare the two pictures" : "Compare the two text files"
+    }
 
     // MARK: Each side's words
 

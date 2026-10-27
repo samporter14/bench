@@ -194,6 +194,44 @@ struct CompareSnapshotTests {
         try await capture(model, "text-unreadable-side", to: directory)
     }
 
+    /// The title bar the Shelf window draws, as a stand-in (the toolbar is the window's): the three dots, "Shelf", the
+    /// project pill, and at the right the real pick pills (Compare, Export as PDF…) and the search pill.
+    private struct ShelfBar: View {
+        @ObservedObject var model: ShelfModel
+        let width: CGFloat
+        /// Drawn as narrow as its contents go, to measure what the bar needs.
+        var measuring = false
+
+        var body: some View {
+            if measuring { bar.fixedSize() } else { bar.frame(width: width, height: 52) }
+        }
+
+        private var bar: some View {
+            HStack(spacing: 10) {
+                ForEach([Color.red, .yellow, .green], id: \.self) { color in Circle().fill(color).frame(width: 12, height: 12) }
+                // The window's own item is fixed in size: it never wraps, so a bar too full runs off the edge.
+                HStack(spacing: 10) {
+                    Text("Shelf").font(.system(size: 15, weight: .semibold)).foregroundStyle(Solanum.ink).padding(.leading, 8)
+                    ShelfProjectPill(model: model)
+                }
+                .fixedSize()
+                Spacer(minLength: 0)
+                if model.showsExportPill { ShelfPickPills(model: model) }
+                ShelfSearchPill(search: .constant(model.search),
+                                width: ShelfSearchPill.width(forWindow: width, comparing: model.showsComparePill))
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 52)
+            .background(Solanum.bar)
+            .overlay(alignment: .bottom) { Solanum.hairline.frame(height: 1) }
+        }
+    }
+
+    /// What the stand-in bar needs, in points, at `width`: its pieces side by side with nothing between.
+    private func needed(_ model: ShelfModel, at width: CGFloat) -> CGFloat {
+        NSHostingView(rootView: ShelfBar(model: model, width: width, measuring: true)).fittingSize.width
+    }
+
     @Test func theShelfWithTwoPickedIsDrawnWhenAsked() async throws {
         guard let destination = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !destination.isEmpty else { return }
         let directory = URL(fileURLWithPath: destination, isDirectory: true)
@@ -208,28 +246,165 @@ struct CompareSnapshotTests {
         let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
         model.pick(try #require(model.shown.first { $0.fileName == "z_prime_by_plate.png" }).id, .only)
         model.pick(try #require(model.shown.first { $0.fileName == "plate_7_heatmap.png" }).id, .toggle)
-        #expect(model.comparePair != nil)
-        let size = NSSize(width: 940, height: 872)
-        for dark in [false, true] {
-            let view = VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    ForEach([Color.red, .yellow, .green], id: \.self) { color in Circle().fill(color).frame(width: 12, height: 12) }
-                    Text("Shelf").font(.system(size: 15, weight: .semibold)).foregroundStyle(Solanum.ink).padding(.leading, 8)
-                    ShelfProjectPill(model: model)
-                    Spacer()
-                    ShelfExportPDFButton(model: model)
-                    ShelfSearchPill(search: .constant(""), width: 200)
+        #expect(model.comparePair != nil && model.showsComparePill)
+        // At the least width, with Compare and Export as PDF… beside the search, the bar's pieces still fit.
+        let least: CGFloat = 620
+        let fits = needed(model, at: least)
+        #expect(fits <= least, "the bar needs \(fits) points at \(least)")
+        // The window at its first width and its least (ShelfView's 620), and the title bar alone at both.
+        for width in [KeptWindowController.size.width, 620] {
+            let size = NSSize(width: width, height: 872)
+            let suffix = width < KeptWindowController.size.width ? "-minimum" : ""
+            for dark in [false, true] {
+                let view = VStack(spacing: 0) {
+                    ShelfBar(model: model, width: width)
+                    ShelfView(model: model, thumbnails: thumbnails, quickLook: KeptQuickLook())
                 }
-                .padding(.horizontal, 14)
-                .frame(height: 52)
-                .background(Solanum.bar)
-                .overlay(alignment: .bottom) { Solanum.hairline.frame(height: 1) }
-                ShelfView(model: model, thumbnails: thumbnails, quickLook: KeptQuickLook())
+                .background(Solanum.page)
+                let rep = try await render(view, size: size, dark: dark)
+                let png = try #require(rep.representation(using: .png, properties: [:]))
+                try png.write(to: directory.appendingPathComponent("shelf-two-picked\(suffix)-\(dark ? "dark" : "light").png"))
+                let bar = try await render(ShelfBar(model: model, width: width), size: NSSize(width: width, height: 52), dark: dark)
+                let barPNG = try #require(bar.representation(using: .png, properties: [:]))
+                try barPNG.write(to: directory.appendingPathComponent("shelf-title-bar-compare\(suffix)-\(dark ? "dark" : "light").png"))
             }
-            .background(Solanum.page)
-            let rep = try await render(view, size: size, dark: dark)
-            let png = try #require(rep.representation(using: .png, properties: [:]))
-            try png.write(to: directory.appendingPathComponent("shelf-two-picked-\(dark ? "dark" : "light").png"))
         }
+        // A picture and a note picked: Export as PDF… alone, at the least width.
+        model.pick(try #require(model.shown.first { $0.fileName == "qc_notes.md" }).id, .only)
+        model.pick(try #require(model.shown.first { $0.fileName == "z_prime_by_plate.png" }).id, .toggle)
+        #expect(model.showsExportPill && !model.showsComparePill)
+        let alone = needed(model, at: least)
+        try ["Shelf title bar at \(Int(least)) points wide, as the stand-in draws it",
+             "Compare and Export as PDF\u{2026} picked: needs \(Int(fits.rounded(.up)))",
+             "Export as PDF\u{2026} alone: needs \(Int(alone.rounded(.up)))"].joined(separator: "\n")
+            .write(to: directory.appendingPathComponent("shelf-title-bar-widths.txt"), atomically: true, encoding: .utf8)
+        for dark in [false, true] {
+            let bar = try await render(ShelfBar(model: model, width: 620), size: NSSize(width: 620, height: 52), dark: dark)
+            let png = try #require(bar.representation(using: .png, properties: [:]))
+            try png.write(to: directory.appendingPathComponent("shelf-title-bar-no-pair-minimum-\(dark ? "dark" : "light").png"))
+        }
+    }
+
+    /// Context menus can't be drawn offscreen, so Compare With's words are written out for review instead: every card
+    /// of the demo shelf and of a made-up shelf with one file name in several sessions, what its menu offers, and a
+    /// stand-in of the card's menu with the submenu open beside it, in the menu's font, to judge its width.
+    @Test func compareWithsEntriesAreWrittenOutWhenAsked() async throws {
+        guard let destination = ProcessInfo.processInfo.environment["CAPSID_SNAPSHOT_DIR"], !destination.isEmpty else { return }
+        let directory = URL(fileURLWithPath: destination, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("compare-with-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let disk = KeptDisk(root: { root })
+        await KeptDemo.seed(disk)
+        let index = KeptIndex(disk: disk, root: { root })
+        await index.refreshAndWait()
+        let model = ShelfModel(shelf: KeptDemo.shelf(index: index, root: root), pdf: ShelfPDFMaker(dependencies: .declining))
+
+        func describe(_ offer: CompareRules.Offer) -> [String] {
+            switch offer {
+            case .none: return ["  (no item)"]
+            case .compare(let left, let right): return ["  \(CompareRules.menuTitle)  [left \(left.title), right \(right.title)]"]
+            case .unavailable: return ["  \(CompareRules.unavailableTitle)  [dimmed] help: \(CompareRules.unavailableHelp)"]
+            case .nothingToCompareWith(let help): return ["  \(CompareRules.compareWithTitle)  [dimmed] help: \(help)"]
+            case .compareWith(let entries): return ["  \(CompareRules.compareWithTitle) \u{25B8}"] + entries.map { "      \($0.title)" }
+            }
+        }
+        var lines = ["Compare With, as each card's menu offers it", "", "## The demo shelf, nothing filtered", ""]
+        for item in model.shown { lines += ["\(item.title)  (\(ShelfRules.caption(for: item)))"] + describe(model.compareOffer(for: item)) + [""] }
+        model.project = "Knockdown validation"
+        lines += ["## The demo shelf, project Knockdown validation", ""]
+        for item in model.shown { lines += [item.title] + describe(model.compareOffer(for: item)) + [""] }
+        model.project = nil
+        let chart = try #require(model.shown.first { $0.fileName == "z_prime_by_plate.png" })
+        let heatmap = try #require(model.shown.first { $0.fileName == "plate_7_heatmap.png" })
+        let notes = try #require(model.shown.first { $0.fileName == "qc_notes.md" })
+        model.pick(chart.id, .only)
+        model.pick(heatmap.id, .toggle)
+        lines += ["## The demo shelf, two pictures picked", ""]
+        for item in [chart, heatmap, notes] { lines += [item.title] + describe(model.compareOffer(for: item)) + [""] }
+        model.pick(notes.id, .toggle)
+        model.pick(heatmap.id, .toggle)
+        lines += ["## The demo shelf, a picture and a note picked", ""]
+        for item in [chart, notes, heatmap] { lines += [item.title] + describe(model.compareOffer(for: item)) + [""] }
+
+        // One file name in several sessions and versions, a long session and a long name.
+        let made = [
+            CompareFixtures.item("z_prime_by_plate.png", session: "Plate reader QC", version: 2),
+            CompareFixtures.item("z_prime_by_plate.png", session: "Plate reader QC", version: 3),
+            CompareFixtures.item("z_prime_by_plate.png", session: "Plate reader QC, repeat", version: 1),
+            CompareFixtures.item("z_prime_by_plate.png", session: "Assay development, second plate reader and the new seals", version: 4),
+            CompareFixtures.item("plate_reader_z_prime_by_plate_with_the_edge_wells_masked_out.png", session: "Plate reader QC", version: 1),
+            CompareFixtures.item("knockdown_blot.png", session: "Western blot quantification", version: nil),
+        ]
+        // The blot's menu lists the other five, the two that read alike with their versions.
+        let offer = CompareRules.offer(for: made[5], pickedPair: nil, shown: made, filtered: false)
+        lines += ["## A made-up shelf: one name in several sessions", ""]
+        for card in [made[5], made[0]] {
+            lines += ["\(card.title)  (\(card.record.sessionTitle), version \(card.record.figure.index.map(String.init) ?? "none"))"]
+                + describe(CompareRules.offer(for: card, pickedPair: nil, shown: made, filtered: false)) + [""]
+        }
+        try lines.joined(separator: "\n").write(to: directory.appendingPathComponent("compare-with-entries.txt"), atomically: true, encoding: .utf8)
+
+        // The stand-in menu: the card's items, Compare With highlighted, and its submenu beside it.
+        guard case .compareWith(let entries) = offer else {
+            Issue.record("the made-up shelf should offer Compare With")
+            return
+        }
+        for dark in [false, true] {
+            let view = CompareWithMenuStandIn(cardItems: ["Show Where It Came From", "Open as Reference", "Quick Look", "Copy",
+                                                          "Export Figure as PDF\u{2026}"],
+                                              entries: entries.map(\.title))
+            let size = NSSize(width: 820, height: 330)
+            let rep = try await render(view.frame(width: size.width, height: size.height, alignment: .topLeading), size: size, dark: dark)
+            let png = try #require(rep.representation(using: .png, properties: [:]))
+            try png.write(to: directory.appendingPathComponent("compare-with-menu-stand-in-\(dark ? "dark" : "light").png"))
+        }
+    }
+}
+
+/// A drawing of a native menu, for review only: the menu's own font and row height, rounded and on the window
+/// background, one item highlighted with its submenu beside it. Not the real menu, which only the system draws.
+private struct CompareWithMenuStandIn: View {
+    let cardItems: [String]
+    let entries: [String]
+
+    private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0) { content() }
+            .padding(5)
+            .fixedSize()
+            .background(Color(nsColor: .windowBackgroundColor), in: .rect(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1))
+    }
+
+    private func row(_ title: String, highlighted: Bool = false, submenu: Bool = false) -> some View {
+        HStack(spacing: 18) {
+            Text(title).lineLimit(1).fixedSize()
+            Spacer(minLength: 0)
+            if submenu { Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)) }
+        }
+        .font(Font(NSFont.menuFont(ofSize: 0)))
+        .foregroundStyle(highlighted ? Color.white : Color.primary)
+        .padding(.horizontal, 10)
+        .frame(height: 22)
+        .background(highlighted ? Color.accentColor : Color.clear, in: .rect(cornerRadius: 4))
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 2) {
+            panel {
+                ForEach(cardItems, id: \.self) { row($0) }
+                row(CompareRules.compareWithTitle, highlighted: true, submenu: true)
+                Divider().padding(.vertical, 4)
+                row("Open")
+                row("Show in Finder")
+                Divider().padding(.vertical, 4)
+                row("Remove")
+            }
+            panel {
+                ForEach(entries, id: \.self) { row($0) }
+            }
+            .padding(.top, CGFloat(cardItems.count) * 22)
+        }
+        .padding(16)
     }
 }

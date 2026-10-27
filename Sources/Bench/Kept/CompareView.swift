@@ -31,7 +31,7 @@ struct CompareView: View {
                 CompareTextPane(model: model)
             case nil:
                 KeptEmpty(title: "Nothing to compare",
-                          sentence: "Pick two pictures or two text files on the Shelf, then choose Compare from one of their menus.",
+                          sentence: "Right-click a picture or a text file on the Shelf and choose Compare With.",
                           action: nil)
             }
             if let note = model.note {

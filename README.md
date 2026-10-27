@@ -162,10 +162,11 @@ Where It Came From. For lab meeting, pick several figures (⌘-click) and
 choose **Export Figure as PDF…** (⌘P; "Export 3 Figures as PDF…" with
 several): one 16:9 page each, with its title, legend and where it came from.
 
-**Compare two of them.** Pick two pictures or two text files and right-click
-one: **Compare** puts the pictures side by side with their zoom linked, or one
-over the other with **Wipe** when they're the same size, and shows what changed
-between two text files, line by line, with Previous and Next Change.
+**Compare two of them.** Right-click a picture or a text file and choose
+**Compare With**, then the other one. Pictures sit side by side with their zoom
+linked, or one over the other with **Wipe** when they're the same size; for two
+text files you see what changed, line by line, with Previous and Next Change.
+With two picked, **Compare** in the title bar does the same.
 
 **Add Selection to Shelf** keeps selected words as a note. Its card shows the
 passage, with where it came from; Copy copies the words. Search also looks

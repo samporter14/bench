@@ -6,10 +6,10 @@
 // everything the Shelf did with one selection works as it did. What is picked
 // is what Export as PDF… makes: one page each, in the order the cards are shown.
 // The rules are an extension of `ShelfModel`; the pieces that draw them
-// (the toolbar's pill, shown once two or more are picked, the ⌘P that works
-// with one too, the card that stands in for the detail while several are
-// picked, the page numbers on the cards) are here too, so ShelfView only
-// places them.
+// (the toolbar's pill, shown once two or more are picked, with Compare beside
+// it for two that pair, the ⌘P that works with one too, the card that stands
+// in for the detail while several are picked, the page numbers on the cards)
+// are here too, so ShelfView only places them.
 import AppKit
 import SwiftUI
 
@@ -174,6 +174,22 @@ struct ShelfExportPDFButton: View {
             .fixedSize()
             .help("\(ShelfPDFRules.exportSpoken(count: model.pickCount)). One figure on each page, 16:9, for lab meeting. \u{2318}P")
             .accessibilityLabel(ShelfPDFRules.exportSpoken(count: model.pickCount))
+    }
+}
+
+/// The title bar's pills while two or more are picked: Export as PDF…, and before it Compare (`ShelfComparePill`, in
+/// CompareWindow.swift) while exactly two pair. Compare comes and goes on Export's left, so Export stays put beside the
+/// search as picks are added.
+struct ShelfPickPills: View {
+    @ObservedObject var model: ShelfModel
+    static let spacing: CGFloat = 8
+
+    var body: some View {
+        HStack(spacing: Self.spacing) {
+            if model.showsComparePill { ShelfComparePill(model: model) }
+            ShelfExportPDFButton(model: model)
+        }
+        .fixedSize()
     }
 }
 

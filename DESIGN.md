@@ -3436,8 +3436,8 @@ differ in the pages they hold and in when they open.
   that release, so opening it first from Help keeps the automatic one away. Dimmed
   in a demo.
 - **Pages for 1.1.** Primary button: Next, and Continue on the last page.
-  1. *Compare two things on the Shelf.* A split-panes symbol. "Pick two pictures or
-     two text files on the Shelf, right-click one and choose Compare. Pictures sit
+  1. *Compare two things on the Shelf.* A split-panes symbol. "Right-click a
+     picture or a text file on the Shelf and choose Compare With. Pictures sit
      side by side, or one wipes over the other; for text, you see what changed,
      line by line."
   2. *Project Workspaces.* A folder. "Each project keeps its last conversation, the
@@ -6786,19 +6786,40 @@ Compare only reads: nothing in it writes, renames or moves a source file
 (`CompareModelTests` checks every byte and date afterwards), and nothing is
 fetched from iCloud.
 
-**The way in.** Pick exactly two cards on the Shelf (⌘-click, ⇧-click) and
-right-click either: after Export … as PDF… the card's menu has **Compare**.
-Two pictures or two text files open the Compare window; any other pair (a
-picture and a note, a table, a PDF, an SVG) has the item dimmed as **Compare
-(Two Pictures or Two Text Files)**, and opens nothing. One
-pick, three or more, or a card outside the picks: no item. No card gains a
-button. There is no menu-bar entry: no menu in the bar carries the Shelf's
-picks (File's Add to Shelf and Keep with Data and Code… act on the Results
-window's selection, and the Shelf's ⌘P is a key of its own), so the card's
-menu is the one place (`ShelfCompareItem`, one line in ShelfView). Pictures
-are the raster kinds ImageIO decodes (png, jpg, jpeg, gif, webp, tif, tiff,
-bmp, heic, avif); text is the Shelf's prose kinds (md, markdown, txt, text,
-rst), a note made by Add Selection to Shelf among them (`CompareRules`).
+**The way in.** A right-click on one card is enough. (In 1.1.0 you had to
+pick two first, and nothing on screen said you could; Sam didn't find it.) A
+picture or a text file has **Compare With ▸** after Export … as PDF…: the
+other cards shown that pair with it, in the Shelf's order (so the search, the
+project and the kind chip narrow it), never the card itself, at most twelve
+and no More…. An entry is one line, the card's name and its caption in
+brackets, "z_prime_by_plate.png (Plate reader QC · 8:47 AM)"; the brackets
+keep a keep's own name, which may hold a "·", apart. One that would read the
+same as another, or as the card, adds its version; a long name is cut in the
+middle, a long session at its end. Choosing one opens Compare, this card on
+the left. With nothing to pair with, **Compare With** is dimmed and its help
+says why: "There's no other picture on the Shelf to compare with", or, with a
+search or filter on, "No other picture is shown to compare with. Clear the
+search or the filters to see more." A card Compare can't read (a PDF, a table,
+an SVG) has no item. The list is made from what the Shelf holds in memory: no
+disk read, no thumbnail.
+
+With exactly two picked (⌘-click, ⇧-click), either one's menu has **Compare**
+there instead, as in 1.1.0: two pictures or two text files open the Compare
+window, the card shown first on the left; any other pair has it dimmed as
+**Compare (Two Pictures or Two Text Files)**, and opens nothing. A card outside
+the two keeps its Compare With. Two that pair also get a quiet **Compare** pill
+in the title bar, just before Export as PDF… and in its style
+(`ShelfPickPills`); one pick, three or more, or a pair Compare can't read:
+none. Export stays beside the search as Compare comes and goes, and under 760
+points the search narrows to 120 beside both pills (160 beside Export alone),
+so the bar fits at the window's least width, 620. There is no menu-bar entry:
+no menu in the bar carries the Shelf's picks (File's Add to Shelf and Keep
+with Data and Code… act on the Results window's selection, and the Shelf's ⌘P
+is a key of its own). `CompareRules.offer` and `ShelfModel.comparablePair`
+decide; `ShelfCompareItem` is one line in ShelfView. Pictures are the raster
+kinds ImageIO decodes (png, jpg, jpeg, gif, webp, tif, tiff, bmp, heic, avif);
+text is the Shelf's prose kinds (md, markdown, txt, text, rst), a note made by
+Add Selection to Shelf among them (`CompareRules`).
 
 **The window** (`CompareWindowController`): one native window, reused (a new
 Compare replaces its pair), 1080 × 760 at first, 720 × 480 at least, frame
@@ -6930,10 +6951,19 @@ side's view, each bound, a pathological pair and a cancelled one),
 with a read out, the text changes from the other side, linked and unlinked
 views through Swap, a rescan's reread, a file changing while read, every side
 that can't be read, Wipe only for one size, Previous and Next Change, and the
-live reader on a real Kept folder changing nothing) and `CompareSnapshotTests`
-(Wipe's pixels at 0%, 50% and 100%, and, with `CAPSID_SNAPSHOT_DIR`, each state
-in light and dark). Live checks still owed: the gestures, keyboard and
-VoiceOver in the real window, the menu items, and files in iCloud.
+live reader on a real Kept folder changing nothing), `CompareWithTests` (Compare
+With's cards: only those that pair, never the card itself, the Shelf's order,
+its search and project, at most twelve; the dimmed item and its help; no item
+on a kind Compare can't read; two picks as before, and a card outside them
+keeping its Compare With; each entry's words, this card on the left; the pill
+only for exactly two that pair, in the Shelf's order; the wiring in ShelfView)
+and `CompareSnapshotTests` (Wipe's pixels at 0%, 50% and 100%, and, with
+`CAPSID_SNAPSHOT_DIR`, each state in light and dark, the Shelf's title bar with
+the Compare pill at 940 and 620 points, a check that the bar's pieces fit at
+620, and Compare With's entries written out for review, since a context menu
+can't be drawn offscreen). Live checks still owed: the gestures, keyboard and
+VoiceOver in the real window, the menu items and the Compare With submenu, the
+pill in the real title bar, and files in iCloud.
 
 ## Find any figure (Find/, since 1.0)
 
