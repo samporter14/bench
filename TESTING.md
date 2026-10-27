@@ -323,6 +323,135 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-27, Capsid 1.1.0: Compare, Project Workspaces, eight specimens, short sequences, closing gestures and What's New (`g/compare-workspaces-specimens`, from main a37b3fb, merged with main 4ce62d3)
+
+Sam chose the scope: Compare on the Shelf, Project Workspaces (with nothing to save, his choice over a Save step), eight new
+specimens, short sequences, a closing gesture when a session finishes (first a tentative stretch item, then "a real feature"),
+and, after seeing the batch, a short What's New window for people updating. Each piece was built on its own branch and merged
+here, along with main (Show Where It Came From goes to the reply). Unpublished 1.0.7 folds into 1.1.0. Everything ran
+offscreen, on fakes and made-up content: no app launched, no window, menu or popover shown, no daemon asked, nothing read
+from Claude Science's folder, nothing in /Applications until the install at the end.
+
+- ✅ **Compare** (`CompareRulesTests`, `CompareDiffTests`, `CompareModelTests`, `CompareSnapshotTests`, 45 tests; with the
+  Shelf's reading, picking and rules suites, 246 tests in 31 suites):
+  - what pairs (raster pictures with raster, md/markdown/txt/text/rst with each other, notes too; anything else a dimmed item);
+  - the line diff and its bounds (20,000 lines, 2,000 changed lines, 30 M steps; past one, a sentence and never a partial list:
+    3,000 lines with nothing shared in 0.23 s, 20,000 with a change every eighth line in 0.25 s, cancelled in 0.07 s, debug
+    build);
+  - pictures decoded upright at most 3,072 px long, over 64 MP refused before decoding;
+  - Wipe only when the upright pixel sizes match; a file that changes during the read read again, then "kept changing";
+    copying from Text Changes gives the words without the + and − marks.
+  - The footnote under Text Changes ("A byte order mark is set aside…") was taken out at review: "source text, not rendered"
+    says enough.
+- ✅ **Project Workspaces** (`WorkspaceRecord`, `Store`, `Return`, `Visits`, `Shelf` and `Snapshot` tests, 51; with
+  LastSession, Reference and Shelf, 940 tests in 146 suites):
+  - records keyed by the project's id in hex (two ids differing only in case are two files);
+  - one pin per session and four at most, a fifth refused;
+  - the note bounded at 64 KiB, written after typing stops, and kept on screen when a save fails;
+  - Return to Project bringing back the last conversation, the pins and the Shelf filtered by the project's id;
+  - a later Return replacing an earlier one.
+- ✅ **Eight specimens** (Capillary electrophoresis, Microtome ribbon, Droplet coalescence, Slime mold maze, Möbius strip,
+  Bayesian update, Fern unfurling, Diatom; 549 in all):
+  - drawn in the specimen harness, every loop closing (seams 0.0000 to 0.0005);
+  - reviewed at 16, 24, 48 and 96 pt in both themes (`BatchRSnapshotTests`: eight moments, the moment before the loop closes,
+    and the still);
+  - review rounds:
+    - the slime mold maze went through three (walls that read as letters, then an eye, then a square 4×4 maze);
+    - the diatom gained a girdle band and transverse striae;
+    - the Möbius strip was redrawn around its crossing;
+    - the capillary trace lost a stray U;
+    - the microtome's knife became a wedge.
+  - One second of frames at 88 pt, 2x, best of three, measured with nothing else building: capillary 2.1 ms, microtome 1.9,
+    Möbius 1.9 (15.2 before its band was worked out once rather than per frame), Bayesian 1.9, droplet 0.8, slime 2.0,
+    fern 3.0, diatom 3.5. The older specimens measured alongside were 0.8 to 1.5.
+  - `theCuratedStoriesAreAllInTheCatalogue` holds every sequence's members to the catalogue.
+- ✅ **Short sequences** (44 tests in the sequence suites; with choice, hold, playback, poster, guide and topic, 165 tests in 22
+  suites):
+  - off by default;
+  - a story plays only if every member plays now;
+  - stories at least six standalone scenes apart and spread evenly;
+  - the caption ticks once per member;
+  - Reduce Motion keeps the still flask.
+  - An offscreen GIF of *From solution to crystal* through the real rotation and draw path, both themes.
+  - Known and left: in a rotation of fewer than six standalone specimens, *A section under the lens* and *Small worlds* can play
+    back to back, so Microscope ends one and opens the next.
+- ✅ **Closing gestures** (`FinishingGestureTests`, `FinishingScheduleTests`, `FinishingEventTests`, `SessionEndingTests`, 56 tests;
+  with the panel, card, hold, playback and sequence suites, 277 tests in 38 suites):
+  - only a completed turn, never a cancelled or replaced one (`SessionEnding`, read from the frame's own status);
+  - once per session and turn, and a new turn finishes again;
+  - none for a session found already finished, nor for one that wasn't the panel's head when it finished;
+  - Reduce Motion and a held still keep the plate for good;
+  - the timeline ends with the gesture (no timer left).
+  - Changed at review:
+    - The Bayesian update and the slime mold dissolved to their posters from a reset, which added confidence or brought the
+      route back. They now go on to 0.35 s, the prior alone and the bare maze.
+    - A dissolve dimmed what both frames share to three quarters halfway. The frames are now added in one layer
+      (`inkBothFramesShareDoesNotDimHalfwayThroughADissolve`).
+  - Captures of every specimen mid-loop, near a boundary and in a reset, the card at four moments, two sessions, Reduce Motion
+    and the Settings checkbox.
+  - Left as is: the droplet's 0.5 s dissolve from its conveyor shows two drops for a moment, because the drop really is
+    elsewhere in the two frames.
+- ✅ **What's New** (`WhatsNewTests`, `WhatsNewPresenterTests`, `WhatsNewSnapshotTests`, 49 tests; the Welcome's 16 unchanged
+  on the shared `TourWindow`):
+  - shown once for 1.1, only to someone who used an earlier Capsid; a fresh install records the release and never shows it;
+  - only while Capsid is the active app, never activating it;
+  - deferred while a question or a failure card, Quick Open, Since You Left, Quick Start, a reply window, the Welcome, a sheet
+    or a modal is up;
+  - seen when closed, not when opened; Help → What's New in Capsid shows it again.
+  - Page 3 now says the new specimens settle to a stop when a session finishes ("they": only the eight have a gesture).
+- ✅ **Mutation checks** (each break made, the named tests failed, the break undone, the suites green again):
+  - Compare:
+    - the generation guard always true: 3 failed, once the fake diff answered late;
+    - Swap moving only the contents: 10 issues in 2 tests;
+    - a late read published by position, not identity: 3 issues.
+  - Workspaces:
+    - no stale-read check: the typed text replaced by the older;
+    - overlapping writes: the file ended on the oldest text;
+    - the Shelf not filtered by id: both same-named projects' items;
+    - Return's generation always current: A's late lookups after B.
+  - Sequences:
+    - eligibility by any member, not all: 61 issues;
+    - the scene boundary `<` made `<=`: the wrong member at the boundary.
+  - Closing gestures:
+    - no duplicate guard: replayed;
+    - the head check loosened: A closed B's scene;
+    - the turn left out of the key: a new turn didn't finish;
+    - the Bayesian target removed: 3 issues;
+    - the additive dissolve removed: 3 specimens dimmed.
+  - What's New:
+    - shown while not active: 4 failed;
+    - a fresh install shown it: 8 issues;
+    - shown under a card: 4 issues.
+- ✅ **Captures**, in `shots-cws/` beside the worktree (`compare`, `workspaces`, `specimens`, `sequences`, `finishing`,
+  `whatsnew`), both themes and minimum sizes where a window has one. Every PNG was opened. Pill ends look slightly flattened in
+  all offscreen captures, the Shelf's existing ones too: the capture path, not the styles.
+- ✅ **Whole suite:** `✔ Test run with 4771 tests in 608 suites passed after 28.857 seconds.` (`swift test --jobs 2`, one swift
+  process at a time). One earlier run, while two other builds were going, failed `fileReadsBetweenPublishesAreNotEachPublished`:
+  it reads 20 files and expects nothing published inside a 30-second window, and that run took 31 seconds. Alone it passed
+  three times out of three in 1.5 seconds, so it was starved, not broken; the run above had the machine to itself. The build's
+  warnings are in test files this batch didn't touch.
+- ⏳ **Only live use can confirm:**
+  - Compare:
+    - the context-menu item;
+    - the real toolbar and View menu items;
+    - pinch, drag and double-click;
+    - VoiceOver hearing "Added" and "Removed";
+    - real iCloud files.
+  - Workspaces:
+    - whether Claude Science's page takes ⌥⌘P before the menu does;
+    - window order and focus after Return;
+    - a pinned reply in a long session;
+    - relaunch and the Return to Project menu;
+    - Trash › Put Back.
+  - Closing gestures:
+    - the hand-over from the panel's playing layer to the card's well in its spring;
+    - an occluded panel;
+    - a Mac that has sat idle.
+  - What's New:
+    - its first showing after this update (a background launch, a card up, Reduce Motion, a fresh install), on a build whose
+      version is 1.1.0.
+  - Specimens: real playback energy.
+
 ## 2026-10-26, Show Where It Came From goes to the reply in the conversation (`g/show-source`, from main a37b3fb, Capsid 1.0.7)
 
 Sam: "When I click Show Where It Came From I think it should take me to the results/attachments section of that exact reply
