@@ -132,9 +132,15 @@ struct SpecimenChoice: Equatable {
     /// whatever is switched on or off, and the choice is there again when it
     /// is unset. With no favourites (none starred yet, or all renamed since),
     /// what is on plays.
-    func rotation(favorites: Set<String>, onlyFavorites: Bool) -> Rotation {
-        guard onlyFavorites else { return rotation }
-        let starred = LabScenes.catalogue.filter { favorites.contains($0.name) }
-        return starred.isEmpty ? rotation : Rotation(LabScenes.spread(starred))
+    ///
+    /// `sequences` are the short stories on offer (`SpecimenSequence`), none
+    /// unless the user asked for them. The ones whose every member plays are
+    /// woven in; with none, the list is the one this made before there were
+    /// stories.
+    func rotation(favorites: Set<String>, onlyFavorites: Bool, sequences: [SpecimenSequence] = []) -> Rotation {
+        let starred = onlyFavorites ? LabScenes.catalogue.filter { favorites.contains($0.name) } : []
+        guard !sequences.isEmpty else { return starred.isEmpty ? rotation : Rotation(LabScenes.spread(starred)) }
+        let playing = starred.isEmpty ? LabScenes.catalogue.filter(isOn) : starred
+        return Rotation(SpecimenSequence.weave(playing, sequences: sequences).scenes)
     }
 }

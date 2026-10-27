@@ -289,6 +289,35 @@ struct ChunkedPlaybackTests {
         #expect(stage.held.isEmpty)
     }
 
+    @Test func aLongStoryWovenIntoTheRotationStillHoldsNoMoreThanTwoChunks() async {
+        // Short sequences (Lab/SpecimenSequences.swift) are ordinary scenes in
+        // the list, so a story of sixty members costs what sixty scenes do:
+        // two chunks at a time, however long the run.
+        let told = (1...60).map { "L\($0)" }
+        let silent: @Sendable (inout GraphicsContext, CGSize, Double, Color) -> Void = { _, _, _, _ in }
+        let alone = (1...30).map { LabScene(name: "S\($0)", theme: .bench, duration: 3, draw: silent) }
+        let members = told.map { LabScene(name: $0, theme: .cell, duration: 4, draw: silent) }
+        let woven = SpecimenSequence.weave(alone + members, sequences: [SpecimenSequence(title: "Long", members: told)],
+                                           spread: { $0 })
+        let block = woven.blocks[0].range
+        #expect(block.count == 60)
+        let stage = Stage(time: Self.start)
+        let plan = PlaybackPlan(sceneDurations: woven.scenes.map(\.duration), fps: 30, scene: block.lowerBound,
+                                sceneStart: Self.start, now: Self.start)
+        let playback = stage.playback(plan)
+        playback.start()
+        for _ in 0..<70 { await stage.turn() }
+        await stage.settle()
+        #expect(stage.mostHeld == 2)
+        #expect(stage.heldWhenDrawing.allSatisfy { $0 <= 1 })
+        #expect(stage.begun.count - stage.released.count == 2)
+        // It really went through members of the story, one scene after another.
+        #expect(Set(stage.begun.map(\.scene)).count > 10)
+        #expect(stage.begun.allSatisfy { block.contains($0.scene) })
+        playback.stop()
+        #expect(stage.held.isEmpty)
+    }
+
     @Test func chunksPlayInOrderEndToEnd() async {
         let stage = Stage(time: Self.start)
         let playback = make(stage)

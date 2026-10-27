@@ -2250,6 +2250,87 @@ Settings, Page sizes) has, in a header of two columns:
   the mixed dash; each binding writes the whole category, so a click changes
   it once. The popover's way into the tab is "Choose specimens one by one…".
 
+### Short sequences (since 1.1.0)
+
+A **sequence** is a title and the names of a few specimens in a set order, a
+small illustrated story and not a protocol (`SpecimenSequence`,
+Lab/SpecimenSequences.swift). Three are curated, in this order: *From
+solution to crystal* (Flask, Stir bar, Nucleation, Crystal), *A section under
+the lens* (Microtome ribbon, Histology slide, Microscope) and *Small worlds*
+(Microscope, Diatom, Slime mold maze). Each member plays for its own
+duration and fades as any scene does, so a run is about 15 seconds (14.8 for
+the first); no specimen is retimed to fit. A sequence has no editor, no panel
+control and no progress: nothing says "2 of 4".
+
+- **The setting.** *Play short sequences*, in Settings → Specimens under
+  "Match the specimen to the session", a native checkbox with one line ("Now
+  and then, a few specimens play in order, like a little story."). Key
+  `playShortSequences` in UserDefaults beside the other scene keys, **off by
+  default**. `SceneSettings.playSequences` clears the cached rotation exactly
+  as a category, a hidden specimen or Only favorites does, so every surface has
+  the change at once. The toolbar popover has no switch for it.
+- **Eligible** only if **every** member plays now: its category is on, it is not
+  switched off, and, while Only favorites plays, it is a favourite. One member out
+  leaves the whole sequence out: nothing is switched back on and nothing stands
+  in. A sequence with a member the catalogue does not have is out in the same
+  way (so a build without a specimen simply plays without the story that needs it).
+  The members of a sequence that is out stay standalone and play as ever.
+- **Weaving is one pure function**, `SpecimenSequence.weave(_:sequences:spread:)`,
+  from what plays (catalogue order, not yet spread) to the rotation's scenes and
+  where each block sits. `SpecimenChoice.rotation(favorites:onlyFavorites:sequences:)`
+  calls it, with none when the setting is off (that path is the one that was
+  there before and is untouched). `Rotation` is still an ordered list of scenes
+  played by the clock, so the panel, the menu bar, the toolbar, the caption, the
+  field guide and the poster agree without being told, a rebuilt view carries on
+  from the clock, and there is no timer, renderer or frame cache of its own. A
+  block is its members' ordinary scenes, one after another, so `scene(at:)`,
+  `SceneBoundarySchedule`, `SpecimenHold` and the playback chunks (two held at a
+  time, whatever the run's length) all work on it as they stand.
+- **Cadence**, deterministic:
+  1. Setting off, or no eligible sequence: the list is `spread(what plays)`, the
+     rotation as it was.
+  2. *S*, the standalone specimens, is what plays less the members of the
+     eligible sequences *Q* (kept in the order curated), spread as ever. A member
+     never plays alone while its sequence is eligible (Microscope, in two of the
+     three, plays only inside them).
+  3. Fewer than 6 in *S* (a tiny rotation, such as favourites that are exactly one
+     sequence): *S*, then each sequence in *Q* once. With *S* empty the sequences
+     play back to back.
+  4. Otherwise at most ⌊|*S*|/6⌋ sequences fit. If that is fewer than |*Q*|, the
+     first ⌊|*S*|/6⌋ in the order curated play and the rest do not this time: their
+     members rejoin *S* and it is spread again. This is decided once, on the
+     count before they rejoin.
+  5. The sequences get m = max(|*Q*|, ⌊|*S*|/20⌋) places, no more than ⌊|*S*|/6⌋:
+     about one story every 20 standalone specimens (two minutes or so), never
+     closer than 6. Place *i* goes before standalone specimen
+     ⌊(2*i* + 1)·|*S*| / 2*m*⌋, so the places are even to within one specimen and the
+     stretch over the end of the list is as long as the others. Place *i* tells
+     sequence *Q*[*i* mod |*Q*|], all its members in one run.
+  With the 541 specimens of 1.0.7 and only *From solution to crystal* playable
+  (the other two need specimens still to come), |*S*| = 537, so it comes round 26
+  times in a round of about 40 minutes. With all three, about nine times each.
+- **Precedence is unchanged.** Reduce Motion is still one flask (or the rotation of
+  one); the idle and occlusion holds still show the member the rotation was in when
+  they began, named by the caption; Quiet while Presenting keeps its own rule.
+  **Play Only** leaves one specimen on, and a curated sequence needs three or four
+  to play, so it stays that one specimen. A **topic-matched** session
+  still plays its single matched specimen: the matcher is offered the specimens that
+  play, each once (`SessionSpecimen.resolve` de-duplicates, since a sequence can
+  come round more than once), so it can pick a member that plays and nothing that
+  does not.
+- **Captions.** The caption line and the right-click menu follow
+  `SceneBoundarySchedule`, which ticks once at each scene's end, so during a block
+  they name the member playing and change once a member, as at any boundary, never
+  per frame.
+- **Tests** (`SpecimenSequenceTests`): eligibility, the weave on made-up scenes
+  (exact order, places and spacing for 0, 3, 6, 12, 40 and the catalogue's
+  standalone specimens), local time and boundaries across wraparound and very
+  large clocks, two readers agreeing, the hold and the caption mid-run, every
+  choice above, the setting and its cache. `SpecimenSequenceSnapshotTests`
+  (`CAPSID_SNAPSHOT_DIR`) draws each playable sequence through the real
+  rotation and `LabScenes.draw`, fade included: a GIF of the run, stills either
+  side of every change, light and dark, and the checkbox.
+
 ### Poster stills (Lab/SpecimenPoster.swift, since 0.9.0)
 
 A specimen's still used to be the scene 60% in. A few specimens draw
