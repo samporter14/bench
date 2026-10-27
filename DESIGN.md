@@ -2306,6 +2306,13 @@ control and no progress: nothing says "2 of 4".
      ⌊(2*i* + 1)·|*S*| / 2*m*⌋, so the places are even to within one specimen and the
      stretch over the end of the list is as long as the others. Place *i* tells
      sequence *Q*[*i* mod |*Q*|], all its members in one run.
+  Two wrinkles, both left as they fall. A sequence's first member can share a
+  theme with the standalone specimen before it, because *S* is spread without
+  knowing where the sequences go (spread exactly as before). And in a tiny
+  rotation (rule 3) that plays *A section under the lens* and *Small worlds* back
+  to back, Microscope ends one and opens the next, so it fades out and in again
+  as itself; with room for standalone specimens between them (rules 4 and 5) it
+  never happens.
   With the 541 specimens of 1.0.7 and only *From solution to crystal* playable
   (the other two need specimens still to come), |*S*| = 537, so it comes round 26
   times in a round of about 40 minutes. With all three, about nine times each.
