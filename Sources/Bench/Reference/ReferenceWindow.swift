@@ -191,6 +191,15 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
              at: row, mark: version)
     }
 
+    /// Return to Project and a pinned row's click (Workspace/): the pinned session's window, opened or the one
+    /// already open, at the reply that holds `row` (the newest with none). The window's model, for Return to see
+    /// how the landing ends.
+    @discardableResult
+    func showPinned(sessionID: String, projectID: String, title: String, projectName: String, row: Int?) -> ReferenceModel? {
+        show(sessionID: sessionID, projectID: projectID, title: title, projectName: projectName, at: row, mark: nil)
+        return models[sessionID]
+    }
+
     /// The session a shelved item names, built from the ids and words its
     /// README kept: Open Conversation needs the address, which is made only
     /// from ids as the database has them (a README can be written by hand).

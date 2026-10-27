@@ -545,6 +545,13 @@ final class ReferenceModel: ObservableObject {
     /// A landing is still reading toward its reply.
     var isLanding: Bool { goal != nil }
 
+    /// Return to Project (Workspace/) found the pinned reply gone: the page says so over whatever reply it shows,
+    /// so that reply is never taken for the pinned one.
+    static let pinnedReplyGoneSentence = "The pinned reply isn\u{2019}t in this conversation any more."
+    func notePinnedReplyGone() {
+        landingNote = Self.pinnedReplyGoneSentence
+    }
+
     /// What the rows read so far settle for a landing.
     private enum Landed {
         case found(ReferenceAnswer)

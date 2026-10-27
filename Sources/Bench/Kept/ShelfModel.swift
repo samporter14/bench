@@ -43,7 +43,18 @@ final class ShelfModel: ObservableObject {
     let documents: ShelfDocumentReadings
 
     @Published private(set) var items: [ShelfItem] = [] { didSet { scopedStale = true } }
-    @Published var project: String? { didSet { if project != oldValue { scopedStale = true; refreshReading(); reconcile(); findScopeChanged() } } }
+    @Published var project: String? {
+        didSet {
+            // Chosen in the pill: by name, as ever, and any project chosen by its id is let go.
+            projectID = nil
+            if project != oldValue { scopedStale = true; refreshReading(); reconcile(); findScopeChanged() }
+        }
+    }
+    /// The project by its id, from Return to Project (Workspace/; `show(projectID:)`): two projects of one name share
+    /// a collection folder, and only this one's items are shown. The pill still names it.
+    @Published private(set) var projectID: String? {
+        didSet { if projectID != oldValue { scopedStale = true; refreshReading(); reconcile() } }
+    }
     @Published var kind: ShelfKind? { didSet { if kind != oldValue { reconcile(); findScopeChanged() } } }
     @Published var search = "" {
         didSet {
@@ -218,11 +229,27 @@ final class ShelfModel: ObservableObject {
         return items.compactMap { seen.insert($0.collection).inserted ? $0.collection : nil }
     }
 
+    /// The items of the project chosen by its id, or all of them.
+    private var projectItems: [ShelfItem] {
+        guard let projectID else { return items }
+        return items.filter { $0.record.projectID == projectID }
+    }
+
+    /// Return to Project (Workspace/): the project's own items, by its id, the pill naming its collection. The search
+    /// and the kind chip are let go, so they show. Nothing changes when the shelf has none of the project's.
+    func show(projectID id: String) {
+        guard let collection = items.first(where: { $0.record.projectID == id })?.collection else { return }
+        search = ""
+        kind = nil
+        project = collection
+        projectID = id
+    }
+
     /// In the project and matching the search: what the chips count.
     /// Made again only when something it depends on changed: a search reads up to 200,000 characters of each item.
     var scoped: [ShelfItem] {
         if scopedStale {
-            scopedItems = ShelfRules.matching(items, project: project, query: search, texts: texts)
+            scopedItems = ShelfRules.matching(projectItems, project: project, query: search, texts: texts)
             scopedStale = false
         }
         return scopedItems
@@ -258,7 +285,7 @@ final class ShelfModel: ObservableObject {
     /// Counts again the files that could still add to the search. VoiceOver is told once when the line appears; the
     /// count changing under it says nothing more.
     private func refreshReading() {
-        let files = search.isEmpty ? 0 : ShelfRules.filesStillToRead(in: items, project: project, query: search, texts: texts, unread: unread)
+        let files = search.isEmpty ? 0 : ShelfRules.filesStillToRead(in: projectItems, project: project, query: search, texts: texts, unread: unread)
         guard files != stillReading else { return }
         let appears = stillReading == 0
         stillReading = files
