@@ -194,7 +194,7 @@ struct QuickOpenSheet: View {
         }
     }
 
-    /// The reference window at the reply that showed the file.
+    /// The main window on the session, at the reply that showed the file.
     private func showWhere(_ file: FoundFile) {
         dismiss()
         find.show(file)

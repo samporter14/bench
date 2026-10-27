@@ -122,15 +122,15 @@ struct ShelfNoteHeaderTests {
 struct ShelfNoteMenuTests {
     @Test func aNotesMenuOpensWithTheTwoThingsItsPictureDidToTheFile() {
         let menu = ShelfRules.moreMenu(canKeep: false, note: true)
-        #expect(menu == [.quickLook, .showInFinder, .divider, .exportPDF, .divider, .remove])
-        #expect(menu.map(\.title) == ["Quick Look", "Show in Finder", "", "Export Figure as PDF\u{2026}", "", "Remove"])
+        #expect(menu == [.quickLook, .showInFinder, .divider, .openAsReference, .exportPDF, .divider, .remove])
+        #expect(menu.map(\.title) == ["Quick Look", "Show in Finder", "", "Open as Reference", "Export Figure as PDF\u{2026}", "", "Remove"])
         #expect(!menu.contains(.keepWithDataAndCode), "a note has no version to keep")
         #expect(ShelfRules.moreMenu(canKeep: true, note: true) == menu, "and never offered it")
     }
 
-    @Test func everyOtherItemsMenuIsAsItWas() {
-        #expect(ShelfRules.moreMenu(canKeep: true) == [.keepWithDataAndCode, .exportPDF, .divider, .remove])
-        #expect(ShelfRules.moreMenu(canKeep: false) == [.exportPDF, .divider, .remove])
+    @Test func everyOtherItemsMenuIsAsItWasWithOpenAsReferenceAdded() {
+        #expect(ShelfRules.moreMenu(canKeep: true) == [.keepWithDataAndCode, .openAsReference, .exportPDF, .divider, .remove])
+        #expect(ShelfRules.moreMenu(canKeep: false) == [.openAsReference, .exportPDF, .divider, .remove])
         #expect(ShelfRules.moreMenu(canKeep: true, note: false) == ShelfRules.moreMenu(canKeep: true))
         #expect(!ShelfRules.moreMenu(canKeep: true).contains(.quickLook) && !ShelfRules.moreMenu(canKeep: false).contains(.showInFinder))
     }
