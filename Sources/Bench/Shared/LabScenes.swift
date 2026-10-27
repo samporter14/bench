@@ -523,6 +523,9 @@ enum LabScenes {
         LabScene(name: "Microtome ribbon", theme: .bench, duration: MicrotomeRibbon.duration) { context, size, t, tint in
             MicrotomeRibbon.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Confocal z-stack", theme: .bench, duration: ConfocalZStack.duration) { context, size, t, tint in
+            ConfocalZStack.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Molecular
         LabScene(name: "Chromatin breathing", theme: .molecular, duration: ChromatinBreathing.duration) { context, size, t, tint in
             ChromatinBreathing.draw(in: &context, size: size, time: t, tint: tint)
@@ -1085,6 +1088,9 @@ enum LabScenes {
         LabScene(name: "Droplet coalescence", theme: .physics, duration: DropletCoalescence.duration) { context, size, t, tint in
             DropletCoalescence.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Contact angle", theme: .physics, duration: ContactAngle.duration) { context, size, t, tint in
+            ContactAngle.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Chemistry
         LabScene(name: "Caffeine", theme: .chemistry, duration: Caffeine.duration) { context, size, t, tint in
             Caffeine.draw(in: &context, size: size, time: t, tint: tint)
@@ -1270,6 +1276,9 @@ enum LabScenes {
         LabScene(name: "Fern unfurling", theme: .plants, duration: FernUnfurling.duration) { context, size, t, tint in
             FernUnfurling.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Pollination", theme: .plants, duration: Pollination.duration) { context, size, t, tint in
+            Pollination.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Data
         LabScene(name: "Clustered heatmap", theme: .data, duration: ClusteredHeatmap.duration) { context, size, t, tint in
             ClusteredHeatmap.draw(in: &context, size: size, time: t, tint: tint)
@@ -1411,6 +1420,12 @@ enum LabScenes {
         },
         LabScene(name: "Bayesian update", theme: .data, duration: BayesianUpdate.duration) { context, size, t, tint in
             BayesianUpdate.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Sanger chromatogram", theme: .data, duration: SangerChromatogram.duration) { context, size, t, tint in
+            SangerChromatogram.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Posterior predictive check", theme: .data, duration: PosteriorPredictiveCheck.duration) { context, size, t, tint in
+            PosteriorPredictiveCheck.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Protein
         LabScene(name: "Lollipop plot", theme: .protein, duration: LollipopPlot.duration) { context, size, t, tint in
@@ -1819,6 +1834,9 @@ enum LabScenes {
         },
         LabScene(name: "Slime mold maze", theme: .microbes, duration: SlimeMoldMaze.duration) { context, size, t, tint in
             SlimeMoldMaze.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Paramecium", theme: .microbes, duration: Paramecium.duration) { context, size, t, tint in
+            Paramecium.draw(in: &context, size: size, time: t, tint: tint)
         },
     ]
 

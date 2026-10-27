@@ -2255,10 +2255,21 @@ Settings, Page sizes) has, in a header of two columns:
 
 A **sequence** is a title and the names of a few specimens in a set order, a
 small illustrated story and not a protocol (`SpecimenSequence`,
-Lab/SpecimenSequences.swift). Three are curated, in this order: *From
+Lab/SpecimenSequences.swift). Twelve are curated, in this order: *From
 solution to crystal* (Flask, Stir bar, Nucleation, Crystal), *A section under
-the lens* (Microtome ribbon, Histology slide, Microscope) and *Small worlds*
-(Microscope, Diatom, Slime mold maze). Each member plays for its own
+the lens* (Microtome ribbon, Histology slide, Microscope), *Small worlds*
+(Microscope, Diatom, Slime mold maze), *A Western blot* (Gel, Western transfer,
+ECL detection, Blot figure), *A nanopore read* (Nanopore, Basecalling, Read
+mapping, Variant calling), *Sorting cells* (Flow cytometry, Flow dot plot,
+FACS, Sort purity), *Energy in a cell* (Glycolysis, Krebs cycle, ATP
+synthase), *A Sanger read* (Thermocycler, Capillary electrophoresis, Sanger
+chromatogram), *A flower pollinated* (Bloom, Pollination, Pollen tube),
+*Checking the model* (Bayesian update, Posterior predictive check), *Imaging a
+cell* (Immunofluorescence, Confocal z-stack) and *A drop at rest* (Droplet
+coalescence, Contact angle). The last nine came in 1.1.1. Kept apart, as
+editorial rules: Illumina sequencing is never paired with Basecalling, Mass
+spec is never followed by Spectra, Negative stain and Cryo-EM are not
+successive stages, and no fern story ends in Bloom or Pollen tube. Each member plays for its own
 duration and fades as any scene does, so a run is about 15 seconds (14.8 for
 the first); no specimen is retimed to fit. A sequence has no editor, no panel
 control and no progress: nothing says "2 of 4".
@@ -2314,13 +2325,13 @@ control and no progress: nothing says "2 of 4".
   to back, Microscope ends one and opens the next, so it fades out and in again
   as itself; with room for standalone specimens between them (rules 4 and 5) it
   never happens.
-  With the 541 specimens of 1.0.7 and only *From solution to crystal* playable
-  (the other two need specimens still to come), |*S*| = 537, so it comes round 26
-  times in a round of about 40 minutes. With all three, about nine times each.
+  With the 555 specimens of 1.1.1 and all twelve playable, 36 specimens are
+  members, so |*S*| = 519 and there are 25 places in a round of about 45 minutes:
+  *From solution to crystal* is told three times and each of the others twice.
 - **Precedence is unchanged.** Reduce Motion is still one flask (or the rotation of
   one); the idle and occlusion holds still show the member the rotation was in when
   they began, named by the caption; Quiet while Presenting keeps its own rule.
-  **Play Only** leaves one specimen on, and a curated sequence needs three or four
+  **Play Only** leaves one specimen on, and a curated sequence needs two to four
   to play, so it stays that one specimen. A **topic-matched** session
   still plays its single matched specimen: the matcher is offered the specimens that
   play, each once (`SessionSpecimen.resolve` de-duplicates, since a sequence can
@@ -3443,15 +3454,14 @@ differ in the pages they hold and in when they open.
   2. *Project Workspaces.* A folder. "Each project keeps its last conversation, the
      references you pin to it and a small working note. History → Return to Project
      brings them back together. There’s nothing to save."
-  3. *Eight new specimens.* The eight new specimens (Capillary electrophoresis,
-     Microtome ribbon, Droplet coalescence, Slime mold maze, Möbius strip,
-     Bayesian update, Fern unfurling, Diatom) playing in turn in the glass well,
+  3. *Fourteen new specimens.* The fourteen new specimens of 1.1 (the eight of
+     1.1.0 and the six of 1.1.1, interleaved) playing in turn in the glass well,
      in the panel's own glyph at 88 pt; under Reduce Motion the first rests as a
      still, as the Welcome's panel page shows a still flask. "Capillary
-     electrophoresis, a Möbius strip, a fern unfurling and five more. When a session
-     finishes, they settle to a stop. Turn on Play short sequences and now and then a
-     few play in order, like a little story." ("They": only the eight have a closing
-     gesture.) Under it the real setting, a native switch "Play short sequences"
+     electrophoresis, a Möbius strip, a paramecium, a fern unfurling and ten more.
+     When a session finishes, they settle to a stop. Turn on Play short sequences and
+     now and then a few play in order, like a little story." ("They": only the
+     fourteen have a closing gesture.) Under it the real setting, a native switch "Play short sequences"
      ("Also in Settings → Specimens."; `SceneSettings.shared.playSequences`, clay
      when on). Showing the page writes nothing.
   4. *Show Where It Came From.* A speech bubble. "From the Shelf, it now opens the
@@ -7957,16 +7967,18 @@ When a session really finishes, the specimen that was playing in the panel
 settles to a stop in the Finished card's well, in 0.4 to 0.9 seconds, and rests
 on that frame. It is an acknowledgement that Claude Science reported a
 completion, not progress and not a result: no second illustration, no sound,
-no new colour, no timer that outlives it. Only the eight specimens of batch R
-have one (Capillary electrophoresis, Microtome ribbon, Möbius strip, Bayesian
-update, Droplet coalescence, Slime mold maze, Fern unfurling, Diatom); every
-other specimen keeps the plate that fills (`FilledPlate`), exactly as before.
+no new colour, no timer that outlives it. Only the fourteen specimens of
+batches R and S have one (Capillary electrophoresis, Microtome ribbon, Möbius
+strip, Bayesian update, Droplet coalescence, Slime mold maze, Fern unfurling,
+Diatom; since 1.1.1 Sanger chromatogram, Posterior predictive check, Contact
+angle, Confocal z-stack, Pollination, Paramecium); every other specimen keeps
+the plate that fills (`FilledPlate`), exactly as before.
 Settings → Specimens has one checkbox, "Finish with a closing gesture"
 (`finishingGesture`, on by default), under "Play short sequences".
 
 - **Where.** In the 88 pt well at the card's left, the spot the working specimen
   was in, so it is that specimen settling where it was and there is never a
-  second celebration beside it: the gesture replaces the plate for these eight
+  second celebration beside it: the gesture replaces the plate for these fourteen
   (`FinishedWell` chooses between them). The Finished heading, the files and
   the buttons are there at once; the gesture delays nothing, takes no focus and
   blocks no button. After it the well rests on its last frame, drawn once.
@@ -7976,34 +7988,44 @@ Settings → Specimens has one checkbox, "Finish with a closing gesture"
     stop along `(1 - u)^k`, covering at most 0.45 s of the scene's own time (0.4
     when nothing is in the way) in twice that real time, within 0.4 to 0.9 s. It
     never runs backwards and never speeds anything up.
-  - *Ease to rest* (Möbius strip, Diatom): it stops at the nearest rest ahead
+  - *Ease to rest* (Möbius strip, Diatom, Posterior predictive check): it stops at the nearest rest ahead
     when one is within reach and at least 0.1 s away. The Möbius marker's rests
     are its home marks (where it began, at 0 and at 3 s of its 6, the second with
     the tick on the other face); with none within reach it slows to a stop where
     it is. The Diatom's are spread through the stretches where its face is at
     least 0.8 of its width (the first and last 1.4 s of its 5 s half turn); with
     none within reach it dissolves rather than stop edge on (edge on is 2.5 s).
+    The posterior predictive check's are the moments a replicate has just drawn
+    in whole over the bars (0.5 s, then every 0.625 s); with none within reach
+    it slows to a stop.
   - *Reset windows.* A finish inside one dissolves instead: the frame that was
     showing gives way, over 0.5 s, to the specimen's poster still
     (`SpecimenPoster`), and rests on that. They are the stretches where the scene
     is itself crossfading or sliding back to its start: the rotation's own fade
     (0.3 s at each end of every scene), the fern's last 0.8 s (5.6 to 6.4), the
-    droplet's conveyor (3.9 to 5.0), the slime mold's fade (6.0 to 7.0) and the
-    Bayesian update's return to the prior (4.2 to 5.6). A settle stops short of
+    droplet's conveyor (3.9 to 5.0), the slime mold's fade (6.0 to 7.0), the
+    Bayesian update's return to the prior (4.2 to 5.6), the contact angle's
+    stage sliding the drop away (3.9 to 5.0), the confocal plane rising as the
+    sections fade (4.05 to 5.15) and the pollination's pan to the next flower
+    (3.5 to 5.1). A settle stops short of
     the next reset in the room there is, down to holding the frame. Two stills
     would add what a finish must not: the Bayesian update's is its tallest
     posterior with every observation, and the slime mold's its whole route. A
     finish in their resets or fades goes on instead to where the reset was going,
     0.35 s into the loop: the prior alone, and the bare maze with the seed and
-    the food (`FinishingSpec.dissolveTo`).
+    the food (`FinishingSpec.dissolveTo`). The confocal z-stack's still is the
+    stack a section short, so a finish in its rise goes on to the whole stack
+    (4 s) instead.
   - *Nothing new.* The Bayesian update's observations land at 0.5 s and every
     0.45 s after; a settle stops short of the next, so no observation arrives
-    that was not on show. (`BayesianUpdate`'s own constants; a test draws the
+    that was not on show. The same holds for the contact angle's tangent and arc
+    (2 and 2.4 s) and for each confocal section (0.7 s, then every 0.7 s). (`BayesianUpdate`'s own constants; a test draws the
     scene and checks the table against them.)
   - *Sequences.* A short sequence member finishes as itself, with a fraction of
     a second of its own loop; the members after it never play.
   - Read from each scene's code (names and times in `FinishingGesture.specs`),
-    not guessed; the periodic ones (capillary, microtome, Möbius, Diatom) are
+    not guessed; the periodic ones (capillary, microtome, Möbius, Diatom,
+    Sanger, posterior predictive check, Paramecium) are
     checked to close on themselves, so a settle may run across the end of the loop.
 - **Which finish.** `LabModel` tells `FinishingGestures` of each finish that
   raised its Finished card for the first time (`finishRaised`), and never one

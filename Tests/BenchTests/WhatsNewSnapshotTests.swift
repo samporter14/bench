@@ -1,7 +1,7 @@
 // WhatsNewSnapshotTests.swift — not a check: when `CAPSID_SNAPSHOT_DIR` names a
 // folder, draws What's New in Capsid offscreen (App/WhatsNewWindow.swift), every
 // page in light and dark, page 3 playing and under Reduce Motion, and the
-// eight new specimens on their own, into it as PNGs. Without the folder the
+// fourteen new specimens on their own, into it as PNGs. Without the folder the
 // test does nothing. Nothing is opened on screen: the window's content is
 // hosted in a view that is never shown, and a title bar is drawn above it as a
 // stand-in.
@@ -143,8 +143,8 @@ struct WhatsNewSnapshotTests {
         }
     }
 
-    /// The eight new specimens, each at the middle of its scene in the well, in a row, to see that every one draws.
-    @Test func theEightSpecimensAreDrawnInTheirWellWhenAsked() async throws {
+    /// The fourteen new specimens, each at the middle of its scene in the well, in a row, to see that every one draws.
+    @Test func theNewSpecimensAreDrawnInTheirWellWhenAsked() async throws {
         guard let directory = try snapshotDirectory() else { return }
         guard case .specimens(let names) = WhatsNew.release11.pages[2].art else { return }
         for dark in [false, true] {
@@ -170,7 +170,7 @@ struct WhatsNewSnapshotTests {
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.flatGlass, true)
             .environment(\.colorScheme, dark ? .dark : .light)
-            let rep = try await PanelSnapshotTests.capture(row, size: NSSize(width: 1100, height: 160), dark: dark, settle: 3)
+            let rep = try await PanelSnapshotTests.capture(row, size: NSSize(width: 1240, height: 160), dark: dark, settle: 3)
             try write(rep, "specimens-sheet-\(dark ? "dark" : "light")", to: directory)
         }
     }

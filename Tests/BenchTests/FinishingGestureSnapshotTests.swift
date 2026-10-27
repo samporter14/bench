@@ -1,5 +1,5 @@
 // FinishingGestureSnapshotTests.swift — not a check: when `CAPSID_SNAPSHOT_DIR`
-// names a folder, draws the closing gesture of the eight specimens that have one,
+// names a folder, draws the closing gesture of each specimen that has one,
 // offscreen, into it:
 //   - for each specimen, a completion midway through its loop, and one near a
 //     reset or the end of its loop, as a strip of frames (what played, the
