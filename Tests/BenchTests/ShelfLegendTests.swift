@@ -127,6 +127,210 @@ struct ShelfLegendTests {
         }
     }
 
+    // MARK: A read that is out of date when it comes back
+
+    /// The case the 1.0.7 review found: the card of an item already read is shown again, the field takes typing while
+    /// the README is read once more, and what the read brought back was put over the new words, which were then never
+    /// saved because the README already said what the field now did.
+    @Test func wordsTypedWhileTheReadmeIsReadAgainAreNotReplacedByWhatWasRead() async throws {
+        let held = Held()
+        try await editor(legend: "Saved words.", held: held) { editor, folder, saves, _ in
+            await editor.show()
+            #expect(editor.legend == "Saved words.")
+            held.holding(true)
+            let reload = Task { await editor.show() }
+            try await until("the reload") { held.count == 1 }
+            #expect(editor.canEdit, "the field takes typing while it is read again, as it always has")
+            editor.legend = "New words typed while the disk waits."
+            held.holding(false)
+            await reload.value
+            #expect(editor.legend == "New words typed while the disk waits.")
+            #expect(editor.canEdit && editor.problem == nil && !editor.changedOutside)
+            #expect(editor.hasUnsavedText)
+
+            await editor.flush().value
+            #expect(try legend(in: folder) == "New words typed while the disk waits.")
+            #expect(!editor.changedOutside && editor.problem == nil && !editor.hasUnsavedText)
+            #expect(saves.count == 1)
+
+            // The next save is made from what this one wrote, not from what the late read saw.
+            editor.legend = "A later change."
+            await editor.flush().value
+            #expect(!editor.changedOutside && editor.problem == nil)
+            #expect(try legend(in: folder) == "A later change.")
+            #expect(saves.count == 2)
+        }
+    }
+
+    /// Nobody typed: the late read is as welcome as it ever was, and shows what another app wrote meanwhile.
+    @Test func aReloadNobodyTypedDuringShowsWhatTheReadmeHoldsNow() async throws {
+        try await editor(legend: "Saved words.") { editor, folder, saves, _ in
+            await editor.show()
+            editor.hide()
+            let url = folder.appending(path: "README.md", directoryHint: .notDirectory)
+            let theirs = try #require(KeptReadme.replacingLegend(in: String(contentsOf: url, encoding: .utf8), with: "Their words."))
+            try Data(theirs.utf8).write(to: url)
+            await editor.show()
+            #expect(editor.legend == "Their words.")
+            #expect(editor.canEdit && !editor.changedOutside && !editor.hasUnsavedText)
+            // And it is the base for the next save.
+            editor.legend = "Mine, after."
+            await editor.flush().value
+            #expect(!editor.changedOutside)
+            #expect(try legend(in: folder) == "Mine, after.")
+            #expect(saves.count == 1)
+        }
+    }
+
+    /// The README changed in another app while the field was away, and the person typed before the late read came back:
+    /// the words stay, the other app's legend is not written over, and the field says so at the save, as it always has.
+    @Test func wordsTypedOverALegendChangedElsewhereMeetTheConflictRuleAtTheSave() async throws {
+        let held = Held()
+        try await editor(legend: "Saved words.", held: held) { editor, folder, saves, _ in
+            await editor.show()
+            editor.hide()
+            held.holding(true)
+            let reload = Task { await editor.show() }
+            try await until("the reload") { held.count == 1 }
+            let url = folder.appending(path: "README.md", directoryHint: .notDirectory)
+            let theirs = try #require(KeptReadme.replacingLegend(in: String(contentsOf: url, encoding: .utf8), with: "Their words."))
+            try Data(theirs.utf8).write(to: url)
+            editor.legend = "Mine, typed while the disk waited."
+            held.holding(false)
+            await reload.value
+            #expect(editor.legend == "Mine, typed while the disk waited.")
+            await editor.flush().value
+            #expect(editor.changedOutside, "it was changed in another app")
+            #expect(try legend(in: folder) == "Their words.", "and is not written over")
+            #expect(editor.legend == "Mine, typed while the disk waited.")
+            #expect(saves.count == 0)
+            await editor.useMine()
+            #expect(!editor.changedOutside && editor.problem == nil)
+            #expect(try legend(in: folder) == "Mine, typed while the disk waited.")
+        }
+    }
+
+    /// Away and back again with the late read still out: the words typed in the second the field was back are saved
+    /// when it is left, behind the read on the disk's one-at-a-time queue, and the read that returns changes nothing.
+    @Test func leavingAgainWhileTheReadmeIsReadAgainSavesWhatWasTypedAndTheLateReadChangesNothing() async throws {
+        let held = Held()
+        try await editor(legend: "Saved words.", held: held) { editor, folder, saves, _ in
+            await editor.show()
+            editor.hide()
+            held.holding(true)
+            let back = Task { await editor.show() }
+            try await until("the reload") { held.count == 1 }
+            editor.legend = "Typed on the way back."
+            editor.hide()
+            held.holding(false)
+            await back.value
+            await editor.settle()
+            #expect(editor.legend == "Typed on the way back.")
+            #expect(try legend(in: folder) == "Typed on the way back.")
+            #expect(!editor.changedOutside && editor.problem == nil && !editor.hasUnsavedText)
+            #expect(saves.count == 1)
+            // Shown once more, it reads what was written.
+            await editor.show()
+            #expect(editor.legend == "Typed on the way back." && editor.canEdit)
+            editor.hide()
+        }
+    }
+
+    /// A save that is asked for while the read is out goes in behind it; the words it takes are the new ones.
+    @Test func aSaveAskedForWhileTheReadmeIsReadAgainWritesTheNewWords() async throws {
+        let held = Held()
+        try await editor(legend: "Saved words.", held: held) { editor, folder, saves, _ in
+            await editor.show()
+            held.holding(true)
+            let reload = Task { await editor.show() }
+            try await until("the reload") { held.count == 1 }
+            editor.legend = "Saved while the disk waited."
+            let save = Task { await editor.save() }
+            held.holding(false)
+            await save.value
+            await reload.value
+            #expect(editor.legend == "Saved while the disk waited.")
+            #expect(try legend(in: folder) == "Saved while the disk waited.")
+            #expect(!editor.changedOutside && editor.problem == nil && !editor.hasUnsavedText)
+            #expect(saves.count == 1)
+        }
+    }
+
+    /// Claude's legend put in while the field is read again is not lost to the read either.
+    @Test func aLegendPutInWhileTheReadmeIsReadAgainStays() async throws {
+        let held = Held()
+        try await editor(legend: "Saved words.", held: held) { editor, folder, saves, _ in
+            await editor.show()
+            held.holding(true)
+            let reload = Task { await editor.show() }
+            try await until("the reload") { held.count == 1 }
+            let put = Task { await editor.put("Claude\u{2019}s words.") }
+            held.holding(false)
+            #expect(await put.value == .saved(before: "Saved words."))
+            await reload.value
+            #expect(editor.legend == "Claude\u{2019}s words.")
+            #expect(try legend(in: folder) == "Claude\u{2019}s words.")
+            #expect(!editor.changedOutside && editor.problem == nil)
+        }
+    }
+
+    // MARK: A read that is cancelled
+
+    /// The card went away while the README was read again: the task that was reading is cancelled, and the read comes
+    /// back as a cancellation. That says nothing about the README, so the field is not turned off and no sentence is said.
+    @Test func aReadCancelledByLeavingTheCardDoesNotTurnTheFieldOff() async throws {
+        let held = Held()
+        try await editor(legend: "Saved words.", held: held) { editor, folder, saves, _ in
+            await editor.show()
+            held.holding(true)
+            let reload = Task { await editor.show() }
+            try await until("the reload") { held.count == 1 }
+            reload.cancel()
+            await reload.value
+            #expect(editor.canEdit)
+            #expect(editor.problem == nil && !editor.changedOutside)
+            #expect(editor.legend == "Saved words.")
+            held.holding(false)
+            // The card is shown again, and the field is as it was.
+            await editor.show()
+            #expect(editor.canEdit && editor.problem == nil)
+            #expect(editor.legend == "Saved words.")
+        }
+    }
+
+    /// And words typed before the card went are saved when it does, not lost with the cancelled read.
+    @Test func wordsTypedBeforeTheCardWentAreSavedWhenItsReadIsCancelled() async throws {
+        let held = Held()
+        try await editor(legend: "Saved words.", held: held) { editor, folder, saves, _ in
+            await editor.show()
+            held.holding(true)
+            let reload = Task { await editor.show() }
+            try await until("the reload") { held.count == 1 }
+            editor.legend = "Typed before the card went."
+            reload.cancel()
+            editor.hide()
+            await reload.value
+            held.holding(false)
+            await editor.settle()
+            #expect(try legend(in: folder) == "Typed before the card went.")
+            #expect(editor.canEdit && editor.problem == nil && !editor.changedOutside && !editor.hasUnsavedText)
+            #expect(editor.legend == "Typed before the card went.")
+        }
+    }
+
+    /// A README that can't be read still turns the field off with the reason, as before: only a read that is cancelled or
+    /// out of date is let go.
+    @Test func aReadmeThatCantBeReadStillTurnsTheFieldOff() async throws {
+        try await editor(legend: "Saved words.") { editor, folder, saves, _ in
+            await editor.show()
+            editor.hide()
+            try FileManager.default.removeItem(at: folder.appending(path: "README.md", directoryHint: .notDirectory))
+            await editor.show()
+            #expect(!editor.canEdit)
+            #expect(editor.problem?.hasPrefix("Couldn\u{2019}t read the README") == true)
+        }
+    }
+
     // MARK: Leaving the field
 
     /// The wait is a minute here, so only leaving can have saved it. This is the case the review found: a legend typed

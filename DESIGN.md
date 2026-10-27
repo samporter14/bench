@@ -6330,6 +6330,22 @@ the draft with its Use Mine and Use Theirs, not the README's old words. An
 editor with nothing left to save or say is let go; with the field on screen a
 failure is the field's to say and the pill says nothing.
 
+**A read that comes back late changes nothing (since the 1.0.7 review).**
+Choosing an item whose editor was kept shows its field at once and reads the
+README once more, and the field takes typing meanwhile. If the person types
+(or Claude's legend is put in) before that read returns, the read is out of
+date: it is dropped whole. It does not replace the words, it does not become
+the README the next save is compared with, and it clears nothing the editor was
+saying. The next save is made from the README the editor last read or wrote,
+so it is a change "in another app" only if another app really changed the
+file, and then the field offers Use Mine and Use Theirs as ever. A read that was
+cancelled (the card went away while it was out) is dropped the same way, and
+does not turn the field off or say the README couldn't be read; a README that
+truly can't be read still does both. (`ShelfLegendEditor.revision` counts the
+typing and the reads that begin; a save asked for meanwhile waits behind the
+read on the disk's one-at-a-time queue.) Nothing on the card changes: no
+loading state, and the field takes typing as it did.
+
 **Claude's legend** (Kept/ShelfClaudeLegend.swift, ShelfClaudeLegendView.swift; after 1.0.4). When Claude makes a figure, the same answer often makes a legend file too: `FIGURE_LEGENDS_final.md`, or a `.md` that shares the figure's name. The detail card offers it in one quiet line in its legend area, **Use Claude's legend** · `FIGURE_LEGENDS_final.md`: the card's quiet-link style (12 points, muted, underlined, as More and Less are), no clay (the card's one clay action is Show Where It Came From). A figure shelved alone has no legend field (the field is for an item kept with data and code, or with a legend), so for it the line sits alone under a hairline, and once Claude's legend is in, the card shows what any item with a legend shows: its Files (the figure and Claude's file) and the legend field with the words in it.
 
 *Finding it.* The files of the answer that showed the figure are read the way the reference reader reads them: one page of history around the README's `source_row` (`ShelfDependencies.answerFiles`, then `ReferenceRules.answers` and `ReferenceFileRules.documents`: the files that aren't pictures, one for each artifact, less the ones Claude Science hides), when the card is first shown, once for each item (a page that couldn't be read is asked again the next time). Nothing is read under Claude Science's own folders; the file's bytes, when asked for, come through the shelf's queue and its 8 MB cap (`KeepDependencies.fetch`), as Add to Shelf's do. A figure whose README has no `source_row` (a pinned answer, or a last answer standing in for the one that showed it) has no offer, and neither has a document or a table. A **legend file** is a prose file (`md`, `markdown`, `txt`) of at most 1,000,000 bytes and not empty, other than the figure itself, whose name has "legend" in it (any case) or whose stem is the figure's stem (any case). Several are offered best first, at most six: the stem match; a legend for this figure (its name has the figure's stem or a number the figure's name has: `fig2_legend.md` for `fig2_zprime.png`); a legend with no number in its name (`FIGURE_LEGENDS_final.md`); a legend that names another figure (`fig1_legend.md`); the answer's own order inside each. A number in a name is a run of one to three digits, not part of a date or a version ("v2"); "S2", "figS2" and a name with "supp" or "extended" in it are supplementary figures'.
