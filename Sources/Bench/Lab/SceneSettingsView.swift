@@ -13,6 +13,9 @@ struct SceneSettingsView: View {
     /// A session's title picks the specimen that plays for it, from the ones
     /// that are on (Lab/SessionSpecimen.swift).
     @AppStorage(SettingsKey.matchSpecimenToSession) private var matchSpecimen = true
+    /// A specimen with a closing gesture settles to a stop when its session
+    /// finishes (Lab/FinishingGesture.swift).
+    @AppStorage(SettingsKey.finishingGesture) private var finishingGesture = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
@@ -125,6 +128,7 @@ struct SceneSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     matchToSession
                     shortSequences
+                    closingGesture
                 }
                 categories
             }
@@ -193,6 +197,23 @@ struct SceneSettingsView: View {
             Toggle("Play short sequences", isOn: $settings.playSequences)
                 .toggleStyle(.checkbox)
             Text("Now and then, a few specimens play in order, like a little story.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 20)
+        }
+    }
+
+    // MARK: Closing gesture
+
+    /// One checkbox and one line: when a session finishes, the specimen that was
+    /// playing settles to a stop where it was, if it has a gesture of its own
+    /// (Lab/FinishingGestures.swift). The others keep the plate that fills.
+    private var closingGesture: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Finish with a closing gesture", isOn: $finishingGesture)
+                .toggleStyle(.checkbox)
+            Text("When a session finishes, some specimens settle to a stop.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

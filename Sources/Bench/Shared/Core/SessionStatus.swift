@@ -26,6 +26,10 @@ public struct SessionStatus: Sendable, Equatable, Identifiable {
     /// keeps its own meaning (the root's write, or the turn's end), which the
     /// lists sort and date by.
     public let activeAt: Date?
+    /// How the turn ended, once it is over and the daemon says: a finished
+    /// session may have been completed, cancelled or replaced. Nil when it
+    /// did not end, or when nothing says.
+    public let ending: SessionEnding?
 
     public init(
         id: String,
@@ -38,7 +42,8 @@ public struct SessionStatus: Sendable, Equatable, Identifiable {
         tokens: Int? = nil,
         deepLink: URL? = nil,
         waitingReason: WaitingReason? = nil,
-        activeAt: Date? = nil
+        activeAt: Date? = nil,
+        ending: SessionEnding? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -51,6 +56,7 @@ public struct SessionStatus: Sendable, Equatable, Identifiable {
         self.deepLink = deepLink
         self.waitingReason = state == .needsInput ? (waitingReason ?? .other) : nil
         self.activeAt = activeAt
+        self.ending = ending
     }
 
     /// Short display title. Falls back to project name when untitled.

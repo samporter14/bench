@@ -113,6 +113,8 @@ struct LabPanelView: View {
     @ObservedObject private var insights: PanelInsights
     /// The Finished card's files and pictures (Lab/FinishedResults.swift).
     @ObservedObject private var finished: FinishedResults
+    /// The closing gestures planned for this run's finishes (Lab/FinishingGestures.swift).
+    private let gestures: FinishingGestures
     /// The shelf the Finished card's one figure is added to (Shelf/ShelfAccess.swift).
     @ObservedObject private var onShelf: ShelfAccess = .live
     /// Why the last Add to Shelf of a figure failed, by version, when it did.
@@ -123,11 +125,12 @@ struct LabPanelView: View {
     let onFit: (CGSize) -> Void
 
     init(model: LabModel, hover: PanelHover, insights: PanelInsights = .shared, finished: FinishedResults = .shared,
-         onFit: @escaping (CGSize) -> Void) {
+         gestures: FinishingGestures = .shared, onFit: @escaping (CGSize) -> Void) {
         self.model = model
         self.hover = hover
         self.insights = insights
         self.finished = finished
+        self.gestures = gestures
         self.onFit = onFit
     }
 
@@ -584,7 +587,7 @@ struct LabPanelView: View {
         var pictures: [ArtifactEntry] = []
         if case .loaded(let entries) = listing { pictures = FinishedResults.pictures(in: entries) }
         return VStack(alignment: .leading, spacing: 12) {
-            Row(side: wellSide, well: FinishedPlateWell(tint: colorScheme.sceneInk)) {
+            Row(side: wellSide, well: FinishedWell(session: session, tint: colorScheme.sceneInk, gestures: gestures)) {
                 caption("Finished", style: Theme.clayText, weight: .semibold, trailing: position)
                 title(session.displayTitle)
                 detail(FinishedCardText.meta(project: session.projectName, duration: session.duration))

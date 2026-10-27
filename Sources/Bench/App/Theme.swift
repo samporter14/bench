@@ -138,6 +138,10 @@ enum SettingsKey {
     /// fits (Lab/SpecimenTopics.swift). On by default (the handoff's
     /// proposal; Sam's call).
     static let matchSpecimenToSession = "matchSpecimenToSession"
+    /// When a session finishes, a specimen that has a closing gesture of its
+    /// own settles to a stop in the Finished card's well instead of the plate
+    /// filling (Lab/FinishingGesture.swift, since 1.1.0). On by default.
+    static let finishingGesture = "finishingGesture"
     /// Quick Start's global key (`GlobalHotKey`), a `GlobalHotKey.Choice`
     /// raw value: "none" turns it off.
     static let quickStartKey = "quickStartKey"
@@ -196,6 +200,7 @@ enum SettingsKey {
             remoteBrowse: true, // Phase 3 browse
             titleBarUsage: TitleBarUsage.fiveHour.rawValue,
             matchSpecimenToSession: true,
+            finishingGesture: true,
             quickStartKey: "controlOptionCommandSpace",
             replyKey: "controlOptionCommandR",
             shortcutsMayAct: false,

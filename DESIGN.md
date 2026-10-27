@@ -7724,7 +7724,9 @@ bar keep the rotation.
 
 **Finished.** The well is a well plate (`FilledPlate`): its wells fill one
 after another and two clay sparkles pop in, 1.3 s, then it rests; under Reduce
-Motion, or while nobody is at the Mac, that last frame at once. When the card
+Motion, or while nobody is at the Mac, that last frame at once. (Eight
+specimens close with a gesture of their own instead of the plate: Finishing
+gestures, below.) When the card
 is on top, Capsid reads the session's files once and up to three pictures
 (`FinishedResults`: its own queue of one, pictures within 1 MiB, withdrawn
 when the card goes): up to three figures 72 × 52 on ivory, "3 files", and
@@ -7812,6 +7814,103 @@ findings land before `completed`.
 
 `--demo progress`, `--demo finished` (`--one-figure` offers Keep…), `--demo
 note`, `--demo stack` (`--hover` opens it): made-up insights; nothing is read.
+
+### Finishing gestures (Lab/FinishingGesture.swift, since 1.1.0)
+
+When a session really finishes, the specimen that was playing in the panel
+settles to a stop in the Finished card's well, in 0.4 to 0.9 seconds, and rests
+on that frame. It is an acknowledgement that Claude Science reported a
+completion, not progress and not a result: no second illustration, no sound,
+no new colour, no timer that outlives it. Only the eight specimens of batch R
+have one (Capillary electrophoresis, Microtome ribbon, Möbius strip, Bayesian
+update, Droplet coalescence, Slime mold maze, Fern unfurling, Diatom); every
+other specimen keeps the plate that fills (`FilledPlate`), exactly as before.
+Settings → Specimens has one checkbox, "Finish with a closing gesture"
+(`finishingGesture`, on by default), under "Play short sequences".
+
+- **Where.** In the 88 pt well at the card's left, the spot the working specimen
+  was in, so it is that specimen settling where it was and there is never a
+  second celebration beside it: the gesture replaces the plate for these eight
+  (`FinishedWell` chooses between them). The Finished heading, the files and
+  the buttons are there at once; the gesture delays nothing, takes no focus and
+  blocks no button. After it the well rests on its last frame, drawn once.
+- **A model of time** (`FinishingGesture`, pure). The specimen's drawing is
+  untouched; the plan only says which moment of its own loop to draw.
+  - *Settle.* The scene's clock slows from the speed it was playing at (1) to a
+    stop along `(1 - u)^k`, covering at most 0.45 s of the scene's own time (0.4
+    when nothing is in the way) in twice that real time, within 0.4 to 0.9 s. It
+    never runs backwards and never speeds anything up.
+  - *Ease to rest* (Möbius strip, Diatom): it stops at the nearest rest ahead
+    when one is within reach and at least 0.1 s away. The Möbius marker's rests
+    are its home marks (where it began, at 0 and at 3 s of its 6, the second with
+    the tick on the other face); with none within reach it slows to a stop where
+    it is. The Diatom's are spread through the stretches where its face is at
+    least 0.8 of its width (the first and last 1.4 s of its 5 s half turn); with
+    none within reach it dissolves rather than stop edge on (edge on is 2.5 s).
+  - *Reset windows.* A finish inside one dissolves instead: the frame that was
+    showing gives way, over 0.5 s, to the specimen's poster still
+    (`SpecimenPoster`), and rests on that. They are the stretches where the scene
+    is itself crossfading or sliding back to its start: the rotation's own fade
+    (0.3 s at each end of every scene), the fern's last 0.8 s (5.6 to 6.4), the
+    droplet's conveyor (3.9 to 5.0), the slime mold's fade (6.0 to 7.0) and the
+    Bayesian update's return to the prior (4.2 to 5.6). A settle stops short of
+    the next reset in the room there is, down to holding the frame. Two stills
+    would add what a finish must not: the Bayesian update's is its tallest
+    posterior with every observation, and the slime mold's its whole route. A
+    finish in their resets or fades goes on instead to where the reset was going,
+    0.35 s into the loop: the prior alone, and the bare maze with the seed and
+    the food (`FinishingSpec.dissolveTo`).
+  - *Nothing new.* The Bayesian update's observations land at 0.5 s and every
+    0.45 s after; a settle stops short of the next, so no observation arrives
+    that was not on show. (`BayesianUpdate`'s own constants; a test draws the
+    scene and checks the table against them.)
+  - *Sequences.* A short sequence member finishes as itself, with a fraction of
+    a second of its own loop; the members after it never play.
+  - Read from each scene's code (names and times in `FinishingGesture.specs`),
+    not guessed; the periodic ones (capillary, microtome, Möbius, Diatom) are
+    checked to close on themselves, so a settle may run across the end of the loop.
+- **Which finish.** `LabModel` tells `FinishingGestures` of each finish that
+  raised its Finished card for the first time (`finishRaised`), and never one
+  held for a Nidus focus session or a presentation (which come later as one
+  notice with no specimen), nor one on the first read that worked. The finish's
+  identity is the one Recent keeps it under (`LabEvent.id`: the session and the
+  turn), so the same completion told twice is one gesture, a rebuilt view or a
+  reopened card never replays it, and a new turn of the same session finishes
+  again, by itself.
+  - *A success only.* `SessionEnding` (Shared/Core), read from the frame's own
+    status: only "completed" and "success" are a success. `SessionState` still
+    reads "cancelled" and "replaced" as finished, so those still raise today's
+    Finished card, with the plate. Waiting, a question, an error and a
+    disconnect are not finishes at all.
+  - *The specimen on show.* The gesture is planned only when, just before the
+    read, the finishing session was the head of the working sessions (the one the
+    panel plays), the working panel was not hidden or paused, no card was over it
+    and the sessions could be read, and the panel's settings play it
+    (`FinishingGestures.wasOnShow`). It takes that session's own specimen and
+    where the clock had it in its loop, then. A late finish from a session whose
+    specimen was not on show, A behind B, plans nothing and cannot touch B's
+    scene, which is never given to the gesture at all; two sessions finishing
+    together give the one that was on show its gesture and the other the plate.
+  - *Played once, for good.* The card's well asks (`claim`) when it is built, and
+    the first ask decides: under Reduce Motion (and for the offscreen captures'
+    `stillSpecimens`), and while the specimen holds a still (`SpecimenHold`), it
+    is the plate's last frame at once, and the gesture never plays later. A
+    plan is only in memory, sixteen at most.
+- **Quiet.** The panel is not built while presenting or when its cards are off,
+  so a finish then plays nothing (it is held, as it always was); the gesture
+  never opens a hidden panel. Rendering stops with the gesture: the well's
+  timeline (`FinishingSchedule`) has exactly the gesture's frames, every 1/30 s
+  and the last at its end, and then no more; there is no timer, task or
+  animation left to cancel, and a view built after it draws the rest frame once.
+- **Tests.** `FinishingGestureTests` (the model: duration, budget, never
+  backwards, resets, rests, the scenes' own constants), `FinishingScheduleTests`
+  (the frames, and then none), `FinishingEventTests` (the events: duplicate, new
+  turn, stale session, each non-success, first load, held finishes, Reduce
+  Motion, a sequence member), `SessionEndingTests`, and
+  `FinishingGestureSnapshotTests` (offscreen strips, GIFs and the card in place,
+  light and dark, with `CAPSID_SNAPSHOT_DIR`). Not yet seen by eye on a real
+  screen: the handover from the working specimen to the card in the panel's own
+  spring, and occlusion (a covered panel simply runs its 0.9 s out of sight).
 
 ## Since You Left (SinceYouLeft/, since 1.0)
 
