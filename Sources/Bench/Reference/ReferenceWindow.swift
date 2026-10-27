@@ -10,7 +10,8 @@
 // when it is pressed (Space too), a document likewise, except a Markdown one,
 // which is read in the window itself ("‹ Answer", Esc or ⌘[ goes back; see
 // ReferenceFiles.swift). At the foot, two pills: Copy with Source (⇧⌘C) and
-// Open Conversation. Window → Keep on Top floats the key one. Nothing here is
+// Open Conversation, with a quiet ⋯ between them (Pin to Project, Workspace/).
+// Window → Keep on Top floats the key one. Nothing here is
 // in the clay: the window reads, it never asks. (What it does besides is the
 // Shelf's: Add to Shelf, "On Shelf ✓" once it is, and a shelved figure wears
 // board 11's mark, a slate chip and an ink ring. Show Where It Came From opens
@@ -267,6 +268,8 @@ struct ReferenceView: View {
     /// The window's width, for the Keep sheet: one wider than the window
     /// would hang off both sides.
     @State private var pageWidth: CGFloat = ReferenceWindowController.size.width
+    /// What Pin to Project came to, when it has something to say (a fifth pin), for a few seconds.
+    @State private var pinSentence: String?
 
     /// The page's margins and the space between its parts, after the mock-up.
     private static let side: CGFloat = 24
@@ -571,16 +574,26 @@ struct ReferenceView: View {
                                                         projectName: session.projectName, seed: seed))
     }
 
-    /// Copy with Source and Open Conversation, as the mock-up's foot has them.
+    /// Copy with Source and Open Conversation, as the mock-up's foot has them, and between them a quiet ⋯ with Pin
+    /// to Project (Workspace/WorkspaceCommands.swift), whose word, when it has one, sits over the foot.
     private var footer: some View {
-        HStack(spacing: 8) {
-            Button(model.copied ? "Copied" : "Copy with Source") { copy() }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
-                .disabled(model.current == nil)
-                .help("The selection, or the whole answer or document, with where it came from (Shift-Command-C)")
-            Spacer(minLength: 8)
-            Button("Open Conversation") { model.openConversation() }
-                .help("This session in the main window")
+        VStack(alignment: .leading, spacing: 8) {
+            if let pinSentence {
+                Text(pinSentence)
+                    .font(.system(size: Solanum.captionSize))
+                    .foregroundStyle(Theme.clayText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button(model.copied ? "Copied" : "Copy with Source") { copy() }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .disabled(model.current == nil)
+                    .help("The selection, or the whole answer or document, with where it came from (Shift-Command-C)")
+                Spacer(minLength: 8)
+                WorkspacePinMenu(session: model.session, row: model.current?.id, sentence: $pinSentence)
+                Button("Open Conversation") { model.openConversation() }
+                    .help("This session in the main window")
+            }
         }
         .buttonStyle(SolanumPillStyle())
         .padding(.horizontal, 16)

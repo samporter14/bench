@@ -178,6 +178,8 @@ final class WebContainer: ObservableObject, WebPageWindow {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.lastSession.note(url: url, daemonPort: self.port)
+                // And each project's last conversation, for Return to Project (Workspace/WorkspaceVisits.swift).
+                WorkspaceCommands.shared.note(url: url, daemonPort: self.port)
             }
         }
     }

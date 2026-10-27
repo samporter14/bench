@@ -87,6 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RemoteController.shared.start()
         // Capsid's item in the menu bar, and the home popover behind a click on it (Companion/).
         MenuBarHome.shared.start()
+        // The projects with a workspace, read once, a few seconds on, for History → Return to Project (Workspace/).
+        WorkspaceStore.shared.start()
         // Quick Start's and Reply's keys from any app, and Finder's Services
         // (QuickStart/). A demo returned above and registers none of it.
         GlobalKeys.shared.actions = [
@@ -135,6 +137,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for url in urls where url.scheme == "bench" {
             Router.shared.handle(benchURL: url, port: WebContainer.shared.port)
         }
+    }
+
+    /// A Working Note typed in the last moment (Workspace/) is written before Capsid goes: two seconds at most.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard Demo.mode == nil, WorkspaceStore.shared.hasUnsavedWork else { return .terminateNow }
+        Task { @MainActor in
+            let store = WorkspaceStore.shared
+            Task { await store.flushAll() }
+            // A write that fails stays unsaved: that is two seconds, and then Capsid quits anyway.
+            let deadline = ContinuousClock.now + .seconds(2)
+            while store.hasUnsavedWork, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -313,6 +329,8 @@ struct BenchCommands: Commands {
     @ObservedObject private var reference = ReferenceCommands.shared
     /// Ask Another Model…: there only while it is on with a key (AskModel/AskModelMenu.swift).
     @ObservedObject private var ask = AskCommands.shared
+    /// The main window's project and the projects with a workspace (Workspace/WorkspaceCommands.swift).
+    @ObservedObject private var workspaces = WorkspaceCommands.shared
     /// The key shown beside Quick Start… (QuickStart/GlobalHotKey.swift).
     @AppStorage(SettingsKey.quickStartKey) private var quickStartKey = GlobalHotKey.Slot.quickStart.fallback.rawValue
 
@@ -422,6 +440,18 @@ struct BenchCommands: Commands {
                     .keyboardShortcut("]")
             }
             .disabled(!active.hasPage)
+            // A project's note, pinned references and last conversation (Workspace/). ⌥⌘P is used nowhere else in
+            // Capsid; dim unless the main window shows a project.
+            Divider()
+            Button("Project Workspace") { workspaces.showWorkspace() }
+                .keyboardShortcut("p", modifiers: [.command, .option])
+                .disabled(!workspaces.canShowWorkspace)
+            Menu("Return to Project") {
+                ForEach(workspaces.returnable) { item in
+                    Button(item.title) { workspaces.returnTo(item.id) }
+                }
+            }
+            .disabled(Demo.mode != nil || workspaces.returnable.isEmpty)
         }
     }
 }
