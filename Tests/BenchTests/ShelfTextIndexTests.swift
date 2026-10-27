@@ -698,7 +698,7 @@ struct ShelfStillReadingWordsTests {
     @Test func theEmptyStateSaysYetWhileReadingAndNothingMatchesOnceItIsDone() {
         #expect(ShelfRules.nothingFoundTitle(for: "zebrafish", stillReading: false) == "Nothing on your shelf matches \u{201C}zebrafish\u{201D}")
         #expect(ShelfRules.nothingFoundTitle(for: "zebrafish", stillReading: true) == "Nothing matches \u{201C}zebrafish\u{201D} yet")
-        #expect(ShelfRules.nothingFoundSentence(stillReadingFiles: nil) == "Search covers names, sessions, legends and Claude\u{2019}s words.")
+        #expect(ShelfRules.nothingFoundSentence(stillReadingFiles: nil) == "Search covers names, sessions, legends, Claude\u{2019}s words and the text of notes and documents.")
         #expect(ShelfRules.nothingFoundSentence(stillReadingFiles: 12) == "Still reading 12 files; more may match.")
     }
 }
@@ -1088,7 +1088,7 @@ struct ShelfStillReadingModelTests {
         rig.model.search = "axolotl"
         #expect(rig.model.searchFoundNothing)
         #expect(rig.model.nothingFoundTitle == "Nothing on your shelf matches \u{201C}axolotl\u{201D}")
-        #expect(rig.model.nothingFoundSentence == "Search covers names, sessions, legends and Claude\u{2019}s words.")
+        #expect(rig.model.nothingFoundSentence == "Search covers names, sessions, legends, Claude\u{2019}s words and the text of notes and documents.")
     }
 
     @Test func filesThatAddNothingDoNotRedrawTheWindowAndOneThatAddsAMatchDoes() async throws {

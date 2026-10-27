@@ -348,7 +348,7 @@ enum ShelfRules {
 
     /// Under that title: the line about the reading while it goes on, else what a search covers.
     static func nothingFoundSentence(stillReadingFiles files: Int?) -> String {
-        files.map(stillReadingSentence) ?? "Search covers names, sessions, legends and Claude\u{2019}s words."
+        files.map(stillReadingSentence) ?? "Search covers names, sessions, legends, Claude\u{2019}s words and the text of notes and documents."
     }
 
     // MARK: The text a search can read
