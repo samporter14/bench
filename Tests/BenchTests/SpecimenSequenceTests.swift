@@ -402,6 +402,15 @@ struct SpecimenSequencePlaybackTests {
         }
     }
 
+    @Test func underReduceMotionAStoryInTheRotationChangesNothing() {
+        // Still the one flask, not a member that happens to be playing; a
+        // rotation of one specimen is still that specimen.
+        let (rotation, _) = Self.rotation()
+        #expect(rotation.scenes.count > 1)
+        #expect(WorkingGlyph.still(in: rotation)?.name == WorkingGlyph.still?.name)
+        #expect(WorkingGlyph.still(in: Rotation([rotation.scenes[0]]))?.name == rotation.scenes[0].name)
+    }
+
     @Test func theCaptionTicksOnceAMemberAndNamesTheOneNowPlaying() throws {
         let (rotation, woven) = Self.rotation()
         let block = try #require(woven.blocks.first)

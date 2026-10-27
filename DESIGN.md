@@ -2279,7 +2279,7 @@ control and no progress: nothing says "2 of 4".
   from what plays (catalogue order, not yet spread) to the rotation's scenes and
   where each block sits. `SpecimenChoice.rotation(favorites:onlyFavorites:sequences:)`
   calls it, with none when the setting is off (that path is the one that was
-  there before and is untouched). `Rotation` is still an ordered list of scenes
+  there before, unchanged). `Rotation` is still an ordered list of scenes
   played by the clock, so the panel, the menu bar, the toolbar, the caption, the
   field guide and the poster agree without being told, a rebuilt view carries on
   from the clock, and there is no timer, renderer or frame cache of its own. A
