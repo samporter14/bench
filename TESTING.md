@@ -343,17 +343,19 @@ window shown, the app not launched, nothing in /Applications or the real Kept fo
 - ✅ **A late legend reload no longer overwrites words just typed** (`ShelfLegendEditor`, `ShelfLegendTests`). Typing during a
   held reload, away and back, a save asked for meanwhile, Claude's legend put in meanwhile, another app's change meanwhile (the
   conflict rule still applies at the save), a cancelled read, and a README that can't be read (still turns the field off).
-  Seven of the nine failed before the fix; the other two (a clean reload, a README that can't be read) are controls and
+  Eight of the ten failed before the fix (the tenth: a dropped read leaves a sentence the field was saying, such as a
+  conflict, where Use Theirs is cancelled); the other two (a clean reload, a README that can't be read) are controls and
   passed throughout.
 - ✅ **Mutation checks:** each fix was broken on purpose and its tests failed, then it was restored. The phone: the cleanup
   moved after the read (2 tests fail), the cleanup made unconditional (2 fail). The README: any "- " line taken for
   Capsid's (8 fail), a row never taken out (11 fail, six of them older tests). The legend: the stale-read check removed
   (5 fail), the cancelled-read check removed (1 fails).
-- ✅ **Whole suite:** `✔ Test run with 4417 tests in 572 suites passed after 44.953 seconds.` (`swift test --jobs 2`).
-  Two earlier full runs each had a timing test fail while the Mac was busy with another build (load average 17):
-  `LabInsightsGateTests.bothOfTheFailureCardsSwitchesMustBeOn` and `QueryCancellationTests.aCancelledReadLeavesTheConnectionForTheNextRead`
-  in one, `ReadingGateTests.cancellingTheCallerCancelsTheRead` in the other. The first two passed alone and the third
-  full run passed everything, so they are load flakes, not these changes.
+- ✅ **Whole suite:** `✔ Test run with 4418 tests in 572 suites passed after 28.795 seconds.` (`swift test --jobs 2`).
+  Before the last refinement above (one more test, 4417), two full runs each had a timing test fail while the Mac was
+  busy with another build (load average 17): `LabInsightsGateTests.bothOfTheFailureCardsSwitchesMustBeOn` and
+  `QueryCancellationTests.aCancelledReadLeavesTheConnectionForTheNextRead` in the first,
+  `ReadingGateTests.cancellingTheCallerCancelsTheRead` in the second. The first two passed alone and the third run passed
+  everything, so they are load flakes, not these changes.
 - ⏳ **Only a live run can confirm:** the phone page in a real Safari (typing and picking a photo during a slow refresh on a
   slow Mac link, and that iOS leaves the field editable then); the Shelf's field under a real, slow README read (returning to an
   item and typing at once); Try Again on a README a person edited in an editor on Windows.

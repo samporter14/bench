@@ -109,11 +109,11 @@ final class ShelfLegendEditor: ObservableObject {
     func load() async {
         revision &+= 1
         let started = revision
-        changedOutside = false
-        problem = nil
         do {
             let read = try await disk.readme(at: folder)
             guard revision == started else { return }
+            changedOutside = false
+            problem = nil
             lastRead = read.markdown
             loading = true
             legend = read.text.legend
@@ -121,6 +121,7 @@ final class ShelfLegendEditor: ObservableObject {
             canEdit = true
         } catch {
             guard revision == started, !(error is CancellationError) else { return }
+            changedOutside = false
             lastRead = nil
             canEdit = false
             problem = Self.unreadable(KeptDiskError.sentence(error))

@@ -318,6 +318,34 @@ struct ShelfLegendTests {
         }
     }
 
+    /// A read that is let go changes nothing, so a sentence the field was saying is still said: Use Theirs reads the
+    /// README again, and if that read is cancelled the conflict is still there to be settled.
+    @Test func aReadLetGoLeavesTheSentenceTheFieldWasSaying() async throws {
+        let held = Held()
+        try await editor(legend: "Saved words.", held: held) { editor, folder, saves, _ in
+            await editor.show()
+            let url = folder.appending(path: "README.md", directoryHint: .notDirectory)
+            let theirs = try #require(KeptReadme.replacingLegend(in: String(contentsOf: url, encoding: .utf8), with: "Their words."))
+            try Data(theirs.utf8).write(to: url)
+            editor.legend = "Mine."
+            await editor.flush().value
+            #expect(editor.changedOutside)
+
+            held.holding(true)
+            let useTheirs = Task { await editor.load() }
+            try await until("the read") { held.count == 1 }
+            useTheirs.cancel()
+            await useTheirs.value
+            #expect(editor.changedOutside, "the conflict is still waiting for the person")
+            #expect(editor.legend == "Mine." && editor.canEdit && editor.problem == nil)
+            held.holding(false)
+
+            // Use Theirs, once it is read, still settles it.
+            await editor.load()
+            #expect(!editor.changedOutside && editor.legend == "Their words.")
+        }
+    }
+
     /// A README that can't be read still turns the field off with the reason, as before: only a read that is cancelled or
     /// out of date is let go.
     @Test func aReadmeThatCantBeReadStillTurnsTheFieldOff() async throws {
