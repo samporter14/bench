@@ -28,7 +28,9 @@
 //
 // Ownership: the record owns the front matter, the title line, the "Not
 // copied" rows and the "Checksums" rows (one for each file whose bytes don't
-// match Claude Science's checksum). The four `KeptText` fields are the bodies of the sections and
+// match Claude Science's checksum). A row is Capsid's only as the record says it
+// wrote it, to the letter: a bullet a person puts beside them, or a row they
+// reword, is theirs (`updating`). The four `KeptText` fields are the bodies of the sections and
 // are written as given and read back as written. (An empty `origin` is made
 // from the record; `origin(for:)` and `attribution(answerAt:)` make the
 // usual ones, with the dates written out in English and the time the way the
@@ -571,6 +573,16 @@ enum KeptReadme {
     /// A new "Not copied" goes where the "Where it came from" section ends,
     /// and a new "Checksums" after "Not copied" (else there), so Capsid's own
     /// sections stay together and a person's go on after them.
+    ///
+    /// Inside those two sections Capsid's rows are the lines that are exactly the
+    /// rows the README's own record says it wrote (the record as it stands in the
+    /// file, before this update), wherever in the section they are. Those it no
+    /// longer needs are taken out, a changed row is written where the old one
+    /// stood, a new one after the last of Capsid's, and every other line is the
+    /// person's and stays byte for byte, a bullet ahead of, between or behind the
+    /// rows included. (Every bullet at the top of the section used to be taken for
+    /// Capsid's, so a person's was replaced or lost.) A row a person reworded is
+    /// theirs too; the record's row is then written again beside it.
     static func updating(_ markdown: String, files: [KeptFile], missing: [KeptMissing]) -> String? {
         guard let (plain, windows) = editable(markdown), let parsed = parsePlain(plain) else { return nil }
         var record = parsed.record
@@ -582,11 +594,16 @@ enum KeptReadme {
         if mark { all[0].removeFirst() }
         guard let front = parseFrontMatter(all) else { return nil }
 
-        // The sections first, below the front matter, so the front matter's own lines keep their places.
+        // The sections first, below the front matter, so the front matter's own lines keep their places. Capsid's rows
+        // in them are the ones it wrote for the record as it was (`parsed.record`); the rows now wanted are the new
+        // record's.
         let notCopiedRows = record.missing.map { "- \(notCopied($0))" }
         let checksumRows = mismatched(record).map { "- \(checksumSentence($0))" }
-        guard setList(notCopiedRows, under: missingHeading, in: &all, from: front.next, after: [originHeading]),
-              setList(checksumRows, under: checksumHeading, in: &all, from: front.next, after: [missingHeading, originHeading])
+        let wasNotCopied = parsed.record.missing.map { "- \(notCopied($0))" }
+        let wasChecksums = mismatched(parsed.record).map { "- \(checksumSentence($0))" }
+        guard setList(notCopiedRows, replacing: wasNotCopied, under: missingHeading, in: &all, from: front.next, after: [originHeading]),
+              setList(checksumRows, replacing: wasChecksums, under: checksumHeading, in: &all, from: front.next,
+                      after: [missingHeading, originHeading])
         else { return nil }
 
         let blocks = [("missing", rows("missing", record.missing.map(missingMap))),
@@ -619,23 +636,24 @@ enum KeptReadme {
         return at..<end
     }
 
-    /// The rows of the list Capsid keeps under `heading` set to `rows`. The
-    /// list is the run of "- " lines at the top of the section; whatever else a
-    /// person put in the section stays. No rows take the list out, and the
-    /// whole section with it when nothing else is in it. A section that isn't
-    /// there is made, after the last of `anchors` there is. False when there
-    /// is nowhere to put it.
-    private static func setList(_ rows: [String], under heading: String, in all: inout [String], from start: Int,
-                                after anchors: [String]) -> Bool {
+    /// The rows Capsid keeps under `heading` made `rows`, where `previous` is what it wrote there last time. A line is
+    /// Capsid's own only when it is exactly one of `previous`, wherever in the section it stands: a bullet a person
+    /// put ahead of, between or behind the rows, a row they reworded, a note, is theirs and is not touched. Rows no
+    /// longer wanted go, new ones come in where the nearest row of Capsid's before them was (before the first when
+    /// there is none), and a row still wanted that is not there (a person took the list out) is written again. When
+    /// none of Capsid's rows is found, the rows go back at the top of the section. No rows take Capsid's out, and the
+    /// whole section with them when nothing else is in it. A section that isn't there is made, after the last of
+    /// `anchors` there is. False when there is nowhere to put it.
+    private static func setList(_ rows: [String], replacing previous: [String], under heading: String, in all: inout [String],
+                                from start: Int, after anchors: [String]) -> Bool {
         if let range = sectionRange(heading, in: all, from: start) {
             var body = Array(all[(range.lowerBound + 1)..<range.upperBound])
-            let first = body.firstIndex { !isBlank($0) } ?? body.count
-            var stop = first
-            while stop < body.count, body[stop].hasPrefix("- ") { stop += 1 }
-            if stop > first {
-                body.replaceSubrange(first..<stop, with: rows)
+            let found = ownRows(previous, in: body)
+            if found.contains(where: { $0 != nil }) {
+                body = changingOwnRows(in: body, found: found, from: previous, to: rows)
             } else if !rows.isEmpty {
-                // No list there (a person took it out): it goes back at the top of the section.
+                // No row of Capsid's there (a person took the list out): it goes back at the top of the section.
+                let first = body.firstIndex { !isBlank($0) } ?? body.count
                 if body.allSatisfy(isBlank) {
                     body = [""] + rows + [""]
                 } else {
@@ -657,6 +675,84 @@ enum KeptReadme {
         let lead = isBlank(all[place - 1]) ? [] : [""]
         all.insert(contentsOf: lead + [heading, ""] + rows + [""], at: place)
         return true
+    }
+
+    /// Where each of `previous` stands in `body`: the first line, not already taken, that is exactly that row. Nil for a
+    /// row that isn't there as written (taken out, or reworded, which makes it the person's).
+    private static func ownRows(_ previous: [String], in body: [String]) -> [Int?] {
+        var taken = Set<Int>()
+        return previous.map { row in
+            guard let at = body.indices.first(where: { !taken.contains($0) && body[$0] == row }) else { return nil }
+            taken.insert(at)
+            return at
+        }
+    }
+
+    /// One step from the rows Capsid wrote (`keep` and `drop` name one by its place in them) to the rows it wants.
+    private enum RowEdit {
+        case keep(Int)
+        case drop(Int)
+        case add(String)
+    }
+
+    /// The steps, by the longest run of rows the two lists share, so a row that stays is not touched and a row that changes
+    /// is dropped and its new one comes where it stood.
+    private static func rowEdits(from old: [String], to new: [String]) -> [RowEdit] {
+        var shared = Array(repeating: Array(repeating: 0, count: new.count + 1), count: old.count + 1)
+        for i in stride(from: old.count - 1, through: 0, by: -1) {
+            for j in stride(from: new.count - 1, through: 0, by: -1) {
+                shared[i][j] = old[i] == new[j] ? shared[i + 1][j + 1] + 1 : max(shared[i + 1][j], shared[i][j + 1])
+            }
+        }
+        var edits: [RowEdit] = []
+        var i = 0
+        var j = 0
+        while i < old.count || j < new.count {
+            if i < old.count, j < new.count, old[i] == new[j] {
+                edits.append(.keep(i))
+                i += 1
+                j += 1
+            } else if i < old.count, j == new.count || shared[i + 1][j] >= shared[i][j + 1] {
+                edits.append(.drop(i))
+                i += 1
+            } else {
+                edits.append(.add(new[j]))
+                j += 1
+            }
+        }
+        return edits
+    }
+
+    /// `body` with Capsid's rows (`found`: where each of `old` stands in it) made `new`, and every other line as it was.
+    private static func changingOwnRows(in body: [String], found: [Int?], from old: [String], to new: [String]) -> [String] {
+        var dropped = Set<Int>()
+        var after: [Int: [String]] = [:]
+        var leading: [String] = []
+        var anchor: Int?
+        func place(_ row: String) {
+            if let anchor { after[anchor, default: []].append(row) } else { leading.append(row) }
+        }
+        for edit in rowEdits(from: old, to: new) {
+            switch edit {
+            case .keep(let k):
+                if let at = found[k] { anchor = at } else { place(old[k]) }
+            case .drop(let k):
+                if let at = found[k] {
+                    dropped.insert(at)
+                    anchor = at
+                }
+            case .add(let row):
+                place(row)
+            }
+        }
+        let first = found.compactMap { $0 }.min() ?? 0
+        var out: [String] = []
+        for (i, line) in body.enumerated() {
+            if i == first { out += leading }
+            if !dropped.contains(i) { out.append(line) }
+            out += after[i] ?? []
+        }
+        return out
     }
 
     // MARK: Front matter, read

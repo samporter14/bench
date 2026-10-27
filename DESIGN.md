@@ -5481,6 +5481,24 @@ is left as it is, and the sheet says "The files landed, but README.md couldn't
 be updated to list them. README.md was changed in another app, so Capsid left it
 alone." Try Again then reads it as it is now.
 
+*Capsid's rows are the lines it wrote, and no others.* In "Not copied" and
+"Checksums", `updating` finds Capsid's own rows by their text: they are the
+lines that are exactly the rows the README's own record says Capsid wrote there
+(the record as it stands in the file, before this update), wherever in the
+section they stand. It takes out those it no longer needs, writes a changed row
+where the old one stood and a new one after the last of Capsid's, and leaves
+every other line as it was, byte for byte: a bullet a person put ahead of,
+between or behind the rows, a row they reworded, a note. (It used to take every
+bullet at the top of the section for its own, so a person's bullet beside the
+rows was replaced or lost on a retry, and the README still read.) A row a
+person reworded or took out is no longer found: the record's row, if still
+wanted, is written again, beside their words or at the top of the section, and
+a second retry then finds it and changes nothing. Nothing in this is guessed
+at, so nothing is refused for it; two identical lines are the same bytes, and
+the first is taken as Capsid's. Line ends and the byte order mark are handled
+as before (`KeptReadmeOwnRowsTests` runs each case plain, with Windows line
+ends, and with a byte order mark as well).
+
 **What a person may do to the file and still have it read (since the second
 README review, after 1.0.2).** The parser is strict about what Capsid writes
 and no stricter about the rest, because a folder that fails to parse leaves the
