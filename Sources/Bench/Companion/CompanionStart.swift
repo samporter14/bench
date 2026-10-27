@@ -39,11 +39,15 @@ final class CompanionStart: ObservableObject {
         case failed(String)
     }
 
-    /// What ⌘↩ hands Quick Start.
+    /// What ⌘↩ hands Quick Start. `retry` is the intent id of the last request this field made and could not
+    /// confirm, with the signature of what it was: Quick Start's own ledger takes it, so a request that may
+    /// already have gone through and is moved there unchanged is retried under the same id (the daemon finds the
+    /// first one), and a changed one gets a new id. Nil when nothing is waiting on an answer.
     struct HandOff: Equatable {
         let text: String
         let project: QuickStartProject?
         let planFirst: Bool
+        var retry: IntentLedger.Pending? = nil
     }
 
     struct Dependencies {
@@ -245,11 +249,11 @@ final class CompanionStart: ObservableObject {
         command || !hasText ? .quickStart : .start
     }
 
-    /// ⌘↩ (and ↩ on an empty field): the words, the project and the plan setting, for Quick Start. Nil while
-    /// a send is on its way.
+    /// ⌘↩ (and ↩ on an empty field): the words, the project, the plan setting and the retry identity, for Quick
+    /// Start. Nil while a send is on its way.
     func handOff() -> HandOff? {
         guard !inFlight else { return nil }
-        return HandOff(text: text, project: project, planFirst: planFirst)
+        return HandOff(text: text, project: project, planFirst: planFirst, retry: ledger.pending)
     }
 
     /// The line under the field, or nil for none (nothing typed, nothing sent).

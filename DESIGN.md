@@ -1406,7 +1406,13 @@ Start's box last asked for one. A line under the field says what Return does and
 that ⌘Return is Quick Start; then "Starting…", then "Started in Assay
 development." with Open, or the flow's own sentence with the words kept. ⌘Return,
 and Return on an empty field, open Quick Start with the words, the project and
-the plan setting. A send that ends while the popover is closed shows its outcome
+the plan setting, and with the intent id of a start the field could not confirm
+(since Codex's review of 1.0.7): the two have ledgers of their own
+(`IntentLedger`), so the hand-over carries the id and the request's signature
+(target, words, plan setting, files), and Quick Start's ledger takes them. The
+same request sent from Quick Start is the same request to the daemon, so a start
+whose answer was lost and which went through is found, not made twice; a request
+edited since, or any request after one that worked, has a new id. A send that ends while the popover is closed shows its outcome
 once, at the next opening. **Recent**, after Working and before Results today,
 holds the five sessions active latest that are in neither list (one put off with
 Later among them, its dot clay): a dot, the title, and "project · when" in the
@@ -6611,7 +6617,8 @@ sending.
 ↩ starts a session in the chosen project through the phone's new-session
 writer (`RemoteBrowser.start`), with an intent id kept the same across a retry
 of an unchanged request, so a session whose answer was lost is found, not made
-twice. ⇧↩ sends the same words as a message to the session the main window
+twice (also for a request the menu bar's field began and moved here with ⌘↩,
+which brings its id with it, `IntentLedger.adopt`). ⇧↩ sends the same words as a message to the session the main window
 shows (`RemoteSessions`: a fresh read, `RemoteDecide.message`, queued when
 Claude is busy). The foot says which: "A new session in Assay development, on
 your plan. ⇧↩ sends it to the session you're viewing." or, with ⇧ down, "A

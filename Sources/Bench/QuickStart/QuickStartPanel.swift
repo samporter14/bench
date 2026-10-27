@@ -46,11 +46,11 @@ final class QuickStartController: NSObject {
     /// what was typed and takes the files and text it is given. The menu bar's
     /// field hands over its project and plan setting too (⌘↩).
     func show(files: [URL] = [], text: String? = nil, project: QuickStartProject? = nil, planFirst: Bool? = nil,
-              dependencies given: QuickStartModel.Dependencies? = nil) {
+              retry: IntentLedger.Pending? = nil, dependencies given: QuickStartModel.Dependencies? = nil) {
         if let given { dependencies = given }
         let model = ensureModel()
         let wasShowing = isShowing
-        model.open(files: files, text: text, keeping: wasShowing, project: project, planFirst: planFirst)
+        model.open(files: files, text: text, keeping: wasShowing, project: project, planFirst: planFirst, retry: retry)
         let window = ensureWindow(model)
         if !wasShowing {
             top = nil

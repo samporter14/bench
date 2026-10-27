@@ -247,7 +247,7 @@ final class CompanionPanelController: NSObject {
             },
             quickStart: { handOff in
                 QuickStartController.shared.show(text: handOff.text.isEmpty ? nil : handOff.text, project: handOff.project,
-                                                 planFirst: handOff.planFirst)
+                                                 planFirst: handOff.planFirst, retry: handOff.retry)
             },
             openStarted: { [weak self] sessionID, projectID in
                 self?.close()

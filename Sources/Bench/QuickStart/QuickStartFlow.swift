@@ -78,6 +78,23 @@ struct IntentLedger: Equatable, Sendable {
         current = make()
     }
 
+    /// A request that has been made and not yet worked: its id and what it was. It may have gone through (its
+    /// answer was lost), so a retry of the same request must carry this id; the signature says what "the same"
+    /// is. Nil before any request, and after one that worked.
+    struct Pending: Equatable, Sendable {
+        let id: String
+        let signature: String
+    }
+
+    var pending: Pending? { signature.map { Pending(id: current, signature: $0) } }
+
+    /// The request another ledger made and could not confirm is this one's to retry (the menu bar's field handing
+    /// its words to Quick Start): the same request gets the same id there, a changed one a new id.
+    mutating func adopt(_ pending: Pending) {
+        signature = pending.signature
+        current = pending.id
+    }
+
     /// A version-4 UUID in lower case, as `crypto.randomUUID()` writes it.
     static func newID() -> String { UUID().uuidString.lowercased() }
 }
