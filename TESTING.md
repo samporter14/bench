@@ -323,6 +323,19 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-27, Capsid 1.1.2 released and installed
+
+- ✅ Released as v1.1.2 (tag on dcd225c, "Capsid 1.1.2", by Sam with `gh release create`), marked Latest: `Bench.zip`
+  with Capsid.app 1.1.2 (59) inside, 18,990,889 bytes, sha256 aa107bc7534961cf…. GitHub's asset digest matches the
+  file built from that commit.
+- ✅ Installed from that same build before the release (CDHash f0f6aa34; the unzipped copy's signature checks and its
+  CDHash is the same). Two 401s and a failed load at 14:05:31 while signing in, then no errors to 14:11:08, a span
+  that takes in the five-minute usage read and the Dock menu building with 11 items. `--diagnose` passes against
+  Claude Science 0.1.70.
+- The whole suite before the push: 4,795 tests in 609 suites pass.
+- ⏳ **Live**: the pick circle under a real pointer (and whether a press on it starts a drag), hover on a full Shelf,
+  Compare on the picked card, and real PDFs and SVGs side by side and in Wipe.
+
 ## 2026-10-27, Compare reads PDFs and SVGs; Compare on the picked card; the pick circle (`g/compare-figures`, from main 2f87bc2)
 
 Sam's Shelf is mostly PDFs and SVGs, so a PNG and a PDF of one figure showed nothing in Compare, and he couldn't find
