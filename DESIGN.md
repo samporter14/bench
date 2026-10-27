@@ -6877,8 +6877,11 @@ adjust zooms a picture by a quarter. Drawn smaller than its pixels a picture
 is smoothed; past them its pixels show as squares, unsmoothed. Nothing is
 stretched, registered, brightened or marked as a difference.
 
-**Wipe** is offered only when the two pictures' upright pixel sizes match;
-otherwise it isn't there at all (not dimmed). It draws both in one rectangle,
+**Wipe** is offered only when the two pictures' upright sizes match, counted
+alike; a picture beside a PDF page or an SVG (pixels beside points, most often
+one figure saved twice) needs only the same shape, aspect ratios within half a
+percent, and the line under it then names both sizes ("960 × 640 px · 460 ×
+307 pt"). Otherwise it isn't there at all (not dimmed). It draws both in one rectangle,
 the left picture left of the divider and the right one right of it, so
 neither moves as the divider does (`CompareWipeImages`), with the names at
 either end above and "Both 1,600 × 1,200 px" under. The divider is dragged, or

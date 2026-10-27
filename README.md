@@ -166,7 +166,7 @@ several): one 16:9 page each, with its title, legend and where it came from.
 **Compare two of them.** Right-click a figure or a text file and choose
 **Compare With**, then the other one. Figures (pictures, a PDF's first page,
 SVGs, in any mix) sit side by side with their zoom linked, or one over the
-other with **Wipe** when they're the same size; for two text files you see what
+other with **Wipe** when they're the same size or shape (a PNG over its PDF); for two text files you see what
 changed, line by line, with Previous and Next Change. With two picked,
 **Compare** beside Export does the same.
 

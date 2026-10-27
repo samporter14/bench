@@ -220,6 +220,16 @@ enum CompareRules {
         return size + " \u{00B7} page 1 of \(grouped(count))"
     }
 
+    /// The line under Wipe: "Both 1,600 × 1,200 px" when the two are one size, else each side's size, left first,
+    /// "960 × 640 px · 460 × 307 pt" (a PNG over its PDF: one shape, counted two ways).
+    static func wipeSizeLine(_ left: CompareImage?, _ right: CompareImage?) -> String {
+        guard let left else { return " " }
+        let a = sizeLine(left, pages: false)
+        guard let right else { return "Both " + a }
+        let b = sizeLine(right, pages: false)
+        return a == b ? "Both " + a : a + " \u{00B7} " + b
+    }
+
     /// The same, for VoiceOver: "612 by 792 points, page 1 of 3".
     static func sizeSpoken(_ image: CompareImage) -> String {
         guard image.unit == .points else { return pixelSpoken(source: image.source) }
@@ -238,11 +248,23 @@ enum CompareRules {
         return Int(a.width) == Int(b.width) && Int(a.height) == Int(b.height)
     }
 
-    /// The same for two sides' figures, which must also count their size alike: a 612 × 792 px picture and a
-    /// 612 × 792 pt page are not one size.
+    /// The same for two sides' figures. Counted alike (both pixels, or both points), they must be one size. A picture
+    /// beside a page or an SVG (pixels beside points) is most often one figure saved twice, a PNG and its PDF, so there
+    /// it is the shape that must match: the two aspect ratios within `aspectTolerance`, and Wipe draws both in one rect.
     static func canWipe(_ a: CompareImage?, _ b: CompareImage?) -> Bool {
-        guard let a, let b, a.unit == b.unit else { return false }
-        return canWipe(a.source, b.source)
+        guard let a, let b else { return false }
+        if a.unit == b.unit { return canWipe(a.source, b.source) }
+        return sameShape(a.source, b.source)
+    }
+
+    /// How far apart two aspect ratios may be and still be one figure's: half a percent, a pixel or two of rounding.
+    static let aspectTolerance = 0.005
+
+    /// Whether two sizes have one shape, within `aspectTolerance`.
+    static func sameShape(_ a: CGSize, _ b: CGSize) -> Bool {
+        guard a.width > 0, a.height > 0, b.width > 0, b.height > 0 else { return false }
+        let ra = Double(a.width / a.height), rb = Double(b.width / b.height)
+        return abs(ra - rb) / max(ra, rb) <= aspectTolerance
     }
 
     // MARK: The sentences

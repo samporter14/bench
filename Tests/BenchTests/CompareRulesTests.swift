@@ -181,9 +181,29 @@ struct CompareRulesTests {
         let png = try CompareImages.decode(CompareFixtures.png(width: 400, height: 300, colour: gradient)).get()
         // Two pages of one size, and a page and an SVG of it: Wipe.
         #expect(CompareRules.canWipe(pageA, pageB) && CompareRules.canWipe(pageA, svg))
-        // A 400 × 300 px picture beside a 400 × 300 pt page: not one size, so no Wipe.
-        #expect(!CompareRules.canWipe(pageA, png) && !CompareRules.canWipe(png, svg))
+        // A 400 × 300 px picture beside a 400 × 300 pt page or SVG: one figure saved twice, one shape, so Wipe.
+        #expect(CompareRules.canWipe(pageA, png) && CompareRules.canWipe(png, svg))
         #expect(CompareRules.canWipe(png, png) && !CompareRules.canWipe(png, nil))
+        // Pixels beside points only need the shape: a PNG drawn at twice the page's size still wipes over it.
+        let big = try CompareImages.decode(CompareFixtures.png(width: 800, height: 600, colour: gradient)).get()
+        #expect(CompareRules.canWipe(big, pageA))
+        // But not a different shape, and counted alike the size must still match.
+        let tall = try CompareImages.decode(CompareFixtures.png(width: 400, height: 400, colour: gradient)).get()
+        #expect(!CompareRules.canWipe(tall, pageA) && !CompareRules.canWipe(big, png))
+    }
+
+    @Test func wipesLineSaysBothOnlyWhenTheSizesAgree() throws {
+        let page = try CompareImages.decode(CompareFixtures.pdf(width: 400, height: 300)).get()
+        let png = try CompareImages.decode(CompareFixtures.png(width: 800, height: 600, colour: gradient)).get()
+        #expect(CompareRules.wipeSizeLine(page, page) == "Both 400 \u{00D7} 300 pt")
+        #expect(CompareRules.wipeSizeLine(png, page) == "800 \u{00D7} 600 px \u{00B7} 400 \u{00D7} 300 pt")
+        #expect(CompareRules.wipeSizeLine(nil, page) == " ")
+    }
+
+    @Test func oneShapeAllowsHalfAPercent() {
+        #expect(CompareRules.sameShape(CGSize(width: 960, height: 640), CGSize(width: 460, height: 307)))
+        #expect(!CompareRules.sameShape(CGSize(width: 960, height: 640), CGSize(width: 460, height: 320)))
+        #expect(!CompareRules.sameShape(.zero, CGSize(width: 460, height: 307)))
     }
 
     // MARK: Geometry

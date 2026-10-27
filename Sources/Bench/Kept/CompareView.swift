@@ -1,7 +1,7 @@
 // CompareView.swift — the Compare window's content (DESIGN.md, Compare), on the
 // 1.0 windows' Solanum surfaces: the page, white wells with hairline edges, ink
 // and muted ink, and one quiet row of hairline pills in the title bar (Swap
-// Sides; for pictures Fit, Link Zoom and, when the two are the same size, Wipe;
+// Sides; for pictures Fit, Link Zoom and, when the two are one size or shape, Wipe;
 // for text, Previous and Next Change). No clay fill anywhere: the window only
 // reads. Each side is its file's name, its own source line when known, and a
 // round ⋯ with the item's own source actions; two pictures stand side by side
@@ -385,7 +385,7 @@ struct CompareWipePane: View {
                 CompareSideHeader(side: right, trailing: true)
             }
             well(left, right)
-            Text(left.content.image.map { "Both " + CompareRules.sizeLine($0, pages: false) } ?? " ")
+            Text(CompareRules.wipeSizeLine(left.content.image, right.content.image))
                 .font(.system(size: 11))
                 .monospacedDigit()
                 .foregroundStyle(Solanum.muted)

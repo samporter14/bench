@@ -332,7 +332,10 @@ Compare or a way to pick two without ⌘. Everything ran offscreen: no app launc
   the picked card's button all follow; a PNG pairs with the PDF of the same figure. Told apart by their first bytes;
   a PDF's first page and an SVG are drawn on white, long side 3,072 px, by the drawing Export as PDF… uses
   (`ShelfVectorDrawing`, now shared; `ShelfPDFRenderTests` still pass). Sides say "460 × 307 pt · page 1 of 3".
-  Wipe needs the same size in the same unit. The 8 MB read stays: nothing on the Shelf is larger.
+  Wipe needs the same size when both count alike; a picture beside a page or an SVG (a PNG and its PDF) needs only the
+  same shape, aspect ratios within half a percent, and the line under Wipe then names both sizes ("960 × 640 px · 460 ×
+  307 pt"); `wipesLineSaysBothOnlyWhenTheSizesAgree`, `oneShapeAllowsHalfAPercent`. Mutation: the shape rule
+  answering no fails `wipeNeedsTheSameSizeCountedTheSameWay`. The 8 MB read stays: nothing on the Shelf is larger.
 - ✅ **Compare on the picked card**, a hairline pill between Clear and the clay Export, only for two that pair. The
   title bar's Compare pill is gone (one place is enough; the picked card is on screen exactly when two are picked), and
   the search is 160 under 760 points again. At 620 points the card's row needs 504 and the title bar 548.
