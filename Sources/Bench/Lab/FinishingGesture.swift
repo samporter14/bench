@@ -43,12 +43,18 @@ struct FinishingSpec: Sendable {
     /// Whether the loop is periodic by construction, so a settle may run across
     /// its end into its start. The others end in a reset, which a settle stops short of.
     let loops: Bool
+    /// Where a dissolve ends when the poster would bring in what a finish must
+    /// not show: the frame the reset is going to, for a scene whose still is
+    /// its fullest moment (more evidence, a whole route). Nil is the poster.
+    let dissolveTo: Double?
 
-    init(_ policy: Policy, resets: [Range<Double>] = [], arrivals: [Double] = [], loops: Bool = false) {
+    init(_ policy: Policy, resets: [Range<Double>] = [], arrivals: [Double] = [], loops: Bool = false,
+         dissolveTo: Double? = nil) {
         self.policy = policy
         self.resets = resets
         self.arrivals = arrivals
         self.loops = loops
+        self.dissolveTo = dissolveTo
     }
 }
 
@@ -130,15 +136,20 @@ enum FinishingGesture {
         "Möbius strip": FinishingSpec(.easeToRest([0, 3], otherwise: .slowToStop), loops: true),
         // The posterior goes back to the prior from `resetAt` (4.2 s) and is gone
         // by 5.25 s. Before that each observation lands at `arrive` (0.5 s and
-        // every 0.45 s after), and a settle must not let another one in.
+        // every 0.45 s after), and a settle must not let another one in. Its
+        // still is the tallest posterior with every observation, so a finish in
+        // the reset or a fade goes on to the prior alone (0.35 s, before the
+        // first arrival), where the reset was going: no confidence is added.
         "Bayesian update": FinishingSpec(.slowToStop, resets: [4.2..<5.6],
-                                         arrivals: [0.5, 0.95, 1.4, 1.85, 2.3, 2.75]),
+                                         arrivals: [0.5, 0.95, 1.4, 1.85, 2.3, 2.75], dissolveTo: 0.35),
         // The row slides left from `slideAt` (3.9 s) to the end, a fresh pair
         // arriving from the right.
         "Droplet coalescence": FinishingSpec(.slowToStop, resets: [3.9..<5.0]),
         // The route fades from `fadeAt` (6 s) to the end, leaving the seed and the
-        // two food dots.
-        "Slime mold maze": FinishingSpec(.slowToStop, resets: [6.0..<7.0]),
+        // two food dots. Its still is the whole route, so a finish in the fade
+        // lets the last faint branches go (0.35 s: the bare maze, the seed and
+        // the food) rather than bringing the route back.
+        "Slime mold maze": FinishingSpec(.slowToStop, resets: [6.0..<7.0], dissolveTo: 0.35),
         // The open frond fades as the next fiddlehead fades in, from `fadeAt`
         // (5.6 s) to the end.
         "Fern unfurling": FinishingSpec(.slowToStop, resets: [5.6..<6.4]),
@@ -170,7 +181,7 @@ enum FinishingGesture {
         let start = wrapped(local, in: loop)
 
         func dissolve() -> FinishingPlan {
-            FinishingPlan(scene: scene.name, kind: .dissolve, loop: loop, from: start, to: poster(), duration: dissolveFor)
+            FinishingPlan(scene: scene.name, kind: .dissolve, loop: loop, from: start, to: spec.dissolveTo ?? poster(), duration: dissolveFor)
         }
         func settle(covering advance: Double) -> FinishingPlan {
             // Twice the time covered, within the budget: the clock falls from its own

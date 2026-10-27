@@ -119,8 +119,7 @@ struct FinishingModelTests {
     // MARK: Reset windows
 
     @Test func aFinishInAResetWindowDissolvesToThePosterStill() throws {
-        for (name, at) in [("Fern unfurling", 5.9), ("Fern unfurling", 5.6), ("Droplet coalescence", 4.2), ("Droplet coalescence", 3.9),
-                           ("Slime mold maze", 6.4), ("Bayesian update", 4.5), ("Bayesian update", 5.5)] {
+        for (name, at) in [("Fern unfurling", 5.9), ("Fern unfurling", 5.6), ("Droplet coalescence", 4.2), ("Droplet coalescence", 3.9)] {
             let plan = try #require(FinishingGesture.plan(for: specimen(name), at: at, poster: 2.5))
             #expect(plan.kind == .dissolve, "\(name) at \(at)")
             #expect(plan.to == 2.5, "\(name) at \(at): the poster's time")
@@ -129,6 +128,24 @@ struct FinishingModelTests {
             #expect(plan.frame(at: 0) == .dissolve(from: at, to: 2.5, mix: 0))
             #expect(plan.rest == .scene(2.5))
         }
+    }
+
+    /// The Bayesian update's still is its most confident moment and the slime
+    /// mold's its whole route: a finish in their resets, or in a fade, goes on
+    /// to where the reset was going, the prior alone and the bare maze, never
+    /// to the still.
+    @Test func aStillThatWouldAddSomethingIsNotWhereAResetEnds() throws {
+        for (name, at) in [("Slime mold maze", 6.0), ("Slime mold maze", 6.4), ("Slime mold maze", 6.99), ("Slime mold maze", 0.1),
+                           ("Bayesian update", 4.2), ("Bayesian update", 4.5), ("Bayesian update", 5.5), ("Bayesian update", 0.1)] {
+            let plan = try #require(FinishingGesture.plan(for: specimen(name), at: at, poster: 2.5))
+            #expect(plan.kind == .dissolve, "\(name) at \(at)")
+            #expect(plan.to == 0.35, "\(name) at \(at): where the reset goes, not the still")
+            #expect(plan.frame(at: 0) == .dissolve(from: at, to: 0.35, mix: 0))
+            #expect(plan.rest == .scene(0.35))
+        }
+        // Before the first observation lands, the prior is all there is.
+        #expect(0.35 < FinishingGesture.specs["Bayesian update"]!.arrivals.min()!)
+        #expect(0.35 >= LabScenes.fade)
     }
 
     @Test func aFinishWhileTheRotationFadesTheSceneInOrOutDissolvesToo() throws {

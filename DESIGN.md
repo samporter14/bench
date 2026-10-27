@@ -7546,7 +7546,12 @@ Settings → Specimens has one checkbox, "Finish with a closing gesture"
     (0.3 s at each end of every scene), the fern's last 0.8 s (5.6 to 6.4), the
     droplet's conveyor (3.9 to 5.0), the slime mold's fade (6.0 to 7.0) and the
     Bayesian update's return to the prior (4.2 to 5.6). A settle stops short of
-    the next reset in the room there is, down to holding the frame.
+    the next reset in the room there is, down to holding the frame. Two stills
+    would add what a finish must not: the Bayesian update's is its tallest
+    posterior with every observation, and the slime mold's its whole route. A
+    finish in their resets or fades goes on instead to where the reset was going,
+    0.35 s into the loop: the prior alone, and the bare maze with the seed and
+    the food (`FinishingSpec.dissolveTo`).
   - *Nothing new.* The Bayesian update's observations land at 0.5 s and every
     0.45 s after; a settle stops short of the next, so no observation arrives
     that was not on show. (`BayesianUpdate`'s own constants; a test draws the
