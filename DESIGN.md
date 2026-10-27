@@ -6177,7 +6177,10 @@ shelf and the card has it.
   minute. A **note** (Add Selection to Shelf) has no version, and the page doesn't
   say which reply holds a selection, so it has no reply: the session opens at the
   newest reply. So does an item whose version no reply was found for, or whose look
-  failed or took more than twelve seconds. Nothing says a reply was found that was
+  failed or took more than twelve seconds. (A shelved item's own time is not given to
+  the look: its README's `answer_at` can be a later answer's when the reply wasn't
+  found at the time, and a look that stopped there would miss the reply; so a long
+  session with no row reads the full 24 pages before it gives up.) Nothing says a reply was found that was
   not: no word on the card or in the window claims it, and the log's words say which
   of the three it was (`row-known`, `row-found`, `row-none`).
 - *The window.* The session is opened as every "open this session" is
@@ -6206,7 +6209,14 @@ shelf and the card has it.
   (a bookmark goes by the list's own row index) is **`data-msg-idx`** (on every message section, 3064733): the
   message's number in the session's history (several, with spaces, on a run of tool
   calls), the same count as the daemon's `/api/frames/<id>/messages?from=` and so as
-  Capsid's history row. The conversation is **a virtual list**:
+  Capsid's history row. The evidence is in the reveal listener: it takes a message's
+  place in the loaded list (the window the page fetched with `from=<base>`) and adds
+  the window's start, `xs = max(floor, base)`, then looks for `data-msg-idx~="<that>"`
+  (3189545 and 3190626), so the page itself treats the attribute as an absolute
+  index; and the jump's own scroll target, `Oc`, counts from the same `base`
+  (3182042). The made-up pages in the tests number their messages that way by
+  construction, so only this reading, and a live click, tell it. The conversation is
+  **a virtual list**:
   `[data-testid="conversation-scroll"]` over rows (`data-index`, `data-rs-index`,
   3216816: a user's message, or a turn of Claude's, a `turn_carousel`, that holds its
   messages and, last, **the tray**, `[data-testid="turn-artifact-tray"]`, 3055986,

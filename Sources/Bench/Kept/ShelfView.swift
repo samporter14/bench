@@ -725,7 +725,7 @@ struct ShelfDetail: View {
             .disabled(Demo.mode != nil)
             .help(item.version == nil
                   ? "The conversation it came from"
-                  : "The conversation, at the reply that made it, with its files in view")
+                  : "The conversation, at the reply that made it when it can be found, with its files in view")
             Button(copied ? "Copied" : "Copy") {
                 ShelfActions.copy(item, disk: model.index.disk)
                 copied = true
