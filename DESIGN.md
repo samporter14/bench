@@ -3473,6 +3473,10 @@ Sources/Bench/AskModel/   AnotherModel (the switch, the key's file, the model li
                           reference window's right-click item), AskToolbarButton (the toolbar's button), ModelPickerMenu
                           (the item in Claude Science's model menu, its script and message handler), AskModelWindow
                           (Ask another model)
+Sources/Bench/Workspace/  Project Workspaces (1.1.0): WorkspaceRecord and WorkspaceFiles (the record and its file),
+                          WorkspaceVisits (each project's last conversation), WorkspaceStore (memory, the note's
+                          saving, pins, Clear), WorkspaceReturn and WorkspaceLive (Return to Project), WorkspacePanel
+                          and WorkspaceView (the panel), WorkspaceCommands (the History menu, the reference's ⋯)
 Sources/Bench/Shared/     The specimens (scenes) and ScienceCore, Capsid's own since 1.0: they began
                           as copies of the Science Status droplet's, and Droplets were retired in
                           October 2026, so `Scripts/sync-shared.sh` went with them. Edit them here.
@@ -6685,6 +6689,184 @@ too. Add to Shelf and Keep… wait up to 2 s for reads under way.
 *Two fixes found on the way, in the same window.* A landing's scroll (Show Where It Came From) waited one yield for the page to be laid out, which was too soon: in a real window it stayed at the top. It waits 120 ms. And the title bar's band was drawn behind the page, so a picture scrolled under the title showed through it; it is drawn over the page now, on the page's own colour. `--step documents` opens the demo scrolled to the documents.
 
 Quick Look draws HTML and SVG in the system's own sandbox, not on Capsid's origin or the page's, so opening one never runs it where Capsid or Claude Science could be reached.
+
+## Project Workspaces (Workspace/, since 1.1.0)
+
+"Can I come back to this project with the useful things still together?" A
+project's workspace is built from what you do: there is no Save step (Sam's
+choice over a Save Workspace… action). It holds three things: the last
+conversation shown in the project, remembered by itself; up to four references
+pinned to it from their windows; and a small Working Note. One explicit action,
+**Return to Project**, brings them back together, with the Shelf showing the
+project.
+
+**Remembered by itself** (`WorkspaceVisits.swift`). As the main web view moves
+from session to session, the session it shows becomes its project's last
+conversation. It rides on the same address watch as reopen-where-you-were
+(`WebContainer`'s sink calls `WorkspaceCommands.note` beside `LastSession.note`)
+and keeps the same shape: one `UserDefaults` array, `workspaceLastSessions`, of
+`<project id>/<session id>` pairs, the database's ids and nothing else, the
+most recently shown project first, 50 projects at most, written only on a
+change, and neither written nor read in a demo. Unlike `lastSession`, leaving a
+session for the home page forgets nothing: the project's last conversation is
+still the one it was. The same watch tells the History menu which project the
+main window shows (any `/projects/<id>/…` page on the daemon's address).
+
+**Pinned references.** The reference window's foot gains a quiet ⋯ between
+Copy with Source and Open Conversation (it had no ⋯ before): **Pin to Project**
+or **Unpin from Project**, for the reference's own project by its id, and
+**Show Project Workspace**. A pin is the session's id, the project's id, the
+reply on the page as its last history row (the Shelf's `sourceRow` is the same
+row) and the session's title as presentation, for when it has gone. One pin per
+session (a session has one window); pinning it again changes nothing. Four at
+most: a fifth is refused, nothing is dropped, and a sentence in clay-text over
+the window's foot says so for eight seconds ("“Assay development” has four
+pinned references already. Unpin one in its workspace (⋯ › Show Project
+Workspace), then pin this one."). Only deliberately pinned references are kept,
+never every window that happens to be open.
+
+**The Working Note.** Plain text, in an AppKit text view on a white card
+(`WorkspaceNoteEditor`), 14 on 21. It is bounded at 64 KiB of UTF-8: a change
+that would pass it (a keystroke, a paste, a drop) is refused before it is made,
+and a line says "That would make the note longer than 64 KB, so it wasn't
+added. Nothing was cut."; from 48 KB a quiet "52 KB of 64 KB" sits under it.
+It is written 0.8 s after typing stops and never more than 4 s after typing
+began, and at once when the panel moves to another project or closes; quitting
+waits up to 2 s for it (`applicationShouldTerminate`, only when something is
+unwritten). A save that fails keeps the text on screen and in memory, says
+"Couldn't save: The disk is full. Your note is kept here." and offers Retry;
+nothing is called saved until a write has landed, and a project with something
+unwritten is never read again over it.
+
+**What is kept** (`WorkspaceRecord.swift`, `WorkspaceFiles.swift`). One
+versioned record per project, keyed by its id, never its name, in Capsid's own
+folder: `~/Library/Application Support/Bench/Workspaces/project-<the id's bytes
+in hex>.json` (folder 0700, file 0600). Hex, because ids that differ only in
+case must stay two files on a disk that doesn't tell case apart, and an id that
+isn't the database's shape (`BrowseSQL.isProjectID`) has no file at all. The
+record is `schema` (1), the project's id, its name (presentation), the note,
+the pins and when it changed: ids, rows, titles and words typed here, never a
+transcript, a document, a picture or anything that signs in. It is written
+whole to a temporary file and renamed over the old one, on the disk's own actor;
+the store (`WorkspaceStore`) writes one project's record one write at a time,
+each taking the record as it is when it begins, so a slow write can never land
+after a newer one, and a read that began before a change made here lands on
+nothing. A record is read as one snapshot. A file that isn't a record of this
+shape (bad JSON, another project's id, five pins, a note over the limit, a
+session id out of shape) is *damaged*, and one with a higher schema is
+*newer*: both are left byte for byte, nothing is written over them, and the
+panel says so ("This workspace can't be read", with the reason and that Return
+still brings back the conversation and the Shelf). Clear Workspace… moves even
+those to the Trash, whole.
+
+**The panel** (`WorkspacePanel.swift`, `WorkspaceView.swift`), on the 1.0
+windows' Solanum surface. One window, moved between projects (its frame kept as
+`CapsidWorkspace`), 400 × 580 at first, 360 × 500 at least. The title bar is
+the page's own band, as the reference window's: the project's name centred
+over "Project workspace", cut in the middle when long and kept clear of the
+window's buttons, the whole name its tooltip; a quiet round ⋯ at the trailing
+edge holds **Clear Workspace…**, which asks first ("Its note and pinned
+references go to the Trash, where Put Back brings them back. Kept files and
+conversations stay as they are.") and touches nothing else. On the page:
+what the last Return couldn't bring back, if anything, as a short list in
+clay-text; "Working note" over the note, which takes the height the page has
+left (96 points at least; only then does the page scroll); "Pinned references
+· 3 of 4" over the pins, a white card of rows, each opening its reference at its
+reply when clicked, its title muted with "gone" when the database no longer has
+the session, and a quiet Unpin. At the foot, a quiet line naming the
+conversation Return will open ("Opens “Plate reader QC”", "Last conversation
+gone", "No conversation here yet") and **Return to Project**, the one clay
+action. A project with nothing yet opens with two sentences instead of the pins'
+caption: "Keep a note for this project here, and pin up to four replies from
+reference windows (⋯ › Pin to Project). Return to Project brings back your last
+conversation here, the pinned replies and the Shelf showing this project." They
+stay until the panel moves on, so the first words typed don't make the page jump.
+Titles are read from the database only when the panel comes to a project:
+`fetchSession` for the last conversation and each pin (read only, off the main
+actor, 2 s), the project's name from the sessions Capsid already watches, else
+from those reads, else `fetchProjectNames`; a look that comes back after the
+panel moved on is dropped.
+
+**Where it is.** History, under Back and Forward: **Project Workspace** (⌥⌘P,
+used nowhere else in Capsid; dim unless the main window shows a project) and
+**Return to Project ▸**, listing the projects with a pin or a note, the one
+shown most recently first (then the one changed most recently), 20 at most, two
+of one name told apart by the end of the id ("Assay development · …c0ffee").
+Choosing one shows the panel on it and returns. And the reference window's ⋯.
+
+**Return to Project** (`WorkspaceReturn.swift`, `WorkspaceLive.swift`). Explicit,
+and safe to press again. Three parts run side by side, none waiting on another,
+so one that fails never holds the rest back:
+
+1. The main window: when the database still has the last conversation in this
+   project (`fetchSession`, as above), the one main web view loads it through the
+   Router (`Router.open`, which is `WebContainer.load`); a session already on show
+   is only shown, not loaded again. A conversation that has gone, or a database
+   that can't be read, leaves the window where it was and says so; so does
+   Capsid while it only reads (an Open would bring Claude Science forward, not the
+   session).
+2. Each pin: looked up first (a session that has gone is said, and no window
+   opens on it), then its window opened, or the one already open used
+   (`ReferenceWindowController`: one per session), on a reachable screen, at the
+   reply that holds its row (`showPinned`, the landing Show Where It Came From
+   uses). The landing is watched until it ends, 30 s at most. If no reply holds
+   the row (the history is shorter, or the row is no reply's), the window says
+   "The pinned reply isn't in this conversation any more." over whatever reply it
+   shows, and the panel lists it: the newest answer is never passed off as the
+   pinned one. A landing that is still reading, that is further back than one
+   landing reads, or whose conversation can't be read, is said too.
+3. The Shelf: once the kept folders have been read, if any item's README names
+   this project's id, the Shelf shows it (`ShelfModel.show(projectID:)`): its own
+   items only, by id, since two projects of one name share one collection
+   folder; the pill names the collection, the search and the kind chip are let
+   go, and choosing a project in the pill lets the id go. With nothing of the
+   project's, the Shelf is left alone.
+
+Every part checks after each wait that it is still the latest Return (a
+generation token, and the Return before is cancelled): a Return to A followed
+by one to B leaves nothing of A's to load, open, show or report afterwards.
+Afterwards the panel shows what couldn't come back and, when anything couldn't,
+comes forward. Return reads and opens, nothing else: it makes no web view, sends
+no message, starts no session, approves no plan and asks no other model.
+
+**Not while unused.** A launch reads the records' folder once, three seconds on
+and off the main actor (200 records at most), so the menu can list them; after
+that nothing is read until the panel, a pin or a Return asks. No polling, and
+no call to the daemon at all. The log has counts and schema numbers, never a
+note, a title or a path.
+
+**Tests.** `WorkspaceRecordTests` (the file's name for an id and back, ids that
+differ only in case, ids out of shape, damaged and newer bytes, records not in
+shape, the note's limit in bytes, lists telling one name apart, the live disk
+on a temporary folder: whole 0600 files, no temporary left, the Trash through an
+injected trasher), `WorkspaceStoreTests` (two projects of one name share no note,
+pin or failure; four pins and a fifth refused; the note's wait, its longest
+wait, the write on moving and closing; held writes never landing out of order;
+a read never landing over newer typing, nor on another project; a failed save
+kept with Retry; the limit refused whole; damaged and newer files left byte for
+byte, on a made-up disk and on the live one; Clear to the Trash; the launch's
+read), `WorkspaceReturnTests` (every part through the one main web view, a real
+`Router` loaded once and not at all while Capsid only reads; what can't come back
+said while the rest comes; a repeated Return making no second window and leaving
+nothing waiting; Return to A then B with A's looks held; the panel's Return; a
+real reference model on the demo's history landing on a pinned row, a missing
+reply never counted a success, an open window moved rather than made again;
+screens), `WorkspaceVisitsTests`, `WorkspaceShelfTests` (two projects of one
+name in one collection) and `WorkspaceSnapshotTests` (the panel to PNGs, light
+and dark, at both sizes, when `CAPSID_SNAPSHOT_DIR` is set). Three guards were
+broken on purpose and the tests failed as they should: without the read's
+change check, typing was replaced by the older text read from disk; with writes
+allowed to overlap, three were under way at once and the file ended on the
+oldest text; without the Shelf's id filter, the other project of the same name
+showed; without the generation check, A's late looks loaded A, opened its pin,
+showed its Shelf and published its summary after B.
+
+**Live checks owed.** That the page doesn't take ⌥⌘P first; window order and
+focus after Return (the main window, the references, the Shelf, the panel); a
+pinned reply on a real long session (the landing's reads, its 30 s watch);
+relaunch (the menu after the launch's read; the note and pins back); Trash and
+Put Back, then the panel again; Return while Capsid only reads; VoiceOver on the
+panel and the ⋯.
 
 ## Quick Start (QuickStart/, since 1.0)
 
