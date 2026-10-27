@@ -3448,13 +3448,12 @@ differ in the pages they hold and in when they open.
      Bayesian update, Fern unfurling, Diatom) playing in turn in the glass well,
      in the panel's own glyph at 88 pt; under Reduce Motion the first rests as a
      still, as the Welcome's panel page shows a still flask. "Capillary
-     electrophoresis, a Möbius strip, a fern unfurling and five more. Turn on Play
-     short sequences and now and then a few play in order, like a little story." Under
-     it the real setting, a native switch "Play short sequences" ("Also in Settings →
-     Specimens."; `SceneSettings.shared.playSequences`, clay when on). Showing the
-     page writes nothing. Finishing gestures (the specimen that was playing
-     settling to rest when a session finishes) are not on the page yet: the table
-     has a marked place for their sentence.
+     electrophoresis, a Möbius strip, a fern unfurling and five more. When a session
+     finishes, they settle to a stop. Turn on Play short sequences and now and then a
+     few play in order, like a little story." ("They": only the eight have a closing
+     gesture.) Under it the real setting, a native switch "Play short sequences"
+     ("Also in Settings → Specimens."; `SceneSettings.shared.playSequences`, clay
+     when on). Showing the page writes nothing.
   4. *Show Where It Came From.* A speech bubble. "From the Shelf, it now opens the
      conversation at the exact reply something came from, with its results in view."
 - **Look.** The Welcome's. A page is a heading, the glass well (120 pt square, the

@@ -63,9 +63,7 @@ enum WhatsNew {
             art: .symbol("folder")),
         WhatsNewPage(
             title: "Eight new specimens",
-            // add when merged (finishing gestures, another branch): after "like a little story." append
-            //   " When a session finishes, the specimen that was playing settles to rest."
-            text: "Capillary electrophoresis, a Möbius strip, a fern unfurling and five more. Turn on Play short sequences and now and then a few play in order, like a little story.",
+            text: "Capillary electrophoresis, a Möbius strip, a fern unfurling and five more. When a session finishes, they settle to a stop. Turn on Play short sequences and now and then a few play in order, like a little story.",
             art: .specimens(["Capillary electrophoresis", "Microtome ribbon", "Droplet coalescence", "Slime mold maze",
                              "Möbius strip", "Bayesian update", "Fern unfurling", "Diatom"]),
             control: .playShortSequences),
