@@ -14,8 +14,10 @@
 // Window → Keep on Top floats the key one. Nothing here is
 // in the clay: the window reads, it never asks. (What it does besides is the
 // Shelf's: Add to Shelf, "On Shelf ✓" once it is, and a shelved figure wears
-// board 11's mark, a slate chip and an ink ring. Show Where It Came From opens
-// the window on the reply a shelved item came from, scrolled to it.)
+// board 11's mark, a slate chip and an ink ring. Open as Reference, in the
+// Shelf's menus, opens the window on the reply a shelved item came from, scrolled
+// to it; until 1.0.7 that was Show Where It Came From, which now goes to the
+// conversation in the main window.)
 import AppKit
 import Combine
 import QuickLookUI
@@ -105,7 +107,7 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
     private var watches: [String: AnyCancellable] = [:]
 
     /// Opens a session's window, or brings it forward. With `row` or `mark`
-    /// (Show Where It Came From, Open as Reference on a figure) it goes to
+    /// (Open as Reference on a shelved item or a figure) it goes to
     /// the reply that holds that history row, or shows that version, and
     /// scrolls to the file: a window already open moves there too.
     func show(_ session: SessionStatus, dependencies: ReferenceDependencies? = nil, at row: Int? = nil, mark: String? = nil) {
@@ -179,8 +181,8 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
     /// The model a session's window shows, for the demo.
     func model(for sessionID: String) -> ReferenceModel? { models[sessionID] }
 
-    /// THE SHELF'S CONTRACT (Kept/Shelf.swift): "Show Where It Came From".
-    /// Opens a session's reference window at the reply that holds history row
+    /// THE SHELF'S CONTRACT (Kept/Shelf.swift): "Open as Reference" (until 1.0.7
+    /// "Show Where It Came From"). Opens a session's reference window at the reply that holds history row
     /// `row`, scrolled to the file `version` and marked "On your shelf" (the
     /// mark follows the shelf); with no row, at the newest reply that shows the
     /// version. The window's own title and project are the ones given; its
@@ -399,7 +401,7 @@ struct ReferenceView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .scrollContentBackground(.hidden)
-                // Show Where It Came From: once the reply is up, the file it came for.
+                // Open as Reference on a shelved item: once the reply is up, the file it came for.
                 .onChange(of: model.scrollRequest, initial: true) { _, request in
                     guard let request else { return }
                     Task { @MainActor in

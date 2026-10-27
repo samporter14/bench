@@ -237,6 +237,10 @@ enum FakeFigurePage {
       addEventListener(type, fn, capture) {
         this.__listeners.push({ type: type, fn: fn, capture: capture === true || (capture && capture.capture === true) });
       }
+      removeEventListener(type, fn, capture) {
+        var wanted = capture === true || (capture && capture.capture === true);
+        this.__listeners = this.__listeners.filter(function (l) { return !(l.type === type && l.fn === fn && l.capture === wanted); });
+      }
       dispatchEvent(event) { return __dispatch(this, event); }
     }
     class FText extends FNode {

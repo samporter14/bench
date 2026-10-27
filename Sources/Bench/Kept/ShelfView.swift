@@ -257,6 +257,8 @@ struct ShelfView: View {
         .contextMenu {
             Button("Show Where It Came From") { ShelfActions.showWhereItCameFrom(item) }
                 .disabled(Demo.mode != nil)
+            Button(ConversationAction.openAsReference.title) { ShelfActions.openAsReference(item) }
+                .disabled(Demo.mode != nil)
             Button("Quick Look") { model.selection = item.id; quickLookSelected() }
             Button("Copy") { ShelfActions.copy(item, disk: model.index.disk) }
             // On the picks when this card is one of them, else on this card alone: the name says which.
@@ -416,8 +418,15 @@ enum ShelfActions {
         NSItemProvider(contentsOf: item.fileURL) ?? NSItemProvider()
     }
 
-    /// "Show Where It Came From": the reference reader at the message that showed it.
+    /// "Show Where It Came From": the main window on the session in Claude Science's own page, scrolled to the reply
+    /// that made the file, with the reply's files in view (Shelf/ShowSource.swift). Until 1.0.7 this opened the
+    /// reference reader.
     static func showWhereItCameFrom(_ item: ShelfItem) {
+        ShowSource.shared.show(SourceAsk(item))
+    }
+
+    /// "Open as Reference": the reference reader at the message that showed it, or at the session's newest reply.
+    static func openAsReference(_ item: ShelfItem) {
         let record = item.record
         ReferenceWindowController.shared.show(sessionID: record.sessionID, projectID: record.projectID, title: record.sessionTitle,
                                               projectName: record.projectName, at: record.sourceRow, mark: record.figure.version)
@@ -716,9 +725,9 @@ struct ShelfDetail: View {
             }
             .buttonStyle(SolanumPillStyle(.regular, prominent: true))
             .disabled(Demo.mode != nil)
-            .help(item.record.sourceRow == nil
-                  ? "The conversation it came from, in Capsid"
-                  : "The conversation, at the message that showed it")
+            .help(item.version == nil
+                  ? "The conversation it came from"
+                  : "The conversation, at the reply that made it when it can be found, with its files in view")
             Button(copied ? "Copied" : "Copy") {
                 ShelfActions.copy(item, disk: model.index.disk)
                 copied = true
@@ -735,7 +744,7 @@ struct ShelfDetail: View {
                         Divider()
                     } else {
                         Button(entry == .exportPDF ? model.exportName(from: item) : entry.title) { perform(entry) }
-                            .disabled(entry == .keepWithDataAndCode && Demo.mode != nil)
+                            .disabled((entry == .keepWithDataAndCode || entry == .openAsReference) && Demo.mode != nil)
                     }
                 }
             } label: {
@@ -745,7 +754,8 @@ struct ShelfDetail: View {
             .menuIndicator(.hidden)
             .buttonStyle(ShelfMoreStyle())
             .fixedSize()
-            .help(drawsAsNote || drawsAsDocument ? "Quick Look, Show in Finder, Export as PDF, Remove" : "Keep with Data and Code, Export as PDF, Remove")
+            .help(drawsAsNote || drawsAsDocument ? "Quick Look, Show in Finder, Open as Reference, Export as PDF, Remove"
+                  : "Keep with Data and Code, Open as Reference, Export as PDF, Remove")
             .accessibilityLabel("More for \(item.fileName)")
         }
     }
@@ -760,6 +770,9 @@ struct ShelfDetail: View {
             quickLook.show([item.fileURL], at: 0)
         case .showInFinder:
             NSWorkspace.shared.activateFileViewerSelecting([item.folder])
+        case .openAsReference:
+            guard Demo.mode == nil else { return }
+            ShelfActions.openAsReference(item)
         case .exportPDF:
             model.exportPDF(from: item)
         case .remove:

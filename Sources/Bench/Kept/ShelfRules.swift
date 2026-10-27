@@ -513,6 +513,9 @@ enum ShelfRules {
         case quickLook
         /// A note's only: the note's folder in Finder.
         case showInFinder
+        /// What Show Where It Came From was until it went to the conversation (after 1.0.7): the session in the
+        /// reference reader, at the reply that showed the file, or at its newest reply.
+        case openAsReference
         case exportPDF
         case divider
         case remove
@@ -523,6 +526,7 @@ enum ShelfRules {
             case .keepWithDataAndCode: "Keep with Data and Code\u{2026}"
             case .quickLook: "Quick Look"
             case .showInFinder: "Show in Finder"
+            case .openAsReference: ConversationAction.openAsReference.title
             case .exportPDF: ShelfPDFRules.exportName(count: 1)
             case .divider: ""
             case .remove: "Remove"
@@ -538,15 +542,16 @@ enum ShelfRules {
         }
     }
 
-    /// What the ⋯ menu holds, in order: Keep with Data and Code… when it can be asked for, Export Figure as PDF…, and
-    /// Remove last, after a divider. A note's card (after 1.0.6) has no picture to double-click or drag out, so its menu
-    /// opens with the two things the picture did to the file, Quick Look and Show in Finder, and then has what any
-    /// item's has (a note has no version to keep). Since 1.0.7 a document's reading card also has the two file actions,
-    /// followed by its existing actions.
+    /// What the ⋯ menu holds, in order: Keep with Data and Code… when it can be asked for, Open as Reference (after
+    /// 1.0.7, when Show Where It Came From went to the conversation; every card has it, a note's too, which opens at
+    /// the session's newest reply), Export Figure as PDF…, and Remove last, after a divider. A note's card (after 1.0.6)
+    /// has no picture to double-click or drag out, so its menu opens with the two things the picture did to the file,
+    /// Quick Look and Show in Finder, and then has what any item's has (a note has no version to keep). Since 1.0.7 a
+    /// document's reading card also has the two file actions, followed by its existing actions.
     static func moreMenu(canKeep: Bool, note: Bool = false, document: Bool = false) -> [MoreItem] {
-        if note { return [.quickLook, .showInFinder, .divider, .exportPDF, .divider, .remove] }
+        if note { return [.quickLook, .showInFinder, .divider, .openAsReference, .exportPDF, .divider, .remove] }
         return (document ? [.quickLook, .showInFinder, .divider] : [])
-            + (canKeep ? [.keepWithDataAndCode] : []) + [.exportPDF, .divider, .remove]
+            + (canKeep ? [.keepWithDataAndCode] : []) + [.openAsReference, .exportPDF, .divider, .remove]
     }
 
     static func flatten(_ text: String) -> String {

@@ -60,6 +60,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
     case keep
     case planProgress, reviewer, notes
     case find
+    case showSource
     /// Not a feature: the checks Capsid makes once when Claude Science's
     /// version changes (App/CompatWatch.swift), so "Last problem" can name them.
     case update
@@ -90,6 +91,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .reviewer: "The reviewer's findings on a finished card"
         case .notes: "Claude's messages to you, on a card"
         case .find: "Find a figure or file from any session, in the Shelf and in Quick Open"
+        case .showSource: "Show Where It Came From, at the reply in the conversation"
         case .update: "The checks after a Claude Science update"
         }
     }
@@ -136,6 +138,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .reviewer: "reviewer findings"
         case .notes: "Claude's messages on a card"
         case .find: "finding files"
+        case .showSource: "Show Where It Came From"
         case .update: "the checks after an update"
         }
     }
@@ -213,9 +216,9 @@ extension CompatInventory {
         hook("img, a[href]", "the figure or the file link under a right-click: a picture's address (currentSrc) or a link's (href) names one version of a file, as /api/artifacts/versions/<version> (any of its tails, with or without ?thumbnail=) or ?v=<version>",
              .shelfMenu, "Shelf/ConversationMenu.swift",
              check: .whenUsed("seen only on a right-click"), literal: true),
-        hook(#"[data-testid="turn-tray-card"]"#, "a card in the Generated tray under a reply: a right-click on its label stands for the picture in the card; a card with no picture (a Markdown, table or text file) stands for the file its label names",
+        hook(#"[data-testid="turn-tray-card"]"#, "a card in the Generated tray under a reply: a right-click on its label stands for the picture in the card; a card with no picture (a Markdown, table or text file) stands for the file its label names; Show Where It Came From outlines the one for the item (see the tray, below)",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click"), literal: true),
-        hook(#"[data-testid="middle-truncated-filename"]"#, "the file-name label in a Generated card (a span whose title is the whole file name, sanitised, and whose text is that name cut in the middle): for a card with no picture Capsid reads the title as the file's name and looks that name up among the session's files, never taking a file whose name is not exactly that; seen on a right-click on such a card, on a session's page only",
+        hook(#"[data-testid="middle-truncated-filename"]"#, "the file-name label in a Generated card (a span whose title is the whole file name, sanitised, and whose text is that name cut in the middle): for a card with no picture Capsid reads the title as the file's name and looks that name up among the session's files, never taking a file whose name is not exactly that; seen on a right-click on such a card, on a session's page only; Show Where It Came From takes the one card whose title is the item's file name, when no card's picture names the version and exactly one has that name",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click on a card with no picture"), literal: true),
         hook(#"[data-testid="artifact-preview-region"]"#, "the body of an open file tile (the side pane's, a tab's: the page's ArtifactTile): a right-click in it, or in the tile's header, is a right-click on that tile, which has no picture to name its version when the file is Markdown, a table or text; a picture drawn in a zoom-and-pan wrapper in this body is the file's viewer (see .react-transform-component img); since 1.0.6 words selected wholly inside it (both ends of the selection) and right-clicked there are a passage Capsid offers Add Selection to Shelf for, in the page's menu",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click in a tile with no picture"), literal: true),
@@ -229,7 +232,7 @@ extension CompatInventory {
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click in a tile with no picture"), literal: true),
         hook("window.getSelection()", "the words selected on a session's page, an ordinary browser call and no markup of Claude Science's: Capsid compares the selection at a right-click's button-down with the one at its menu (WebKit selects the word under the pointer when a right-click lands outside the selection) and, if it is the same, offers Add Selection to Shelf in the Mac's menu, or (since 1.0.6) first in Capsid's group in the page's own menu for a tile, when both ends of the selection are inside the tile's preview region; it puts the selection back with removeAllRanges and addRange if a click on that item moved it; it reads the words only when that item is chosen, and they go to a note on the shelf and nowhere else",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click on selected words")),
-        hook("img", "the thumbnail inside a tray card, whose address names the file's version, as /api/artifacts/versions/<version>?thumbnail=<width>",
+        hook("img", "the thumbnail inside a tray card, whose address names the file's version, as /api/artifacts/versions/<version>?thumbnail=<width>; Show Where It Came From takes the card whose thumbnail names the item's version as its card",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click"), literal: true),
         hook("a picture beside what was clicked", "the page lays a transparent layer (its annotation layer) over a figure it draws, in the side pane, in a tab or inline in a reply, so a right-click lands on the layer and the picture is its sibling; Capsid takes the picture under the pointer that shares a parent with what was clicked, or with what that is in, never as far out as the body",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click")),
@@ -243,6 +246,20 @@ extension CompatInventory {
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only on a right-click"), literal: true),
         hook("Escape on the document", "the page closes its figure menu on a keydown Escape in the capture phase of the document (else on a pointer-down outside the menu); after one of Capsid's items is chosen Capsid sends Escape, and a pointer-down on the body if the menu is still there 80 ms later",
              .shelfMenu, "Shelf/ConversationMenu.swift", check: .whenUsed("seen only when an item of Capsid's is chosen")),
+        hook(#"[data-testid="conversation-scroll"]"#, "the scroller of a session's conversation (a virtual list: only the rows near the screen are drawn): Show Where It Came From scrolls it to a reply, taking the first one on the page with a height. A page with none gets \"no-scroller\" in the log and a breadcrumb, and the session open as it is",
+             .showSource, "Shelf/SourceSeek.swift", check: .whenUsed("seen only when Show Where It Came From goes to a reply"), literal: true),
+        hook("[data-msg-idx]", "an element the page draws for a message, carrying the message's number; the same marker the page's own jumps (view in context, the compute chip's jump to a cell) and the reviewer's findings find a message by. Show Where It Came From reads the numbers of what is drawn to know which way, and how far, to scroll",
+             .showSource, "Shelf/SourceSeek.swift", check: .whenUsed("seen only when Show Where It Came From goes to a reply"), literal: true),
+        hook("data-msg-idx", "its value: one whole number, or several with spaces between (a run of tool calls). It counts messages of the session's history from 0, as the daemon's /api/frames/<session>/messages?from=<n> does, which is what makes Capsid's history row (source_row, or the row of the message that shows a version) the reply's number; a page that counted another way would put Show Where It Came From at the wrong reply, or at none",
+             .showSource, "Shelf/SourceSeek.swift", check: .whenUsed("seen only when Show Where It Came From goes to a reply"), literal: true),
+        hook("[data-rs-index]", "a row of the conversation's virtual list, one turn or one message of the user's: Show Where It Came From takes the row of the reply's message as its turn, to look for the turn's Generated tray in it and no farther, and measures the rows that carry messages to judge how far to scroll",
+             .showSource, "Shelf/SourceSeek.swift", check: .whenUsed("seen only when Show Where It Came From goes to a reply"), literal: true),
+        hook(#"[data-testid="turn-artifact-tray"]"#, "the Generated tray at the end of a turn (\"GENERATED · n\" over a card for each file, five at most before \"+n more\"; the page's flow layout draws none): Show Where It Came From scrolls it into view, from the top of the turn when the whole turn fits, else with the tray two-fifths down, and outlines the item's card in it, or the tray when the card isn't there or is folded into \"+n more\" (which it never opens). A turn without one is scrolled to by its reply",
+             .showSource, "Shelf/SourceSeek.swift", check: .whenUsed("seen only when Show Where It Came From goes to a reply"), literal: true),
+        hook("scrolling up loads earlier messages", "the page keeps only the last 200 messages of a long session until its reader scrolls up: a scroll event that goes up with the scroll position under 1800 pixels loads 200 more. Show Where It Came From reaches a reply older than the loaded ones by scrolling to the top and nudging, as a reader would, and gives up cleanly when nothing more comes (the start of the conversation, or a session continued from another, whose earlier part is folded away)",
+             .showSource, "Shelf/SourceSeek.swift", check: .whenUsed("seen only when Show Where It Came From goes to a reply that is not loaded")),
+        hook("Element.animate", "an ordinary browser call and no markup of Claude Science's: the outline on the item's card is a Web Animations animation of the card's own outline, which changes none of the page's attributes, classes or styles and leaves nothing behind",
+             .showSource, "Shelf/SourceSeek.swift", check: .whenUsed("seen only when Show Where It Came From goes to a reply")),
         hook(#"[data-testid="model-selector"]"#, "the model picker beside the message box (its button, or the wrapper round the button): a real pointer-down, Enter, Space or an arrow on it starts a two-second watch for its menu; the same test id is on every composer's picker, so the draft is read from the composer the pressed one sits in",
              .modelMenu, "AskModel/ModelPickerMenu.swift", check: .whenUsed("seen only when the model picker is pressed"), literal: true),
         hook(#"[role="menu"][data-cds="ModelSelector"], [role="menu"][data-testid="model-selector-popup"]"#, "the picker's own menu, a popup the page draws in a layer of its own when the picker opens: the catalog picker's has data-cds=\"ModelSelector\" (its button has it too, hence role=\"menu\" with it), the plain picker's has data-testid=\"model-selector-popup\"; the effort and \"More models\" submenus are other popups and are left alone. Capsid adds a rule and one item at the end of its list within two seconds of a press on the picker, and posts a breadcrumb when a menu opens that is not this one, or this one has no list or item to copy",
