@@ -64,4 +64,28 @@ struct FinishingScheduleTests {
         #expect(last != image(0), "and it did move")
         #expect(image(0) == image(-1), "before it begins, it is the frame that showed")
     }
+
+    /// A dissolve adds its two frames, so ink they share stays whole halfway: a
+    /// frame dissolving into itself looks just like that frame, where two
+    /// half-strength layers laid over each other would leave it at three quarters.
+    @MainActor
+    @Test func inkBothFramesShareDoesNotDimHalfwayThroughADissolve() throws {
+        for name in ["Slime mold maze", "Droplet coalescence", "Fern unfurling"] {
+            let scene = specimen(name)
+            let at = scene.duration / 2
+            func pixels(_ frame: FinishingPlan.Frame) throws -> [UInt8] {
+                let view = Canvas { context, size in
+                    FinishingDraw.draw(frame, of: scene, in: &context, size: size, tint: .black)
+                }.frame(width: 88, height: 88)
+                let renderer = ImageRenderer(content: view)
+                renderer.scale = 2
+                return [UInt8](try #require(renderer.cgImage?.dataProvider?.data as Data?))
+            }
+            let plain = try pixels(.scene(at))
+            let halfway = try pixels(.dissolve(from: at, to: at, mix: 0.5))
+            #expect(plain.count == halfway.count)
+            let worst = zip(plain, halfway).map { abs(Int($0) - Int($1)) }.max() ?? 0
+            #expect(worst <= 3, "\(name): at most rounding apart, not \(worst)")
+        }
+    }
 }

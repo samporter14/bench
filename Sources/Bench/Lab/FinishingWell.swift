@@ -91,15 +91,21 @@ enum FinishingDraw {
         case .scene(let local):
             SpecimenPoster.drawLooping(scene, in: &context, size: size, local: local, tint: tint)
         case .dissolve(let from, let to, let mix):
-            var shown = context
-            shown.opacity = 1 - mix
-            shown.drawLayer { layer in
-                LabScenes.draw(scene, in: &layer, size: size, local: from, tint: tint)
-            }
-            var still = context
-            still.opacity = mix
-            still.drawLayer { layer in
-                SpecimenPoster.drawLooping(scene, in: &layer, size: size, local: to, tint: tint)
+            // Added together in one layer: ink both frames share stays whole
+            // (two half-strength layers laid one over the other would leave it
+            // at three quarters halfway), and only what differs fades.
+            context.drawLayer { both in
+                var shown = both
+                shown.opacity = 1 - mix
+                shown.drawLayer { layer in
+                    LabScenes.draw(scene, in: &layer, size: size, local: from, tint: tint)
+                }
+                var still = both
+                still.opacity = mix
+                still.blendMode = .plusLighter
+                still.drawLayer { layer in
+                    SpecimenPoster.drawLooping(scene, in: &layer, size: size, local: to, tint: tint)
+                }
             }
         }
     }
