@@ -7589,9 +7589,10 @@ Settings → Specimens has one checkbox, "Finish with a closing gesture"
   timeline (`FinishingSchedule`) has exactly the gesture's frames, every 1/30 s
   and the last at its end, and then no more; there is no timer, task or
   animation left to cancel, and a view built after it draws the rest frame once.
-- **Tests.** `FinishingGestureTests` (the model: duration, budget, never backwards,
-  resets, rests, the scene's own constants; the schedule; the events: duplicate,
-  new turn, stale session, each non-success, first load, held finishes, Reduce
+- **Tests.** `FinishingGestureTests` (the model: duration, budget, never
+  backwards, resets, rests, the scenes' own constants), `FinishingScheduleTests`
+  (the frames, and then none), `FinishingEventTests` (the events: duplicate, new
+  turn, stale session, each non-success, first load, held finishes, Reduce
   Motion, a sequence member), `SessionEndingTests`, and
   `FinishingGestureSnapshotTests` (offscreen strips, GIFs and the card in place,
   light and dark, with `CAPSID_SNAPSHOT_DIR`). Not yet seen by eye on a real
