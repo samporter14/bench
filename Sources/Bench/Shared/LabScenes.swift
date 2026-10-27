@@ -517,6 +517,12 @@ enum LabScenes {
         LabScene(name: "Eyewash station", theme: .bench, duration: EyewashStation.duration) { context, size, t, tint in
             EyewashStation.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Capillary electrophoresis", theme: .bench, duration: CapillaryElectrophoresis.duration) { context, size, t, tint in
+            CapillaryElectrophoresis.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Microtome ribbon", theme: .bench, duration: MicrotomeRibbon.duration) { context, size, t, tint in
+            MicrotomeRibbon.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Molecular
         LabScene(name: "Chromatin breathing", theme: .molecular, duration: ChromatinBreathing.duration) { context, size, t, tint in
             ChromatinBreathing.draw(in: &context, size: size, time: t, tint: tint)
@@ -922,6 +928,9 @@ enum LabScenes {
         LabScene(name: "Fly pushing", theme: .organisms, duration: FlyPushing.duration) { context, size, t, tint in
             FlyPushing.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Diatom", theme: .organisms, duration: Diatom.duration) { context, size, t, tint in
+            Diatom.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Physics
         LabScene(name: "Sine wave", theme: .physics, duration: SineWave.duration) { context, size, t, tint in
             SineWave.draw(in: &context, size: size, time: t, tint: tint)
@@ -1069,6 +1078,12 @@ enum LabScenes {
         },
         LabScene(name: "Archimedes screw", theme: .physics, duration: ArchimedesScrew.duration) { context, size, t, tint in
             ArchimedesScrew.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Möbius strip", theme: .physics, duration: MobiusStrip.duration) { context, size, t, tint in
+            MobiusStrip.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Droplet coalescence", theme: .physics, duration: DropletCoalescence.duration) { context, size, t, tint in
+            DropletCoalescence.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Chemistry
         LabScene(name: "Caffeine", theme: .chemistry, duration: Caffeine.duration) { context, size, t, tint in
@@ -1252,6 +1267,9 @@ enum LabScenes {
         LabScene(name: "Chloroplast movement", theme: .plants, duration: ChloroplastMovement.duration) { context, size, t, tint in
             ChloroplastMovement.draw(in: &context, size: size, time: t, tint: tint)
         },
+        LabScene(name: "Fern unfurling", theme: .plants, duration: FernUnfurling.duration) { context, size, t, tint in
+            FernUnfurling.draw(in: &context, size: size, time: t, tint: tint)
+        },
         // Data
         LabScene(name: "Clustered heatmap", theme: .data, duration: ClusteredHeatmap.duration) { context, size, t, tint in
             ClusteredHeatmap.draw(in: &context, size: size, time: t, tint: tint)
@@ -1390,6 +1408,9 @@ enum LabScenes {
         },
         LabScene(name: "Bootstrap resampling", theme: .data, duration: BootstrapResampling.duration) { context, size, t, tint in
             BootstrapResampling.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Bayesian update", theme: .data, duration: BayesianUpdate.duration) { context, size, t, tint in
+            BayesianUpdate.draw(in: &context, size: size, time: t, tint: tint)
         },
         // Protein
         LabScene(name: "Lollipop plot", theme: .protein, duration: LollipopPlot.duration) { context, size, t, tint in
@@ -1795,6 +1816,9 @@ enum LabScenes {
         },
         LabScene(name: "Replica plating", theme: .microbes, duration: ReplicaPlating.duration) { context, size, t, tint in
             ReplicaPlating.draw(in: &context, size: size, time: t, tint: tint)
+        },
+        LabScene(name: "Slime mold maze", theme: .microbes, duration: SlimeMoldMaze.duration) { context, size, t, tint in
+            SlimeMoldMaze.draw(in: &context, size: size, time: t, tint: tint)
         },
     ]
 

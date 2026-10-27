@@ -624,6 +624,16 @@ enum SpecimenNotes {
             note: "An eyewash station flushes both eyes at once with a gentle stream; the standard calls for at least 15 minutes of flow after a splash.",
             topics: ["safety", "lab life"],
             also: ["Z358.1", "flush", "emergency shower", "splash"]),
+        "Capillary electrophoresis": SpecimenNote(
+            caption: "Charged bands separating in a tube",
+            note: "Capillary electrophoresis separates substances by their migration through a narrow capillary in an electric field.",
+            topics: ["electrophoresis", "separation"],
+            also: ["CE", "electropherogram", "migration time", "capillary"]),
+        "Microtome ribbon": SpecimenNote(
+            caption: "Thin sections curling into a ribbon",
+            note: "Microtomes cut thin sections; in suitable material, successive sections can remain joined as a ribbon.",
+            topics: ["sample prep", "microscopy"],
+            also: ["rotary microtome", "paraffin", "histology", "sectioning"]),
         "Coffee": SpecimenNote(
             caption: "Filling a mug from the pot",
             note: "Coffee is the unofficial fuel of long lab days: caffeine blocks adenosine receptors in the brain, which wards off sleepiness.",
@@ -1389,6 +1399,11 @@ enum SpecimenNotes {
             note: "Fly pushing is the routine of anesthetizing flies with CO2 and sorting them under a microscope by sex and markers such as curly wings.",
             topics: ["lab life", "model organisms"],
             also: ["Drosophila", "CO2 pad", "balancer", "genetic crosses"]),
+        "Diatom": SpecimenNote(
+            caption: "A patterned shell of silica",
+            note: "Diatoms are single-celled algae with patterned silica walls, called frustules, composed of overlapping halves.",
+            topics: ["microbiology", "microscopy", "ecology"],
+            also: ["frustule", "silica", "algae", "plankton"]),
         "Caffeine": SpecimenNote(
             caption: "The stimulant in coffee and tea",
             note: "Caffeine is a methylxanthine that blocks adenosine receptors in the brain, which is why it fights drowsiness.",
@@ -2099,6 +2114,11 @@ enum SpecimenNotes {
             note: "Replica plating uses a velvet block to print colonies from a master plate onto selective plates, revealing which ones fail to grow there.",
             topics: ["microbiology", "sample prep"],
             also: ["velvet", "master plate", "selective plate", "Lederberg"]),
+        "Slime mold maze": SpecimenNote(
+            caption: "A living network finding a route",
+            note: "Physarum can reorganize its tubular network to connect food sources through a maze.",
+            topics: ["microbiology", "model organisms"],
+            also: ["slime mould", "Physarum", "maze", "network"]),
         "Sine wave": SpecimenNote(
             caption: "A circle unwinding into a wave",
             note: "A sine wave is the height of a point moving around a circle at constant speed, plotted over time; it is the basic shape of oscillation.",
@@ -2344,6 +2364,16 @@ enum SpecimenNotes {
             note: "A turning helix in an inclined tube traps pockets of water and carries them uphill, a pump still used for sewage, irrigation and drainage.",
             topics: ["mechanics", "physics"],
             also: ["pump", "helix", "irrigation", "Archimedes"]),
+        "Möbius strip": SpecimenNote(
+            caption: "Following a one-sided ribbon",
+            note: "A Möbius strip has one side and one boundary, formed by joining the ends of a strip after a half twist.",
+            topics: ["math"],
+            also: ["mobius", "Moebius", "topology", "non-orientable"]),
+        "Droplet coalescence": SpecimenNote(
+            caption: "Two drops joining and relaxing",
+            note: "Coalescence joins contacting droplets into one; surface tension drives the merged interface toward a smoother shape.",
+            topics: ["physics"],
+            also: ["surface tension", "droplet", "merging", "capillary"]),
         "Seedling": SpecimenNote(
             caption: "A seed sprouting into leaves",
             note: "A germinating seed sends a shoot up through the soil and unfolds its first leaves, starting life as a photosynthesizing seedling.",
@@ -2424,6 +2454,11 @@ enum SpecimenNotes {
             note: "In strong light chloroplasts move to the cell's side walls to avoid damage; in weak light they spread across the face to catch more.",
             topics: ["plants", "cell biology", "signaling"],
             also: ["phototropin", "avoidance response", "photorelocation", "blue light"]),
+        "Fern unfurling": SpecimenNote(
+            caption: "A young frond slowly uncoiling",
+            note: "Many young fern fronds are coiled and unfold as they grow; this development is called circinate vernation.",
+            topics: ["plants", "development"],
+            also: ["fiddlehead", "circinate vernation", "frond", "unfurling"]),
         "Clustered heatmap": SpecimenNote(
             caption: "Rows sorted into similar groups",
             note: "A clustered heatmap shows a data matrix as color-coded values, with rows and columns ordered by similarity so related groups stand out.",
@@ -2654,6 +2689,11 @@ enum SpecimenNotes {
             note: "The bootstrap redraws a sample with replacement many times; the spread of the statistic across resamples estimates its uncertainty.",
             topics: ["statistics", "data", "math"],
             also: ["confidence interval", "with replacement", "resampling", "Efron"]),
+        "Bayesian update": SpecimenNote(
+            caption: "Updating a belief with evidence",
+            note: "Bayesian inference combines a prior distribution with a likelihood to obtain a posterior distribution.",
+            topics: ["statistics", "data", "math"],
+            also: ["Bayes", "prior", "posterior", "beta-binomial"]),
         "Transit": SpecimenNote(
             caption: "A planet dimming its star",
             note: "In the transit method, a planet crossing its star briefly dims the starlight, revealing the planet's size and orbit.",
