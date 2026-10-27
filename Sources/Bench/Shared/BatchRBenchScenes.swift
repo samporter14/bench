@@ -238,12 +238,13 @@ enum MicrotomeRibbon {
 /// Möbius strip: a broad band seen from in front and a little above, with one
 /// half twist: it lies flat round the back and left and turns over gradually
 /// across the front and round to the right, and right at the front it is seen
-/// edge on, its edges crossing. It is painted back to front so its near parts
-/// hide its far ones. A clay marker runs steadily along the centre line
-/// with a tick standing out from the face it is on. After one lap it is back
-/// where it started with the tick on the other face; only after the second lap
-/// does the tick come back to where it began, and the loop is those two laps.
-/// A faint ghost of the marker shows through the band while the band hides it.
+/// edge on, its edges crossing. Its near parts hide its far ones, worked out
+/// once, so a frame is a fill, a stroke and the marker. A clay marker runs
+/// steadily along the centre line with a tick standing out from the face it
+/// is on. After one lap it is back where it started with the tick on the
+/// other face; only after the second lap does the tick come back to where it
+/// began, and the loop is those two laps. A faint ghost of the marker shows
+/// through the band while the band hides it.
 enum MobiusStrip {
     static let duration = 6.0
     private typealias Vector = (Double, Double, Double)
@@ -328,91 +329,187 @@ enum MobiusStrip {
         return abs(across) <= halfWidth ? across : nil
     }
 
-    /// Pieces of the band painted together: their areas as triangles, and
-    /// their stretches of the band's edge and of its outline where it folds.
-    private struct Batch {
-        let areas: [(Double, Double)]
-        let edges: [((Double, Double), (Double, Double))]
+    /// A cover: pieces of the band, their areas and their edges, laid over the
+    /// marker to hide what of it lies behind them.
+    private struct Cover {
+        let areas: Path
+        let edges: Path
+        let isEmpty: Bool
     }
 
-    /// The band cut across its width into `pieces`, each two triangles wound
-    /// the same way on screen. The pieces are sorted back to front, then
-    /// gathered into batches: a piece joins the current batch unless it
-    /// overlaps something already in it (its near neighbours along the band
-    /// aside), so the batches can be painted in order with the same result as
-    /// the pieces one by one, at a fraction of the cost.
-    private struct Strip {
-        let face: [(Double, Double)]
-        let batches: [Batch]
-        let batchOf: [Int]
+    /// Everything about the band that does not move, worked out once, in the
+    /// square's own units. The band is cut across its width into `pieces`;
+    /// each edge is kept only where no nearer piece (its near neighbours aside)
+    /// lies over it, which is what painting the pieces back to front would
+    /// show, and the kept stretches are joined into a few long lines. The face
+    /// is one path: runs of pieces that lie the same way up as single
+    /// outlines, and where the band folds over on screen, triangles, all wound
+    /// the same way so the overlaps fill once. For the marker on each piece,
+    /// what is painted over its dot (nearer pieces outside the seven round it)
+    /// and over its tick when the tick points away (those seven as well).
+    private struct Shape {
+        let face: Path
+        let outline: Path
+        let over: [Cover]
+        let behind: [Cover]
     }
 
-    private static let strip: Strip = {
-        var areas: [[(Double, Double)]] = [], depths: [Double] = []
-        var boxes: [(x0: Double, y0: Double, x1: Double, y1: Double)] = []
-        var outlines: [[((Double, Double), (Double, Double))]] = []
-        for i in 0..<pieces {
-            let a = -.pi + 2 * .pi * Double(i) / Double(pieces), b = -.pi + 2 * .pi * Double(i + 1) / Double(pieces)
+    private static let shape: Shape = {
+        typealias Point = (x: Double, y: Double)
+        let n = pieces
+        func flat(_ p: (x: Double, y: Double, depth: Double)) -> Point { (p.x, p.y) }
+        func wind(_ a: Point, _ b: Point, _ c: Point) -> Double { (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) }
+        func at(_ i: Int) -> Double { -.pi + 2 * .pi * Double(i) / Double(n) }
+        func cg(_ p: Point) -> CGPoint { CGPoint(x: p.x, y: p.y) }
+        func add(_ points: [Point], to path: inout Path, closed: Bool) {
+            path.move(to: cg(points[0]))
+            for p in points.dropFirst() { path.addLine(to: cg(p)) }
+            if closed { path.closeSubpath() }
+        }
+
+        var quads: [[Point]] = [], depths: [Double] = [], triangles: [[[Point]]] = [], edges: [[[Point]]] = []
+        for i in 0..<n {
+            let a = at(i), b = at(i + 1)
             let q = [screen(point(a, -halfWidth)), screen(point(b, -halfWidth)), screen(point(b, halfWidth)), screen(point(a, halfWidth))]
-            let c = q.map { ($0.x, $0.y) }
-            var outline = [(c[0], c[1]), (c[3], c[2])]
-            if let fa = fold(a), let fb = fold(b) {
-                let pa = screen(point(a, fa)), pb = screen(point(b, fb))
-                outline.append(((pa.x, pa.y), (pb.x, pb.y)))
-            }
-            outlines.append(outline)
+            let c = q.map(flat)
+            quads.append(c)
             depths.append(q.reduce(0) { $0 + $1.depth } / 4)
-            boxes.append((q.map(\.x).min()!, q.map(\.y).min()!, q.map(\.x).max()!, q.map(\.y).max()!))
-            var area: [(Double, Double)] = []
-            for tri in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
-                let wind = (tri[1].x - tri[0].x) * (tri[2].y - tri[0].y) - (tri[1].y - tri[0].y) * (tri[2].x - tri[0].x)
-                area += (wind < 0 ? [tri[0], tri[2], tri[1]] : tri).map { ($0.x, $0.y) }
+            triangles.append([[c[0], c[1], c[2]], [c[0], c[2], c[3]]].map { wind($0[0], $0[1], $0[2]) < 0 ? [$0[0], $0[2], $0[1]] : $0 })
+            var lines = [[c[0], c[1]], [c[3], c[2]]]
+            // The fold, traced in finer steps and out to where it meets the edge.
+            var run: [Point] = []
+            var last: (t: Double, v: Double?) = (a, nil)
+            for s in 0...4 {
+                let t = a + (b - a) * Double(s) / 4, v = fold(t)
+                if s > 0, (v == nil) != (last.v == nil) {
+                    let from = last.v != nil
+                    var lo = last.t, hi = t
+                    for _ in 0..<30 {
+                        let m = (lo + hi) / 2
+                        if (fold(m) != nil) == from { lo = m } else { hi = m }
+                    }
+                    let end = from ? lo : hi
+                    if let w = fold(end) { run.append(flat(screen(point(end, w)))) }
+                    if from {
+                        if run.count > 1 { lines.append(run) }
+                        run = []
+                    }
+                }
+                if let v { run.append(flat(screen(point(t, v)))) }
+                last = (t, v)
             }
-            areas.append(area)
+            if run.count > 1 { lines.append(run) }
+            edges.append(lines)
         }
-        // Overlap on screen, with room for both edges' strokes; neighbours never count.
-        func overlaps(_ i: Int, _ j: Int) -> Bool {
-            let apart = min((i - j + pieces) % pieces, (j - i + pieces) % pieces)
-            guard apart > 2 else { return false }
-            let a = boxes[i], b = boxes[j], m = 0.07
-            return a.x0 < b.x1 + m && b.x0 < a.x1 + m && a.y0 < b.y1 + m && b.y0 < a.y1 + m
-        }
-        var batches: [Batch] = [], batchOf = Array(repeating: 0, count: pieces), members: [Int] = []
-        func close() {
-            batches.append(Batch(areas: members.flatMap { areas[$0] }, edges: members.flatMap { outlines[$0] }))
-            members = []
-        }
-        for i in depths.indices.sorted(by: { depths[$0] < depths[$1] }) {
-            if members.contains(where: { overlaps($0, i) }) { close() }
-            batchOf[i] = batches.count
-            members.append(i)
-        }
-        close()
-        return Strip(face: areas.flatMap { $0 }, batches: batches, batchOf: batchOf)
-    }()
 
-    private static func triangles(_ u: UnitSquare, _ points: [(Double, Double)]) -> Path {
-        var path = Path()
-        var k = 0
-        while k + 2 < points.count {
-            path.move(to: u.pt(points[k].0, points[k].1))
-            path.addLine(to: u.pt(points[k + 1].0, points[k + 1].1))
-            path.addLine(to: u.pt(points[k + 2].0, points[k + 2].1))
-            path.closeSubpath()
-            k += 3
+        // Where each edge shows: sampled, and each change refined by halving.
+        func inside(_ p: Point, _ j: Int) -> Bool {
+            triangles[j].contains { wind($0[0], $0[1], p) > 1e-12 && wind($0[1], $0[2], p) > 1e-12 && wind($0[2], $0[0], p) > 1e-12 }
         }
-        return path
-    }
+        func hidden(_ p: Point, _ i: Int) -> Bool {
+            (0..<n).contains { j in
+                min((i - j + n) % n, (j - i + n) % n) > 2 && depths[j] > depths[i] && inside(p, j)
+            }
+        }
+        var shown: [[Point]] = []
+        for i in 0..<n {
+            for line in edges[i] {
+                for (p, q) in zip(line, line.dropFirst()) {
+                    func on(_ s: Double) -> Point { s >= 1 ? q : (x: p.x + (q.x - p.x) * s, y: p.y + (q.y - p.y) * s) }
+                    var was = !hidden(p, i), from: Double? = was ? 0 : nil, s0 = 0.0
+                    for step in 1...12 {
+                        let s1 = Double(step) / 12, now = !hidden(on(s1), i)
+                        if now != was {
+                            var lo = s0, hi = s1
+                            for _ in 0..<24 {
+                                let m = (lo + hi) / 2
+                                if !hidden(on(m), i) == was { lo = m } else { hi = m }
+                            }
+                            if let start = from { shown.append([on(start), on(lo)]); from = nil } else { from = hi }
+                        }
+                        was = now
+                        s0 = s1
+                    }
+                    if let start = from { shown.append([on(start), q]) }
+                }
+            }
+        }
+
+        // The shown stretches joined end to end into lines.
+        func same(_ a: Point, _ b: Point) -> Bool { abs(a.x - b.x) < 1e-9 && abs(a.y - b.y) < 1e-9 }
+        var outline = Path()
+        var loose = shown
+        while var chain = loose.popLast() {
+            var grew = true
+            while grew {
+                grew = false
+                if let k = loose.firstIndex(where: { same($0[0], chain[chain.count - 1]) }) {
+                    chain.append(loose.remove(at: k)[1]); grew = true
+                } else if let k = loose.firstIndex(where: { same($0[1], chain[chain.count - 1]) }) {
+                    chain.append(loose.remove(at: k)[0]); grew = true
+                } else if let k = loose.firstIndex(where: { same($0[1], chain[0]) }) {
+                    chain.insert(loose.remove(at: k)[0], at: 0); grew = true
+                } else if let k = loose.firstIndex(where: { same($0[0], chain[0]) }) {
+                    chain.insert(loose.remove(at: k)[1], at: 0); grew = true
+                }
+            }
+            let closed = chain.count > 2 && same(chain[0], chain[chain.count - 1])
+            add(closed ? Array(chain.dropLast()) : chain, to: &outline, closed: closed)
+        }
+
+        // The face: which way up each piece lies on screen, 0 where it folds.
+        var face = Path()
+        let way = quads.map { c -> Int in
+            let w1 = wind(c[0], c[1], c[2]), w2 = wind(c[0], c[2], c[3])
+            return w1 > 0 && w2 > 0 ? 1 : w1 < 0 && w2 < 0 ? -1 : 0
+        }
+        var i = 0
+        while i < n {
+            guard way[i] != 0 else {
+                for t in triangles[i] { add(t, to: &face, closed: true) }
+                i += 1
+                continue
+            }
+            var j = i
+            while j + 1 < n && way[j + 1] == way[i] { j += 1 }
+            let ring = [quads[i][0]] + (i...j).map { quads[$0][1] } + [quads[j][2]] + (i...j).reversed().map { quads[$0][3] }
+            add(way[i] > 0 ? ring : ring.reversed(), to: &face, closed: true)
+            i = j + 1
+        }
+
+        // The covers for the marker on each piece, kept to the pieces that come near it.
+        func box(_ points: [Point], _ m: Double) -> (x0: Double, y0: Double, x1: Double, y1: Double) {
+            (points.map(\.x).min()! - m, points.map(\.y).min()! - m, points.map(\.x).max()! + m, points.map(\.y).max()! + m)
+        }
+        let reach = quads.map { box($0, 0.04) }
+        func cover(_ members: [Int]) -> Cover {
+            var areas = Path(), lines = Path()
+            for j in members {
+                for t in triangles[j] { add(t, to: &areas, closed: true) }
+                for line in edges[j] { add(line, to: &lines, closed: false) }
+            }
+            return Cover(areas: areas, edges: lines, isEmpty: members.isEmpty)
+        }
+        var over: [Cover] = [], behind: [Cover] = []
+        for k in 0..<n {
+            let round = (-3...3).map { (k + $0 + n) % n }
+            let high = round.map { depths[$0] }.max()!, low = round.map { depths[$0] }.min()!
+            let marker = box([at(k), (at(k) + at(k + 1)) / 2, at(k + 1)].map { flat(screen(point($0, 0))) }, 0.14)
+            let near = (0..<n).filter {
+                let r = reach[$0]
+                return r.x0 < marker.x1 && marker.x0 < r.x1 && r.y0 < marker.y1 && marker.y0 < r.y1
+            }
+            over.append(cover(near.filter { !round.contains($0) && depths[$0] > high }))
+            behind.append(cover(near.filter { round.contains($0) || depths[$0] >= low }))
+        }
+        return Shape(face: face, outline: outline, over: over, behind: behind)
+    }()
 
     static func draw(in context: inout GraphicsContext, size: CGSize, time t: Double, tint: Color) {
         let u = UnitSquare(size)
-
-        // The band's face: one flat tone over all of it. The pieces overlap
-        // where the band folds, so they are filled solid in a layer and the
-        // layer is laid down faint, which keeps the tone even.
-        var faint = context
-        faint.opacity = 0.14
-        faint.drawLayer { layer in layer.fill(triangles(u, strip.face), with: .color(tint)) }
+        // The band is kept in the square's units and laid down scaled, as it is.
+        let square = CGAffineTransform(a: u.side, b: 0, c: 0, d: u.side, tx: u.origin.x, ty: u.origin.y)
+        let line = StrokeStyle(lineWidth: max(0.06, UnitSquare.hairline / u.side), lineCap: .round, lineJoin: .round)
 
         // The marker on the centre line, twice round in a loop, its tick along
         // the band's normal: the normal comes back to itself only after two laps.
@@ -421,41 +518,50 @@ enum MobiusStrip {
         let at = screen(p)
         let tip = screen((p.0 + 0.11 * normal.0, p.1 + 0.11 * normal.1, p.2 + 0.11 * normal.2))
         let facing = tip.depth >= at.depth
-        // It is painted with the batches of the pieces round it: on top of them,
-        // and its tick under them when the tick points away.
         let wrapped = along - 2 * .pi * ((along + .pi) / (2 * .pi)).rounded(.down)
         let k = Int((wrapped + .pi) / (2 * .pi) * Double(pieces)) % pieces
-        let near = (-3...3).map { strip.batchOf[(k + $0 + pieces) % pieces] }
-        let first = near.min() ?? 0, last = near.max() ?? 0
+        let over = shape.over[k]
         func tick(_ c: GraphicsContext, _ alpha: Double) {
             u.stroke(c, u.line((at.x, at.y), (tip.x, tip.y)), clay.opacity(alpha), 0.035)
         }
         func dot(_ c: GraphicsContext, _ alpha: Double) {
             c.fill(u.circle(at.x, at.y, 0.045), with: .color(clay.opacity(alpha)))
         }
-        // A ghost of it, seen through the band when the band hides it.
-        tick(context, 0.35)
-        dot(context, 0.35)
+        func hide(_ c: GraphicsContext, _ cover: Cover) {
+            var erase = c
+            erase.concatenate(square)
+            erase.blendMode = .destinationOut
+            erase.fill(cover.areas, with: .color(.black))
+            erase.stroke(cover.edges, with: .color(.black), style: line)
+        }
 
-        // The edges, painted back to front: each batch first clears what is
-        // behind it, so nearer parts of the band hide farther ones.
-        context.drawLayer { layer in
-            for (b, batch) in strip.batches.enumerated() {
-                if !facing && b == first { tick(layer, 1) }
-                layer.blendMode = .destinationOut
-                layer.fill(triangles(u, batch.areas), with: .color(.black))
-                layer.blendMode = .normal
-                var edges = Path()
-                for e in batch.edges {
-                    edges.move(to: u.pt(e.0.0, e.0.1))
-                    edges.addLine(to: u.pt(e.1.0, e.1.1))
-                }
-                u.stroke(layer, edges, tint, 0.06)
-                if b == last {
-                    if facing { tick(layer, 1) }
-                    dot(layer, 1)
-                }
-            }
+        // The band: its face one faint tone, then its edges.
+        var band = context
+        band.concatenate(square)
+        band.fill(shape.face, with: .color(tint.opacity(0.14)))
+        let shows = facing && over.isEmpty
+        // A ghost of the marker, seen through the band when the band hides it.
+        if !shows {
+            tick(context, 0.35)
+            dot(context, 0.35)
+        }
+        band.stroke(shape.outline, with: .color(tint), style: line)
+        if shows {
+            tick(context, 1)
+            dot(context, 1)
+            return
+        }
+        // Otherwise the marker is drawn in a small layer and the pieces over
+        // it are cleared from it: over a tick pointing away, the pieces round
+        // it as well as the nearer ones.
+        let corner = u.pt(min(at.x, tip.x) - 0.06, min(at.y, tip.y) - 0.06)
+        var small = context
+        small.clip(to: Path(CGRect(x: corner.x, y: corner.y, width: u.len(abs(at.x - tip.x) + 0.12), height: u.len(abs(at.y - tip.y) + 0.12))))
+        small.drawLayer { layer in
+            tick(layer, 1)
+            if !facing { hide(layer, shape.behind[k]) }
+            dot(layer, 1)
+            if !over.isEmpty { hide(layer, over) }
         }
     }
 }
