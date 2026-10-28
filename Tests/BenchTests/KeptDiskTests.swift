@@ -1235,7 +1235,7 @@ struct KeptFileFactsBoundTests {
         #expect(silent.count == 1)
         // A second look behind it is nil at once, and nothing more is put on the queue.
         let second = await KeptDisk.fileFacts(of: file, within: .seconds(15), run: held.run,
-                                              wait: { try? await Task.sleep(for: .seconds(3600)) }, silent: silent)
+                                              wait: { _ in try? await Task.sleep(for: .seconds(3600)) }, silent: silent)
         #expect(second == nil)
         #expect(held.count == 1)
         // The queue moves again: the late look comes back, its answer dropped, and the folder answers again.
