@@ -161,6 +161,10 @@ final class ShelfLegendEditor: ObservableObject {
     /// Nothing on screen, nothing to save, nothing to say: the model lets it go.
     var isIdle: Bool { !onScreen && inFlight == 0 && !holdsDraft }
 
+    /// Text not yet written, or a save under way: Capsid doesn't quit until it is over
+    /// (`ShelfModel.settleLegendsForQuit`).
+    var hasPendingSave: Bool { hasUnsavedText || inFlight > 0 }
+
     private func typed() {
         guard canEdit else { return }
         waiting?.cancel()

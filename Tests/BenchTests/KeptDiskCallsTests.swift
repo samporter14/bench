@@ -24,6 +24,9 @@ struct KeptDiskCallsTests {
         "FileManager.default", "fileManager.", "opendir(", "readdir(", "Data(contentsOf", "String(contentsOf",
         "resourceValues(", "checkResourceIsReachable(", "standardizedFileURL", "resolvingSymlinksInPath",
         "FileHandle(", "NSWorkspace", "bookmarkData(",
+        // The C calls that resolve a path and ask an open file what and where it is (a bare `open(` is not
+        // scanned for: NSWorkspace's open says it too).
+        "realpath(", "fstat(", "fcntl(",
         // What a file manager or a URL does to the disk, whatever the file manager is called.
         "FileManager(", ".createDirectory(", ".removeItem(", ".moveItem(", ".copyItem(", ".contentsOfDirectory(",
         ".fileExists(", ".attributesOfItem(", ".subpathsOfDirectory(", ".write(to:", "renamex_np(", "NSFileCoordinator",
@@ -68,8 +71,12 @@ struct KeptDiskCallsTests {
             // Taking a folder off the shelf: into the Trash, never deleted.
             "KeptDisk.swift: .trashItem(": 1,
             // A text file's first bytes, for its card (and a look at whether iCloud has it), and a figure's
-            // whole file for Copy (`pictureBytes`): the two reads by handle.
-            "KeptDisk.swift: FileHandle(": 2,
+            // whole file for Copy (`pictureBytes`): both read by the one handle `openInside` gives, and only once
+            // the file it opened is known to be under the Kept folder (its real path, and the open file's own).
+            "KeptDisk.swift: FileHandle(": 1,
+            "KeptDisk.swift: realpath(": 1,
+            "KeptDisk.swift: fstat(": 1,
+            "KeptDisk.swift: fcntl(": 1,
             // Whether iCloud has a file put away, and a file's date and size (the picture cache's look at it).
             "KeptDisk.swift: resourceValues(": 2,
             // The README's bytes, read whole; the atomic writes of a file, a README and a legend.

@@ -144,18 +144,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A Working Note typed in the last moment (Workspace/) is written before Capsid goes: two seconds at most.
+    /// A Working Note typed in the last moment (Workspace/) is written before Capsid goes: two seconds at most. A
+    /// Shelf legend typed in the last moment (Kept/ShelfLegend.swift) is written too, and its save waited for: one that
+    /// can't be saved keeps Capsid open unless the person chooses to quit without it
+    /// (`ShelfModel.settleLegendsForQuit`).
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard Demo.mode == nil, WorkspaceStore.shared.hasUnsavedWork else { return .terminateNow }
+        guard Demo.mode == nil else { return .terminateNow }
+        let shelf = KeptWindowController.shared.model
+        guard WorkspaceStore.shared.hasUnsavedWork || shelf?.hasPendingLegends == true else { return .terminateNow }
         Task { @MainActor in
             let store = WorkspaceStore.shared
+            // The legends' saves start now, beside the note's.
+            let legends = Task { await shelf?.settleLegendsForQuit() ?? [] }
             Task { await store.flushAll() }
             // A write that fails stays unsaved: that is two seconds, and then Capsid quits anyway.
             let deadline = ContinuousClock.now + .seconds(2)
             while store.hasUnsavedWork, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
-            sender.reply(toApplicationShouldTerminate: true)
+            let unsaved = await legends.value
+            sender.reply(toApplicationShouldTerminate: unsaved.isEmpty || Self.quitWithoutLegends(unsaved))
         }
         return .terminateLater
+    }
+
+    /// Legends that couldn't be saved at quitting: Quit Anyway, or Cancel (the default) to stay with the text kept in
+    /// each field. True to quit.
+    private static func quitWithoutLegends(_ names: [String]) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = names.count == 1
+            ? "The legend for \u{201C}\(names[0])\u{201D} isn\u{2019}t saved"
+            : "\(names.count) legends on the Shelf aren\u{2019}t saved"
+        alert.informativeText = "Capsid couldn\u{2019}t write them to their README. Cancel to keep Capsid open and "
+            + "choose the item to see why; your text is kept there. If you quit, it is lost."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Quit Anyway")
+        alert.buttons.first?.keyEquivalent = "\r"
+        NSApp.activate()
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     func applicationWillTerminate(_ notification: Notification) {

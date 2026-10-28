@@ -314,6 +314,25 @@ struct KeptReadmeRefusalTests {
         #expect(KeptReadme.parse(good) != nil)
     }
 
+    /// Code review, 28 October 2026: a README that names a file outside its folder was read, and the file shown.
+    @Test func aPathOutOfTheFolderIsRefusedWhereverItIsListed() {
+        for path in ["../../../outside.txt", "data/../../outside.txt", "..", "/etc/hosts", ""] {
+            var figureOut = record()
+            figureOut.figure.path = path
+            #expect(KeptReadme.parse(render(figureOut, text())) == nil, "figure \(path)")
+            var fileOut = record()
+            fileOut.files[0].path = path
+            #expect(KeptReadme.parse(render(fileOut, text())) == nil, "file \(path)")
+        }
+        // Names with dots in them are names, not ways out.
+        for path in ["..notes.md", "data/v1..2.csv", ".hidden.png", "z_prime.png"] {
+            var named = record()
+            named.figure.path = path
+            #expect(KeptReadme.parse(render(named, text())) != nil, "figure \(path)")
+            #expect(KeptReadme.staysInFolder(path))
+        }
+    }
+
     @Test func aFileWithoutTheMarkerIsRefused() {
         #expect(KeptReadme.parse(without("capsid_kept: 1")) == nil)
         #expect(KeptReadme.parse(good.replacingOccurrences(of: "capsid_kept: 1", with: "capsid_kept: 2")) == nil)
