@@ -228,9 +228,48 @@ final class KeptDisk {
     /// disk's queue (never the main actor, never a cooperative thread). Nil
     /// when it can't be looked at. The picture cache asks it every time a card
     /// does, so a file put in the place of another is told from it.
+    ///
+    /// Bounded as a look is (code review, 28 October 2026): a folder that
+    /// doesn't answer in 15 s is nil, and so is a cancelled caller, at once.
+    /// The look itself may stay out on the queue; what it finds after its
+    /// caller was let go is dropped. While one is out past its limit the
+    /// next are nil at once rather than each waiting out a limit of its own
+    /// behind it, and a look whose caller has gone before its turn makes no call.
     nonisolated static func fileFacts(of file: URL) async -> KeptFileFacts? {
-        await withCheckedContinuation { continuation in
-            runOnDisk { continuation.resume(returning: KeptDiskWork.fileFacts(file)) }
+        await fileFacts(of: file, within: .seconds(15), run: runOnDisk, wait: { try? await Task.sleep(for: $0) })
+    }
+
+    /// Looks at file facts that are out past their limit and haven't come back.
+    nonisolated private static let silentFacts = StuckCount()
+
+    /// `fileFacts(of:)`, with the limit, the queue and the clock given: tests hold a look as a dropped volume would.
+    nonisolated static func fileFacts(of file: URL, within limit: Duration, run: (@escaping Work) -> Void,
+                                      wait: @escaping @Sendable (Duration) async -> Void,
+                                      silent: StuckCount? = nil) async -> KeptFileFacts? {
+        let stuck = silent ?? silentFacts
+        if stuck.count > 0 || Task.isCancelled { return nil }
+        let call = Call<KeptFileFacts?>(stuck: stuck)
+        defer { call.stopTimer() }
+        return await withTaskCancellationHandler {
+            // The limit and a cancel come back as errors: either is nil, as for a file that can't be looked at.
+            try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<KeptFileFacts?, any Error>) in
+                call.install(continuation)
+                run {
+                    // Its caller has been told (the limit passed, or it was cancelled): no call is made.
+                    guard call.isLive else {
+                        call.returned(.success(nil))
+                        return
+                    }
+                    call.returned(.success(KeptDiskWork.fileFacts(file)))
+                }
+                call.setTimer(Task {
+                    await wait(limit)
+                    guard !Task.isCancelled else { return }
+                    call.timeout(KeptDiskError.notResponding(KeptDiskError.lookDidNotRespond))
+                })
+            }
+        } onCancel: {
+            call.cancel()
         }
     }
 
@@ -479,7 +518,7 @@ final class KeptDisk {
 // MARK: One call's bookkeeping
 
 /// How many calls are out past their limit and haven't come back.
-private final class StuckCount: @unchecked Sendable {
+final class StuckCount: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
 
@@ -715,7 +754,7 @@ private enum KeptDiskWork {
             for name in names {
                 guard wanted() else { return results }
                 let folder = collectionFolder.appending(path: name, directoryHint: .isDirectory)
-                guard let found = keptReadme(in: folder) else { continue }
+                guard let found = keptReadme(in: folder), listsOnlyItsOwnFiles(found.record, in: folder) else { continue }
                 results.append(KeptResult(folder: folder, collection: collection, record: found.record, text: found.text))
             }
         }
@@ -833,6 +872,55 @@ private enum KeptDiskWork {
         try? files.removeItem(at: folder)
     }
 
+    // MARK: Staying inside the Kept folder
+
+    /// The real path of something that is there, every link on the way followed; nil when nothing is there.
+    private static func realPath(_ url: URL) -> String? {
+        guard let resolved = realpath(url.path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    /// Whether `path` is under `folder` (not the folder itself), whole names compared: "/Kept 2/x" is not under "/Kept".
+    static func isPath(_ path: String, under folder: String) -> Bool {
+        let inner = path.split(separator: "/"), outer = folder.split(separator: "/")
+        return inner.count > outer.count && inner.starts(with: outer)
+    }
+
+    /// A handle for reading `file`, only when what it opens is an ordinary file under `root` with every link followed,
+    /// and only when iCloud hasn't put it away; nil otherwise. A path like "x/../../outside.txt", or a link inside the
+    /// Kept folder to a file outside it, is refused (code review, 28 October 2026). The path is resolved first, opened
+    /// without following a last link, and the file that was opened is asked where it is: a link swapped in between the
+    /// look and the open is refused too, and a pipe or a device is never read (a read of one could wait for ever).
+    private static func openInside(_ file: URL, root: URL) -> FileHandle? {
+        guard let base = realPath(root), let target = realPath(file), isPath(target, under: base) else { return nil }
+        if isPutAway(URL(fileURLWithPath: target, isDirectory: false)) { return nil }
+        let descriptor = open(target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard descriptor >= 0 else { return nil }
+        var facts = stat()
+        var opened = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard fstat(descriptor, &facts) == 0, facts.st_mode & S_IFMT == S_IFREG,
+              fcntl(descriptor, F_GETPATH, &opened) != -1,
+              isPath(String(cString: opened), under: base) else {
+            close(descriptor)
+            return nil
+        }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    }
+
+    /// Whether every file a README lists, of those that are there, is in its own folder with every link followed. A
+    /// folder whose README lists a link out of it is not put on the shelf, so nothing that reads an item's files by
+    /// its path (Quick Look, a drag, a thumbnail, a PDF) is handed a file from elsewhere.
+    static func listsOnlyItsOwnFiles(_ record: KeptRecord, in folder: URL) -> Bool {
+        guard let base = realPath(folder) else { return false }
+        return ([record.figure] + record.files).allSatisfy { file in
+            guard KeptReadme.staysInFolder(file.path) else { return false }
+            // A file that isn't there can't be read from anywhere.
+            guard let target = realPath(folder.appending(path: file.path, directoryHint: .notDirectory)) else { return true }
+            return isPath(target, under: base)
+        }
+    }
+
     // MARK: A look at a text file
 
     /// A file iCloud has put away (not on this Mac, or not all of it): reading
@@ -858,10 +946,8 @@ private enum KeptDiskWork {
     }
 
     static func peek(_ file: URL, root: URL, limit: Int) -> String? {
-        guard file.path.hasPrefix(root.path + "/") else { return nil }
         // A file iCloud has put away isn't read: reading it would bring it back.
-        if isPutAway(file) { return nil }
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        guard let handle = openInside(file, root: root) else { return nil }
         defer { try? handle.close() }
         guard let data = try? handle.read(upToCount: limit), !data.isEmpty, !data.contains(0) else { return nil }
         // Cut at a whole character: a cut in the middle of one is not a reason to refuse.
@@ -874,9 +960,7 @@ private enum KeptDiskWork {
     /// A file's bytes when it is under `root`, is here, and is no bigger than
     /// `limit`: one byte more than that is read to tell. Nil otherwise.
     static func bytes(of file: URL, root: URL, limit: Int) -> Data? {
-        guard file.path.hasPrefix(root.path + "/") else { return nil }
-        if isPutAway(file) { return nil }
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        guard let handle = openInside(file, root: root) else { return nil }
         defer { try? handle.close() }
         guard let data = try? handle.read(upToCount: limit + 1), !data.isEmpty, data.count <= limit else { return nil }
         return data

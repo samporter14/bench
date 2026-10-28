@@ -1079,3 +1079,201 @@ struct KeptDiskPeekTests {
         }
     }
 }
+
+// MARK: Staying inside the Kept folder (code review, 28 October 2026, finding 2)
+
+@Suite(.serialized) @MainActor
+struct KeptBoundaryTests {
+    /// A file beside the Kept folder: what a read that leaves it would find.
+    private func outsideFile(in scratch: URL) throws -> URL {
+        let outside = scratch.appending(path: "outside.txt", directoryHint: .notDirectory)
+        try Data("not a kept file".utf8).write(to: outside)
+        return outside
+    }
+
+    @Test func readmeTraversalMustNotReadOutsideKeptRoot() async throws {
+        try await inScratch { scratch, _, disk in
+            _ = try outsideFile(in: scratch)
+            let folder = try await keep(disk)
+            // The README names a file three folders up: <scratch>/Kept/<collection>/<name>/../../../outside.txt.
+            let readmeURL = folder.appending(path: "README.md", directoryHint: .notDirectory)
+            let readme = try String(contentsOf: readmeURL, encoding: .utf8)
+            #expect(readme.contains("file: \"z_prime.png\""))
+            let edited = readme.replacingOccurrences(of: "file: \"z_prime.png\"", with: "file: \"../../../outside.txt\"")
+            try Data(edited.utf8).write(to: readmeURL)
+
+            // Not a README Capsid wrote, so the folder isn't on the shelf.
+            #expect(KeptReadme.parse(edited) == nil)
+            let found = try await disk.scan()
+            #expect(!found.contains { $0.folder.lastPathComponent == folder.lastPathComponent })
+
+            // And a path like it, asked for directly, is refused by both reads.
+            let escaping = folder.appending(path: "../../../outside.txt", directoryHint: .notDirectory)
+            #expect(try await disk.peek(escaping) == nil)
+            #expect(try await disk.pictureBytes(escaping) == nil)
+            // Even one that comes back into the Kept folder by way of "..".
+            #expect(try await disk.peek(folder.appending(path: "../\(folder.lastPathComponent)/z_prime.png")) == "made-up figure bytes")
+        }
+    }
+
+    @Test func symlinkMustNotReadOutsideKeptRoot() async throws {
+        try await inScratch { scratch, _, disk in
+            let outside = try outsideFile(in: scratch)
+            let folder = try await keep(disk)
+            // A link inside the kept folder to the file outside it.
+            let link = folder.appending(path: "link.txt", directoryHint: .notDirectory)
+            try files.createSymbolicLink(at: link, withDestinationURL: outside)
+            #expect(try await disk.peek(link) == nil)
+            #expect(try await disk.pictureBytes(link) == nil)
+            // A folder inside linked to a folder outside.
+            let away = folder.appending(path: "away", directoryHint: .isDirectory)
+            try files.createSymbolicLink(at: away, withDestinationURL: scratch)
+            #expect(try await disk.peek(away.appending(path: "outside.txt", directoryHint: .notDirectory)) == nil)
+        }
+    }
+
+    @Test func aFolderWhoseFigureIsALinkOutOfItIsNotOnTheShelf() async throws {
+        try await inScratch { scratch, _, disk in
+            let outside = try outsideFile(in: scratch)
+            let folder = try await keep(disk)
+            let before = try await disk.scan()
+            #expect(before.count == 1)
+            let figure = folder.appending(path: "z_prime.png", directoryHint: .notDirectory)
+            try files.removeItem(at: figure)
+            try files.createSymbolicLink(at: figure, withDestinationURL: outside)
+            let after = try await disk.scan()
+            #expect(after.isEmpty)
+        }
+    }
+
+    @Test func aLinkThatStaysInsideTheFolderIsReadAsBefore() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk)
+            let link = folder.appending(path: "same.csv", directoryHint: .notDirectory)
+            try files.createSymbolicLink(at: link, withDestinationURL: folder.appending(path: "data/z_prime_by_plate.csv"))
+            #expect(try await disk.peek(link) == String(decoding: csv, as: UTF8.self))
+            #expect(try await disk.pictureBytes(link) == csv)
+        }
+    }
+
+    @Test func aKeptFolderReachedThroughALinkIsReadAsBefore() async throws {
+        try await inScratch { scratch, root, disk in
+            let folder = try await keep(disk)
+            // The setting names a link to the Kept folder (as a folder moved to another disk might be).
+            let linked = scratch.appending(path: "KeptLink", directoryHint: .isDirectory)
+            try files.createSymbolicLink(at: linked, withDestinationURL: root)
+            let throughLink = KeptDisk(root: { linked })
+            let found = try await throughLink.scan()
+            #expect(found.count == 1)
+            let figure = try #require(found.first).figureURL
+            #expect(try await throughLink.peek(figure) == "made-up figure bytes")
+            #expect(try await throughLink.pictureBytes(figure) == png)
+            _ = folder
+        }
+    }
+
+    @Test func aPipeInAKeptFolderIsNeverRead() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk)
+            let pipe = folder.appending(path: "pipe.txt", directoryHint: .notDirectory)
+            #expect(mkfifo(pipe.path, 0o600) == 0)
+            // A read of a pipe nobody writes to would wait for ever; it is refused instead.
+            #expect(try await disk.peek(pipe) == nil)
+            #expect(try await disk.pictureBytes(pipe) == nil)
+        }
+    }
+}
+
+// MARK: A file's facts, bounded (code review, 28 October 2026, finding 4)
+
+/// The disk's queue as a dropped volume holds it: nothing runs until it is let go.
+private final class HeldQueue: @unchecked Sendable {
+    private let lock = NSLock()
+    private var kept: [KeptDisk.Work] = []
+
+    var count: Int { lock.withLock { kept.count } }
+
+    func run(_ work: @escaping KeptDisk.Work) {
+        lock.withLock { kept.append(work) }
+    }
+
+    /// Runs what was kept, in order, here.
+    func release() {
+        let all = lock.withLock { () -> [KeptDisk.Work] in
+            defer { kept = [] }
+            return kept
+        }
+        all.forEach { $0() }
+    }
+}
+
+struct KeptFileFactsBoundTests {
+    private func scratchFile() throws -> URL {
+        let file = FileManager.default.temporaryDirectory.appending(path: "capsid-facts-\(UUID().uuidString).txt",
+                                                                     directoryHint: .notDirectory)
+        try Data("made-up".utf8).write(to: file)
+        return file
+    }
+
+    @Test func aLookThatAnswersGivesTheFacts() async throws {
+        let file = try scratchFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let facts = await KeptDisk.fileFacts(of: file, within: .seconds(15), run: { $0() },
+                                             wait: { try? await Task.sleep(for: $0) }, silent: StuckCount())
+        #expect(facts?.size == 7)
+    }
+
+    @Test func aLookOnAStalledQueueIsLetGoAtItsLimitAndTheNextIsNotQueuedBehindIt() async throws {
+        let file = try scratchFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let held = HeldQueue()
+        let silent = StuckCount()
+        // The limit passes at once: the caller is let go with nil, the look still out.
+        let first = await KeptDisk.fileFacts(of: file, within: .seconds(15), run: held.run, wait: { _ in }, silent: silent)
+        #expect(first == nil)
+        #expect(held.count == 1)
+        #expect(silent.count == 1)
+        // A second look behind it is nil at once, and nothing more is put on the queue.
+        let second = await KeptDisk.fileFacts(of: file, within: .seconds(15), run: held.run,
+                                              wait: { _ in try? await Task.sleep(for: .seconds(3600)) }, silent: silent)
+        #expect(second == nil)
+        #expect(held.count == 1)
+        // The queue moves again: the late look comes back, its answer dropped, and the folder answers again.
+        held.release()
+        #expect(silent.count == 0)
+        let third = await KeptDisk.fileFacts(of: file, within: .seconds(15), run: { $0() },
+                                             wait: { try? await Task.sleep(for: $0) }, silent: silent)
+        #expect(third?.size == 7)
+    }
+
+    @Test func aCancelledLookLetsItsCallerGoAtOnce() async throws {
+        let file = try scratchFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let held = HeldQueue()
+        let silent = StuckCount()
+        let looking = Task {
+            await KeptDisk.fileFacts(of: file, within: .seconds(3600), run: held.run,
+                                     wait: { try? await Task.sleep(for: $0) }, silent: silent)
+        }
+        for _ in 0..<1000 where held.count == 0 { try await Task.sleep(for: .milliseconds(2)) }
+        #expect(held.count == 1)
+        looking.cancel()
+        // Let go without the queue moving and without the hour passing.
+        #expect(await looking.value == nil)
+        // A cancel is not a silent folder: the next look is not refused.
+        #expect(silent.count == 0)
+        held.release()
+        #expect(silent.count == 0)
+    }
+
+    @Test func aLookAskedForByACancelledTaskMakesNoCall() async throws {
+        let held = HeldQueue()
+        let looking = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await KeptDisk.fileFacts(of: URL(fileURLWithPath: "/made-up", isDirectory: false), within: .seconds(15),
+                                            run: held.run, wait: { _ in }, silent: StuckCount())
+        }
+        #expect(await looking.value == nil)
+        #expect(held.count == 0)
+    }
+}

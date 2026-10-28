@@ -361,6 +361,54 @@ struct QuickStartNewSessionTests {
     }
 }
 
+// MARK: Files with the same bytes
+
+/// Code review, 28 October 2026, finding 3: the upload cache was keyed by the intent and the bytes alone, so a second
+/// file with the same bytes under another name was never uploaded and the message listed the first one twice.
+@MainActor
+struct QuickStartAttachmentIdentityTests {
+    private let rig = FlowRig()
+
+    @Test func identicalBytesWithDifferentNamesKeepBothIdentities() async throws {
+        let table = "plate,z_prime\n1,0.71\n"
+        let a = try rig.file("sample_A.csv", table), b = try rig.file("sample_B.csv", table)
+        let outcome = await rig.flow.perform(rig.newSession(files: [a, b]))
+        #expect(outcome.succeeded)
+        #expect(rig.uploads.map(\.file.name) == ["sample_A.csv", "sample_B.csv"])
+        let lines = rig.uploads.map { rig.line(of: $0.file) }.joined(separator: "\n")
+        #expect(lines.contains("sample_A.csv") && lines.contains("sample_B.csv"))
+        #expect(rig.writes == [.newSessionWithFiles(project: "proj-1", text: "QC this export\n\n" + lines, planMode: true, intentID: intent)])
+    }
+
+    @Test func aRetryStillReusesEachFileUnderItsOwnName() async throws {
+        let table = "plate,z_prime\n1,0.71\n"
+        let a = try rig.file("sample_A.csv", table), b = try rig.file("sample_B.csv", table)
+        rig.createReplies = [nil]
+        _ = await rig.flow.perform(rig.newSession(files: [a, b]))
+        #expect(rig.uploads.count == 2)
+        rig.createReplies = [RemoteWriteResult(status: 409)]
+        rig.intents = [newID]
+        let retry = await rig.flow.perform(rig.newSession(files: [a, b]))
+        #expect(retry == .started(sessionID: newID, sentence: "Started in Made-up."))
+        #expect(rig.uploads.count == 2, "each file went up once")
+        let creates = rig.writes.compactMap { write -> String? in
+            if case .newSessionWithFiles(_, let text, _, _) = write { return text }
+            return nil
+        }
+        #expect(creates.count == 2 && creates[0] == creates[1])
+        #expect(creates.last?.contains("sample_B.csv") == true)
+    }
+
+    @Test func theKeyTellsNameFromTypeWhateverTheNameHolds() {
+        let digest = SHA256.hash(data: Data("same".utf8))
+        let one = QuickStartFlow.uploadedKey(intent: intent, digest: digest, name: "a|b", contentType: "text/csv")
+        let two = QuickStartFlow.uploadedKey(intent: intent, digest: digest, name: "a", contentType: "b|text/csv")
+        #expect(one != two)
+        #expect(one != QuickStartFlow.uploadedKey(intent: intent, digest: digest, name: "a|b", contentType: "text/plain"))
+        #expect(one == QuickStartFlow.uploadedKey(intent: intent, digest: digest, name: "a|b", contentType: "text/csv"))
+    }
+}
+
 // MARK: A message to the session in view
 
 @MainActor
