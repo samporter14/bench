@@ -275,10 +275,17 @@ final class QuickStartFlow: QuickStartSending {
         let at: Date
     }
 
+    /// The key an upload is remembered by: the intent id, the file's digest, its name and its content type. Each part
+    /// is prefixed with its length, so no name can be read as another name and type.
+    nonisolated static func uploadedKey(intent: String, digest: SHA256Digest, name: String, contentType: String) -> String {
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return [intent, hex, name, contentType].map { "\($0.utf8.count):\($0)" }.joined(separator: "|")
+    }
+
     let sessions: RemoteSessions
     let browser: RemoteBrowser
     private let dependencies: Dependencies
-    /// By intent id and the file's digest.
+    /// By intent id, the file's digest, its name and its content type (`uploadedKey`).
     private var uploaded: [String: Uploaded] = [:]
 
     init(sessions: RemoteSessions, browser: RemoteBrowser, dependencies: Dependencies) {
@@ -559,14 +566,17 @@ final class QuickStartFlow: QuickStartSending {
     }
 
     /// The file's place in the project: what an earlier try of this intent
-    /// uploaded (the same bytes, the same project, within ten minutes), else a
-    /// new upload, which is remembered.
+    /// uploaded (the same bytes under the same name and type, the same project,
+    /// within ten minutes), else a new upload, which is remembered. Two files
+    /// with the same bytes and different names are two files: each goes up, and
+    /// the message lists each by its own name.
     private func place(_ file: UploadFile, intent: String, project: String) async -> Placed {
         let now = dependencies.now()
         uploaded = uploaded.filter { $0.value.at <= now && now.timeIntervalSince($0.value.at) < Self.uploadedLifetime }
         let digest = SHA256.hash(data: file.data)
-        let key = intent + "|" + digest.map { String(format: "%02x", $0) }.joined()
-        if let earlier = uploaded[key], earlier.digest == digest, earlier.project == project {
+        let key = Self.uploadedKey(intent: intent, digest: digest, name: file.name, contentType: file.contentType)
+        if let earlier = uploaded[key], earlier.digest == digest, earlier.project == project,
+           earlier.attachment.filename == file.name, earlier.attachment.contentType == file.contentType {
             return .placed(earlier.attachment, retried: true)
         }
         guard BrowseSQL.isProjectID(project), let reply = await dependencies.upload(project, file) else { return .failed }

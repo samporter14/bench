@@ -223,6 +223,27 @@ final class ShelfModel: ObservableObject {
         return fresh
     }
 
+    // MARK: Quitting
+
+    /// A legend typed in a field isn't written yet, or its save is under way: quitting waits (App/BenchApp.swift).
+    var hasPendingLegends: Bool { legendEditors.values.contains { $0.hasPendingSave } }
+
+    /// Quitting (App/BenchApp.swift): every legend typed is written now and every save under way is over, however long
+    /// the disk takes to say so (each write has its own limit, `KeptDisk`). Answers the names of the items whose legend
+    /// still isn't saved (a disk that said no, a README changed in another app), sorted: Capsid stays open for those
+    /// unless the person chooses to quit without them. A save that has only been asked for is not a saved legend
+    /// (code review, 28 October 2026: a legend typed in the second before ⌘Q, or one whose save was still under way,
+    /// was lost).
+    func settleLegendsForQuit() async -> [String] {
+        var unsaved: [String] = []
+        for (id, editor) in legendEditors {
+            await editor.settle()
+            guard editor.hasUnsavedText else { continue }
+            unsaved.append(items.first { $0.id == id }?.title ?? (id as NSString).lastPathComponent)
+        }
+        return unsaved.sorted()
+    }
+
     // MARK: What is shown
 
     /// The projects (collections) with something on the shelf, by their newest item.

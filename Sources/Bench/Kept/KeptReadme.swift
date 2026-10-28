@@ -775,6 +775,15 @@ enum KeptReadme {
         }
     }
 
+    /// Whether a path a README lists names a file in its own folder, as written: relative, and never up out of the
+    /// folder through "..". A README that lists anything else is not one Capsid wrote, and is not read (code review,
+    /// 28 October 2026: `figure.file: "../../../outside.txt"` was read from outside the Kept folder). Links are the
+    /// disk's to check (`KeptDisk`), since what a path names on disk can change after the README is read.
+    static func staysInFolder(_ path: String) -> Bool {
+        guard !path.isEmpty, !path.hasPrefix("/") else { return false }
+        return !path.split(separator: "/").contains("..")
+    }
+
     private static let fileFields = [Field("artifact", .string, optional: true), Field("version", .string, optional: true),
                                      Field("index", .int, optional: true), Field("of", .int, optional: true),
                                      Field("sha256", .string, optional: true), Field("expected_sha256", .string, optional: true),
@@ -820,7 +829,7 @@ enum KeptReadme {
             return nil
         }
         func file(_ values: [String: Value], path: String, role: KeptRole) -> KeptFile? {
-            guard let bytes = number(values, "bytes") else { return nil }
+            guard staysInFolder(path), let bytes = number(values, "bytes") else { return nil }
             return KeptFile(path: path, role: role, artifact: text(values, "artifact"), version: text(values, "version"),
                             index: number(values, "index"), of: number(values, "of"), sha256: text(values, "sha256"),
                             bytes: bytes, expectedSha256: text(values, "expected_sha256"))

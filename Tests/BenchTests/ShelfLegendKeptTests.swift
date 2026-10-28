@@ -35,6 +35,12 @@ private final class HeldCalls: @unchecked Sendable {
     }
 }
 
+/// What quitting answered, once it has.
+@MainActor
+private final class Answer {
+    var names: [String]?
+}
+
 @MainActor
 private func until(_ what: String, _ condition: () -> Bool) async throws {
     for _ in 0..<1000 {
@@ -232,6 +238,106 @@ struct ShelfLegendKeptTests {
             #expect(model.legendEditor(for: item) === editor)
             #expect(model.keepsLegendEditor(for: item.id))
         }
+    }
+
+    // MARK: Quitting (code review, 28 October 2026, finding 1)
+
+    /// The legend in the README as it is on disk now, read past the held queue.
+    private func legendInFile(_ item: ShelfItem) throws -> String? {
+        let url = item.folder.appending(path: "README.md", directoryHint: .notDirectory)
+        return KeptReadme.parse(try String(contentsOf: url, encoding: .utf8))?.text.legend
+    }
+
+    @Test func aLegendTypedJustBeforeQuittingIsWrittenBeforeQuittingIsAnswered() async throws {
+        try await rig { model, item, _, held in
+            let editor = model.legendEditor(for: item)
+            await editor.show()
+            #expect(!model.hasPendingLegends)
+            // Typed, and its save is a minute away: nothing was written yet, and quitting must wait for it.
+            editor.legend = "Typed a moment before Quit."
+            #expect(model.hasPendingLegends)
+            held.holding(true)
+            let answer = Answer()
+            let quitting = Task { @MainActor in
+                answer.names = await model.settleLegendsForQuit()
+            }
+            try await until("the save to reach the disk") { held.count == 1 }
+            // The write is held, as a slow disk holds it: quitting is still waiting, and the README has the old text.
+            for _ in 0..<50 { await Task.yield() }
+            #expect(answer.names == nil)
+            #expect(try legendInFile(item) == item.text.legend)
+            held.holding(false)
+            await quitting.value
+            #expect(answer.names == [])
+            #expect(try legendInFile(item) == "Typed a moment before Quit.")
+            #expect(!model.hasPendingLegends)
+        }
+    }
+
+    @Test func aSaveAlreadyUnderWayWhenQuitIsChosenIsWaitedFor() async throws {
+        try await rig { model, item, other, held in
+            let editor = model.legendEditor(for: item)
+            await editor.show()
+            editor.legend = "Left, then quit."
+            held.holding(true)
+            // Leaving the item starts the save (`hide`), which only asks for it.
+            editor.hide()
+            model.selection = other.id
+            try await until("the save to reach the disk") { held.count == 1 }
+            #expect(model.hasPendingLegends, "a save that has only been asked for is not a saved legend")
+            let answer = Answer()
+            let quitting = Task { @MainActor in
+                answer.names = await model.settleLegendsForQuit()
+            }
+            for _ in 0..<50 { await Task.yield() }
+            #expect(answer.names == nil)
+            held.holding(false)
+            await quitting.value
+            #expect(answer.names == [])
+            #expect(try legendInFile(item) == "Left, then quit.")
+        }
+    }
+
+    @Test func aLegendThatCantBeSavedAtQuittingIsNamedAndItsTextKept() async throws {
+        try await rig { model, item, _, _ in
+            let editor = model.legendEditor(for: item)
+            await editor.show()
+            editor.legend = "Typed, and the README went."
+            try FileManager.default.removeItem(at: item.folder.appending(path: "README.md", directoryHint: .notDirectory))
+            let unsaved = await model.settleLegendsForQuit()
+            // The quit path asks the person about this one rather than going (App/BenchApp.swift).
+            #expect(unsaved == [item.title])
+            #expect(editor.legend == "Typed, and the README went." && editor.hasUnsavedText)
+            #expect(model.hasPendingLegends)
+        }
+    }
+
+    @Test func aLegendChangedInAnotherAppIsNotWrittenOverAtQuittingAndIsNamed() async throws {
+        try await rig { model, item, _, _ in
+            let disk = model.index.disk
+            let editor = model.legendEditor(for: item)
+            await editor.show()
+            editor.legend = "Mine, typed before Quit."
+            let read = try await disk.readme(at: item.folder)
+            _ = try await disk.replaceLegend(at: item.folder, with: "Theirs, from another app.", lastRead: read.markdown)
+            let unsaved = await model.settleLegendsForQuit()
+            #expect(unsaved == [item.title])
+            #expect(editor.changedOutside)
+            #expect(try legendInFile(item) == "Theirs, from another app.")
+        }
+    }
+
+    /// The app's quit path asks the Shelf as well as the Working Notes, waits for the legends, and quits without an
+    /// unsaved one only when the person says so.
+    @Test func quittingAsksTheShelfAndWaitsForItsLegends() throws {
+        let app = FindRepo.source("App/BenchApp.swift")
+        let start = try #require(app.range(of: "func applicationShouldTerminate("))
+        let end = try #require(app.range(of: "func applicationWillTerminate("))
+        let body = String(app[start.lowerBound..<end.lowerBound])
+        #expect(body.contains("shelf?.hasPendingLegends == true"))
+        #expect(body.contains("await shelf?.settleLegendsForQuit()"))
+        #expect(body.contains("unsaved.isEmpty || Self.quitWithoutLegends(unsaved)"))
+        #expect(!body.contains("sender.reply(toApplicationShouldTerminate: true)"))
     }
 
     // MARK: The view
