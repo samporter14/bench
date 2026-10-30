@@ -142,6 +142,9 @@ struct LabPanelView: View {
     @AppStorage(SettingsKey.panelCorner) private var corner = PanelCorner.bottomRight
     @Environment(\.colorScheme) private var colorScheme
     @State private var entered = false
+    /// The scene well is one view across the faces that have one: each face's
+    /// row holds a clear spot where it goes, and the well follows that spot.
+    @Namespace private var wellSpace
     /// The last thing shown, so the panel keeps its look while it fades out
     /// instead of collapsing as its content goes.
     @State private var held: Face?
@@ -245,6 +248,11 @@ struct LabPanelView: View {
                 content(face)
                     .padding(Theme.panelPadding)
                     .frame(width: face.width(well: wellSide))
+                // One well for every face that has one, so it stays put while the
+                // words beside it change (the working face becoming its Finished card).
+                if let key = wellKey(face) {
+                    well(face, key: key)
+                }
                 if hover.isInside {
                     dismissButton(face)
                 }
@@ -308,21 +316,89 @@ struct LabPanelView: View {
         switch face {
         case .working(let session, let others):
             workingContent(session, others: others)
+                .transition(arrival(face))
         case .card(let card, let count):
             // Each card is its own view. When the top card changes straight from one to another of a kind
             // (Finished to Finished), SwiftUI would keep the view: `.onDisappear { finished.forget }` would
             // never run for the first, and the plate's `settled` would stay true for the second.
             cardContent(card, count: count)
                 .id(card.id)
+                .transition(arrival(face))
         }
     }
+
+    /// How a face's words and buttons come: beside a well that stays, they
+    /// rise a few points as they fade in; a card that asks has no well, and
+    /// fades as it always has. Under Reduce Motion nothing animates at all.
+    private func arrival(_ face: Face) -> AnyTransition {
+        guard wellKey(face) != nil else { return .opacity }
+        return .asymmetric(insertion: .opacity.combined(with: .offset(y: 6)), removal: .opacity)
+    }
+
+    // MARK: The well
+
+    /// What keeps the well's content: the working face's specimen while
+    /// sessions work, else each card's own (a Finished card's plate starts
+    /// afresh for the next). Nil for a face with no well: a card that asks,
+    /// and the stack opened into rows.
+    private func wellKey(_ face: Face) -> String? {
+        switch face {
+        case .working(let session, let others):
+            if model.problem != nil { return "working-problem" }
+            if usagePause.pause(for: session.id) != nil { return "working-paused" }
+            return PanelStack.expands(working: others + 1, hovering: hover.isInside) ? nil : "working"
+        case .card(.needsInput, _):
+            return nil
+        case .card(let card, _):
+            return card.id
+        }
+    }
+
+    /// The well, where the face's row keeps its spot (`Row`), drawn once
+    /// across the faces so it doesn't fade out and in again as one becomes
+    /// another; only what plays in it changes.
+    private func well(_ face: Face, key: String) -> some View {
+        wellContent(face)
+            .id(key)
+            .frame(width: wellSide, height: wellSide)
+            .background(Color.primary.opacity(0.06))
+            .clipShape(.rect(cornerRadius: wellSide * 0.2))
+            .matchedGeometryEffect(id: Self.wellSpot, in: wellSpace, properties: .frame, isSource: false)
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func wellContent(_ face: Face) -> some View {
+        switch face {
+        case .working(let session, _):
+            if model.problem != nil {
+                symbol("exclamationmark.triangle")
+            } else if usagePause.pause(for: session.id) != nil {
+                symbol("pause.circle")
+            } else {
+                WorkingGlyph(tint: colorScheme.sceneInk, rotation: SessionSpecimen.of(session, matching: matchSpecimen).rotation)
+            }
+        case .card(let card, _):
+            switch card {
+            case .failed: ContaminatedPlateWell(tint: colorScheme.sceneInk)
+            case .finished(let session): FinishedWell(session: session, tint: colorScheme.sceneInk, gestures: gestures)
+            case .web: symbol("bell")
+            case .notice(let notice): symbol(notice.symbol)
+            case .saved: symbol("arrow.down.circle")
+            case .needsInput: EmptyView()
+            }
+        }
+    }
+
+    /// The matched-geometry id of the well's spot in a row.
+    fileprivate static let wellSpot = "well"
 
     @ViewBuilder
     private func workingContent(_ session: SessionStatus, others: Int) -> some View {
         if model.problem != nil {
             // The last read failed: say so, rather than count on as if the
             // session were still known to be working.
-            Row(side: wellSide, well: symbol("exclamationmark.triangle")) {
+            Row(side: wellSide, spot: wellSpace) {
                 caption("Not updating", trailing: others > 0 ? "+\(others) more" : nil)
                 title(session.displayTitle)
                 detail(model.staleSince.map { "Last checked at \($0.formatted(date: .omitted, time: .shortened))" }
@@ -331,7 +407,7 @@ struct LabPanelView: View {
         } else if let pause = usagePause.pause(for: session.id) {
             // A used-up limit holds it: no specimen, since nothing is happening
             // in it, and when it starts again.
-            Row(side: wellSide, well: symbol("pause.circle")) {
+            Row(side: wellSide, spot: wellSpace) {
                 caption("Paused · usage limit", trailing: others > 0 ? "+\(others) more" : nil)
                 title(session.displayTitle)
                 detail(pause.sentence())
@@ -342,7 +418,7 @@ struct LabPanelView: View {
             let specimen = SessionSpecimen.of(session, matching: matchSpecimen)
             let progress = insights.progress[session.id]
             VStack(alignment: .leading, spacing: 12) {
-                Row(side: wellSide, well: WorkingGlyph(tint: colorScheme.sceneInk, rotation: specimen.rotation)) {
+                Row(side: wellSide, spot: wellSpace) {
                     caption("Working", dot: true, trailing: others > 0 ? "+\(others) more" : nil)
                     title(session.displayTitle)
                     TurnClockText(prefix: session.projectName, since: session.startedAt)
@@ -433,7 +509,7 @@ struct LabPanelView: View {
             // there is none, the card is as it always was.
             let reason = failures.reason(for: session.id)
             VStack(alignment: .leading, spacing: 12) {
-                Row(side: wellSide, well: ContaminatedPlateWell(tint: colorScheme.sceneInk)) {
+                Row(side: wellSide, spot: wellSpace) {
                     caption("Stopped with an error", style: Theme.clayText, weight: .semibold, trailing: position)
                     title(session.displayTitle)
                     detail(Self.ranFor(session))
@@ -461,7 +537,7 @@ struct LabPanelView: View {
             // Claude Science's title is the caption; a notification with no
             // body has nothing under it, so its title takes the body's place.
             let hasBody = !notification.body.isEmpty
-            Row(side: wellSide, well: symbol("bell")) {
+            Row(side: wellSide, spot: wellSpace) {
                 caption(hasBody ? notification.title : "Claude Science", trailing: position)
                 title(hasBody ? notification.body : notification.title)
                 buttons {
@@ -474,7 +550,7 @@ struct LabPanelView: View {
         case .notice(let notice) where notice.midRunNote != nil:
             noteCard(notice, card: card, position: position)
         case .notice(let notice):
-            Row(side: wellSide, well: symbol(notice.symbol)) {
+            Row(side: wellSide, spot: wellSpace) {
                 caption(notice.caption, trailing: position)
                 title(notice.title)
                 if !notice.detail.isEmpty { detail(notice.detail) }
@@ -503,7 +579,7 @@ struct LabPanelView: View {
                 if case .sinceYouLeft = notice.action { Button("Show") { model.open(card) } }
             }
         case .saved(let url):
-            Row(side: wellSide, well: symbol("arrow.down.circle")) {
+            Row(side: wellSide, spot: wellSpace) {
                 caption("Saved", trailing: position)
                 title(url.lastPathComponent)
                 buttons {
@@ -587,7 +663,7 @@ struct LabPanelView: View {
         var pictures: [ArtifactEntry] = []
         if case .loaded(let entries) = listing { pictures = FinishedResults.pictures(in: entries) }
         return VStack(alignment: .leading, spacing: 12) {
-            Row(side: wellSide, well: FinishedWell(session: session, tint: colorScheme.sceneInk, gestures: gestures)) {
+            Row(side: wellSide, spot: wellSpace) {
                 caption("Finished", style: Theme.clayText, weight: .semibold, trailing: position)
                 title(session.displayTitle)
                 detail(FinishedCardText.meta(project: session.projectName, duration: session.duration))
@@ -675,7 +751,7 @@ struct LabPanelView: View {
     private func noteCard(_ notice: LabNotice, card: LabCard, position: String?) -> some View {
         let note = notice.midRunNote
         let text = note?.text ?? notice.title
-        return Row(side: wellSide, well: symbol(notice.symbol)) {
+        return Row(side: wellSide, spot: wellSpace) {
             caption(notice.caption, trailing: position)
             Text(verbatim: text)
                 .font(.system(size: 13))
@@ -894,7 +970,7 @@ struct LabPanelView: View {
         case .done(let text):
             HStack(spacing: 4) {
                 Text(text)
-                Image(systemName: "checkmark")
+                DrawnCheckmark()
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(Theme.clayText)
@@ -995,25 +1071,25 @@ struct LabPanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The scene well on the left, `side` points square, and the text column
-    /// on the right.
-    private struct Row<Well: View, Column: View>: View {
+    /// The scene well's spot on the left, `side` points square, and the text
+    /// column on the right. The well itself is drawn over the spot, once for
+    /// every face (`well(_:key:)`).
+    private struct Row<Column: View>: View {
         let side: CGFloat
-        let well: Well
+        let spot: Namespace.ID
         @ViewBuilder let column: Column
 
-        init(side: CGFloat, well: Well, @ViewBuilder column: () -> Column) {
+        init(side: CGFloat, spot: Namespace.ID, @ViewBuilder column: () -> Column) {
             self.side = side
-            self.well = well
+            self.spot = spot
             self.column = column()
         }
 
         var body: some View {
             HStack(spacing: 14) {
-                well
+                Color.clear
                     .frame(width: side, height: side)
-                    .background(Color.primary.opacity(0.06))
-                    .clipShape(.rect(cornerRadius: side * 0.2))
+                    .matchedGeometryEffect(id: LabPanelView.wellSpot, in: spot, properties: .frame, isSource: true)
                 VStack(alignment: .leading, spacing: 3) {
                     column
                 }

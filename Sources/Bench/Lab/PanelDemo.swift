@@ -63,6 +63,17 @@ enum PanelDemo {
         }
     }
 
+    /// `working`, finished (`--demo morph`): its card, with the Finished demo's files and pictures.
+    static func finish(_ working: SessionStatus, insights: PanelInsights = .shared,
+                       finished: FinishedResults = .shared) -> LabCard {
+        let done = SessionStatus(id: working.id, projectID: working.projectID, projectName: working.projectName,
+                                 title: working.title, state: .finished, updatedAt: Date(), startedAt: working.startedAt)
+        insights.showDemo(reviewers: [done.id: ReviewerCounts(standing: 0, fixed: 0, running: 0, reviews: 1)])
+        finished.showDemo(files(oneFigure: false), for: done.id,
+                          pictures: Dictionary(uniqueKeysWithValues: pictures(oneFigure: false)))
+        return .finished(done)
+    }
+
     // MARK: Files
 
     static func files(oneFigure: Bool) -> [ArtifactEntry] {

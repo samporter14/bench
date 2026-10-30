@@ -39,6 +39,7 @@ private struct ContextButton: View {
                     .font(.system(size: 12, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(figures.isHigh ? Theme.clayText : Color.secondary)
+                    .rollingDigits(Double(figures.percent))
             }
         }
         .buttonStyle(ReadoutButtonStyle())

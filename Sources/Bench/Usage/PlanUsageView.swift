@@ -26,6 +26,7 @@ struct PlanUsageLabel: View {
                 HStack(spacing: 0) {
                     Text(name + "\(limit.leftPercent)% left")
                         .foregroundStyle(limit.isLow ? Theme.clayText : Color.secondary)
+                        .rollingDigits(Double(limit.leftPercent))
                     if let resetsAt = limit.resetsAt {
                         Text(" · resets " + TimeSpan.reset(resetsAt, now: context.date))
                             .foregroundStyle(.tertiary)

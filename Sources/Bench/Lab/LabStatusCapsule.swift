@@ -17,13 +17,18 @@ struct LabStatusCapsule: View {
             showing.toggle()
         } label: {
             HStack(spacing: 6) {
-                if model.waiting.isEmpty, model.working.isEmpty {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .foregroundStyle(.secondary)
-                } else {
-                    scene(for: model.waiting.first)
-                        .frame(width: Theme.capsuleSceneSize, height: Theme.capsuleSceneSize)
+                // One stack, so the glyph keeps its place as it changes, and it
+                // hops once when more come to need you (DESIGN.md, Look → Motion).
+                ZStack {
+                    if model.waiting.isEmpty, model.working.isEmpty {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        scene(for: model.waiting.first)
+                            .frame(width: Theme.capsuleSceneSize, height: Theme.capsuleSceneSize)
+                    }
                 }
+                .hopsWhenItGrows(model.waiting.count)
                 words
                     .font(.system(size: 12, weight: .medium))
             }
@@ -65,6 +70,7 @@ struct LabStatusCapsule: View {
             let count = model.waiting.count
             Text(count == 1 ? "1 needs you" : "\(count) need you")
                 .foregroundStyle(Theme.clayText)
+                .rollingDigits(Double(count))
         } else if usagePause.holdsAll(model.working) {
             Text("Paused · usage limit")
                 .foregroundStyle(.secondary)
@@ -72,6 +78,7 @@ struct LabStatusCapsule: View {
             TurnClockText(prefix: "Working", since: session.startedAt)
         } else if working.count > 1 {
             Text("\(working.count) working")
+                .rollingDigits(Double(working.count))
         } else {
             Text(model.recent.isEmpty ? "Activity" : "Recent")
                 .foregroundStyle(.secondary)

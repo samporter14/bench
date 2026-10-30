@@ -132,6 +132,7 @@ struct MenuBarItemView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(count)
+                    .rollingDigits(Double(face.needs))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

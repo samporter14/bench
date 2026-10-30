@@ -249,9 +249,15 @@ Claude follows a plan, the panel says which step it's on ("Step 4 of 6 · Check
 against published screens") with a thin bar. When a session finishes, the
 card shows its figures, how many files it made and what the reviewer found,
 with Results and, for a single figure, Keep…. When one stops with an error,
-it says why. A note Claude sends while it works comes up as a quiet card. A
-question, a plan, a failure and a finish each have their own sound. With two
-or more sessions working, hover over the panel to see them all.
+it says why; the scene well stays where it is as the working panel becomes
+its card. A note Claude sends while it works comes up as a quiet card. A
+question, a plan, a failure and a finish each have their own sound, and a
+quieter tap says an approval, a reply or an Add to Shelf went through (with a
+tap on the trackpad for an approval or a reply). Pick Glass or Bubbles for
+them in Settings → Alerts → Sounds, where each has a play button. Counts in
+the toolbar and the menu bar roll to their new number, and nothing moves
+under Reduce Motion. With two or more sessions working, hover over the panel
+to see them all.
 
 ## Since you left
 

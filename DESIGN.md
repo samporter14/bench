@@ -53,9 +53,33 @@ third-party dependencies.
   our own.
 - Type: the system font. Titles are semibold, captions 11pt medium in
   secondary, and times use monospaced digits.
-- Motion: springs (`.spring(duration: 0.35, bounce: 0.15)`) for the panel's
-  entrance and resize, and nothing else moves except the scenes. With
-  Reduce Motion on there are no springs, and a waiting glyph is still.
+- Motion: motion only answers something that just happened. It plays once,
+  never loops, and is off under Reduce Motion (and in a still picture of a
+  view, `stillSpecimens`); the scenes are the one thing that plays on. Springs
+  (`Theme.spring`, `.spring(duration: 0.35, bounce: 0.15)`) for the panel's
+  entrance and resize. Since 1.1.3 (Shared/OnceMotion.swift), also:
+  - *Rolling digits* (`rollingDigits`, `.contentTransition(.numericText)` with
+    the spring): the toolbar status capsule's "2 need you" and "3 working",
+    the menu bar's count, the context ring's percent and the usage readout's
+    "% left", the Shelf pill's count, and "3 more" under Needs you in the
+    activity list. Never a clock: the turn clock's m:ss changes by itself.
+    (The Dock's menu is AppKit's and keeps its plain words.)
+  - *A hop* (`hopsWhenItGrows`, one scale keyframe up and back): the status
+    capsule's glyph when more come to need you, not fewer, and the Shelf
+    pill's glyph when something goes on the shelf. Both glyphs are drawn (a
+    scene, the shelf's shape), not SF Symbols, so `.symbolEffect(.bounce)`
+    would do nothing there; the hop is its stand-in.
+  - *A checkmark drawn on* (`DrawnCheckmark`, `.symbolEffect(.drawOn)`):
+    "Approved ✓" on a plan's card, and every other done line of a card and
+    of an activity row ("Sent ✓", "Allowed once ✓").
+  - *The panel's well staying put* while the working face becomes its
+    Finished card, or one card with a well becomes another: the words and
+    buttons beside it rise 6 pt as they fade in (The panel, Layout).
+  Haptics answer the same way, on a trackpad, and are not motion (Lab/
+  SentFeedback.swift): `.alignment` as Compare's Wipe divider meets the
+  centre or an edge, and `.levelChange` when an Approve or a reply from a
+  card goes through. With Reduce Motion on there are no springs, no rolls,
+  hops or drawing, and a waiting glyph is still.
 - Scenes: the droplet's own. `PlayedGlyph(tint:rotation:)` for the working
   rotation and `PlayedLoop(glyph:tint:)` for a waiting reason. They draw in
   `.primary` ink with clay accents built in. The panel shows them at 88pt,
@@ -675,6 +699,19 @@ the column beside an 88 pt well had 226. A question, a plan or an error
 reads at that width. The width of the cards that ask does not follow the
 Size setting; the width of the others does (Scenes settings).
 
+**One well across the faces** (since 1.1.3). The well is drawn once, over a
+clear spot each face's row keeps for it (`Row(side:spot:)`, followed with
+`matchedGeometryEffect` in the view's `@Namespace`): when the working face
+becomes its Finished card, or a stopped card or a notice takes the top, the
+well's square stays and follows the spot as the panel resizes, and only what
+plays in it changes (the finishing gesture, the plate, a symbol). The words and
+buttons beside and under it are the new face's own view and come with a short
+fade as they rise 6 pt; the old ones fade. A card's own well content is kept by
+the card's id, so the next Finished card's plate fills afresh. The well is not
+glass (a 6% ink fill inside the panel's one glass shape), so there is no
+`glassEffectID` to morph, and no second glass shape; no shadow, no timer. Cards
+that ask, and the stack opened into rows, have no well and fade as before.
+
 - **Working (compact, about 336×120).**
   - Left: an 88×88 scene well playing the rotation.
   - Right column: a caption with a clay live dot and "Working"; the session
@@ -720,7 +757,9 @@ Size setting; the width of the others does (Scenes settings).
     line each, cut at the end), then "and N more…" when there are more.
     When it is ready the buttons are **Approve** (`.glassProminent`, clay,
     the primary action), **Open** (`.glass`) and Later. Pressed, Approve is a
-    small spinner; approved, the row reads "Approved ✓" in clay-text. The card
+    small spinner; approved, the row reads "Approved ✓" in clay-text, its
+    checkmark drawn on (`.symbolEffect(.drawOn)`, since 1.1.3), with a
+    level-change tap on the trackpad and the quiet sent sound. The card
     keeps its width and grows taller; the panel measures its content, so the
     window follows. See Approving a plan from its card. Beside Show steps,
     **Request changes…** (since 0.7.0).
@@ -771,7 +810,9 @@ A 18pt live scene plus a short text: "Working · 4:12", "2 need you" (in clay-te
 "Recent" once something has happened, or a quiet "Activity" before then. It is
 always in the toolbar since 0.3.1 (it used to vanish when nothing worked or
 waited), so the list stays one click away. Clicking it opens the activity
-list.
+list. Since 1.1.3 "2 need you" and "3 working" roll to their new figure, and
+the glyph hops once when the number that need you goes up, never when it
+goes down (Look → Motion); the clock in "Working · 4:12" does not roll.
 
 ### Activity list (Lab/ActivityList.swift, Lab/ActivityMenu.swift, since 0.2.0)
 
@@ -1357,7 +1398,8 @@ whether the item is there at all; off, there is none, whatever the older
 switch says. The item is a small Capsid glyph (five nodes, the nodes in clay,
 the lines in the menu bar's own ink) and, beside it, the count of what needs
 you: sessions that wait for you now and sessions that stopped with an error,
-not those put off with Later. While a session works it plays the specimen
+not those put off with Later. Since 1.1.3 the count rolls to its new figure
+(Look → Motion). While a session works it plays the specimen
 instead, only with the older switch on (Settings → Panel → "Play it in the
 menu bar too", `showMenuBarSpecimen`, off by default; turning it on turns the
 item on too). The item names nothing, so Quiet while presenting leaves it. Its
@@ -2533,7 +2575,9 @@ Approving a plan from its card).
   that still arrives for the old session is ignored (since 0.9.3).
 - Look: a 14 pt ring in `.primary` at 15% for the track and clay for the
   fill, with the percent beside it (12 pt medium, monospaced digits,
-  secondary; clay past 80%). Hidden when no session is shown.
+  secondary; clay past 80%). Hidden when no session is shown. The ring
+  springs to a new reading and, since 1.1.3, the percent rolls to it
+  (Look → Motion).
 - Both readouts share ONE toolbar item (`TitleBarReadouts`): one glass
   capsule, ring half | hairline | usage half, like the Scenes split button.
   Each half is a button in `ReadoutButtonStyle` (10 pt side padding, a faint
@@ -2556,8 +2600,9 @@ Approving a plan from its card).
   12m" or "Week 12% left · resets Thu". Which limit is the Title bar shows
   setting's (since 0.9.1, below). The session limit goes unnamed: "5h" read
   as five hours to go. The countdown ticks each minute and is tertiary; the
-  figure is secondary and turns clay-text under 20% left. `chart.bar.xaxis`
-  shows until the first read lands.
+  figure is secondary and turns clay-text under 20% left; since 1.1.3 it rolls
+  to a new reading (the countdown does not). `chart.bar.xaxis` shows until the
+  first read lands.
 - Popover (glass): a **Plan limits** section with a row per limit ("Current
   session", "Weekly · all models", "Weekly · Opus", "Weekly · Sonnet"), each
   with a bar, "% left" and "Resets in 2h 14m" (and the forecast line and
@@ -3666,6 +3711,12 @@ instead of every one it visited; the conversation's rows are built one at a time
 rather than all at once; and a read for a screen that was left, or a page put away,
 is cancelled on the phone and, for a file, on the Mac as well (Capsid on your
 phone, above), so the page's fetch for it stops.
+
+**One-shot motion, 1.1.3 (not measured).** The rolls, hops, drawn checkmark and
+the panel's well (Look → Motion) add no timer, observer or loop: each runs only
+as a value changes, for under half a second, and the well is the same one view
+the panel drew before, moved rather than drawn twice. The panel's one glass
+shape is unchanged.
 
 ## Files and ownership
 
@@ -6356,7 +6407,9 @@ session's history. You asked: “…”"). The legend comment and fine print say
   on it; "Already on your shelf" with Show Shelf; "Adding to your shelf…"
   while the file is fetched; a failure's sentence alone for six seconds.
 - *The toolbar*: "Shelf · 12" beside Results (the board's shelf glyph and the
-  live count; "Shelf" alone when empty), opening the Shelf window.
+  live count; "Shelf" alone when empty), opening the Shelf window. Since 1.1.3
+  the count rolls to its new figure and the glyph hops once when the count
+  goes up (Look → Motion).
 - *Results*: each file's seal is Add to Shelf (a spinner, then "On Shelf ✓";
   a failure as a clay-text sentence under the file); its menu has Add to Shelf
   (or Show on Shelf), Keep with Data and Code…, Preview, Copy, Save…; the
@@ -8020,7 +8073,9 @@ shows nothing), how often models report a step in progress, and whether
 findings land before `completed`.
 
 `--demo progress`, `--demo finished` (`--one-figure` offers Keep…), `--demo
-note`, `--demo stack` (`--hover` opens it): made-up insights; nothing is read.
+note`, `--demo stack` (`--hover` opens it), `--demo morph` (since 1.1.3: the
+working face, which finishes after three seconds, for the well that stays as
+it becomes its Finished card): made-up insights; nothing is read.
 
 ### Finishing gestures (Lab/FinishingGesture.swift, since 1.1.0)
 

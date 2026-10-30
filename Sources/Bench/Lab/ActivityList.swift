@@ -309,7 +309,7 @@ struct ActivityList: View {
             case .done(let text):
                 HStack(spacing: 4) {
                     Text(text)
-                    Image(systemName: "checkmark")
+                    DrawnCheckmark()
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Theme.clayText)
@@ -333,6 +333,7 @@ struct ActivityList: View {
         ActivityRow(action: { showsAllNeeds = true }) {
             HStack(spacing: 4) {
                 Text("\(count) more")
+                    .rollingDigits(Double(count))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
                 Spacer(minLength: 0)

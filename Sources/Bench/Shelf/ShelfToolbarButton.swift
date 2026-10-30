@@ -21,9 +21,12 @@ struct ShelfToolbarButton: View {
                     .stroke(style: StrokeStyle(lineWidth: 1.2, lineCap: .butt, lineJoin: .miter))
                     .frame(width: 14, height: 14)
                     .accessibilityHidden(true)
+                    // A hop when something is put on the shelf (DESIGN.md, Look → Motion).
+                    .hopsWhenItGrows(count)
                 Text(ShelfWords.pill(count: count))
                     .font(.system(size: 12))
                     .monospacedDigit()
+                    .rollingDigits(Double(count))
             }
         }
         .buttonStyle(ReadoutButtonStyle())

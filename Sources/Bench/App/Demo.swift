@@ -116,6 +116,9 @@ enum Demo {
         case note
         /// Three sessions working; `--hover` opens the panel into a row each.
         case stack
+        /// The working face with its plan's progress, which finishes after
+        /// three seconds: the well stays as the face becomes its Finished card.
+        case morph
         /// Since You Left (SinceYouLeft/SinceYouLeftDemo.swift): the sheet on a
         /// made-up return, in a plain window; `--step card` shows the panel's
         /// card instead. Nothing is read from Claude Science, and answering
@@ -335,6 +338,15 @@ enum Demo {
             if let step = mode.flatMap({ PanelDemo.Step(rawValue: $0.rawValue) }) {
                 let shown = PanelDemo.prepare(step, oneFigure: CommandLine.arguments.contains("--one-figure"))
                 showPanel(working: shown.working, cards: shown.cards)
+            }
+        case .morph?:
+            let shown = PanelDemo.prepare(.progress)
+            showPanel(working: shown.working, cards: [])
+            if let working = shown.working.first {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(3))
+                    LabModel.shared.showDemo(working: [], cards: [PanelDemo.finish(working)])
+                }
             }
         case .sinceYouLeft?:
             if sinceYouLeftStep == "card" {
