@@ -323,6 +323,21 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-30, motion that answers, sounds that land, haptics (main 053ca8b, f044bf4; not released)
+
+- ✅ `swift test`: 4,820 tests in 612 suites pass. New: the Bubbles file names and the fallback to Glass then the Mac
+  (`aMissingFamilyFileFallsBackToGlassThenToTheMac`), the setting (`theSettingNamesTheFamilyAndAnythingElseIsGlass`),
+  sent never a card's sound and the quietest of Capsid's own, an approval felt once and a refused one not
+  (`PlanApproverTests`), and Wipe's detents (`theWipeDividerIsFeltOnlyAsItMeetsTheCentreOrAnEdge`).
+- ✅ Built with `Scripts/build-app.sh`: all ten .caf files are in Capsid.app/Contents/Resources/Sounds. Installed in
+  /Applications (the running copy quit first) and running; it still says 1.1.2.
+- ✅ The panel's well, after the change to one well across the faces, lands where it did before
+  (`CAPSID_SNAPSHOT_DIR` captures of Finished and of the note card, whose taller column centres the well).
+- ✅ `.symbolEffect(.drawOn, isActive:)` checked in a hosted window: active draws nothing, inactive the whole
+  checkmark, so `DrawnCheckmark` starts hidden and draws on.
+- ⏳ Not seen live: the morph mid-flight (`--demo morph`; a screen capture showed only the desktop), the rolls and
+  hops on a real count, the trackpad taps, the Bubbles sounds through Capsid, and Settings → Alerts → Sounds.
+
 ## 2026-10-27, Capsid 1.1.2 released and installed
 
 - ✅ Released as v1.1.2 (tag on dcd225c, "Capsid 1.1.2", by Sam with `gh release create`), marked Latest: `Bench.zip`
