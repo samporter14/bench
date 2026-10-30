@@ -256,6 +256,24 @@ struct CompareRulesTests {
         #expect(CompareWipe.x(0.25, width: 400) == 100)
     }
 
+    @Test func theWipeDividerIsFeltOnlyAsItMeetsTheCentreOrAnEdge() {
+        // Crossing the centre, either way, and landing on it.
+        #expect(CompareWipe.meetsDetent(from: 0.48, to: 0.53))
+        #expect(CompareWipe.meetsDetent(from: 0.6, to: 0.4))
+        #expect(CompareWipe.meetsDetent(from: 0.45, to: 0.5))
+        // Leaving it, or staying on it, is nothing: one tap per arrival.
+        #expect(!CompareWipe.meetsDetent(from: 0.5, to: 0.52))
+        #expect(!CompareWipe.meetsDetent(from: 0.5, to: 0.5))
+        // Reaching an edge, and a drag past it, once.
+        #expect(CompareWipe.meetsDetent(from: 0.97, to: 1.3))
+        #expect(CompareWipe.meetsDetent(from: 0.04, to: -0.2))
+        #expect(!CompareWipe.meetsDetent(from: 1, to: 1.4))
+        #expect(!CompareWipe.meetsDetent(from: 1, to: 0.95))
+        // Moving about elsewhere.
+        #expect(!CompareWipe.meetsDetent(from: 0.2, to: 0.3))
+        #expect(!CompareWipe.meetsDetent(from: 0.7, to: 0.65))
+    }
+
     // MARK: The Text Changes column
 
     private func document(_ left: String, _ right: String) throws -> CompareTextDocument {

@@ -436,6 +436,8 @@ final class PlanApprover: ObservableObject {
         var settleLimit: Duration = WriteDeadline.settleRead
         /// Waits out a deadline; tests stand in for the clock.
         var wait: @MainActor (Duration) async -> Void = WriteDeadline.sleep
+        /// The approval went through: a tap and the sent sound (Lab/SentFeedback.swift).
+        var landed: @MainActor () -> Void = SentFeedback.landed
 
         static func live() -> Dependencies {
             Dependencies(
@@ -737,6 +739,7 @@ final class PlanApprover: ObservableObject {
         log.notice("Approve from the card: \(String(describing: outcome), privacy: .public)")
         guard let message = outcome.message else {
             states[id] = .approved(shown)
+            dependencies.landed()
             let pause = dependencies.approvedPause
             tasks[id] = Task { [weak self] in
                 try? await Task.sleep(for: pause)

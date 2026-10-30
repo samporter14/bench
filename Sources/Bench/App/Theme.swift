@@ -64,6 +64,8 @@ enum SettingsKey {
     /// Off until chosen in Settings → General.
     static let shareTaskWithNidus = "shareTaskWithNidus"
     static let soundOnNeedsInput = "soundOnNeedsInput"
+    /// Which family of sounds plays: Glass (the default) or Bubbles (since 1.1.3).
+    static let soundFamily = "soundFamily"
     /// A plan's card shows its summary and an Approve button (since 0.3.4).
     /// Off, the card is Open and Later, and no plan is read.
     static let showPlansOnCard = "showPlansOnCard"
@@ -189,6 +191,7 @@ enum SettingsKey {
             holdDuringFocus: true,
             shareTaskWithNidus: false,
             soundOnNeedsInput: true,
+            soundFamily: SoundFamily.glass.rawValue,
             showPlansOnCard: true,
             macNotifications: false,
             macNotifyFinishes: false,

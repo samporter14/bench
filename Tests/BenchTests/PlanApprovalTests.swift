@@ -554,6 +554,8 @@ private final class FakeDaemon {
     var enabled = true
     private(set) var reads: [String] = []
     private(set) var posts: [String] = []
+    /// How many approvals were felt and heard as landed (Lab/SentFeedback.swift).
+    private(set) var landings = 0
     private var heldRead: CheckedContinuation<Void, Never>?
     /// The settle read waits for `releaseSettleRead()`.
     var holdSettleRead = false
@@ -589,6 +591,7 @@ private final class FakeDaemon {
                 return answer
             },
             approvedPause: .milliseconds(20))
+        dependencies.landed = { self.landings += 1 }
         dependencies.postLimit = postLimit
         dependencies.settleLimit = settleLimit
         return dependencies
@@ -676,6 +679,8 @@ struct PlanApproverTests {
         approver.approve(Made.root)
         await approver.settled()
         #expect(daemon.posts.count == 1)
+        // Felt and heard once, as the approval landed.
+        #expect(daemon.landings == 1)
     }
 
     @Test func aChangedPlanIsNeverPosted() async throws {
@@ -691,6 +696,8 @@ struct PlanApproverTests {
         #expect(message == PlanOutcome.changed.message)
         // Open stays: the card is still there.
         #expect(model.cards.map(\.id) == ["needs-\(Made.root)"])
+        // Nothing landed: no tap, no sound.
+        #expect(daemon.landings == 0)
     }
 
     @Test func aPlanApprovedElsewhereMeanwhileIsNeverPosted() async throws {

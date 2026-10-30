@@ -420,8 +420,8 @@ struct PanelSoundTests {
 
     @Test func eachKindOfEventHasItsOwnSystemSound() {
         let names = PanelSound.allCases.map(\.systemName)
-        #expect(Set(names).count == 4)
-        #expect(names == ["Glass", "Submarine", "Basso", "Hero"])
+        #expect(Set(names).count == 5)
+        #expect(names == ["Glass", "Submarine", "Basso", "Hero", "Tink"])
         for name in names { #expect(NSSound(named: name) != nil, "\(name)") }
     }
 
@@ -434,11 +434,12 @@ struct PanelSoundTests {
     }
 
     @Test func eachKindOfEventHasCapsidsOwnSoundAndTheAppCarriesThem() throws {
-        // Capsid's own four (since 1.0.1): a .caf each in Resources/Sounds, short, and copied into the app.
+        // Capsid's own five in each family (four since 1.0.1, sent and Bubbles since 1.1.3): a .caf each
+        // in Resources/Sounds, short, and copied into the app.
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let folder = root.appendingPathComponent("Resources/Sounds")
-        let names = PanelSound.allCases.map(\.fileName)
-        #expect(Set(names).count == 4)
+        let names = SoundFamily.allCases.flatMap { family in PanelSound.allCases.map(family.fileName) }
+        #expect(Set(names).count == 10)
         for name in names {
             let url = folder.appendingPathComponent(name + ".caf")
             let sound = try #require(NSSound(contentsOf: url, byReference: true), Comment(rawValue: name + ".caf"))
@@ -522,9 +523,66 @@ struct PanelSoundTests {
         #expect(!model.contains("NSSound("))
     }
 
-    @Test func aFinishIsTheQuietestSound() {
+    @Test func aFinishIsQuieterThanWhatAsksAndSentIsTheQuietestOfCapsidsOwn() {
         #expect(PanelSound.finish.volume(own: true) < PanelSound.question.volume(own: true))
         #expect(PanelSound.finish.volume(own: false) < PanelSound.question.volume(own: false))
+        // Sent is the quietest of Capsid's own, about 0.6 of what asks; the Mac's Tink stands in
+        // at the same 0.6 (only the Hero fanfare is turned down further).
+        for other in PanelSound.allCases where other != .sent {
+            #expect(PanelSound.sent.volume(own: true) < other.volume(own: true), "\(other)")
+        }
+        #expect(PanelSound.sent.volume(own: true) == 0.6 * PanelSound.question.volume(own: true))
+        #expect(PanelSound.sent.volume(own: false) < PanelSound.question.volume(own: false))
+    }
+
+    @Test func sentIsNeverACardsSoundAndComesLastInALoudestRead() {
+        let cards: [LabCard] = [.needsInput(Fixture.session("a", .needsInput, reason: .question)),
+                                .needsInput(Fixture.session("a", .needsInput, reason: .plan)),
+                                .failed(Fixture.session("a", .error)), .finished(Fixture.session("a", .finished))]
+        #expect(!cards.contains { PanelSound.sound(for: $0) == .sent })
+        #expect(PanelSound.loudest([.sent, .finish]) == .finish)
+    }
+
+    @Test func eachFamilyNamesItsFiles() {
+        #expect(PanelSound.allCases.map(SoundFamily.glass.fileName) == ["question", "plan", "failure", "finish", "sent"])
+        #expect(PanelSound.allCases.map(SoundFamily.bubbles.fileName)
+                == ["bubbles-question", "bubbles-plan", "bubbles-failure", "bubbles-finish", "bubbles-sent"])
+    }
+
+    @Test func aMissingFamilyFileFallsBackToGlassThenToTheMac() throws {
+        // A made-up bundle whose Sounds folder has Glass's question and Bubbles' plan, and nothing else.
+        let root = FileManager.default.temporaryDirectory.appending(path: "capsid-sounds-\(UUID().uuidString).bundle")
+        let sounds = root.appending(path: "Contents/Resources/Sounds")
+        try FileManager.default.createDirectory(at: sounds, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["question", "bubbles-plan"] {
+            try Data().write(to: sounds.appending(path: name + ".caf"))
+        }
+        let bundle = try #require(Bundle(url: root))
+        // The family's own file.
+        #expect(PanelSound.plan.url(in: bundle, family: .bubbles)?.lastPathComponent == "bubbles-plan.caf")
+        // Bubbles has no question: Glass's plays.
+        #expect(PanelSound.question.url(in: bundle, family: .bubbles)?.lastPathComponent == "question.caf")
+        // Glass never borrows from another family.
+        #expect(PanelSound.plan.url(in: bundle, family: .glass) == nil)
+        // Neither has a failure: the Mac's Basso stands in.
+        #expect(PanelSound.failure.url(in: bundle, family: .bubbles) == nil)
+    }
+
+    @Test func theSettingNamesTheFamilyAndAnythingElseIsGlass() {
+        let scratch = ScratchDefaults.make(prefix: "sound-family")
+        defer { scratch.discard() }
+        #expect(SoundFamily.chosen(scratch.defaults) == .glass)
+        scratch.defaults.set("bubbles", forKey: SettingsKey.soundFamily)
+        #expect(SoundFamily.chosen(scratch.defaults) == .bubbles)
+        scratch.defaults.set("kazoo", forKey: SettingsKey.soundFamily)
+        #expect(SoundFamily.chosen(scratch.defaults) == .glass)
+    }
+
+    @Test func sentIsSilentWhilePresentingAndUnderTheSwitch() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/Bench/Lab/PanelSound.swift"), encoding: .utf8)
+        #expect(source.contains("quiet: Bool = PresentingMode.shared.isQuiet) {\n        guard !quiet else { return }\n        play(.sent, defaults: defaults)"))
     }
 }
 

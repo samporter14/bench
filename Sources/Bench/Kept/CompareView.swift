@@ -433,7 +433,7 @@ struct CompareWipePane: View {
                 .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space))
                     .onChanged { value in
                         guard size.width > 0 else { return }
-                        model.wipeFraction = CompareWipe.clamped(Double(value.location.x / size.width))
+                        model.moveDivider(to: Double(value.location.x / size.width))
                     })
                 .focusable()
                 .focused($dividerFocused)

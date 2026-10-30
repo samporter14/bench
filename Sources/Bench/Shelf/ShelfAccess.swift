@@ -66,13 +66,20 @@ final class ShelfAccess: ObservableObject {
     static func cannotShow(_ folder: URL?) {}
     static func nothingToPrime() {}
 
+    /// Something new went on the shelf: the quiet sent sound (not for one already there).
+    @MainActor
+    private static func landed(_ outcome: ShelfAddOutcome) -> ShelfAddOutcome {
+        if case .added = outcome { PanelSound.playSent() }
+        return outcome
+    }
+
     /// The real shelf.
     static let live = ShelfAccess(
         contains: { Shelf.shared.contains(version: $0) },
         isAdding: { Shelf.shared.adding.contains($0) },
         count: { Shelf.shared.count },
-        add: { await Shelf.shared.add($0) },
-        addNote: { await Shelf.shared.addNote($0) },
+        add: { landed(await Shelf.shared.add($0)) },
+        addNote: { landed(await Shelf.shared.addNote($0)) },
         undo: { await Shelf.shared.undo($0) },
         show: { Shelf.shared.show(selecting: $0) },
         // The contract has no explicit load: `versions` is read lazily, on first use.

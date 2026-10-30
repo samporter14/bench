@@ -435,7 +435,15 @@ final class CompareModel: ObservableObject {
 
     /// Moves Wipe's divider by `steps` arrow presses (finer with Option).
     func moveDivider(by steps: Int, fine: Bool = false) {
-        wipeFraction = CompareWipe.stepped(wipeFraction, by: steps, fine: fine)
+        moveDivider(to: CompareWipe.stepped(wipeFraction, by: steps, fine: fine))
+    }
+
+    /// The divider goes to `fraction`, as a drag or a key moves it: a tap on
+    /// the trackpad when it meets the centre or an edge (Lab/SentFeedback.swift).
+    func moveDivider(to fraction: Double) {
+        let old = wipeFraction
+        wipeFraction = CompareWipe.clamped(fraction)
+        if CompareWipe.meetsDetent(from: old, to: wipeFraction) { Haptics.alignment() }
     }
 
     // MARK: Text Changes

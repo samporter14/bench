@@ -436,4 +436,14 @@ enum CompareWipe {
 
     /// The divider's position in a pane `width` points wide.
     static func x(_ fraction: Double, width: CGFloat) -> CGFloat { CGFloat(clamped(fraction)) * width }
+
+    /// Whether moving the divider from `old` to `new` meets a place worth
+    /// feeling: it reaches or crosses the centre, or reaches an edge. Leaving
+    /// one is nothing, and so is staying on it, so a drag is felt once there.
+    static func meetsDetent(from old: Double, to new: Double) -> Bool {
+        let (a, b) = (clamped(old), clamped(new))
+        guard a != b else { return false }
+        if b == 0.5 || (a - 0.5) * (b - 0.5) < 0 { return true }
+        return b == 0 || b == 1
+    }
 }

@@ -228,6 +228,7 @@ struct PanelSettingsView: View {
 struct AlertSettingsView: View {
     @AppStorage(SettingsKey.showCards) private var showCards = true
     @AppStorage(SettingsKey.soundOnNeedsInput) private var sound = true
+    @AppStorage(SettingsKey.soundFamily) private var soundFamily = SoundFamily.glass
     @AppStorage(SettingsKey.showPlansOnCard) private var plansOnCard = true
     @AppStorage(SettingsKey.holdDuringFocus) private var holdDuringFocus = true
     @AppStorage(SinceYouLeftSettings.sheetKey) private var sinceYouLeftSheet = true
@@ -246,7 +247,32 @@ struct AlertSettingsView: View {
                 .disabled(!showCards)
                 Toggle(isOn: $sound) {
                     Text("Play a sound")
-                    Text("Once, when a session needs you, stops with an error or finishes, with or without the card. Each has its own sound.")
+                    Text("Once, when a session needs you, stops with an error or finishes, with or without the card. Each has its own sound, and a quieter one says what you sent went through.")
+                }
+                Picker(selection: $soundFamily) {
+                    ForEach(SoundFamily.allCases) { Text($0.title).tag($0) }
+                } label: {
+                    Text("Sounds")
+                    Text("Lab glass and metal, or bubbles in water.")
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .disabled(!sound)
+                LabeledContent {
+                    HStack(spacing: 8) {
+                        ForEach(SoundFamily.allCases) { family in
+                            Button {
+                                PanelSound.preview(family)
+                            } label: {
+                                Label(family.title, systemImage: "play.fill")
+                            }
+                            .help("Play \(family.title)'s question sound")
+                        }
+                    }
+                    .controlSize(.small)
+                } label: {
+                    Text("Hear them")
+                    Text("Each family's question sound, even with sounds off.")
                 }
             }
 
@@ -271,7 +297,7 @@ struct AlertSettingsView: View {
                 .onChange(of: holdDuringFocus) { _, on in if !on { LabModel.shared.releaseHeldFinishes() } }
             }
         }
-        .settingsPage(height: 940)
+        .settingsPage(height: 1030)
     }
 }
 

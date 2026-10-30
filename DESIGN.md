@@ -760,7 +760,8 @@ Size setting; the width of the others does (Scenes settings).
     VoiceOver is offered the same as a named **Dismiss** action beside Open
     (since 0.9.3), so it needs no hover.
 - **Sound.** When a needs-input card arrives, play its sound (a setting, on by
-  default; the four sounds are under "The panel's moments" below).
+  default; the five sounds and their two families are under "The panel's
+  moments" below).
 - **Open.** Activate Capsid, show the window and navigate the web view to the
   session's `deepLink`, through the Router.
 
@@ -1857,8 +1858,11 @@ button (Approve, Reply, Review, Allow Once, else Open or Open in Capsid), whethe
 a plain Open follows, Deny, what Later's menu carries, Request changes…, the line
 for an answer on its way ("Sending…" spinner) or one sent ("Sent ✓", "Approved ✓",
 "Allowed once ✓", "Denied ✓"; a card whose send went is dismissed with it, so these
-show only for a moment, or while the reply window keeps the reply), and the sentence for
-a send that didn't go. The card
+show only for a moment, or while the reply window keeps the reply; since 1.1.3 the
+checkmark is drawn on), and the sentence for
+a send that didn't go. A reply or a plan's changes that went (`.sent`, or queued)
+come with a level-change tap and the quiet sent sound (`Dependencies.landed`,
+Lab/SentFeedback.swift, since 1.1.3); Allow and Deny do not. The card
 draws it, and the activity list's rows draw the same (Activity list → Acting from a
 row); both call `CardActions.perform`, which calls the replier, the approver or the
 reply window as the card's buttons always did. `QuestionReplier.prepare` reads a card
@@ -3009,7 +3013,8 @@ than the screen it is on (Page sizes, below):
 - **Panel** (`panel`): the specimen while a session works (show it, name it,
   the menu bar), where the panel sits (corner, screen, while Capsid is in
   front), and a way to the Specimens tab.
-- **Alerts** (`alerts`): on the panel (cards, plans with Approve, sound),
+- **Alerts** (`alerts`): on the panel (cards, plans with Approve, sound, and
+  since 1.1.3 the sound family, Glass or Bubbles, with a play button each),
   Quiet While Presenting (since 0.9.0; see Quiet while presenting), Mac
   notifications, and what waits while Nidus is focusing.
 - **Usage** (`usage`): which limit the title bar shows (since 0.9.1) and
@@ -3075,6 +3080,7 @@ before.
 | Title bar shows: 5-hour limit or Whichever is lowest (`titleBarUsage`, since 0.9.1; see Usage remaining) | 5-hour limit |
 | Show the Lab panel | on |
 | Play a sound when a session needs you | on |
+| Sounds: Glass or Bubbles (`soundFamily`, since 1.1.3; see The panel's moments, Sound) | Glass |
 | Show plans on the card, with Approve (`showPlansOnCard`, since 0.3.4) | on |
 | Also send a Mac notification (Mac notifications) | off |
 | When a session finishes too (Mac notifications) | off |
@@ -6887,7 +6893,10 @@ neither moves as the divider does (`CompareWipeImages`), with the names at
 either end above and "Both 1,600 × 1,200 px" under. The divider is dragged, or
 moved with ← and → by 5% (Option, 1%) once it has the keyboard; VoiceOver
 reads it as "Wipe divider, 50%" and adjusts it. In Wipe there is one viewport,
-so Link Zoom goes from the row.
+so Link Zoom goes from the row. Since 1.1.3 the trackpad taps (`.alignment`)
+as the divider reaches or crosses the centre, or reaches an edge, once on each
+arrival and not on every move of the drag (`CompareWipe.meetsDetent`,
+`CompareModel.moveDivider(to:)`); a reset to the centre is not felt.
 
 **Decoding and its limits** (`CompareImages`). The bytes come through the disk
 layer (`KeptDisk.pictureBytes`: a file under the Kept folder, on this Mac and
@@ -7925,7 +7934,7 @@ session beneath, **Open**) is a notice: it queues behind the cards about
 sessions, lasts 10 s, makes no sound and no Mac notification, and shows only
 where cards do and "Show plans, questions and requests on the card" is on.
 
-**Sound.** One setting covers four short sounds of Capsid's own (since 1.0.1;
+**Sound.** One setting covers five short sounds of Capsid's own (four since 1.0.1;
 Sam's call: "SOUNDS use eleven labs"), one family of lab glass and metal made
 with ElevenLabs' sound effects (`eleven_text_to_sound_v2`, four takes each),
 each trimmed to start on the sound, faded, under a second, and levelled to the
@@ -7940,6 +7949,25 @@ Glass, Submarine, Basso and Hero (at half) stand in. Every take, with the ones
 in use marked, is on the "Capsid Sounds" listening page made for Sam. One read
 plays one sound, the most urgent. A held finish (Nidus focus, presenting) is
 silent.
+
+*Sent* (since 1.1.3, `PanelSound.sent`, "sent.caf"; the Mac's Tink stands in): a
+glass tap at 0.6 volume, the quietest, after something you sent from Capsid
+lands: an Approve, a reply to a question or a plan's changes from the card
+(with a level-change tap, `SentFeedback.landed`), and a figure or a passage
+added to the Shelf (`ShelfAccess.live`; not one already there). It is never a
+card's sound, under the same "Play a sound" switch, and never while Capsid is
+quiet for a presentation (`PanelSound.playSent`). A permission's Allow or Deny
+is a decision, not something sent, and stays silent.
+
+*Families* (since 1.1.3): Settings → Alerts → Sounds picks Glass (the sounds
+above, the default) or Bubbles, the same five moments in water
+(Resources/Sounds/bubbles-<name>.caf), made the same way. The setting is
+`soundFamily` (`SoundFamily`), read each time a sound plays. A family missing a
+file plays Glass's, and with neither the Mac's sound stands in
+(`PanelSound.url(in:family:)`). Beside it, Hear Them has a play button per
+family, which plays that family's question sound whether or not sounds are on.
+Scripts/build-app.sh copies every Resources/Sounds/*.caf flat, so a family is
+only its files.
 
 **The stack.** With two or more sessions working, the panel shows one with
 "+N more" as plain words; with the pointer over it, it opens into one row per

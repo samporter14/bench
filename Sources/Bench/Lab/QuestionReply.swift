@@ -264,6 +264,8 @@ final class QuestionReplier: ObservableObject {
         /// Waits out a notification's time limit; tests stand in for the clock.
         /// Returns early when its task is cancelled.
         var wait: @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+        /// A reply or a plan's changes went: a tap and the sent sound (Lab/SentFeedback.swift).
+        var landed: @MainActor () -> Void = SentFeedback.landed
 
         static func live() -> Dependencies {
             Dependencies(
@@ -882,6 +884,7 @@ final class QuestionReplier: ObservableObject {
         case .sent, .queued:
             reply.phase = .sent(result.sentence)
             planReplies[id] = reply
+            dependencies.landed()
             settleCard(id, session: reply.session)
         case .changed:
             reply.phase = .closed(result.sentence == Sentence.planGone ? Sentence.planGone : Sentence.planChanged)
@@ -976,6 +979,7 @@ final class QuestionReplier: ObservableObject {
         case .sent:
             reply.phase = .sent(result.sentence)
             replies[id] = reply
+            dependencies.landed()
             settleCard(id, session: reply.session)
         case .changed:
             // Read it again: a new question takes the old one's place; the
