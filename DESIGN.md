@@ -7016,14 +7016,13 @@ comes first, as a hairline pill on the detail and an item on a slot's menu. It
 makes a **new** folder for the newest version and never touches or overwrites
 the old one:
 
-- an item kept with its data and code opens the Keep sheet on the newest version, with nothing pinned (the old answer didn't make it), and Keep picks a free name;
+- an item kept with its data and code opens the Keep sheet on the newest version, with nothing pinned (the old answer didn't make it), and Keep picks a free name. That is an ordinary keep, so it makes Keep's own reads, the lineage among them: the person asked for it. The check itself never reads the lineage;
 - an item only shelved is shelved again at the newest version, beside the old (`Shelf.add`: the same artifact, the newest's own version id).
 
 Once the newest is on the shelf, the pill becomes **Compare with the Newer One**
 (Compare, kept on the left, newest on the right), and a slot offers **Put the
-Newer One in Fig 2B**. Only data that changed is not something Capsid can
-re-keep for you, so then only the sentence and Show Where It Came From are
-offered. Both reads are listed in Diagnostics (CompatInventory) as *when used*
+Newer One in Fig 2B**. When only the data changed there is no newer figure
+to keep, so the sentence and Show Where It Came From are all that is offered. Both reads are listed in Diagnostics (CompatInventory) as *when used*
 under "Out of date on the Shelf and on a paper's panels".
 
 `--demo kept --step stale` opens on Fig 2B: its figure is v3 of 4 and its data

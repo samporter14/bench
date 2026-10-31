@@ -323,6 +323,32 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-10-30, Papers (a figure map) and Out of date on the Shelf (main, not released)
+
+- ✅ `swift test`: 4,884 tests in 615 suites pass. New:
+  - `PaperFileTests` (30): the round trip in every script, 26 refusals, label order 1A < 1B < 2A < 10A with S1A after, gaps, every change, export names and legends;
+  - `PaperModelTests` (7): made, filled, relabelled and emptied, with not a byte of a kept folder touched; a PAPER.md changed in another app; broken slots; the export's names, order, bytes, legends.md and PDF; a cancelled or empty export; Papers not taken for a project;
+  - `ShelfFreshnessTests` (22): newer figure, newer input, both, same version, 404, the version missing from its list, unreachable, the sentences;
+  - `ShelfFreshnessCheckTests` (5): once a window session, three at a time, Check, reset with a late answer dropped, a withdrawn read, the demo's marks, no lineage and no timer.
+- ⚠️ Two flakes under full-suite load, each passing alone and on the rerun:
+  - `ReadingGateTests.cancellingTheCallerCancelsTheRead`;
+  - `ShelfPDFSnapshotTests.theMadeUpShelfMakesAThreePagePDF…`: it gives the index 5 s and the suite took 40 s.
+- ✅ Built with `Scripts/build-app.sh` and installed in /Applications as install.sh does: the running copy quit by its exact executable, the old one moved aside, the new one opened and seen running, then the old one removed. The installed `Contents/MacOS/Capsid` has the same SHA-256 as the build. It still says 1.1.2.
+- ✅ `--demo kept --step papers`, captured by window ID (`screencapture -l`):
+  - the Papers chip after a hairline;
+  - "Z′ assay paper", "5 of 9 panels filled · 1 panel out of date", Check (hairline) and Export… (clay);
+  - Figure 1: 1A and 1B filled, 1C "Missing · Skipped between panels", 1D "Empty · Drop a figure here", then Add Panel 1E;
+  - Figure 2: 2A, then 2B with "Out of date", then 2C empty;
+  - the shelf strip, with its own mark on Fig 2B.
+  The first capture showed the strip's text thumbnails spilling out of their boxes, Add Panel taller than a slot, and the slot's mark meeting a long label. All three were fixed and captured again.
+- ✅ `--demo kept --step stale`, captured by window ID: Fig 2B is selected, with "A newer version of this figure exists (version 3 → 4)." and "The data behind this figure changed after you kept it (z_prime_by_plate.csv, version 3 → 5).". Keep the Newer One shows, dimmed as it is in a demo. The cards show "Out of date" and, on the blot, "Not in Claude Science".
+- ⏳ Not seen live:
+  - the Supplementary row (S1A gone, S1B a folder that isn't there) scrolled into view; the tests cover both;
+  - dragging a card onto a slot, and a slot onto another;
+  - Add to Paper…'s sheet, Relabel…, and Export… writing a real folder;
+  - Keep the Newer One and Compare with the Newer One against a real Claude Science with a newer version;
+  - the marks staying away with the daemon down.
+
 ## 2026-10-30, motion that answers, sounds that land, haptics (main 053ca8b, f044bf4; not released)
 
 - ✅ `swift test`: 4,820 tests in 612 suites pass. New: the Bubbles file names and the fallback to Glass then the Mac

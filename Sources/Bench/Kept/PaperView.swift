@@ -196,7 +196,7 @@ struct PaperView: View {
                                 Label("Add Panel \(next.text)", systemImage: "plus")
                                     .font(.system(size: 12))
                                     .foregroundStyle(Solanum.muted)
-                                    .frame(width: PaperSlotView.size.width, height: PaperSlotView.size.height)
+                                    .frame(width: PaperSlotView.size.width, height: PaperSlotView.pictureHeight)
                                     .overlay(RoundedRectangle(cornerRadius: 10)
                                         .strokeBorder(Solanum.hairline, style: StrokeStyle(lineWidth: 1, dash: [4, 4])))
                                     .contentShape(Rectangle())
@@ -240,6 +240,7 @@ struct PaperView: View {
                                        radius: 6, margin: 4)
                                 .frame(width: 112, height: 70)
                                 .background(Solanum.raised, in: .rect(cornerRadius: 8))
+                                .clipShape(.rect(cornerRadius: 8))
                                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(ShelfLook.cardEdge, lineWidth: 1))
                                 .overlay(alignment: .topTrailing) { ShelfStaleMark(freshness: model.freshness(of: item)).padding(3) }
                             Text(item.title)
@@ -312,6 +313,8 @@ struct PaperView: View {
 /// another slot dropped on it, and its menu has the rest.
 struct PaperSlotView: View {
     static let size = CGSize(width: 168, height: 132)
+    /// The picture's box, above the caption: the height Add Panel stands at too.
+    static let pictureHeight: CGFloat = size.height - 24
 
     let slot: PaperSlot
     let paper: KeptPaper
@@ -348,8 +351,9 @@ struct PaperSlotView: View {
                     .padding(8)
                 }
             }
-            .frame(width: Self.size.width, height: Self.size.height - 24)
+            .frame(width: Self.size.width, height: Self.pictureHeight)
             .background(slot.item == nil ? Solanum.page : Solanum.raised, in: .rect(cornerRadius: 10))
+            .clipShape(.rect(cornerRadius: 10))
             .overlay {
                 if slot.item == nil {
                     RoundedRectangle(cornerRadius: 10)
@@ -367,7 +371,8 @@ struct PaperSlotView: View {
                     .background(Capsule().fill(Solanum.ink))
                     .padding(6)
             }
-            .overlay(alignment: .topTrailing) {
+            // At the foot, so the label and a long mark ("Not in Claude Science") never meet in a narrow slot.
+            .overlay(alignment: .bottomTrailing) {
                 if let item = slot.item { ShelfStaleMark(freshness: model.freshness(of: item)).padding(6) }
             }
             Text(caption)

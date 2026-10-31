@@ -267,12 +267,13 @@ final class PaperModel: ObservableObject {
     /// (`latest`) so a legend typed a second ago is in. A panel that is empty or whose folder is gone is listed in the
     /// legends as missing and has no file. Answers the sentence to say, or nil when the person cancelled.
     func export(_ kept: KeptPaper, items: [ShelfItem], latest: @MainActor ([ShelfItem]) async -> [ShelfItem]) async -> String? {
+        // Taken before the panel is asked for, so a second click while it comes up opens no second one.
         guard !exporting else { return nil }
+        exporting = true
+        defer { exporting = false }
         await settle()
         let paper = (papers.first { $0.id == kept.id } ?? kept).paper
         guard let parent = await dependencies.chooseFolder(paper.name) else { return nil }
-        exporting = true
-        defer { exporting = false }
         // Each filled panel's item, as the disk has it now.
         let held = paper.panels.compactMap { panel -> (PaperPanel, ShelfItem)? in
             if case .filled(let item) = state(of: panel, items: items) { (panel, item) } else { nil }
