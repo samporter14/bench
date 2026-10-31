@@ -757,14 +757,16 @@ enum KeptReadme {
 
     // MARK: Front matter, read
 
-    private enum Value {
+    /// A value in a front-matter map: a quoted string, or a bare word (a number, a role). Shared with PAPER.md
+    /// (PaperFile.swift), whose front matter is read the same strict way.
+    enum Value {
         case string(String)
         case bare(String)
     }
 
-    private enum Kind { case string, int, role }
+    enum Kind { case string, int, role }
 
-    private struct Field {
+    struct Field {
         let key: String
         let optional: Bool
         let kind: Kind
@@ -905,7 +907,7 @@ enum KeptReadme {
     /// `{ key: value, key: value }` with the fields in the order given, the
     /// optional ones left out when there is nothing to say, and each value of
     /// its kind; nil for anything else.
-    private static func readMap(_ raw: String, _ fields: [Field]) -> [String: Value]? {
+    static func readMap(_ raw: String, _ fields: [Field]) -> [String: Value]? {
         let s = raw.unicodeScalars
         var i = s.startIndex
         func expect(_ literal: String) -> Bool {
@@ -965,7 +967,7 @@ enum KeptReadme {
     /// The string whose opening quote is at `start`, and where it ends (after
     /// the closing quote); nil if it is malformed or uses an escape the
     /// renderer doesn't write.
-    private static func readQuoted(_ raw: String, from start: String.UnicodeScalarView.Index) -> (String, String.UnicodeScalarView.Index)? {
+    static func readQuoted(_ raw: String, from start: String.UnicodeScalarView.Index) -> (String, String.UnicodeScalarView.Index)? {
         let s = raw.unicodeScalars
         var i = start
         guard i < s.endIndex, s[i] == "\"" else { return nil }
@@ -1002,7 +1004,7 @@ enum KeptReadme {
     }
 
     /// Reads "2026-10-22T09:12:00-04:00" (or with "Z"): only a real date.
-    private static func date(rfc3339 text: String) -> Date? {
+    static func date(rfc3339 text: String) -> Date? {
         let c = Array(text.unicodeScalars)
         func number(_ range: Range<Int>) -> Int? {
             guard range.upperBound <= c.count, c[range].allSatisfy({ ("0"..."9").contains($0) }) else { return nil }
