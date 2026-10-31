@@ -89,8 +89,10 @@ enum Demo {
         /// Keep (Kept/KeptDemo.swift), with `--step`: `sheet` (the Keep sheet
         /// filled from made-up reads, in a plain window), `sheet-partial`
         /// (the same after a keep in which one file couldn't be copied),
-        /// `window` (the Kept window on made-up folders in a temporary root)
-        /// or `window-empty`. Nothing is read from Claude Science and
+        /// `window` (the Kept window on made-up folders in a temporary root),
+        /// `window-empty`, `papers` (the same on the Papers page, with a
+        /// made-up paper) or `stale` (on Fig 2B, out of date, with its
+        /// sentences). Nothing is read from Claude Science and
         /// nothing lands outside the temporary root.
         case kept
         /// The reference window (Reference/ReferenceDemo.swift) on a made-up

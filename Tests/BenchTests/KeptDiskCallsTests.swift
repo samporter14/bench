@@ -79,9 +79,11 @@ struct KeptDiskCallsTests {
             "KeptDisk.swift: fcntl(": 1,
             // Whether iCloud has a file put away, and a file's date and size (the picture cache's look at it).
             "KeptDisk.swift: resourceValues(": 2,
-            // The README's bytes, read whole; the atomic writes of a file, a README and a legend.
+            // The README's bytes, read whole; the atomic writes of a file, a README and a legend, and a paper's two:
+            // a new PAPER.md (or an export's legends.md) that refuses to replace a file, and a PAPER.md rewritten
+            // only if it is still the text last read (PaperFile.swift).
             "KeptDisk.swift: Data(contentsOf": 1,
-            "KeptDisk.swift: .write(to:": 4,
+            "KeptDisk.swift: .write(to:": 6,
             // The rename that refuses to replace a folder.
             "KeptDisk.swift: renamex_np(": 1,
             // Finder and the default app, asked to show or open a kept file (a UI call, not a look at the disk),
@@ -101,6 +103,10 @@ struct KeptDiskCallsTests {
             "ShelfPDFCommand.swift: NSWorkspace": 1,
             // Compare's Show in Finder on a side's file (a UI call, as above). Its reads go through `KeptDisk`.
             "CompareView.swift: NSWorkspace": 1,
+            // A paper's Show in Finder, and Finder asked to show an export when it is done (UI calls, as above).
+            // The export itself is written through `KeptDisk` (`beginExport`, `finishExport`).
+            "PaperView.swift: NSWorkspace": 1,
+            "PaperModel.swift: NSWorkspace": 1,
         ]
         let now = try found()
         #expect(now == allowed, "now: \(now.sorted { $0.key < $1.key })")

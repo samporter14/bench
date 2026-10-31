@@ -37,6 +37,8 @@ struct ShelfView: View {
     let quickLook: KeptQuickLook
     @FocusState private var gridFocused: Bool
     @State private var keeping: KeepModel?
+    /// Add to Paper…: the item the sheet puts in a paper (PaperView.swift).
+    @State private var addingToPaper: ShelfItem?
     @State private var size: CGSize = KeptWindowController.size
 
     init(model: ShelfModel, thumbnails: KeptThumbnails, quickLook: KeptQuickLook) {
@@ -95,6 +97,12 @@ struct ShelfView: View {
             .sheet(item: $keeping) { keep in
                 KeepSheet(model: keep, dismiss: { keeping = nil }, width: max(360, min(KeepSheet.width, size.width)))
             }
+            .sheet(item: $addingToPaper) { item in
+                PaperAddSheet(model: model.papers, item: item, dismiss: { addingToPaper = nil }) { paper in
+                    model.showsPapers = true
+                    model.papers.selection = paper.id
+                }
+            }
             .onAppear { gridFocused = true }
     }
 
@@ -108,7 +116,10 @@ struct ShelfView: View {
                 if model.finder.isWanted { ShelfFindPage(model: model) } else { nothingOnTheShelf }
             } else {
                 chips
-                if let selected = model.selected {
+                if model.showsPapers {
+                    PaperView(model: model, papers: model.papers, thumbnails: thumbnails, quickLook: quickLook,
+                              keepNewer: { keepNewer($0) })
+                } else if let selected = model.selected {
                     grid
                     if model.pickCount > 1 {
                         ShelfPickedCard(model: model, thumbnails: thumbnails)
@@ -130,11 +141,17 @@ struct ShelfView: View {
         let counts = model.counts
         return HStack(spacing: 8) {
             ForEach([ShelfKind?.none, .figure, .document, .table], id: \.self) { kind in
-                Button(ShelfRules.chipLabel(kind, counts)) { model.kind = kind }
-                    .buttonStyle(ShelfChipStyle(selected: model.kind == kind))
+                Button(ShelfRules.chipLabel(kind, counts)) { model.kind = kind; model.showsPapers = false }
+                    .buttonStyle(ShelfChipStyle(selected: !model.showsPapers && model.kind == kind))
                     .accessibilityLabel("\(kind?.chip ?? "All"), \(counts.of(kind))")
-                    .accessibilityAddTraits(model.kind == kind ? .isSelected : [])
+                    .accessibilityAddTraits(!model.showsPapers && model.kind == kind ? .isSelected : [])
             }
+            // The Papers page: a place, not a kind, so it has no count, and a hairline apart from the kinds.
+            Solanum.hairline.frame(width: 1, height: 18).padding(.horizontal, 2).accessibilityHidden(true)
+            Button("Papers") { model.showsPapers = true }
+                .buttonStyle(ShelfChipStyle(selected: model.showsPapers))
+                .accessibilityAddTraits(model.showsPapers ? .isSelected : [])
+                .help("Your papers\u{2019} figures, panel by panel, from what is on your shelf")
             Spacer(minLength: 12)
             // A search still reading files says so here, at the end of the row, where there is room and nothing
             // moves: it goes when the reading is done. The empty state says it itself when it is up.
@@ -237,6 +254,10 @@ struct ShelfView: View {
                 .overlay(alignment: .topLeading) {
                     ShelfPickCircle(model: model, id: item.id).offset(x: -5, y: -5).accessibilityHidden(true)
                 }
+                // Out of date, when Claude Science says so; nothing while nothing is known (ShelfOutOfDate.swift).
+                .overlay(alignment: .topTrailing) {
+                    ShelfStaleMark(freshness: model.freshness(of: item)).padding(7)
+                }
             ShelfName(parts: item.nameParts, size: 13, weight: isSelected ? .semibold : .regular)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -259,6 +280,8 @@ struct ShelfView: View {
             gridFocused = true
         }
         .id(item.id)
+        // Its versions asked for once a window session, as the card comes into view (ShelfFreshnessCheck.swift).
+        .onAppear { model.freshness.check([item]) }
         .onDrag { ShelfActions.fileProvider(for: item) }
         .contextMenu {
             Button("Show Where It Came From") { ShelfActions.showWhereItCameFrom(item) }
@@ -272,6 +295,9 @@ struct ShelfView: View {
             // Compare With ▸ the cards shown that pair with this one; Compare on two picks, this card among them
             // (Kept/CompareWindow.swift).
             ShelfCompareItem(model: model, item: item)
+            if !item.isSelectionNote {
+                Button(ShelfRules.MoreItem.addToPaper.title) { addingToPaper = item }
+            }
             Divider()
             Button("Open") { NSWorkspace.shared.open(item.fileURL) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.folder]) }
@@ -338,7 +364,20 @@ struct ShelfView: View {
                     keep: { keepWithDataAndCode(item) },
                     // A search that also looks in the sessions leaves them more of the window.
                     maxHeight: model.finder.isWanted ? max(220, size.height * 0.34) : max(220, size.height * 0.56),
-                    previewWidth: ShelfDetail.previewWidth(forWindow: size.width))
+                    previewWidth: ShelfDetail.previewWidth(forWindow: size.width),
+                    keepNewer: { keepNewer(item) }, addToPaper: { addingToPaper = item })
+    }
+
+    /// Keep the Newer One (ShelfOutOfDate.swift): the Keep sheet on the newest version for an item kept with its data
+    /// and code, else the newest version shelved beside the old one. Never over the old folder.
+    private func keepNewer(_ item: ShelfItem) {
+        guard Demo.mode == nil, let newer = model.newerFigure(of: item) else { return }
+        if item.record.keepsDataOrCode {
+            guard keeping == nil else { return }
+            keeping = KeepModel(subject: ShelfOutOfDate.newerSubject(item, newer), dependencies: .live(shelf: .shared))
+        } else {
+            model.shelveNewer(item)
+        }
     }
 
     private func keepWithDataAndCode(_ item: ShelfItem) {
@@ -516,6 +555,9 @@ struct ShelfDetail: View {
     let keep: () -> Void
     let maxHeight: CGFloat
     var previewWidth: CGFloat = 250
+    /// Keep the Newer One, and Add to Paper…: the window's, which own the sheets.
+    var keepNewer: () -> Void = {}
+    var addToPaper: () -> Void = {}
     @State private var copied = false
     @State private var sayingMore = false
     @State private var showingClaude = false
@@ -587,6 +629,7 @@ struct ShelfDetail: View {
         // A note's words, read when its card is shown and again when the folders are read.
         .task(id: item.id) { await model.passages.look(at: item) }
         .task(id: item.fileURL) { await model.documents.look(at: item) }
+        .onAppear { model.freshness.check([item]) }
         .onReceive(model.index.$results.dropFirst()) { _ in
             Task {
                 await model.passages.look(at: item)
@@ -657,6 +700,7 @@ struct ShelfDetail: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                ShelfStaleLines(item: item, model: model, keepNewer: keepNewer)
                 Spacer(minLength: 8)
                 buttons
             }
@@ -695,6 +739,7 @@ struct ShelfDetail: View {
                 .foregroundStyle(Solanum.muted)
                 .padding(.top, 12)
             }
+            ShelfStaleLines(item: item, model: model, keepNewer: keepNewer).padding(.top, 8)
             buttons.padding(.top, 20)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -790,6 +835,10 @@ struct ShelfDetail: View {
             ShelfActions.openAsReference(item)
         case .exportPDF:
             model.exportPDF(from: item)
+        case .addToPaper:
+            addToPaper()
+        case .checkForNewer:
+            model.freshness.checkAgain([item])
         case .remove:
             model.removeSelected()
         case .divider:

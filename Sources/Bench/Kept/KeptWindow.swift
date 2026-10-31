@@ -95,13 +95,14 @@ final class KeptWindowController: NSObject, NSWindowDelegate {
     private var thumbnails: KeptThumbnails?
     private(set) var model: ShelfModel?
 
-    /// Shows the Shelf window, selecting the item in `folder` when given.
-    func show(shelf: Shelf = .shared, select folder: URL? = nil) {
+    /// Shows the Shelf window, selecting the item in `folder` when given. A demo gives its own version reads
+    /// (`freshness`) and may open on the Papers page.
+    func show(shelf: Shelf = .shared, select folder: URL? = nil, freshness: ShelfFreshnessCheck? = nil, papers: Bool = false) {
         if window == nil {
             let quickLook = KeptQuickLook()
             let disk = shelf.index.disk
             let thumbnails = KeptThumbnails(peek: { url in (try? await disk.peek(url)) ?? nil })
-            let model = ShelfModel(shelf: shelf)
+            let model = ShelfModel(shelf: shelf, freshness: freshness)
             let hosting = NSHostingController(rootView: ShelfView(model: model, thumbnails: thumbnails, quickLook: quickLook))
             hosting.sizingOptions = []
             let window = KeptWindow(contentRect: NSRect(origin: .zero, size: Self.size),
@@ -131,6 +132,7 @@ final class KeptWindowController: NSObject, NSWindowDelegate {
             self.model = model
         }
         shelf.index.refresh()
+        if papers { model?.showsPapers = true }
         if let folder { model?.select(folder: folder) }
         Demo.activateUnlessQuiet()
         if Demo.isQuiet { window?.orderFrontRegardless() } else { window?.makeKeyAndOrderFront(nil) }
@@ -139,6 +141,8 @@ final class KeptWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         quickLook?.closePanel()
         thumbnails?.removeAll()
+        // What Claude Science said of the items' versions is let go: the next window asks again (Efficiency).
+        model?.freshness.reset()
     }
 }
 

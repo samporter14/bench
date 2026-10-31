@@ -146,6 +146,44 @@ struct KeptResult: Equatable, Sendable, Identifiable {
     var figureURL: URL { folder.appending(path: record.figure.path, directoryHint: .notDirectory) }
 }
 
+/// A paper found under `<root>/Papers` (PaperFile.swift): its folder, the text it was read as (what a change is
+/// compared against before it is written) and what it says.
+struct KeptPaper: Equatable, Sendable, Identifiable {
+    var id: String { folder.path }
+    let folder: URL
+    let markdown: String
+    let paper: Paper
+}
+
+/// What a paper's export copies, decided before the disk is asked (PaperModel.swift).
+struct PaperExportPlan: Equatable, Sendable {
+    struct File: Equatable, Sendable {
+        /// A kept figure, under the Kept folder.
+        let source: URL
+        /// "Fig 2B · z_prime_by_plate.png".
+        let name: String
+        /// Its size as the README lists it, for the time limit.
+        let bytes: Int
+    }
+
+    /// The folder the person chose; the export is a new folder inside it.
+    let parent: URL
+    /// The export folder's name, before it is cleaned or dated.
+    let name: String
+    let files: [File]
+    let legends: String
+    /// The cap on one figure's bytes: what a keep copies, and a little room.
+    var limit = 64 << 20
+}
+
+/// An export being built: the hidden folder in the chosen place, and the name it is to have.
+struct PaperExportFolder: Equatable, Sendable {
+    let temp: URL
+    let parent: URL
+    let name: String
+    let at: Date
+}
+
 /// Which file a path holds, to a cache of pictures drawn from it: when it was
 /// last written, how big it is, and whether iCloud has put it away. If any
 /// differs, what was drawn is not what is there (another file, or the same
@@ -421,6 +459,73 @@ final class KeptDisk {
         let last = Data(markdown.utf8)
         return try await perform(.write, allowed: limit(data.count + 2 * last.count)) { wanted in
             try KeptDiskWork.listFile(in: folder, root: root, data: data, file: file, lastRead: last)
+        }
+    }
+
+    // MARK: Papers (PaperFile.swift)
+
+    /// Every `<root>/Papers/<Name>/PAPER.md` Capsid can read, by name. A folder whose PAPER.md is missing, too big or
+    /// not one Capsid wrote is passed over, as a kept folder without its marker is.
+    func papers() async throws -> [KeptPaper] {
+        let root = rootURL()
+        return try await perform(.look, allowed: lookLimit) { wanted in
+            try KeptDiskWork.papers(root: root, wanted: wanted)
+        }
+    }
+
+    /// One paper, read again: what a change is made from, and compared against when it is written.
+    func readPaper(at folder: URL) async throws -> KeptPaper {
+        let root = rootURL()
+        return try await perform(.look, allowed: lookLimit) { wanted in
+            try KeptDiskWork.readPaper(in: folder, root: root)
+        }
+    }
+
+    /// Makes `<root>/Papers/<name>/PAPER.md`, built in a hidden folder and renamed into place as a keep is: `name`
+    /// cleaned, or the dated name when that is taken. The Kept folder and Papers are made when they aren't there.
+    func createPaper(_ paper: Paper) async throws -> KeptPaper {
+        let root = rootURL()
+        return try await perform(.write, allowed: limit(4_096)) { wanted in
+            try KeptDiskWork.createPaper(paper, root: root)
+        }
+    }
+
+    /// Writes a paper's PAPER.md again (a temporary file, then a rename), only if it is still, byte for byte, the
+    /// text `lastRead` (`changedOutside` when it isn't, and nothing is written): a change made in another app is never
+    /// written over. Answers the paper as written, the next `lastRead`.
+    func replacePaper(at folder: URL, with paper: Paper, lastRead: String) async throws -> KeptPaper {
+        let root = rootURL()
+        let markdown = PaperFile.render(paper)
+        let bytes = Data(markdown.utf8), last = Data(lastRead.utf8)
+        try await perform(.write, allowed: limit(bytes.count + last.count)) { wanted in
+            try KeptDiskWork.replacePaper(in: folder, root: root, with: bytes, lastRead: last)
+        }
+        return KeptPaper(folder: folder, markdown: markdown, paper: paper)
+    }
+
+    /// The first half of a paper's export: a hidden folder in `parent` with the figures copied in under their new
+    /// names and `legends.md`. The PDF is drawn into it next (ShelfPDF.swift, on its own queue), and then
+    /// `finishExport` names it, so an export is whole or isn't there.
+    func beginExport(_ plan: PaperExportPlan, at date: Date = Date()) async throws -> PaperExportFolder {
+        let root = rootURL()
+        let bytes = plan.files.reduce(plan.legends.utf8.count) { $0 + $1.bytes }
+        return try await perform(.write, allowed: limit(2 * bytes)) { wanted in
+            try KeptDiskWork.beginExport(plan, root: root, at: date)
+        }
+    }
+
+    /// Renames the export into place, never over a folder that is there: the name, the dated name, then numbered.
+    func finishExport(_ folder: PaperExportFolder) async throws -> URL {
+        try await perform(.write, allowed: limit(0)) { wanted in
+            try KeptDiskWork.finishExport(folder)
+        }
+    }
+
+    /// Deletes an export that didn't finish. Never throws: a folder that can't be removed is left, hidden.
+    func abandonExport(_ folder: PaperExportFolder) async {
+        let temp = folder.temp
+        _ = try? await perform(.cleanup, allowed: limit(0)) { wanted in
+            KeptDiskWork.removeTemporary(temp)
         }
     }
 
@@ -704,8 +809,18 @@ private enum KeptDiskWork {
         switch try rootState(root) {
         case .missing: throw KeptDiskError.rootMissing
         case .absent: return []
-        case .ready: return sortedWithoutCase(try subfolders(of: root))
+        case .ready:
+            // Papers (PaperFile.swift) is where papers live, not a project's collection: it is offered as one only when
+            // a project of that name already keeps results there.
+            return sortedWithoutCase(try subfolders(of: root).filter { name in
+                name.caseInsensitiveCompare(PaperFile.folderName) != .orderedSame || holdsKeptFolders(root.appending(path: name, directoryHint: .isDirectory))
+            })
         }
+    }
+
+    /// Whether a folder of the Kept folder has a kept result in it (a subfolder whose README is Capsid's).
+    private static func holdsKeptFolders(_ folder: URL) -> Bool {
+        ((try? subfolders(of: folder)) ?? []).contains { keptReadme(in: folder.appending(path: $0, directoryHint: .isDirectory)) != nil }
     }
 
     static func isTaken(root: URL, collection: String, name: String) -> Bool {
@@ -1102,5 +1217,152 @@ private enum KeptDiskWork {
         if !present { try writeFile(data, to: path, in: folder) }
         try replaceReadme(in: folder, with: Data(updated.utf8), lastRead: lastRead)
         return KeptListing(path: path, markdown: updated, wasListed: false)
+    }
+
+    // MARK: Papers
+
+    /// A PAPER.md is a few hundred lines at most; one this big isn't one of ours.
+    static let paperCap = 1 << 20
+
+    private static func papersFolder(_ root: URL) -> URL {
+        root.appending(path: PaperFile.folderName, directoryHint: .isDirectory)
+    }
+
+    /// `<root>/Papers/<name>`, not hidden: the shape of a paper's folder and nothing else.
+    private static func isPaperFolder(_ folder: URL, in root: URL) -> Bool {
+        folder.deletingLastPathComponent().path == papersFolder(root).path && !folder.lastPathComponent.hasPrefix(".")
+    }
+
+    /// A folder's PAPER.md when it is one Capsid wrote, read by the one handle that stays inside the Kept folder.
+    private static func paper(in folder: URL, root: URL) -> KeptPaper? {
+        let url = folder.appending(path: PaperFile.fileName, directoryHint: .notDirectory)
+        guard let data = bytes(of: url, root: root, limit: paperCap), let markdown = readmeText(data),
+              let paper = PaperFile.parse(markdown) else { return nil }
+        return KeptPaper(folder: folder, markdown: markdown, paper: paper)
+    }
+
+    static func papers(root: URL, wanted: KeptDisk.StillWanted) throws -> [KeptPaper] {
+        switch try rootState(root) {
+        case .missing: throw KeptDiskError.rootMissing
+        case .absent: return []
+        case .ready: break
+        }
+        let folder = papersFolder(root)
+        guard look(folder).isDirectory, let names = try? subfolders(of: folder) else { return [] }
+        var found: [KeptPaper] = []
+        for name in sortedWithoutCase(names) {
+            guard wanted() else { break }
+            if let paper = paper(in: folder.appending(path: name, directoryHint: .isDirectory), root: root) { found.append(paper) }
+        }
+        return found
+    }
+
+    static func readPaper(in folder: URL, root: URL) throws -> KeptPaper {
+        guard isPaperFolder(folder, in: root) else { throw KeptDiskError.failed(notPaper) }
+        guard look(folder.appending(path: PaperFile.fileName, directoryHint: .notDirectory)).exists else {
+            throw KeptDiskError.failed("This paper\u{2019}s PAPER.md isn\u{2019}t there any more.")
+        }
+        guard let found = paper(in: folder, root: root) else { throw KeptDiskError.failed(notPaper) }
+        return found
+    }
+
+    static let notPaper = "This isn\u{2019}t a paper Capsid can read."
+
+    /// Makes a folder if it isn't there, refusing a file in its place.
+    private static func ensureFolder(_ url: URL) throws {
+        let here = look(url)
+        if here.exists {
+            guard here.isDirectory else { throw KeptDiskError.failed("\u{201C}\(url.lastPathComponent)\u{201D} in the Kept folder isn\u{2019}t a folder.") }
+        } else {
+            try makeFolder(url)
+        }
+    }
+
+    /// Writes a file that isn't there yet, whole (a temporary file, then a rename).
+    private static func writeNew(_ data: Data, to url: URL) throws {
+        guard !look(url).exists else { throw KeptDiskError.failed("A file with this name is already there.") }
+        try data.write(to: url, options: .atomic)
+    }
+
+    /// Renames a folder built hidden into place: the name, the dated name, then numbered; never over one that is there.
+    private static func place(_ temp: URL, in parent: URL, name: String, at date: Date) throws -> URL {
+        let dated = KeptName.isDated(name) ? name : KeptName.dated(name, at: date)
+        var names = [name]
+        if dated != name { names.append(dated) }
+        names += (2...99).map { KeptName.numbered(dated, $0) }
+        for candidate in names {
+            let target = parent.appending(path: candidate, directoryHint: .isDirectory)
+            if try moveWithoutReplacing(temp, to: target) { return target }
+        }
+        throw KeptDiskError.failed("No free name was left for this folder.")
+    }
+
+    static func createPaper(_ paper: Paper, root: URL) throws -> KeptPaper {
+        switch try rootState(root) {
+        case .missing: throw KeptDiskError.rootMissing
+        case .absent: try makeFolder(root)
+        case .ready: break
+        }
+        let parent = papersFolder(root)
+        try ensureFolder(parent)
+        let name = KeptName.sanitized(paper.name)
+        let temp = parent.appending(path: KeptName.temporaryFolder(for: name), directoryHint: .isDirectory)
+        try makeFolder(temp)
+        let markdown = PaperFile.render(paper)
+        do {
+            try writeNew(Data(markdown.utf8), to: temp.appending(path: PaperFile.fileName, directoryHint: .notDirectory))
+            let folder = try place(temp, in: parent, name: name, at: paper.createdAt)
+            return KeptPaper(folder: folder, markdown: markdown, paper: paper)
+        } catch {
+            removeTemporary(temp)
+            throw error
+        }
+    }
+
+    static func replacePaper(in folder: URL, root: URL, with markdown: Data, lastRead: Data) throws {
+        guard isPaperFolder(folder, in: root) else { throw KeptDiskError.failed(notPaper) }
+        let url = folder.appending(path: PaperFile.fileName, directoryHint: .notDirectory)
+        guard let current = bytes(of: url, root: root, limit: paperCap) else {
+            throw KeptDiskError.failed("This paper\u{2019}s PAPER.md isn\u{2019}t there any more.")
+        }
+        // An editor's byte order mark is no part of the text the caller read: compared without it, and put back.
+        let (plain, marked) = withoutByteOrderMark(current)
+        // Bytes, not characters: "é" typed two ways is two files.
+        guard plain == lastRead else { throw KeptDiskError.changedOutside }
+        guard let text = String(data: markdown, encoding: .utf8), PaperFile.parse(text) != nil else {
+            throw KeptDiskError.failed("That PAPER.md isn\u{2019}t one Capsid can read back.")
+        }
+        try ((marked ? byteOrderMark : Data()) + markdown).write(to: url, options: .atomic)
+    }
+
+    static func beginExport(_ plan: PaperExportPlan, root: URL, at date: Date) throws -> PaperExportFolder {
+        guard look(plan.parent).isDirectory else { throw KeptDiskError.failed("The folder chosen for the export isn\u{2019}t there.") }
+        let name = KeptName.sanitized(plan.name)
+        let temp = plan.parent.appending(path: KeptName.temporaryFolder(for: name), directoryHint: .isDirectory)
+        try makeFolder(temp)
+        do {
+            for file in plan.files {
+                // Only a kept figure, read inside the Kept folder; one that can't be read stops the export whole.
+                guard let data = bytes(of: file.source, root: root, limit: plan.limit) else {
+                    throw KeptDiskError.failed("\u{201C}\(file.source.lastPathComponent)\u{201D} couldn\u{2019}t be read, so nothing was exported.")
+                }
+                try writeNew(data, to: temp.appending(path: ShelfFileName.sanitized(file.name), directoryHint: .notDirectory))
+            }
+            try writeNew(Data(plan.legends.utf8), to: temp.appending(path: PaperRules.legendsFileName, directoryHint: .notDirectory))
+        } catch {
+            removeTemporary(temp)
+            throw error
+        }
+        return PaperExportFolder(temp: temp, parent: plan.parent, name: name, at: date)
+    }
+
+    static func finishExport(_ folder: PaperExportFolder) throws -> URL {
+        guard look(folder.temp).isDirectory else { throw KeptDiskError.failed("The export\u{2019}s folder isn\u{2019}t there.") }
+        do {
+            return try place(folder.temp, in: folder.parent, name: folder.name, at: folder.at)
+        } catch {
+            removeTemporary(folder.temp)
+            throw error
+        }
     }
 }

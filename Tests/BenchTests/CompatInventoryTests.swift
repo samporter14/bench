@@ -301,6 +301,8 @@ struct CompatEndpointTests {
         "output_data.error on GET /api/frames/<session>?shallow=true",
         // Fields of the messages read above, kept by Keep's showing op.
         "_artifact_refs and _ts on GET /api/frames/<session>/messages",
+        // Fields of Keep's versions read above, which the Shelf's out-of-date marks read too.
+        "version_id and version_number on GET /api/artifacts/<artifact>/versions",
         // A message the history reader projects as a note.
         "send_user_message in GET /api/frames/<session>/messages",
         // Fields of the session tree the phone's permission queue reads; the insight reader projects the plan statuses in the page.

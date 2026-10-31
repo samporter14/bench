@@ -41,6 +41,16 @@ final class ShelfModel: ObservableObject {
     let passages: ShelfPassages
     /// Rendered documents for their reading cards, held in a small cache.
     let documents: ShelfDocumentReadings
+    /// The papers, and the one the Papers page shows (PaperModel.swift).
+    let papers: PaperModel
+    /// What Claude Science says of each item's versions, this window session (ShelfFreshnessCheck.swift).
+    let freshness: ShelfFreshnessCheck
+
+    /// The Papers page is up in place of the cards and the detail (DESIGN.md, Shelf → Papers): the chip at the end of
+    /// the row. Not a kind, and not counted; the project pill and the search still choose the cards it offers.
+    @Published var showsPapers = false {
+        didSet { if showsPapers, !oldValue { Task { await papers.refresh() } } }
+    }
 
     @Published private(set) var items: [ShelfItem] = [] { didSet { scopedStale = true } }
     @Published var project: String? {
@@ -113,6 +123,8 @@ final class ShelfModel: ObservableObject {
     private var legendSubscription: AnyCancellable?
     private var documentSubscription: AnyCancellable?
     private var passageSubscription: AnyCancellable?
+    private var paperSubscription: AnyCancellable?
+    private var freshnessSubscription: AnyCancellable?
     private var noteTask: Task<Void, Never>?
     private var pending: (folder: URL, until: Date)?
     private let now: () -> Date
@@ -124,11 +136,15 @@ final class ShelfModel: ObservableObject {
     init(shelf: Shelf, noteLifetime: Duration = .seconds(8), now: @escaping () -> Date = { Date() }, calendar: Calendar = .current,
          pdf: ShelfPDFMaker? = nil, legendDelay: Duration = .seconds(1), claudeLegend: ShelfClaudeLegend? = nil,
          textIndex: ShelfTextIndex? = nil, passages: ShelfPassages? = nil, documents: ShelfDocumentReadings? = nil,
+         papers: PaperModel? = nil, freshness: ShelfFreshnessCheck? = nil,
          announce: @escaping @MainActor (String) -> Void = ShelfModel.announceQuietly) {
         self.shelf = shelf
         self.announce = announce
         self.passages = passages ?? ShelfPassages(disk: shelf.index.disk)
         self.documents = documents ?? ShelfDocumentReadings(disk: shelf.index.disk)
+        let index = shelf.index
+        self.papers = papers ?? PaperModel(disk: index.disk, root: { index.rootURL })
+        self.freshness = freshness ?? .live()
         self.textIndex = textIndex ?? ShelfTextIndex(disk: shelf.index.disk)
         self.legendDelay = legendDelay
         self.claudeLegend = claudeLegend ?? ShelfClaudeLegend(dependencies: { shelf.legendDependencies })
@@ -150,12 +166,21 @@ final class ShelfModel: ObservableObject {
         documentSubscription = self.documents.objectWillChange.sink { [weak self] _ in
             MainActor.assumeIsolated { self?.objectWillChange.send() }
         }
+        // A paper written or read again, a version list come back: the cards, the detail and the map are drawn again.
+        paperSubscription = self.papers.objectWillChange.sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.objectWillChange.send() }
+        }
+        freshnessSubscription = self.freshness.objectWillChange.sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.objectWillChange.send() }
+        }
         subscription = shelf.index.$results.sink { [weak self] results in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.items = ShelfRules.items(from: results)
                 // The folders were read again: the files read for the search are looked at again too.
                 if self.textIndex.isActive { self.textIndex.update(for: self.items) }
+                // And the papers, once the Papers page has read them: a PAPER.md changed in Finder is seen.
+                if self.papers.state != .idle { Task { await self.papers.refresh() } }
                 self.refreshReading()
                 self.reconcile()
             }

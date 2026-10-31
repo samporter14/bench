@@ -517,6 +517,10 @@ enum ShelfRules {
         /// reference reader, at the reply that showed the file, or at its newest reply.
         case openAsReference
         case exportPDF
+        /// The paper and the label to put the item in (PaperView.swift, `PaperAddSheet`).
+        case addToPaper
+        /// Ask Claude Science again whether the figure or its data has a newer version (ShelfOutOfDate.swift).
+        case checkForNewer
         case divider
         case remove
 
@@ -528,6 +532,8 @@ enum ShelfRules {
             case .showInFinder: "Show in Finder"
             case .openAsReference: ConversationAction.openAsReference.title
             case .exportPDF: ShelfPDFRules.exportName(count: 1)
+            case .addToPaper: "Add to Paper\u{2026}"
+            case .checkForNewer: "Check for Newer Versions"
             case .divider: ""
             case .remove: "Remove"
             }
@@ -547,11 +553,13 @@ enum ShelfRules {
     /// the session's newest reply), Export Figure as PDF…, and Remove last, after a divider. A note's card (after 1.0.6)
     /// has no picture to double-click or drag out, so its menu opens with the two things the picture did to the file,
     /// Quick Look and Show in Finder, and then has what any item's has (a note has no version to keep). Since 1.0.7 a
-    /// document's reading card also has the two file actions, followed by its existing actions.
+    /// document's reading card also has the two file actions, followed by its existing actions. With the Papers page every card
+    /// but a note's has Add to Paper… and Check for Newer Versions before Remove (DESIGN.md, Shelf → Papers): a note
+    /// has no version, so neither is offered.
     static func moreMenu(canKeep: Bool, note: Bool = false, document: Bool = false) -> [MoreItem] {
         if note { return [.quickLook, .showInFinder, .divider, .openAsReference, .exportPDF, .divider, .remove] }
         return (document ? [.quickLook, .showInFinder, .divider] : [])
-            + (canKeep ? [.keepWithDataAndCode] : []) + [.openAsReference, .exportPDF, .divider, .remove]
+            + (canKeep ? [.keepWithDataAndCode] : []) + [.openAsReference, .exportPDF, .divider, .addToPaper, .checkForNewer, .divider, .remove]
     }
 
     static func flatten(_ text: String) -> String {

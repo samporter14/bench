@@ -65,7 +65,8 @@ struct ShelfDocumentReadingRulesTests {
         }
         #expect(ShelfDetail.form(for: prose, reading: .none, document: .none) == .ordinary)
         #expect(ShelfRules.moreMenu(canKeep: true, document: true)
-                == [.quickLook, .showInFinder, .divider, .keepWithDataAndCode, .openAsReference, .exportPDF, .divider, .remove])
+                == [.quickLook, .showInFinder, .divider, .keepWithDataAndCode, .openAsReference, .exportPDF, .divider, .addToPaper,
+                    .checkForNewer, .divider, .remove])
         #expect(ShelfRules.documentHeaderParts(for: prose).prefix(3) == ["qc_notes.md", "Plate reader QC", "Assay development"])
         #expect(ShelfDetail.documentHeight(forCard: 480 * 0.56) + 160 <= 480 * 0.56 + 1)
     }

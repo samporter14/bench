@@ -1,8 +1,11 @@
 // KeptDemo.swift — `--demo kept` (DESIGN.md, Keep and Shelf): the Keep sheet
 // filled from made-up reads, and the Shelf window on made-up folders in a
 // temporary root: figures, documents and tables put on the shelf, and one
-// figure kept with its data and code. Nothing is read from Claude Science;
-// nothing lands outside the temporary root, which is deleted when Capsid quits.
+// figure kept with its data and code. `papers` and `stale` add a paper's figure
+// map and the out-of-date marks, from made-up version lists: Fig 2B has a newer
+// version and newer data, the blot's version is gone, the rest are current.
+// Nothing is read from Claude Science; nothing lands outside the temporary
+// root, which is deleted when Capsid quits.
 import AppKit
 import SwiftUI
 
@@ -49,12 +52,15 @@ enum KeptDemo {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Capsid Kept demo-\(UUID().uuidString)", isDirectory: true)
         let disk = KeptDisk(root: { root })
         switch step {
-        case "window", "window-empty":
+        case "window", "window-empty", "papers", "stale":
             let index = KeptIndex(disk: disk, root: { root })
             let shelf = shelf(index: index, root: root)
             Task { @MainActor in
-                if step == "window" { await seed(disk) }
-                KeptWindowController.shared.show(shelf: shelf)
+                var folders: [String: String] = [:]
+                if step != "window-empty" { folders = await seed(disk) }
+                if step == "papers" { await seedPaper(disk, folders: folders) }
+                let kept = step == "stale" ? folders[keptName].map { root.appending(path: $0, directoryHint: .isDirectory) } : nil
+                KeptWindowController.shared.show(shelf: shelf, select: kept, freshness: freshness(), papers: step == "papers")
             }
         default:
             let model = makeModel(disk: disk, root: root, failingData: step == "sheet-partial")
@@ -172,6 +178,10 @@ enum KeptDemo {
     }
 
     private static func version(_ n: Int) -> String { String(format: "eeeeeeee-0000-4000-8000-%012d", n) }
+    /// Each made-up item its own artifact, as Claude Science has them: the out-of-date marks read each one's versions.
+    private static func artifact(_ n: Int) -> String { String(format: "ffffffff-0000-4000-8000-%012d", n) }
+    private static let dataArtifact = "dddddddd-0000-4000-8000-000000000001"
+    private static let keptName = "Fig 2B"
 
     /// The made-up shelf: the mock-up's first row (a figure, a heatmap, a
     /// Markdown note, a spreadsheet), more of each kind below it, and one
@@ -208,8 +218,12 @@ enum KeptDemo {
     }
 
     /// The made-up shelf in `disk`'s root: every item put there as an add
-    /// does it, and one kept with data and code, as Keep does.
-    static func seed(_ disk: KeptDisk) async {
+    /// does it, and one kept with data and code, as Keep does. Answers each
+    /// item's folder as a paper names it ("Collection/Name"), by its file's
+    /// name (Fig 2B's as `keptName`).
+    @discardableResult
+    static func seed(_ disk: KeptDisk) async -> [String: String] {
+        var folders: [String: String] = [:]
         for item in seeds() {
             let keptAt = Date().addingTimeInterval(-item.minutesAgo * 60)
             let answered = Date().addingTimeInterval(-item.minutesAgo * 60 - 150)
@@ -217,21 +231,25 @@ enum KeptDemo {
             try? await disk.write(item.data, to: item.file, in: destination)
             let session = SessionStatus(id: "00000000-0000-4000-8000-0000000000d8", projectID: "demo-\(item.project)", projectName: item.project,
                                         title: item.session, state: .finished, updatedAt: keptAt)
-            let figure = KeptFile(path: item.file, role: .figure, artifact: artifact, version: item.version, index: 3, of: nil,
+            let number = Int(item.version.suffix(12)) ?? 0
+            let figure = KeptFile(path: item.file, role: .figure, artifact: artifact(number), version: item.version, index: 3, of: nil,
                                   sha256: disk.sha256(of: item.data), bytes: item.data.count)
             let written = ShelfRules.readme(session: session, folderName: destination.name, figure: figure,
                                             answer: .init(text: item.answer, at: answered, isLast: false), row: item.row,
                                             question: item.question, keptAt: keptAt, claudeScience: "0.1.70", capsid: "1.0")
-            _ = try? await disk.finish(destination, readme: KeptReadme.render(written.record, text: written.text))
+            if (try? await disk.finish(destination, readme: KeptReadme.render(written.record, text: written.text))) != nil {
+                folders[item.file] = PaperRules.folderPath(collection: item.collection, name: destination.name)
+            }
         }
-        await seedKept(disk)
+        if let kept = await seedKept(disk) { folders[keptName] = kept }
+        return folders
     }
 
-    /// Fig 2B, kept with its data and code and a legend.
-    private static func seedKept(_ disk: KeptDisk) async {
+    /// Fig 2B, kept with its data and code and a legend. Answers its folder as a paper names it.
+    private static func seedKept(_ disk: KeptDisk) async -> String? {
         let keptAt = Date().addingTimeInterval(-2 * 1440 * 60 - 3_600)
         let name = "Fig 2B \u{00B7} Z\u{2032} by plate"
-        guard let destination = try? await disk.prepare(collection: "Paper draft", name: name, at: keptAt) else { return }
+        guard let destination = try? await disk.prepare(collection: "Paper draft", name: name, at: keptAt) else { return nil }
         let figure = chart(variant: 3)
         let data = csv()
         try? await disk.write(figure, to: "z_prime.png", in: destination)
@@ -242,8 +260,8 @@ enum KeptDemo {
             sessionID: session.id, sessionTitle: "Plate reader QC",
             figure: KeptFile(path: "z_prime.png", role: .figure, artifact: artifact, version: versions[2].v, index: 3, of: 4,
                              sha256: disk.sha256(of: figure), bytes: figure.count),
-            files: [KeptFile(path: "data/z_prime_by_plate.csv", role: .data, artifact: "dddddddd-0000-4000-8000-000000000001",
-                             version: dataVersion, index: nil, of: nil, sha256: disk.sha256(of: data), bytes: data.count),
+            files: [KeptFile(path: "data/z_prime_by_plate.csv", role: .data, artifact: dataArtifact,
+                             version: dataVersion, index: 3, of: nil, sha256: disk.sha256(of: data), bytes: data.count),
                     KeptFile(path: "code/z_prime.py", role: .code, artifact: nil, version: versions[2].v, index: nil, of: nil,
                              sha256: nil, bytes: script.utf8.count)],
             missing: [], claudeScience: "0.1.70", capsid: "1.0", sourceRow: 41,
@@ -252,7 +270,48 @@ enum KeptDemo {
                             claudeSaid: answer,
                             attribution: "From Claude\u{2019}s answer at \(KeepRules.longTime(at(50))) on \(KeepRules.longDate(at(50))).",
                             origin: "[Plate reader QC](bench://session?project=demo-assay&frame=\(session.id)), in Paper draft.\nVersion 3 of 4 of z_prime.png, kept on \(KeepRules.longDate(keptAt)) at \(KeepRules.longTime(keptAt)) by Capsid 1.0, from Claude Science 0.1.70. The link opens the session in Capsid on a Mac that has it.")
-        _ = try? await disk.finish(destination, readme: KeptReadme.render(record, text: text))
+        guard (try? await disk.finish(destination, readme: KeptReadme.render(record, text: text))) != nil else { return nil }
+        return PaperRules.folderPath(collection: "Paper draft", name: destination.name)
+    }
+
+    /// A paper on the made-up shelf: two figures and a supplement, with a panel planned and empty, a letter skipped,
+    /// a panel whose folder has gone, and Fig 2B (out of date) in 2B.
+    private static func seedPaper(_ disk: KeptDisk, folders: [String: String]) async {
+        func panel(_ label: String, _ file: String?) -> PaperPanel {
+            let label = PaperLabel(label)!
+            guard let file else { return PaperPanel(label: label) }
+            return PaperPanel(label: label, folder: folders[file], file: file == keptName ? "z_prime.png" : file)
+        }
+        let panels = [
+            panel("1A", "z_prime_by_plate.png"), panel("1B", "plate_7_heatmap.png"), panel("1D", nil),
+            panel("2A", "de_heatmap.png"), panel("2B", keptName), panel("2C", nil),
+            panel("S1A", "knockdown_blot.png"),
+            PaperPanel(label: PaperLabel("S1B")!, folder: "Assay development/standard_curve_old", file: "standard_curve.png"),
+        ]
+        let paper = Paper(name: "Z\u{2032} assay paper", createdAt: at(3 * 1440), panels: panels, capsid: "1.0")
+        _ = try? await disk.createPaper(paper)
+    }
+
+    // MARK: Made-up versions
+
+    /// The out-of-date marks' reads, made up: Fig 2B's figure has a version 4 past the kept 3 and its data a version 5
+    /// past the kept 3; the blot is gone (a 404); every other item is the newest of its one version.
+    static func freshness() -> ShelfFreshnessCheck {
+        let frame = session.id, when = at(60)
+        return ShelfFreshnessCheck(read: { artifact in
+            try? await Task.sleep(for: .milliseconds(250))
+            func list(_ items: [(String, Int)]) -> ShelfTransferResult {
+                .answered(.versions(items.map { ArtifactVersion(v: $0.0, n: $0.1, frame: frame, mime: nil, size: 4096, at: when, parent: nil) }))
+            }
+            if artifact == KeptDemo.artifact { return list(versions.map { ($0.v, $0.n) }) }
+            if artifact == dataArtifact {
+                return list([("cccccccc-0000-4000-8000-000000000000", 1), ("cccccccc-0000-4000-8000-000000000002", 2),
+                             (dataVersion, 3), ("cccccccc-0000-4000-8000-000000000004", 4), ("cccccccc-0000-4000-8000-000000000005", 5)])
+            }
+            guard artifact.hasPrefix("ffffffff"), let number = Int(artifact.suffix(12)) else { return .answered(.missing) }
+            if number == 6 { return .answered(.missing) }
+            return list([(version(number), 1)])
+        })
     }
 
     // MARK: Pictures

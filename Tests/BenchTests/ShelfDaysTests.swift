@@ -181,11 +181,13 @@ struct ShelfNamePartsTests {
 
 struct ShelfMoreMenuTests {
     @Test func theMenuHoldsKeepThenOpenAsReferenceThenExportThenRemoveLast() {
-        #expect(ShelfRules.moreMenu(canKeep: true) == [.keepWithDataAndCode, .openAsReference, .exportPDF, .divider, .remove])
+        #expect(ShelfRules.moreMenu(canKeep: true)
+                == [.keepWithDataAndCode, .openAsReference, .exportPDF, .divider, .addToPaper, .checkForNewer, .divider, .remove])
         #expect(ShelfRules.moreMenu(canKeep: true).map(\.title)
-                == ["Keep with Data and Code\u{2026}", "Open as Reference", "Export Figure as PDF\u{2026}", "", "Remove"])
+                == ["Keep with Data and Code\u{2026}", "Open as Reference", "Export Figure as PDF\u{2026}", "",
+                    "Add to Paper\u{2026}", "Check for Newer Versions", "", "Remove"])
         // Kept with its data and code already, or with no version to keep: no Keep.
-        #expect(ShelfRules.moreMenu(canKeep: false) == [.openAsReference, .exportPDF, .divider, .remove])
+        #expect(ShelfRules.moreMenu(canKeep: false) == [.openAsReference, .exportPDF, .divider, .addToPaper, .checkForNewer, .divider, .remove])
         // As VoiceOver offers them on the detail card.
         #expect([ShelfRules.MoreItem.keepWithDataAndCode, .openAsReference, .exportPDF, .remove].map(\.spoken)
                 == ["Keep with Data and Code", "Open as Reference", "Export Figure as PDF", "Remove"])

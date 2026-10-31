@@ -61,6 +61,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
     case planProgress, reviewer, notes
     case find
     case showSource
+    case outOfDate
     /// Not a feature: the checks Capsid makes once when Claude Science's
     /// version changes (App/CompatWatch.swift), so "Last problem" can name them.
     case update
@@ -92,6 +93,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .notes: "Claude's messages to you, on a card"
         case .find: "Find a figure or file from any session, in the Shelf and in Quick Open"
         case .showSource: "Show Where It Came From, at the reply in the conversation"
+        case .outOfDate: "Out of date on the Shelf and on a paper\u{2019}s panels"
         case .update: "The checks after a Claude Science update"
         }
     }
@@ -139,6 +141,7 @@ enum CompatFeature: String, CaseIterable, Sendable {
         case .notes: "Claude's messages on a card"
         case .find: "finding files"
         case .showSource: "Show Where It Came From"
+        case .outOfDate: "the out-of-date marks"
         case .update: "the checks after an update"
         }
     }
@@ -330,6 +333,12 @@ extension CompatInventory {
         read("GET /api/artifacts/<artifact>/versions",
              "a bare array, oldest first: version_id, version_number, frame_id, content_type, size_bytes, created_at, parent_version_id (file_path, agent_name and language are dropped in the page)",
              .keep, "Remote/ArtifactReader.swift"),
+        // The Shelf's out-of-date marks (Kept/ShelfFreshnessCheck.swift): the same read, for a kept figure's artifact and
+        // each recorded input's, only when a card, a detail or a paper's panel is shown or Check is pressed.
+        read("version_id and version_number on GET /api/artifacts/<artifact>/versions",
+             "the kept version_id among them (none: the version isn't in Claude Science any more) and the greatest version_number; a 404 or 410 is gone, anything else unread says nothing",
+             .outOfDate, "Kept/ShelfFreshnessCheck.swift",
+             check: .whenUsed("read only for the Shelf\u{2019}s kept items as they are shown, never on a timer")),
         read("GET /api/artifacts/versions/<version>?include_metadata=true",
              "JSON: version_id (the one asked for), artifact_id, version_number, filename, content_type, size_bytes, created_at, checksum (sha256 hex or null), is_user_upload, reproduction_code?, environment {environment_name, python_version, packages [{name, version}]}?",
              .keep, "Remote/ArtifactReader.swift"),

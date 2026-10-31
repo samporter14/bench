@@ -129,8 +129,8 @@ struct ShelfNoteMenuTests {
     }
 
     @Test func everyOtherItemsMenuIsAsItWasWithOpenAsReferenceAdded() {
-        #expect(ShelfRules.moreMenu(canKeep: true) == [.keepWithDataAndCode, .openAsReference, .exportPDF, .divider, .remove])
-        #expect(ShelfRules.moreMenu(canKeep: false) == [.openAsReference, .exportPDF, .divider, .remove])
+        #expect(ShelfRules.moreMenu(canKeep: true) == [.keepWithDataAndCode, .openAsReference, .exportPDF, .divider, .addToPaper, .checkForNewer, .divider, .remove])
+        #expect(ShelfRules.moreMenu(canKeep: false) == [.openAsReference, .exportPDF, .divider, .addToPaper, .checkForNewer, .divider, .remove])
         #expect(ShelfRules.moreMenu(canKeep: true, note: false) == ShelfRules.moreMenu(canKeep: true))
         #expect(!ShelfRules.moreMenu(canKeep: true).contains(.quickLook) && !ShelfRules.moreMenu(canKeep: false).contains(.showInFinder))
     }
