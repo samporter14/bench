@@ -181,6 +181,23 @@ the real version with the data it was drawn from and the script that drew it.
 If Claude made a legend file, Keep can keep it too; on the Shelf, **Use
 Claude’s legend** puts its words into Your legend, where you can edit them.
 
+**Lay out a paper's figures.** Choose **Papers** at the end of the Shelf's
+chips, make a paper, and drag cards from your shelf onto its panels (or
+right-click a card and choose **Add to Paper…**): Fig 1A, 1B, 2A, and the
+supplement after. Empty panels and skipped letters show as missing. A panel
+whose folder you moved or trashed says so. Removing a panel never touches its
+kept folder. **Export…** makes one folder with each figure named for its panel
+(`Fig 2B · z_prime_by_plate.png`), `legends.md` with every legend in order,
+and one PDF. A paper is a plain `PAPER.md` in `~/Documents/Kept/Papers/<name>/`.
+
+**Know when a figure is out of date.** As cards show (and when you press
+**Check**), the Shelf asks Claude Science whether a kept figure, or the data it
+was drawn from, has a newer version. It marks the ones that have one: "The data
+behind this figure changed after you kept it (data.csv, version 3 → 5)."
+**Keep the Newer One** keeps the newest in a new folder beside the old, and
+then **Compare with the Newer One** puts them side by side. When Claude Science
+can't be reached, nothing is marked.
+
 <img src="docs/shelf.png" width="600" alt="The Shelf window with heatmap typed in its search: two shelved heatmaps as cards, then In your sessions with five more files from other sessions, each with Add to Shelf, and the selected figure's detail with where it came from">
 
 ## An answer beside the work

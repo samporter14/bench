@@ -3718,6 +3718,15 @@ as a value changes, for under half a second, and the well is the same one view
 the panel drew before, moved rather than drawn twice. The panel's one glass
 shape is unchanged.
 
+**Papers and Out of date, after 1.1.2 (not measured).** Neither adds a timer,
+an observer of the disk or a cache that outlives the window. A paper is read
+when its page first shows and when the Shelf reads its folders again. Each
+change writes one small file. The out-of-date reads are one per artifact per
+window session, asked as cards come into view, three at a time on the Results
+shelf's queue at the list's priority (behind a person's own reads), and let go
+when the window closes. A shelf of 200 items scrolled end to end makes at most
+200 small reads, once.
+
 ## Files and ownership
 
 ```
@@ -3739,6 +3748,9 @@ Sources/Bench/Workspace/  Project Workspaces (1.1.0): WorkspaceRecord and Worksp
                           WorkspaceVisits (each project's last conversation), WorkspaceStore (memory, the note's
                           saving, pins, Clear), WorkspaceReturn and WorkspaceLive (Return to Project), WorkspacePanel
                           and WorkspaceView (the panel), WorkspaceCommands (the History menu, the reference's ⋯)
+Sources/Bench/Kept/       (the papers and out-of-date pieces, after 1.1.2) PaperFile (PAPER.md and its rules), PaperModel
+                          (a window's papers and their changes), PaperView (the Papers page, Add to Paper…), ShelfFreshness
+                          (the verdict), ShelfFreshnessCheck (the reads), ShelfOutOfDate (the marks and Keep the Newer One)
 Sources/Bench/Shared/     The specimens (scenes) and ScienceCore, Capsid's own since 1.0: they began
                           as copies of the Science Status droplet's, and Droplets were retired in
                           October 2026, so `Scripts/sync-shared.sh` went with them. Edit them here.
@@ -6008,6 +6020,10 @@ is read stays the user's. A second Keep… while a sheet is up is refused
 say so in the README's attribution: "The text is cut off: the rest couldn't
 be read."
 
+*Keep the Newer One* (after 1.1.2; Shelf → Out of date) opens this sheet on the
+newest version of a kept item that has a newer one, with nothing pinned. It is a
+new keep into a new folder, named as any keep is, never over the old one.
+
 ## Shelf (Kept/Shelf*.swift, Shelf/, since 1.0)
 
 Sam's priority, in his words: Claude Science makes so many figures, documents
@@ -6854,6 +6870,168 @@ The editor changed in three ways for it, and in no other: `put`, `list` and `und
 Since 1.0.6, for Keep's row: `KeepPlanTests` (the row only with a candidate and on by default, none for an answer about another version, the best of several and the detail that says so, the plan with and without it, the destination sentence and the record carrying the legend, and that the Shelf and Keep read one file the same way), `KeepModelTests` (a keep copies the file and puts the figure's part in "Your legend", several files, unticking, a file that failed and Try Again filling the legend, a legend written meanwhile left alone) and `KeepSheetSnapshotTests` (the sheet with the row, and with several files).
 
 Since 1.0.6, for the rest of this section: `ShelfTextIndexTests` (which files an item's search reads, the search and its caption, the caps, a file read again when changed, reading off the main actor, five hundred items searched quickly, the model's use of it), `ShelfPassageTests` (the passage's rules, the held passages and the disk), `ShelfDocumentTests` (the several-file match, the menu's lines and what each does, no ask for one file or for Show in Results, a closed menu doing nothing) and `TileSelectionItemTests` (the script in JavaScriptCore against a made-up page: the item first only for a passage wholly inside the tile's region and left alone by the right-click, the selection put back, the words read once and dropped, the count posted and never the words; the Swift half on made-up menus; `FigureMenuSnapshotTests` has the captures). Only a real right-click in a real tile confirms the page's own menu.
+
+**Papers: a figure map** (Kept/PaperFile.swift, PaperModel.swift, PaperView.swift;
+the papers half of KeptDisk.swift; after 1.1.2). A manuscript's figures are kept
+items in an order: Fig 1A, 1B, 2A, then the supplement, S1A. A paper is that
+order and nothing else. It names kept folders and never copies, moves or owns
+them, so taking a panel out of a paper can't lose a figure.
+
+*Where it lives, and why.* A **Papers** chip at the end of the kind chips,
+after a hairline: a place, not a kind, so it has no count and is never one of
+the filters. Chosen, it puts the paper's map where the cards and the detail
+stand, with a strip of the shelf's own cards at the foot. The window keeps its
+one live page and its chrome (the title, the project pill, the search), and the
+pill and the search still choose the cards in the strip. There is no second
+window to keep in step, and nothing new in the title bar, which at 620 points
+has no room for another control. A sidebar would have cost the cards a column
+at every width, all the time, for a page that is used now and then. A window of
+its own would have doubled Quick Look, the thumbnails and the drag sources, and
+split "what is on my shelf" across two places.
+
+*The file.* `<Kept root>/Papers/<name>/PAPER.md`, wholly Capsid's.
+`PaperFile.render` writes front matter that `PaperFile.parse` reads as strictly
+as the kept README is read (`KeptReadme`'s own reader, shared):
+
+```
+---
+capsid_paper: 1
+name: "Z′ assay paper"
+created_at: 2026-10-30T09:12:00-04:00
+panels:
+  - { label: "1A", folder: "Assay development/z_prime_by_plate", artifact: "…", version: "…", file: "z_prime_by_plate.png" }
+  - { label: "2C" }
+capsid: "1.1.2"
+---
+```
+
+Exact lines in exact order, and one `- { … }` row per panel in label order.
+`{ label }` alone is a panel planned and empty. A folder is exactly
+"Collection/Name" inside the root, never hidden, never `..`. Anything else
+(a key it doesn't know, a label not written the way Capsid writes it, a label
+twice, no closing `---`) is not a paper, and is not shown and not touched.
+Under the front matter, the paper's name, one line per panel and fine print
+saying that Capsid writes the file and that removing a panel never touches its
+folder. That part is rewritten every time and never read back. The artifact and
+version recorded are the ones the folder held when it went in, for the record;
+what a slot shows is the folder.
+
+*The folders are the record.* There is no index of papers and nothing kept
+between windows: the papers are read when the page first shows and whenever the
+Shelf reads its folders again. Every change (assign, empty, remove, relabel,
+swap, a new slot) is made from the PAPER.md last read, one at a time, and
+written whole only if the file is still that text, byte for byte
+(`KeptDisk.replacePaper`; a byte order mark is compared without and put back).
+A file changed in another app meanwhile is read again and the change is not
+made: "PAPER.md was changed in another app, so Capsid read it again and didn't
+make that change. Make it again if you still want it." A new paper is built in
+a hidden folder and renamed into place: its name, then dated, then numbered,
+never over a folder that is there. Papers has no README, so the Shelf's scan
+passes it by. A project of that name could have one, and it would still show:
+the project pill lists Papers only when it holds kept folders.
+
+*The map.* At the top:
+
+- the paper, as a menu of the papers with New Paper… and Show in Finder;
+- "3 of 7 panels filled · 1 panel out of date";
+- **Check**, a hairline pill;
+- **Export…**, clay, the page's one action that asks.
+
+Each figure has a heading (Figure 1, Supplementary Figure S1), then its slots:
+
+- a whole-figure panel first, then every letter from A to the highest in use;
+- a filled slot is the figure on its paper, with a label badge (ink, page-coloured words) and its name;
+- an empty slot is a dashed edge, "Empty · Drop a figure here";
+- a letter skipped between two panels is drawn the same and says "Missing", so a figure doesn't look done when 1B isn't there;
+- a slot whose folder has gone (moved, renamed, in the Trash) shows its sentence where the picture would be: "“z_prime_by_plate” isn't in the Shelf folder any more. It may have been moved, renamed or put in the Trash." It is never a crash, never filled from a guess, and is listed as missing in an export's legends.
+
+After a figure's last slot comes **Add Panel 1E** (the letter after the
+highest, so a gap left on purpose stays), and under the figures come **New
+Figure** and **New Supplementary Figure**. Labels order as a person counts:
+1A < 1B < 2A < 10A, a whole figure before its panels, every main figure before
+S1A (`PaperLabel`). A label is typed as "2B", "fig 2b" or "Figure S1A". "1 A",
+"01A" and "1AB" are refused: each could mean something else.
+
+*The ways in.*
+
+- **Add to Paper…** on a card's right-click menu and in the detail's ⋯ (not a note's: a note has no version). It opens a small sheet: the paper (the one last shown, or New Paper… with its name), and the label, offered as the next letter of the paper's last main figure. It says when that label holds a figure already, which then gives way.
+- **Drag** a card from the strip onto a slot. A slot dragged onto another trades places with it. The payload is plain text that only the page reads; anything else dropped is let go.
+- A slot's menu has Show on Shelf, Quick Look, Relabel… (onto a free or empty label it moves; onto a filled one the two trade places, so nothing is lost), Empty Panel (the label stays), Remove from Paper (the label goes) and, when it is out of date, the ways on (Out of date, below).
+
+*Export…* asks where, with a folder panel ("Export Here", Downloads at first).
+It makes `<paper> figures` there, built hidden and renamed into place as a new
+paper is. In it:
+
+- each filled panel's kept figure, copied byte for byte through `KeptDisk` and named for its label, `Fig 2B · z_prime_by_plate.png` (`PaperRules.exportName`: the kept name, without the extension written twice, made safe);
+- `legends.md`: a heading for each figure, then each panel's label and name with the person's own legend; Claude's words, marked "Claude:", only when there is no legend and they aren't merely the session's last answer; "_No legend yet._" otherwise; empty and missing panels listed so a gap is seen;
+- one PDF of them all, `<paper>.pdf`, made by the lab-meeting PDF's own drawing (`ShelfPDF.make`), a page per panel in figure order, each titled with its label.
+
+The legends are read from the disk first, so a legend typed a second ago is in.
+A file that can't be read, or a PDF that can't be made, leaves nothing behind.
+Finder shows the folder, and the pill says "Exported 5 panels to “Z′ assay paper
+figures”. 2 panels were empty or missing; legends.md says which."
+
+`--demo kept --step papers` opens the page on a made-up paper:
+
+- 1A and 1B filled, 1C skipped and 1D empty;
+- 2A, then Fig 2B (out of date) in 2B, then 2C empty;
+- S1A the blot (gone from Claude Science);
+- S1B a folder that isn't there.
+
+`PaperFileTests` cover the file: the round trip in every script, 26 refusals, ordering, the gaps, every change, names, legends and sentences. `PaperModelTests` cover a paper on the demo's shelf: made, filled, changed and never a byte of a kept folder touched; a PAPER.md changed outside; broken slots; the export's names, order, bytes, legends and PDF; a cancelled or empty export writing nothing; Papers not taken for a project.
+
+**Out of date** (Kept/ShelfFreshness.swift, ShelfFreshnessCheck.swift,
+ShelfOutOfDate.swift; after 1.1.2). A figure kept last week may have a newer
+version now, or the data it was drawn from may have changed since. A kept
+README records the figure's artifact and version and, for an item kept with
+data and code, each input's. The Shelf asks Claude Science for each artifact's
+list of versions and compares. It makes **one read**, `GET
+/api/artifacts/<artifact>/versions`, the page's own read for its version
+stepper, through the Results shelf's queue at the list's priority. It **never
+reads the lineage**, which can start a model call.
+
+*When it asks.* As a card, the detail or a paper's slot comes into view, and on
+**Check** (the paper's header) or **Check for Newer Versions** (a card's ⋯, a
+slot's menu). It never asks on a timer. Each artifact is asked once for as long
+as the window is open, however often its cards scroll past, and several items of
+one artifact share the read. At most three reads are out at a time. Closing the
+window lets every answer go, and a read still out when it closes is dropped when
+it comes back. One log line with counts ends each run of reads, never a name or
+an id.
+
+*The verdict* (`ShelfFreshnessRules.verdict`), from what was read:
+
+- **Stale.** "A newer version of this figure exists (version 3 → 4)." and/or "The data behind this figure changed after you kept it (z_prime_by_plate.csv, version 3 → 5)." (", and 2 more files" past the first). The figure's sentence comes first. An input counts only by its own artifact's list.
+- **Gone.** Claude Science answered 404 or 410, or lists the artifact without the kept version: "This version isn't in Claude Science any more." Gone wins over a newer input.
+- **Unknown.** The daemon is down, the page isn't signed in or up, the read timed out or came back in a shape Capsid doesn't know. Nothing is known, so **nothing is shown**. A mark is a claim, made only on evidence, never a false alarm. A figure that is current wins over an input that couldn't be read.
+
+*Where it shows.*
+
+- **On a card's picture and a slot**: a small clay capsule, "Out of date" or "Not in Claude Science". Clay is for what needs you, and this does.
+- **On the detail**: the sentences, with a clay dot each, above the controls.
+- **In the paper's header**: "2 panels out of date".
+
+*The ways on.* Compare needs both versions on disk, so **Keep the Newer One**
+comes first, as a hairline pill on the detail and an item on a slot's menu. It
+makes a **new** folder for the newest version and never touches or overwrites
+the old one:
+
+- an item kept with its data and code opens the Keep sheet on the newest version, with nothing pinned (the old answer didn't make it), and Keep picks a free name;
+- an item only shelved is shelved again at the newest version, beside the old (`Shelf.add`: the same artifact, the newest's own version id).
+
+Once the newest is on the shelf, the pill becomes **Compare with the Newer One**
+(Compare, kept on the left, newest on the right), and a slot offers **Put the
+Newer One in Fig 2B**. Only data that changed is not something Capsid can
+re-keep for you, so then only the sentence and Show Where It Came From are
+offered. Both reads are listed in Diagnostics (CompatInventory) as *when used*
+under "Out of date on the Shelf and on a paper's panels".
+
+`--demo kept --step stale` opens on Fig 2B: its figure is v3 of 4 and its data
+v3 of 5, the blot is gone, and the rest are current. `ShelfFreshnessTests` (22:
+every verdict, newer figure, newer input, both, same version, 404, the version
+missing from its list, unreachable, the sentences) and `ShelfFreshnessCheckTests`
+(once a session, three at a time, Check, reset and a late answer, a withdrawn
+read, the demo's marks, no lineage and no timer in the source).
 
 ## Compare (Kept/Compare*.swift, since 1.1.0)
 
