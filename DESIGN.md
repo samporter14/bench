@@ -3718,7 +3718,7 @@ as a value changes, for under half a second, and the well is the same one view
 the panel drew before, moved rather than drawn twice. The panel's one glass
 shape is unchanged.
 
-**Papers and Out of date, after 1.1.2 (not measured).** Neither adds a timer,
+**Papers and Out of date, 1.1.3 (not measured).** Neither adds a timer,
 an observer of the disk or a cache that outlives the window. A paper is read
 when its page first shows and when the Shelf reads its folders again. Each
 change writes one small file. The out-of-date reads are one per artifact per
@@ -3748,7 +3748,7 @@ Sources/Bench/Workspace/  Project Workspaces (1.1.0): WorkspaceRecord and Worksp
                           WorkspaceVisits (each project's last conversation), WorkspaceStore (memory, the note's
                           saving, pins, Clear), WorkspaceReturn and WorkspaceLive (Return to Project), WorkspacePanel
                           and WorkspaceView (the panel), WorkspaceCommands (the History menu, the reference's ⋯)
-Sources/Bench/Kept/       (the papers and out-of-date pieces, after 1.1.2) PaperFile (PAPER.md and its rules), PaperModel
+Sources/Bench/Kept/       (the papers and out-of-date pieces, since 1.1.3) PaperFile (PAPER.md and its rules), PaperModel
                           (a window's papers and their changes), PaperView (the Papers page, Add to Paper…), ShelfFreshness
                           (the verdict), ShelfFreshnessCheck (the reads), ShelfOutOfDate (the marks and Keep the Newer One)
 Sources/Bench/Shared/     The specimens (scenes) and ScienceCore, Capsid's own since 1.0: they began
@@ -6020,7 +6020,7 @@ is read stays the user's. A second Keep… while a sheet is up is refused
 say so in the README's attribution: "The text is cut off: the rest couldn't
 be read."
 
-*Keep the Newer One* (after 1.1.2; Shelf → Out of date) opens this sheet on the
+*Keep the Newer One* (since 1.1.3; Shelf → Out of date) opens this sheet on the
 newest version of a kept item that has a newer one, with nothing pinned. It is a
 new keep into a new folder, named as any keep is, never over the old one.
 
@@ -6872,7 +6872,7 @@ Since 1.0.6, for Keep's row: `KeepPlanTests` (the row only with a candidate and 
 Since 1.0.6, for the rest of this section: `ShelfTextIndexTests` (which files an item's search reads, the search and its caption, the caps, a file read again when changed, reading off the main actor, five hundred items searched quickly, the model's use of it), `ShelfPassageTests` (the passage's rules, the held passages and the disk), `ShelfDocumentTests` (the several-file match, the menu's lines and what each does, no ask for one file or for Show in Results, a closed menu doing nothing) and `TileSelectionItemTests` (the script in JavaScriptCore against a made-up page: the item first only for a passage wholly inside the tile's region and left alone by the right-click, the selection put back, the words read once and dropped, the count posted and never the words; the Swift half on made-up menus; `FigureMenuSnapshotTests` has the captures). Only a real right-click in a real tile confirms the page's own menu.
 
 **Papers: a figure map** (Kept/PaperFile.swift, PaperModel.swift, PaperView.swift;
-the papers half of KeptDisk.swift; after 1.1.2). A manuscript's figures are kept
+the papers half of KeptDisk.swift; since 1.1.3). A manuscript's figures are kept
 items in an order: Fig 1A, 1B, 2A, then the supplement, S1A. A paper is that
 order and nothing else. It names kept folders and never copies, moves or owns
 them, so taking a panel out of a paper can't lose a figure.
@@ -6981,7 +6981,7 @@ figures”. 2 panels were empty or missing; legends.md says which."
 `PaperFileTests` cover the file: the round trip in every script, 26 refusals, ordering, the gaps, every change, names, legends and sentences. `PaperModelTests` cover a paper on the demo's shelf: made, filled, changed and never a byte of a kept folder touched; a PAPER.md changed outside; broken slots; the export's names, order, bytes, legends and PDF; a cancelled or empty export writing nothing; Papers not taken for a project.
 
 **Out of date** (Kept/ShelfFreshness.swift, ShelfFreshnessCheck.swift,
-ShelfOutOfDate.swift; after 1.1.2). A figure kept last week may have a newer
+ShelfOutOfDate.swift; since 1.1.3). A figure kept last week may have a newer
 version now, or the data it was drawn from may have changed since. A kept
 README records the figure's artifact and version and, for an item kept with
 data and code, each input's. The Shelf asks Claude Science for each artifact's
