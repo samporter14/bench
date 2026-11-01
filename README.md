@@ -133,8 +133,8 @@ on Settings → Panel → Name the specimen that's playing for its name and a
 caption under the session in the panel. Turn on **Play short sequences** and,
 now and then, a few specimens play in order, like a little story. Tired of the
 one playing right now? Right-click the panel and choose Don't Play. The panel can sit in any
-corner of your screen, on any display: Settings → Panel → Corner and
-Screen. And Capsid's own icon comes in six of Solanum's colorways (Clay,
+corner of your screen, on any display: drag it there, or choose in
+Settings → Panel → Corner and Screen. And Capsid's own icon comes in six of Solanum's colorways (Clay,
 Ivory, Slate, two one-color versions and Ivory with a clay capsid): Settings →
 General → App icon. It changes the Dock icon while Capsid is open; Finder and
 Launchpad keep the Clay one, because macOS doesn't let an app change those
