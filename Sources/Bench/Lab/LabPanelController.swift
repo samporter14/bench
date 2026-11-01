@@ -1,7 +1,8 @@
 // LabPanelController.swift — the floating window (DESIGN.md, Lab, "The
-// panel"): a non-activating panel in the bottom-right corner of the menu-bar
-// screen, there only while something works or a card is up. While idle it
-// does not exist at all.
+// panel"): a non-activating panel in a corner of a screen (bottom right of the
+// menu-bar screen unless changed in Settings or by dragging it to another),
+// there only while something works or a card is up. While idle it does not
+// exist at all.
 import AppKit
 import Combine
 import SwiftUI
@@ -48,6 +49,13 @@ final class LabPanelController {
     private var fitted = false
     private var shrinking: Task<Void, Never>?
     private var hiding: Task<Void, Never>?
+    /// While the panel is being dragged: where the pointer and the window
+    /// were when it began, and the screen it began on.
+    private var drag: (mouse: NSPoint, origin: NSPoint, screen: Int?)?
+    /// A size the content asked for mid-drag, used when it is let go.
+    private var sizeAfterDrag: CGSize?
+    /// Where the panel is gliding to after a drag, until it gets there.
+    private var gliding: NSRect?
 
     /// Until the content reports its size, which it does in its first layout:
     /// wide as the widest card at the chosen size, tall enough for the
@@ -143,14 +151,14 @@ final class LabPanelController {
             .dropFirst()
             .sink { [weak self] _ in
                 guard let self, let panel = self.panel else { return }
-                self.place(panel.frame.size)
+                self.place(self.gliding?.size ?? panel.frame.size)
             }
             .store(in: &subscriptions)
 
         center.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .sink { [weak self] _ in
                 guard let self, let panel = self.panel else { return }
-                self.place(panel.frame.size)
+                self.place(self.gliding?.size ?? panel.frame.size)
             }
             .store(in: &subscriptions)
     }
@@ -167,9 +175,13 @@ final class LabPanelController {
         }
         // The report comes from inside SwiftUI's own layout pass, so the
         // window is resized on the next turn rather than under it.
-        let view = LabPanelView(model: model, hover: hover) { [weak self] size in
-            Task { self?.fit(size) }
-        }
+        let view = LabPanelView(model: model, hover: hover,
+                                onDrag: { [weak self] ended in
+                                    if ended { self?.dragEnded() } else { self?.dragMoved() }
+                                },
+                                onFit: { [weak self] size in
+                                    Task { self?.fit(size) }
+                                })
         let hosting = LabHostingView(rootView: view)
         // The window follows the content's size, never the other way round.
         hosting.sizingOptions = []
@@ -212,6 +224,8 @@ final class LabPanelController {
     /// Fades out, then takes the window away entirely, unless the panel was
     /// wanted again meanwhile: `present()` cancels the pending removal.
     private func dismiss() {
+        drag = nil
+        sizeAfterDrag = nil
         guard let panel else { return }
         fade(panel, to: 0)
         hiding = Task { [weak self] in
@@ -264,15 +278,79 @@ final class LabPanelController {
 
     /// In the chosen corner of the chosen screen's visible frame (bottom right
     /// of the menu bar's screen unless changed), with the glass (not the clear
-    /// margin round it) `Theme.panelInset` from the corner.
-    private func place(_ size: CGSize) {
+    /// margin round it) `Theme.panelInset` from the corner. `glide` moves it
+    /// there in a short ease-out (after a drag), or at once under Reduce Motion.
+    private func place(_ size: CGSize, glide: Bool = false) {
         guard let panel, let screen = PanelScreen.current else { return }
+        // A panel being dragged stays under the pointer; its new size waits.
+        guard drag == nil else {
+            sizeAfterDrag = size
+            return
+        }
         let area = screen.visibleFrame
         let margin = LabPanelView.margin
         let corner = PanelCorner.current
         let origin = CGPoint(x: corner.isLeft ? area.minX + Theme.panelInset - margin : area.maxX - Theme.panelInset + margin - size.width,
                              y: corner.isTop ? area.maxY - Theme.panelInset + margin - size.height : area.minY + Theme.panelInset - margin)
         let frame = NSRect(origin: origin, size: size)
-        if panel.frame != frame { panel.setFrame(frame, display: true) }
+        // Already on its way there: the settings written on the drop ask
+        // again, and must not cut the glide short.
+        if frame == gliding { return }
+        guard panel.frame != frame else { return }
+        guard glide, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            gliding = nil
+            panel.setFrame(frame, display: true)
+            return
+        }
+        gliding = frame
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.22
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(frame, display: true)
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                if self?.gliding == frame { self?.gliding = nil }
+            }
+        }
+    }
+
+    // MARK: Dragging to a corner
+
+    /// The panel follows the pointer, from where it was when the drag began.
+    /// The pointer's place on screen, not the gesture's, which is measured in
+    /// the window being moved.
+    private func dragMoved() {
+        guard let panel else { return }
+        let mouse = NSEvent.mouseLocation
+        if drag == nil {
+            gliding = nil
+            let glass = panel.frame.insetBy(dx: LabPanelView.margin, dy: LabPanelView.margin)
+            drag = (mouse, panel.frame.origin,
+                    PanelScreen.index(of: CGPoint(x: glass.midX, y: glass.midY), in: NSScreen.screens.map(\.frame)))
+        }
+        guard let drag else { return }
+        panel.setFrameOrigin(NSPoint(x: drag.origin.x + mouse.x - drag.mouse.x, y: drag.origin.y + mouse.y - drag.mouse.y))
+    }
+
+    /// Let go: the panel goes to the corner nearest where its middle is, on
+    /// the screen that is on, and that becomes Settings → Panel → Corner and
+    /// Screen, so the panel comes back there and Settings says so.
+    private func dragEnded() {
+        guard let panel, let started = drag else { return }
+        drag = nil
+        let size = sizeAfterDrag ?? panel.frame.size
+        sizeAfterDrag = nil
+        let screens = NSScreen.screens
+        let glass = panel.frame.insetBy(dx: LabPanelView.margin, dy: LabPanelView.margin)
+        let middle = CGPoint(x: glass.midX, y: glass.midY)
+        if let dropped = PanelScreen.index(of: middle, in: screens.map(\.frame)) {
+            let defaults = UserDefaults.standard
+            defaults.set(PanelCorner.nearest(to: middle, in: screens[dropped].visibleFrame).rawValue,
+                         forKey: SettingsKey.panelCorner)
+            defaults.set(PanelScreen.choice(dropped: dropped, started: started.screen,
+                                            names: screens.map(\.localizedName), chosen: PanelScreen.chosenName),
+                         forKey: SettingsKey.panelScreen)
+        }
+        place(size, glide: true)
     }
 }

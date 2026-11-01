@@ -679,6 +679,20 @@ Position:
   that isn't connected falls back to the menu bar's and is listed as "(not
   connected)", so the choice still reads true.
 - Follow screen changes (`didChangeScreenParametersNotification`).
+- **Drag it to another corner** (since 1.1.4). Dragged anywhere but a button
+  (a `DragGesture` of at least 4pt on the glass, so a click is still a click),
+  the window follows the pointer (`NSEvent.mouseLocation`, not the gesture's
+  translation, which is measured in the window being moved). Let go, it goes
+  to the corner of the quarter its middle is in (`PanelCorner.nearest`), on
+  the screen its middle is on or nearest (`PanelScreen.index`), and that is
+  written to Corner and Screen, so Settings says so and the panel comes back
+  there. Dropped on the screen it started on, Screen is kept as it was (a
+  chosen screen that isn't connected stays chosen); on another, it is that
+  screen, or the default when that's the menu bar's (`PanelScreen.choice`).
+  The move into the corner is a 0.22s ease-out that answers the drop, once;
+  under Reduce Motion it is there at once. A size the content asks for
+  mid-drag waits for the drop. Settings stays the way to move it without a
+  pointer.
 
 When it shows:
 
@@ -1918,7 +1932,9 @@ answered without opening the session.
 **The window.** The panel is never key (it must not take the keyboard from
 whatever you're typing in), so Reply opens a window of its own
 (`ReplyWindowController`): Capsid comes forward, as you asked it to, and the
-window opens beside the panel (above it, or below when there is no room). A
+window opens beside the panel (above it, or below when there is no room,
+lined up with the panel's outer edge: its right in a right corner, its left
+in a left one, since 1.1.4). A
 question arriving never opens it; a second Reply brings the same window
 forward. At its top it says where the answer goes: "Answering" (or "Request
 from", "Changing the plan of"), the session's title and its project. Then

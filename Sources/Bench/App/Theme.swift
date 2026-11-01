@@ -257,6 +257,20 @@ enum PanelCorner: String, CaseIterable, Identifiable {
     static var current: PanelCorner {
         UserDefaults.standard.string(forKey: SettingsKey.panelCorner).flatMap(PanelCorner.init(rawValue:)) ?? .bottomRight
     }
+
+    /// The corner a panel let go of with its middle at `point` goes to: the
+    /// one of the quarter of `area` the point is in. A point outside the
+    /// area counts with the quarter on its side.
+    static func nearest(to point: CGPoint, in area: CGRect) -> PanelCorner {
+        let left = point.x < area.midX
+        let top = point.y >= area.midY
+        switch (top, left) {
+        case (false, false): return .bottomRight
+        case (false, true): return .bottomLeft
+        case (true, false): return .topRight
+        case (true, true): return .topLeft
+        }
+    }
 }
 
 /// The screen the specimens panel sits on: the one with the menu bar, or one
@@ -270,6 +284,30 @@ enum PanelScreen {
     static var current: NSScreen? {
         let name = chosenName
         return NSScreen.screens.first { !name.isEmpty && $0.localizedName == name } ?? NSScreen.screens.first
+    }
+
+    /// Which of the screens' `frames` a point is on, else the one whose edge
+    /// is nearest it (a panel let go of half off every screen). Nil only with
+    /// no screens.
+    static func index(of point: CGPoint, in frames: [CGRect]) -> Int? {
+        if let inside = frames.firstIndex(where: { $0.contains(point) }) { return inside }
+        func distance(_ frame: CGRect) -> CGFloat {
+            let dx = max(frame.minX - point.x, 0, point.x - frame.maxX)
+            let dy = max(frame.minY - point.y, 0, point.y - frame.maxY)
+            return dx * dx + dy * dy
+        }
+        return frames.indices.min { distance(frames[$0]) < distance(frames[$1]) }
+    }
+
+    /// What Settings → Panel → Screen says after the panel is dragged from
+    /// screen `started` to screen `dropped` (indexes into `names`, the menu
+    /// bar's first). On the screen it started on, the choice is kept as it is,
+    /// so a chosen screen that isn't connected is still chosen. Elsewhere it
+    /// is the screen it landed on: empty for the menu bar's, else its name.
+    static func choice(dropped: Int, started: Int?, names: [String], chosen: String) -> String {
+        if dropped == started { return chosen }
+        guard dropped > 0, names.indices.contains(dropped) else { return "" }
+        return names[dropped]
     }
 }
 
