@@ -55,7 +55,8 @@ final class ReplyWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.hidesOnDeactivate = false
         window.delegate = self
-        window.setFrameOrigin(origin ?? Self.origin(for: window.frame.size, beside: LabPanelController.shared.panelFrame))
+        window.setFrameOrigin(origin ?? Self.origin(for: window.frame.size, beside: LabPanelController.shared.panelFrame,
+                                                             corner: .current))
         windows[sessionID] = window
         // Its reply is kept while the window shows it, sent or not.
         replier.windowOpened(sessionID)
@@ -93,16 +94,17 @@ final class ReplyWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Above the panel when there is room, else below it, its trailing edge
-    /// with the panel's; centred on the screen when the panel isn't up.
-    static func origin(for size: NSSize, beside panel: NSRect?) -> NSPoint {
+    /// Above the panel when there is room, else below it, its outer edge with
+    /// the panel's (the right edge in a right corner, the left in a left);
+    /// centred on the screen when the panel isn't up.
+    static func origin(for size: NSSize, beside panel: NSRect?, corner: PanelCorner = .bottomRight) -> NSPoint {
         let screen = NSScreen.screens.first { panel.map($0.frame.intersects) ?? false } ?? NSScreen.main
         let area = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         guard let panel else {
             return NSPoint(x: area.midX - size.width / 2, y: area.midY - size.height / 2)
         }
         let gap: CGFloat = 4
-        var x = panel.maxX - LabPanelView.margin - size.width
+        var x = corner.isLeft ? panel.minX + LabPanelView.margin : panel.maxX - LabPanelView.margin - size.width
         var y = panel.maxY - LabPanelView.margin + gap
         if y + size.height > area.maxY { y = panel.minY + LabPanelView.margin - gap - size.height }
         x = min(max(x, area.minX), area.maxX - size.width)

@@ -123,14 +123,19 @@ struct LabPanelView: View {
     private var actions: CardActions { CardActions(model: model, plans: plans, questions: questions) }
     /// Reports the window size the content wants, whenever it changes.
     let onFit: (CGSize) -> Void
+    /// Reports a drag of the panel: false as it moves, true when let go. The
+    /// controller moves the window and takes it to a corner.
+    let onDrag: (_ ended: Bool) -> Void
 
     init(model: LabModel, hover: PanelHover, insights: PanelInsights = .shared, finished: FinishedResults = .shared,
-         gestures: FinishingGestures = .shared, onFit: @escaping (CGSize) -> Void) {
+         gestures: FinishingGestures = .shared, onDrag: @escaping (_ ended: Bool) -> Void = { _ in },
+         onFit: @escaping (CGSize) -> Void) {
         self.model = model
         self.hover = hover
         self.insights = insights
         self.finished = finished
         self.gestures = gestures
+        self.onDrag = onDrag
         self.onFit = onFit
     }
 
@@ -232,6 +237,11 @@ struct LabPanelView: View {
                 }
             }
         }
+        // Dragged anywhere but a button, the panel goes where it's let go of,
+        // to the nearest corner. A click (under 4 points of travel) is still a click.
+        .gesture(DragGesture(minimumDistance: 4)
+            .onChanged { _ in onDrag(false) }
+            .onEnded { _ in onDrag(true) })
         .padding(Self.margin)
         .fixedSize()
         .animation(reduceMotion ? nil : Theme.spring, value: face.motionKey + (stackIsOpen(face) ? "-open" : ""))
