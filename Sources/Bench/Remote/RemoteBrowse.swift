@@ -408,7 +408,7 @@ final class RemoteBrowser {
     static let shared = RemoteBrowser(sessions: .shared, dependencies: .live())
 
     /// What a page of history read gave.
-    enum HistoryRead: Equatable {
+    enum HistoryRead: Equatable, Sendable {
         case page(HistoryPage)
         /// The history still has `total` rows: the page Bench holds stands.
         case same(total: Int)

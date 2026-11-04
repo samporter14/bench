@@ -28,6 +28,7 @@ struct ReferenceSnapshotTests {
                     model.wantThumbnail(figure)
                     for _ in 0..<100 where !model.thumbnails.contains(figure.v) { try await Task.sleep(for: .milliseconds(20)) }
                 }
+                if let answer = model.current { await model.prepare(answer) }
             }
             for dark in [false, true] {
                 let view = ReferenceView(model: model, selection: ReferenceSelection())

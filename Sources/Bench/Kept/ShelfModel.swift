@@ -53,6 +53,7 @@ final class ShelfModel: ObservableObject {
     }
 
     @Published private(set) var items: [ShelfItem] = [] { didSet { scopedStale = true } }
+    @Published private(set) var searchingShelf = false
     @Published var project: String? {
         didSet {
             // Chosen in the pill: by name, as ever, and any project chosen by its id is let go.
@@ -120,6 +121,20 @@ final class ShelfModel: ObservableObject {
     /// `scoped` as last made, and whether a choice, the items or the text read has changed since.
     private var scopedItems: [ShelfItem] = []
     private var scopedStale = true
+    /// Small collections remain immediate; larger full-text scans run off the UI actor.
+    private static let backgroundSearchThreshold = 80
+    private struct SearchResult: Sendable {
+        let items: [ShelfItem]
+        let stillReading: Int
+    }
+    private var searchGeneration = 0
+    private var searchWorker: Task<SearchResult?, Never>?
+    private var searchPublication: Task<Void, Never>?
+    /// Completed matches belong to the current items, query and project. Changed paths accumulate across
+    /// canceled workers until a current result incorporates them.
+    private var completedMatches: Set<String>?
+    private var pendingTextPaths: Set<String> = []
+    private var usesBackgroundSearch: Bool { !search.isEmpty && items.count >= Self.backgroundSearchThreshold }
     private var legendSubscription: AnyCancellable?
     private var documentSubscription: AnyCancellable?
     private var passageSubscription: AnyCancellable?
@@ -192,7 +207,12 @@ final class ShelfModel: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.texts = texts
+                self.pendingTextPaths.formUnion(texts.changedPaths)
                 guard !self.search.isEmpty else { return }
+                if self.usesBackgroundSearch {
+                    self.scheduleSearch()
+                    return
+                }
                 let before = self.scopedStale ? nil : self.scopedItems.map(\.id)
                 self.scopedStale = true
                 guard self.scoped.map(\.id) != before else { return }
@@ -297,7 +317,8 @@ final class ShelfModel: ObservableObject {
     /// Made again only when something it depends on changed: a search reads up to 200,000 characters of each item.
     var scoped: [ShelfItem] {
         if scopedStale {
-            scopedItems = ShelfRules.matching(projectItems, project: project, query: search, texts: texts)
+            // Large searches publish metadata matches from a worker before their full-text results.
+            scopedItems = usesBackgroundSearch ? [] : ShelfRules.matching(projectItems, project: project, query: search, texts: texts)
             scopedStale = false
         }
         return scopedItems
@@ -333,12 +354,74 @@ final class ShelfModel: ObservableObject {
     /// Counts again the files that could still add to the search. VoiceOver is told once when the line appears; the
     /// count changing under it says nothing more.
     private func refreshReading() {
+        if usesBackgroundSearch {
+            scheduleSearch()
+            return
+        }
+        searchGeneration += 1
+        searchWorker?.cancel()
+        searchPublication?.cancel()
+        completedMatches = nil
+        if searchingShelf { searchingShelf = false }
         let files = search.isEmpty ? 0 : ShelfRules.filesStillToRead(in: projectItems, project: project, query: search, texts: texts, unread: unread)
+        setStillReading(files)
+    }
+
+    private func setStillReading(_ files: Int) {
         guard files != stillReading else { return }
         let appears = stillReading == 0
         stillReading = files
         objectWillChange.send()
         if appears { announce(ShelfRules.stillReadingLabel) }
+    }
+
+    /// A result is installed only if its query, scope, and text snapshot are still current.
+    private func scheduleSearch() {
+        searchGeneration += 1
+        let generation = searchGeneration
+        searchWorker?.cancel()
+        searchPublication?.cancel()
+        let needsInitialMatches = scopedStale
+        if needsInitialMatches {
+            completedMatches = nil
+            if !searchingShelf { searchingShelf = true }
+        }
+        let items = projectItems, project = project, query = search, texts = texts, unread = unread
+        let previous = completedMatches, changedPaths = pendingTextPaths
+        let worker = Task.detached(priority: .userInitiated) { [weak self] () -> SearchResult? in
+            if needsInitialMatches,
+               let metadata = ShelfRules.matchingCancellable(items, project: project, query: query, texts: .none) {
+                await MainActor.run {
+                    guard let self, !Task.isCancelled, self.searchGeneration == generation else { return }
+                    let changed = self.scopedItems != metadata
+                    if changed { self.objectWillChange.send() }
+                    self.scopedItems = metadata
+                    self.scopedStale = false
+                    if changed { self.reconcile() }
+                }
+            }
+            guard let matches = ShelfRules.matchingCancellable(items, project: project, query: query, texts: texts,
+                                                               previous: previous, changedPaths: changedPaths) else { return nil }
+            let count = ShelfRules.filesStillToRead(in: items, project: project, query: query, texts: texts, unread: unread,
+                                                    matchingIDs: Set(matches.map(\.id)))
+            guard !Task.isCancelled else { return nil }
+            return SearchResult(items: matches, stillReading: count)
+        }
+        searchWorker = worker
+        searchPublication = Task { @MainActor [weak self] in
+            guard let result = await worker.value, let self, !Task.isCancelled,
+                  self.searchGeneration == generation else { return }
+            let changed = self.scopedItems != result.items
+            if changed { self.objectWillChange.send() }
+            self.scopedItems = result.items
+            self.scopedStale = false
+            self.completedMatches = Set(result.items.map(\.id))
+            self.pendingTextPaths.removeAll(keepingCapacity: true)
+            let finishedInitialSearch = self.searchingShelf
+            if self.searchingShelf { self.searchingShelf = false }
+            self.setStillReading(result.stillReading)
+            if changed || finishedInitialSearch { self.reconcile() }
+        }
     }
 
     /// Says `words` to VoiceOver without cutting off what it is saying: a search is typed beside it.
@@ -353,6 +436,10 @@ final class ShelfModel: ObservableObject {
     private func reconcile() {
         if let pending, now() > pending.until { self.pending = nil }
         applyPending()
+        // Metadata-only results (and the empty snapshot before they arrive) are provisional. A selected
+        // body-text match may return in the full result, so keep its selection and multipicks until then.
+        // Explicit pending opens are still handled above, including clearing filters when necessary.
+        guard !usesBackgroundSearch || !searchingShelf else { return }
         let shown = self.shown
         // Picks still shown stay picked: moving the selection puts it back to one pick, so they are kept aside.
         let keep = picked.intersection(shown.map(\.id))

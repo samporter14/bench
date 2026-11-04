@@ -31,6 +31,12 @@ private func makeHold(_ mac: Mac, center: NotificationCenter = NotificationCente
 
 @MainActor
 struct SpecimenHoldRuleTests {
+    @Test func lowPowerFrameRateRespectsTheFullMotionPreference() {
+        #expect(WorkingGlyph.frameRate(lowPower: false, fullMotion: false) == 30)
+        #expect(WorkingGlyph.frameRate(lowPower: true, fullMotion: false) == 15)
+        #expect(WorkingGlyph.frameRate(lowPower: true, fullMotion: true) == 30)
+    }
+
     @Test func playsUntilTheIdleLimitThenHolds() {
         let mac = Mac()
         let hold = makeHold(mac)

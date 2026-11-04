@@ -223,14 +223,20 @@ final class Shelf: ObservableObject {
             question = await d.question(source.session.id, row)
         }
 
-        // 3. The file, through the Results shelf's queue and its 8 MB cap.
+        // 3. The file, through the shared queue; larger files use a private spool.
         let item = KeepItem(role: .figure, source: .download(version: version), artifact: facts.a ?? entry.artifact, version: version,
                             name: fileName, size: facts.size ?? entry.size, sha: facts.sha)
-        let bytes: Data
+        let bytes: Data?
+        let transferred: ArtifactFile?
         var expected: String?
         switch await d.keep.fetch(item) {
         case .bytes(let data, let sha):
             bytes = data
+            transferred = nil
+            expected = sha
+        case .file(let file, let sha):
+            bytes = nil
+            transferred = file
             expected = sha
         case .gone:
             return .failed(ShelfRules.gone(fileName))
@@ -256,9 +262,11 @@ final class Shelf: ObservableObject {
             return .failed(ShelfRules.couldntAdd(fileName, KeptDiskError.sentence(error)))
         }
         let figure = KeptFile(path: fileName, role: .figure, artifact: facts.a ?? entry.artifact, version: version, index: facts.n,
-                              of: nil, sha256: d.keep.disk.sha256(of: bytes), bytes: bytes.count, expectedSha256: expected)
+                              of: nil, sha256: transferred?.sha256 ?? d.keep.disk.sha256(of: bytes!),
+                              bytes: transferred?.bytes ?? bytes!.count, expectedSha256: expected)
         do {
-            try await d.keep.disk.write(bytes, to: fileName, in: destination)
+            if let transferred { try await d.keep.disk.write(transferred, to: fileName, in: destination) }
+            else { try await d.keep.disk.write(bytes!, to: fileName, in: destination) }
         } catch {
             await d.keep.disk.abandon(destination)
             return .failed(ShelfRules.couldntAdd(fileName, KeptDiskError.sentence(error)))

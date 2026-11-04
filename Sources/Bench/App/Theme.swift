@@ -51,6 +51,8 @@ enum SettingsKey {
     static let showCards = "showLabCards"
     /// The working specimen in the menu bar too. Off by default.
     static let showMenuBarSpecimen = "showMenuBarSpecimen"
+    /// Preserve the full specimen frame rate when macOS Low Power Mode is enabled.
+    static let fullMotionInLowPower = "fullMotionInLowPower"
     /// A quiet line in the working panel naming the specimen that's playing,
     /// with its caption from the field guide. Off by default.
     static let showSpecimenCaption = "showSpecimenCaption"

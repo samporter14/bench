@@ -605,7 +605,7 @@ final class PlayedLoopView: NSView {
         player.removeAllAnimations()
         playedSize = bounds.size
         guard let window, let glyph, let tint, bounds.width >= 1, bounds.height >= 1 else { return }
-        let count = Int(WaitingScenes.duration * PlayedGlyphView.fps)
+        let count = moves ? Int(WaitingScenes.duration * PlayedGlyphView.fps) : 1
         let frames = Self.frames(of: glyph, count: count, size: bounds.size, scale: window.backingScaleFactor, tint: Color(tint))
         guard !frames.isEmpty else { return }
         CATransaction.begin()
@@ -635,8 +635,8 @@ final class PlayedLoopView: NSView {
                 var frame = context
                 frame.translateBy(x: cell.width * CGFloat(k % columns), y: cell.height * CGFloat(k / columns))
                 frame.clip(to: Path(CGRect(origin: .zero, size: cell)))
-                WaitingScenes.draw(glyph, in: &frame, size: cell,
-                                   time: WaitingScenes.duration * Double(k) / Double(count), tint: tint)
+                let time = count == 1 ? WaitingScenes.duration / 4 : WaitingScenes.duration * Double(k) / Double(count)
+                WaitingScenes.draw(glyph, in: &frame, size: cell, time: time, tint: tint)
             }
         }
         .frame(width: cell.width * CGFloat(columns), height: cell.height * CGFloat(rows))

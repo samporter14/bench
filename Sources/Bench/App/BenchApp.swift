@@ -449,9 +449,11 @@ struct BenchCommands: Commands {
             CompareMenu(commands: compare)
         }
         CommandGroup(after: .textEditing) {
-            Button("Find…") { ActiveWebPage.current?.showFind() }
+            Button("Find…") {
+                if let find = reference.keyWindow?.find { find.show() } else { ActiveWebPage.current?.showFind() }
+            }
                 .keyboardShortcut("f")
-                .disabled(!active.hasPage)
+                .disabled(!active.hasPage && reference.keyWindow == nil)
         }
         CommandGroup(after: .windowArrangement) {
             // A reference window floats over the work while it is wanted

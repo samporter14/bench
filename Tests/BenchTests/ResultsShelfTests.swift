@@ -640,12 +640,13 @@ struct ResultsShelfTests {
         let shelf = fake.shelf()
         let url = URL(fileURLWithPath: "/made-up/Downloads/x")
         // Too big by its listing: not read at all.
-        let listedBig = entry("big.pdf", version: "v-big", size: ArtifactReaderScript.Cap.download + 1)
+        let listedBig = entry("big.pdf", version: "v-big", size: ArtifactFileLimits.maximum + 1)
         #expect(await shelf.save(listedBig, to: url) == .tooBig)
         #expect(fake.reads.isEmpty)
-        #expect(shelf.fileProblems["v-big"] == "Over 8 MB: open the session to download it there.")
+        #expect(shelf.fileProblems["v-big"] == "Over 512 MB: open the session to download it there.")
         // Too big by its bytes, whatever the listing said.
         fake.files[.download(version: "v-liar")] = .bytes(Data(count: ArtifactReaderScript.Cap.download + 1))
+        fake.files[.fileDownload(version: "v-liar")] = .tooBig
         #expect(await shelf.save(entry("small.bin", version: "v-liar"), to: url) == .tooBig)
         fake.files[.download(version: "v-gone")] = .missing
         #expect(await shelf.save(entry("gone.md", version: "v-gone"), to: url) == .failed(.missing))
@@ -1244,8 +1245,8 @@ struct ShelfSaveAllTests {
     }
 
     @Test func aSaveAllOfFilesAllOverTheCapLooksAtNothingOnTheDisk() async {
-        let shelf = await shelf(with: [entry("huge.csv", version: "v-1", size: cap + 1),
-                                       entry("huger.csv", version: "v-2", size: cap + 1)])
+        let shelf = await shelf(with: [entry("huge.csv", version: "v-1", size: ArtifactFileLimits.maximum + 1),
+                                       entry("huger.csv", version: "v-2", size: ArtifactFileLimits.maximum + 1)])
         shelf.saveAll(madeUpID(1), into: out)
         await shelf.settled()
         #expect(summary(shelf) == ShelfSaveAllSummary(folder: out, tooBig: 2))
@@ -1325,15 +1326,16 @@ struct ShelfSaveAllTests {
 
     @Test func aFileOverTheCapIsSkippedAndCounted() async {
         fake.files[.download(version: "v-liar")] = .bytes(Data(count: cap + 1))
-        let shelf = await shelf(with: [entry("ok.md", version: "v-ok"), entry("huge.csv", version: "v-huge", size: cap + 1),
+        fake.files[.fileDownload(version: "v-liar")] = .tooBig
+        let shelf = await shelf(with: [entry("ok.md", version: "v-ok"), entry("huge.csv", version: "v-huge", size: ArtifactFileLimits.maximum + 1),
                                        entry("liar.txt", version: "v-liar")])
         shelf.saveAll(madeUpID(1), into: out)
         await shelf.settled()
         #expect(Set(fake.downloads) == ["v-ok", "v-liar"], "the one over the cap by its listing is never downloaded")
         #expect(fake.written.map(\.lastPathComponent) == ["ok.md"])
         #expect(summary(shelf)?.line == "Saved 1 file. 2 were too big to save here.")
-        #expect(shelf.fileProblems["v-huge"] == "Over 8 MB: open the session to download it there.")
-        #expect(shelf.fileProblems["v-liar"] == "Over 8 MB: open the session to download it there.")
+        #expect(shelf.fileProblems["v-huge"] == "Over 512 MB: open the session to download it there.")
+        #expect(shelf.fileProblems["v-liar"] == "Over 512 MB: open the session to download it there.")
         #expect(shelf.saved.keys.sorted() == ["v-ok"])
     }
 

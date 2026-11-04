@@ -29,7 +29,7 @@ struct ShelfSaveAllSummary: Equatable, Sendable {
     /// Where the files went.
     let folder: URL
     var saved = 0
-    /// Over the 8 MB cap, by the listing or by the bytes.
+    /// Over the 512 MB save cap, by the listing or by the streamed bytes.
     var tooBig = 0
     /// Couldn't be read or written.
     var failed = 0
@@ -289,6 +289,13 @@ final class ShelfSavedFiles {
         }
         try await perform(.write, in: Self.destination(of: url), reserving: Self.name(of: url),
                           allowed: limit(data.count), body)
+    }
+
+    func write(_ file: ArtifactFile, to url: URL, unlessExists exists: (@Sendable (URL) -> Bool)? = nil) async throws {
+        try await perform(.write, in: Self.destination(of: url), reserving: Self.name(of: url), allowed: limit(file.bytes)) {
+            if let exists, exists(url) { throw ShelfSaveError.nameTaken }
+            try file.copy(to: url, replace: exists == nil)
+        }
     }
 
     // MARK: Looking

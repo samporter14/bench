@@ -394,6 +394,13 @@ final class KeptDisk {
         }
     }
 
+    func write(_ file: ArtifactFile, to relativePath: String, in destination: KeptDestination) async throws {
+        let folder = destination.tempFolder
+        try await perform(.write, allowed: limit(file.bytes)) { _ in
+            try KeptDiskWork.copyFile(file, to: relativePath, in: folder)
+        }
+    }
+
     /// Writes README.md, last, and moves the folder into place. The name is
     /// never taken from a folder that exists: the dated one is used when it
     /// appeared meanwhile, then a numbered one. Answers where the folder is.
@@ -421,6 +428,12 @@ final class KeptDisk {
     func writeInto(_ folder: URL, _ data: Data, relativePath: String) async throws {
         try await perform(.write, allowed: limit(data.count)) { wanted in
             try KeptDiskWork.writeInto(folder, data, relativePath: relativePath)
+        }
+    }
+
+    func writeInto(_ folder: URL, _ file: ArtifactFile, relativePath: String) async throws {
+        try await perform(.write, allowed: limit(file.bytes)) { _ in
+            try KeptDiskWork.copyInto(folder, file, relativePath: relativePath)
         }
     }
 
@@ -919,6 +932,16 @@ private enum KeptDiskWork {
     /// One file into `folder`: the path must be one a keep may write, the
     /// folder must be there, and nothing at the path may be.
     static func writeFile(_ data: Data, to relativePath: String, in folder: URL) throws {
+        let target = try fileTarget(relativePath, in: folder)
+        try data.write(to: target, options: .atomic)
+    }
+
+    static func copyFile(_ file: ArtifactFile, to relativePath: String, in folder: URL) throws {
+        let target = try fileTarget(relativePath, in: folder)
+        try file.copy(to: target, replace: false)
+    }
+
+    private static func fileTarget(_ relativePath: String, in folder: URL) throws -> URL {
         guard KeptLayout.isValidRelativePath(relativePath) else {
             throw KeptDiskError.failed("That file's name can't be used in a Kept folder.")
         }
@@ -935,12 +958,17 @@ private enum KeptDiskWork {
         }
         let target = folder.appending(path: relativePath, directoryHint: .notDirectory)
         guard !look(target).exists else { throw KeptDiskError.failed("A file with this name is already there.") }
-        try data.write(to: target, options: .atomic)
+        return target
     }
 
     static func writeInto(_ folder: URL, _ data: Data, relativePath: String) throws {
         guard keptReadme(in: folder) != nil else { throw KeptDiskError.failed(notKept) }
         try writeFile(data, to: relativePath, in: folder)
+    }
+
+    static func copyInto(_ folder: URL, _ file: ArtifactFile, relativePath: String) throws {
+        guard keptReadme(in: folder) != nil else { throw KeptDiskError.failed(notKept) }
+        try copyFile(file, to: relativePath, in: folder)
     }
 
     /// README last, then the rename, which doesn't replace a folder: the

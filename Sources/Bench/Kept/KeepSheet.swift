@@ -377,6 +377,7 @@ struct KeepSheet: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Solanum.muted)
                     .monospacedDigit()
+                if let version = model.transferringVersion { ArtifactTransferProgress(version: version) }
             }
             .accessibilityElement(children: .combine)
         case .kept(let outcome), .partial(let outcome):

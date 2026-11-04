@@ -421,7 +421,7 @@ struct ResultsView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     if let batch = shelf.batches[item.id] {
-                        saveAllLine(batch)
+                        saveAllLine(batch, sessionID: item.id)
                     }
                 }
                 Spacer(minLength: 8)
@@ -459,13 +459,17 @@ struct ResultsView: View {
     }
 
     /// "Saving 3 of 7…", then "Saved 6 files. 1 was too big to save here." and Reveal in Finder.
-    private func saveAllLine(_ batch: ShelfSaveAllState) -> some View {
+    private func saveAllLine(_ batch: ShelfSaveAllState, sessionID: String) -> some View {
         HStack(spacing: 6) {
             if case .saving = batch { ProgressView().controlSize(.mini) }
             Text(batch.line)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            if case .saving = batch {
+                Button("Cancel") { shelf.cancelSaveAll(sessionID) }
+                    .buttonStyle(.link).font(.system(size: 11))
+            }
             if case .finished(let summary) = batch {
                 Button("Reveal in Finder") {
                     NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: summary.folder.path)
@@ -584,6 +588,9 @@ struct ResultFileRow: View {
                 Text(ResultFileRow.detail(entry))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                if shelf.saving.contains(entry.version) || mark == .adding {
+                    ArtifactTransferProgress(version: entry.version)
+                }
                 if let problem = shelf.fileProblems[entry.version] ?? problem {
                     Text(problem)
                         .font(.system(size: 11))
@@ -617,6 +624,9 @@ struct ResultFileRow: View {
                     .disabled(shelf.preparing.contains(entry.version))
             }
             Button("Save…") { ResultSaving.choose(entry, project: session.projectID, shelf: shelf) }
+            if shelf.fileProblems[entry.version] != nil {
+                Button("Try Saving Again…") { ResultSaving.choose(entry, project: session.projectID, shelf: shelf) }
+            }
             if shelf.saved[entry.version] != nil {
                 Button("Open") { openSaved() }
                 Button("Reveal in Finder") { revealSaved() }
@@ -650,6 +660,10 @@ struct ResultFileRow: View {
             }
             if shelf.saving.contains(entry.version) {
                 ProgressView().controlSize(.small).accessibilityLabel("Saving \(entry.name)")
+                if shelf.canCancelSave(entry.version) {
+                    Button { shelf.cancelSave(entry.version) } label: { Image(systemName: "xmark.circle") }
+                        .help("Cancel this save").accessibilityLabel("Cancel saving \(entry.name)")
+                }
             } else {
                 Button { ResultSaving.choose(entry, project: session.projectID, shelf: shelf) } label: {
                     Image(systemName: "square.and.arrow.down")

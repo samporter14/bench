@@ -952,7 +952,7 @@ enum HistoryReaderScript {
     """#
 
     /// What the page said.
-    enum Outcome: Equatable {
+    enum Outcome: Equatable, Sendable {
         /// A page of the history, with the page's own measure of the read
         /// (nil when it sent none in shape: never a reason to refuse the page).
         case read(HistoryPage, timing: HistoryTiming? = nil)

@@ -40,6 +40,7 @@ final class ReferenceCommands: ObservableObject {
 final class ReferenceWindow: NSWindow {
     /// What the window opens in Quick Look (ReferenceFiles.swift).
     var files: ReferenceFiles?
+    var find: ReferenceFind?
     /// Leaves the reading view for the answer: Esc and ⌘[ while a document
     /// is open. True when it did; any other time the keys are not the window's.
     var goBack: (@MainActor () -> Bool)?
@@ -63,7 +64,16 @@ final class ReferenceWindow: NSWindow {
     /// Esc and ⌘[ go back from a document before the History menu's Back
     /// (also ⌘[, for the page in the main window) can claim the key.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if event.keyCode == 53, flags.isEmpty, let find, find.isPresented {
+            find.close()
+            return true
+        }
         if ReferenceFileRules.goesBack(event), goBack?() == true { return true }
+        if event.charactersIgnoringModifiers?.lowercased() == "g", let find {
+            if flags == .command { find.next(); return true }
+            if flags == [.command, .shift] { find.previous(); return true }
+        }
         return super.performKeyEquivalent(with: event)
     }
 
@@ -71,6 +81,7 @@ final class ReferenceWindow: NSWindow {
     /// above the window takes it, and the responder chain is not asked to
     /// answer a selector it may not implement.)
     override func cancelOperation(_ sender: Any?) {
+        if let find, find.isPresented { find.close(); return }
         _ = goBack?()
     }
 }
@@ -125,7 +136,8 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         ReadingGate.shared.start()
         let model = ReferenceModel(session: session, dependencies: dependencies ?? .live())
         let selection = ReferenceSelection()
-        let hosting = NSHostingController(rootView: ReferenceView(model: model, selection: selection))
+        let find = ReferenceFind()
+        let hosting = NSHostingController(rootView: ReferenceView(model: model, selection: selection, find: find))
         // The window keeps its size whatever it shows: the empty and failed
         // states are smaller than a reply, and must not shrink it.
         hosting.sizingOptions = []
@@ -148,6 +160,7 @@ final class ReferenceWindowController: NSObject, NSWindowDelegate {
         window.toolbarStyle = .unified
         window.delegate = self
         window.files = model.files
+        window.find = find
         model.files.window = window
         window.goBack = Self.goBack(for: model)
         if !window.setFrameUsingName(Self.frameName) { window.center() }
@@ -258,12 +271,18 @@ final class ReferenceSelection {
 }
 
 struct ReferenceView: View {
+    private struct RenderKey: Hashable {
+        let id: Int
+        let text: String
+    }
     @ObservedObject var model: ReferenceModel
     /// The shelf, watched so "On Shelf ✓" and the mark follow it.
     @ObservedObject private var shelf: ShelfAccess
     /// What is being opened and the document that is, watched for the spinners and the reading view.
     @ObservedObject private var files: ReferenceFiles
     let selection: ReferenceSelection
+    @ObservedObject var find: ReferenceFind
+    @FocusState private var findFocused: Bool
     /// The document's own: the answer's text view is still under it.
     @State private var documentSelection = ReferenceSelection()
     @State private var keeping: KeepModel?
@@ -278,19 +297,24 @@ struct ReferenceView: View {
     private static let top: CGFloat = 20
     private static let gap: CGFloat = 14
 
-    init(model: ReferenceModel, selection: ReferenceSelection) {
+    init(model: ReferenceModel, selection: ReferenceSelection, find: ReferenceFind = ReferenceFind()) {
         self.model = model
         self.selection = selection
+        self.find = find
         _shelf = ObservedObject(wrappedValue: model.shelf)
         _files = ObservedObject(wrappedValue: model.files)
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            if find.isPresented { findBar }
             content
             footer
         }
         .frame(minWidth: 360, minHeight: 320)
+        .onChange(of: find.isPresented) { _, shown in if shown { findFocused = true } }
+        .onChange(of: find.focusRequest) { _, _ in findFocused = true }
+        .onDisappear { find.clear() }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
         .background { Solanum.page.ignoresSafeArea() }
         .overlay {
@@ -351,6 +375,33 @@ struct ReferenceView: View {
         }
     }
 
+    private var findBar: some View {
+        HStack(spacing: 8) {
+            TextField("Find in this page", text: $find.query)
+                .textFieldStyle(.roundedBorder)
+                .focused($findFocused)
+                .onSubmit { find.next() }
+            Text(find.countLabel)
+                .font(.system(size: Solanum.captionSize))
+                .foregroundStyle(Solanum.muted)
+                .fixedSize()
+            Button { find.previous() } label: { Image(systemName: "chevron.up") }
+                .disabled(find.matches.isEmpty)
+                .accessibilityLabel("Previous match")
+                .help("Previous match (Shift-Command-G)")
+            Button { find.next() } label: { Image(systemName: "chevron.down") }
+                .disabled(find.matches.isEmpty)
+                .accessibilityLabel("Next match")
+                .help("Next match (Command-G)")
+            Button { find.close() } label: { Image(systemName: "xmark") }
+                .accessibilityLabel("Close Find")
+                .help("Close Find")
+        }
+        .padding(.horizontal, Self.side)
+        .padding(.vertical, 8)
+        .background(Solanum.page)
+    }
+
     /// The answer, with a Markdown document over it while one is open: the
     /// answer stays where it is, so "‹ Answer" returns to the same place.
     private var content: some View {
@@ -386,8 +437,15 @@ struct ReferenceView: View {
                             }
                         }
                         if !answer.parts.isEmpty {
-                            ReferenceTextView(text: model.rendered(answer), selection: selection,
-                                              ask: { selected in askAnotherModel(selected ?? answer.question) })
+                            if let rendered = model.rendered(answer) {
+                                ReferenceTextView(text: rendered, selection: selection,
+                                                  ask: { selected in askAnotherModel(selected ?? answer.question) },
+                                                  find: find, isFindTarget: files.document == nil)
+                            } else {
+                                Text("Preparing answer\u{2026}")
+                                    .font(.system(size: Solanum.captionSize))
+                                    .foregroundStyle(Solanum.muted)
+                            }
                         }
                         if model.readingRest || model.restMissing {
                             Text(model.readingRest ? "Reading the rest\u{2026}" : "Part of this answer couldn\u{2019}t be read.")
@@ -400,6 +458,7 @@ struct ReferenceView: View {
                     .padding(.bottom, Self.side)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .task(id: RenderKey(id: answer.id, text: answer.text)) { await model.prepare(answer) }
                 .scrollContentBackground(.hidden)
                 // Open as Reference on a shelved item: once the reply is up, the file it came for.
                 .onChange(of: model.scrollRequest, initial: true) { _, request in
@@ -455,7 +514,7 @@ struct ReferenceView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Solanum.muted)
                 } else {
-                    ReferenceTextView(text: document.rendered, selection: documentSelection)
+                    ReferenceTextView(text: document.rendered, selection: documentSelection, find: find)
                 }
                 if document.cut {
                     Text(ReferenceFileRules.cutSentence)
@@ -649,7 +708,7 @@ struct ReferenceView: View {
             return
         }
         guard let answer = model.current else { return }
-        model.copy(selection.selectedText ?? model.rendered(answer).string)
+        model.copy(selection.selectedText ?? model.rendered(answer)?.string ?? answer.text)
     }
 
     private func keep(_ file: HistoryFile) {
@@ -748,6 +807,8 @@ struct ReferenceTextView: NSViewRepresentable {
     /// as the new text reaches it. Off: a new text starts unselected.
     var keepsSelection = false
     var accessibilityLabel = "Claude\u{2019}s answer"
+    var find: ReferenceFind? = nil
+    var isFindTarget = true
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         /// The text last put in, by identity: the model renders once per text.
@@ -757,6 +818,7 @@ struct ReferenceTextView: NSViewRepresentable {
         /// at the same width.
         var measured: (text: NSAttributedString, width: CGFloat, height: CGFloat)?
         var ask: (@MainActor (String?) -> Void)?
+        weak var find: ReferenceFind?
         /// Whether Ask Another Model is on with a key, asked as the menu opens.
         var available: @MainActor () -> Bool = { AnotherModel.shared.isAvailable }
 
@@ -807,6 +869,11 @@ struct ReferenceTextView: NSViewRepresentable {
     func updateNSView(_ textView: NSTextView, context: Context) {
         context.coordinator.ask = ask
         textView.setAccessibilityLabel(accessibilityLabel)
+        if context.coordinator.find !== find {
+            context.coordinator.find?.detach(textView)
+            context.coordinator.find = find
+        }
+        if isFindTarget { find?.attach(textView) } else { find?.detach(textView) }
         guard context.coordinator.shown !== text else { return }
         context.coordinator.shown = text
         let kept = textView.selectedRange()
@@ -816,6 +883,10 @@ struct ReferenceTextView: NSViewRepresentable {
         } else {
             textView.setSelectedRange(NSRange(location: 0, length: 0))
         }
+    }
+
+    static func dismantleNSView(_ textView: NSTextView, coordinator: Coordinator) {
+        coordinator.find?.detach(textView)
     }
 
     /// The text's height at the proposed width. SwiftUI measures at several

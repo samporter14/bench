@@ -9,6 +9,7 @@ struct WorkingGlyph: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     /// Stills, as Reduce Motion asks, for a view that is drawn once (a snapshot).
     @Environment(\.stillSpecimens) private var stillSpecimens
+    @AppStorage(SettingsKey.fullMotionInLowPower) private var fullMotionInLowPower = false
     private var reduceMotion: Bool { systemReduceMotion || stillSpecimens }
     /// Nobody has touched the Mac for ten minutes: a still, not the rotation.
     @ObservedObject private var hold = SpecimenHold.shared
@@ -24,6 +25,10 @@ struct WorkingGlyph: View {
         rotation.scenes.count == 1 ? rotation.scenes[0] : still
     }
 
+    static func frameRate(lowPower: Bool, fullMotion: Bool) -> Double {
+        lowPower && !fullMotion ? 15 : PlayedGlyphView.fps
+    }
+
     var body: some View {
         // The ZStack keeps the view's identity across the switch, so the
         // watching below starts and stops with the glyph, not with each face.
@@ -35,7 +40,8 @@ struct WorkingGlyph: View {
                 // middle of it, as a covered window's specimen is held.
                 StillSpecimen(tint: tint, scene: hold.scene(in: rotation, at: .now), at: 0.5)
             } else {
-                PlayedGlyph(tint: tint, rotation: rotation)
+                PlayedGlyph(tint: tint, rotation: rotation,
+                            fps: Self.frameRate(lowPower: hold.isLowPower, fullMotion: fullMotionInLowPower))
             }
         }
         .modifier(WatchesHold(active: !reduceMotion))

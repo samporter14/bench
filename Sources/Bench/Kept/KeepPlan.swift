@@ -199,7 +199,7 @@ enum KeepRules {
     /// files is kept with its figure, script and answer, and the README says so.
     static let inputLimit = 20
     /// The shelf's cap on a download; a file over it is listed, not copied.
-    static let cap = ArtifactReaderScript.Cap.download
+    static let cap = ArtifactFileLimits.maximum
 
     // MARK: The versions
 
@@ -317,13 +317,13 @@ enum KeepRules {
 
     /// Under the tiles, for a version whose listed size is over the cap.
     static func overCapSentence(size: Int) -> String {
-        "At \(bytes(size)) it\u{2019}s over the 8 MB Capsid can copy here, so this version can\u{2019}t be kept."
+        "At \(bytes(size)) it\u{2019}s over the 512 MB Capsid can copy here, so this version can\u{2019}t be kept."
     }
 
     /// After a keep in which Claude Science said the figure is over the cap (its
     /// size wasn't listed, or was listed wrong).
     static func figureTooBig(_ name: String) -> String {
-        "\(name) is over 8 MB, which is more than Capsid can copy here, so nothing was kept. Choose another version, or Cancel."
+        "\(name) is over 512 MB, which is more than Capsid can copy here, so nothing was kept. Choose another version, or Cancel."
     }
 
     /// After a keep in which the figure couldn't be written; `reason` is the disk's sentence.
@@ -422,7 +422,7 @@ enum KeepRules {
         let (copyable, tooBig, unsaved) = copyableInputs(sources)
         if copyable.isEmpty {
             if !tooBig.isEmpty {
-                return KeepRow(kind: .data, title: title, detail: "\(count(tooBig.count, "file")) · too big to keep here (over 8 MB).",
+                return KeepRow(kind: .data, title: title, detail: "\(count(tooBig.count, "file")) · too big to keep here (over 512 MB).",
                                available: false, onByDefault: false, info: nil)
             }
             return KeepRow(kind: .data, title: title, detail: "Not saved in Claude Science, so Capsid can\u{2019}t copy it.",
@@ -444,7 +444,7 @@ enum KeepRules {
         if allInferred {
             notes.append("Detected by static analysis only — may not have contributed to this artifact.")
         }
-        if !tooBig.isEmpty { notes.append("\(count(tooBig.count, "input")) over 8 MB won\u{2019}t be copied.") }
+        if !tooBig.isEmpty { notes.append("\(count(tooBig.count, "input")) over 512 MB won\u{2019}t be copied.") }
         if !unsaved.isEmpty { notes.append("\(count(unsaved.count, "input")) not saved in Claude Science can\u{2019}t be.") }
         if lineage.inputs.count > inputLimit { notes.append("Only the first \(inputLimit) of \(lineage.inputs.count) inputs are offered.") }
         let list = copyable.compactMap { input -> String? in

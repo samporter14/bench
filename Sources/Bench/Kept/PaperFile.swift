@@ -307,6 +307,17 @@ enum PaperFile {
 // MARK: Rules
 
 enum PaperRules {
+    /// Consecutive panel labels for a batch; do not silently cross into another figure.
+    static func batchLabels(start: PaperLabel, count: Int) -> [PaperLabel]? {
+        guard count > 0, count <= 26 else { return nil }
+        if count == 1 { return [start] }
+        guard let first = start.panel.unicodeScalars.first, start.panel.unicodeScalars.count == 1,
+              first.value >= 65, first.value <= 90, first.value + UInt32(count - 1) <= 90 else { return nil }
+        return (0..<count).map { offset in
+            PaperLabel(supplementary: start.supplementary, figure: start.figure,
+                       panel: String(Unicode.Scalar(first.value + UInt32(offset))!))
+        }
+    }
     /// What the Shelf window shows in a figure's row: a panel, or the place of one that is not there yet.
     enum Slot: Equatable, Sendable {
         case panel(PaperPanel)

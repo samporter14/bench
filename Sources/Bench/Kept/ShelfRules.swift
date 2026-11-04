@@ -255,6 +255,25 @@ enum ShelfRules {
         }
     }
 
+    /// The background version checks cancellation between items so a superseded search stops promptly.
+    static func matchingCancellable(_ items: [ShelfItem], project: String?, query: String, texts: ShelfTexts,
+                                    previous: Set<String>? = nil, changedPaths: Set<String> = []) -> [ShelfItem]? {
+        let words = searchWords(query)
+        var found: [ShelfItem] = []
+        for item in items {
+            if Task.isCancelled { return nil }
+            if let project, item.collection != project { continue }
+            // Only valid for the same items, scope and query. An unchanged item's previous result needs no
+            // further scan of its text; order still comes from the current shelf.
+            if let previous, !proseFiles(of: item).contains(where: { changedPaths.contains($0.path) }) {
+                if previous.contains(item.id) { found.append(item) }
+                continue
+            }
+            if matches(item, words, texts: texts) { found.append(item) }
+        }
+        return found
+    }
+
     /// A search's words: split at blanks, none of them empty.
     static func searchWords(_ query: String) -> [SearchWord] {
         query.split(whereSeparator: \.isWhitespace).map { SearchWord(String($0)) }
@@ -306,14 +325,15 @@ enum ShelfRules {
     /// already gains nothing from its other files). `unread` is what the text index has not come to
     /// (`ShelfTextIndex.unread`). Each file once.
     static func filesStillToRead(in items: [ShelfItem], project: String?, query: String, texts: ShelfTexts,
-                                 unread: Set<String>) -> Int {
+                                 unread: Set<String>, matchingIDs: Set<String>? = nil) -> Int {
         let words = searchWords(query)
         guard !words.isEmpty, !unread.isEmpty else { return 0 }
         var paths: Set<String> = []
         for item in items {
+            if Task.isCancelled { return 0 }
             if let project, item.collection != project { continue }
             let coming = proseFiles(of: item).map(\.path).filter(unread.contains)
-            if coming.isEmpty || matches(item, words, texts: texts) { continue }
+            if coming.isEmpty || (matchingIDs.map { $0.contains(item.id) } ?? matches(item, words, texts: texts)) { continue }
             paths.formUnion(coming)
         }
         return paths.count
@@ -602,7 +622,7 @@ enum ShelfRules {
     }
 
     static func tooBig(_ name: String) -> String {
-        "\(name) is over 8 MB, which is more than the shelf takes."
+        "\(name) is over 512 MB, which is more than the shelf takes."
     }
 
     static func gone(_ name: String) -> String {

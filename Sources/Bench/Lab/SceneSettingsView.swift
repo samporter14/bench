@@ -16,6 +16,7 @@ struct SceneSettingsView: View {
     /// A specimen with a closing gesture settles to a stop when its session
     /// finishes (Lab/FinishingGesture.swift).
     @AppStorage(SettingsKey.finishingGesture) private var finishingGesture = true
+    @AppStorage(SettingsKey.fullMotionInLowPower) private var fullMotionInLowPower = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var query = ""
@@ -129,6 +130,8 @@ struct SceneSettingsView: View {
                     matchToSession
                     shortSequences
                     closingGesture
+                    Toggle("Keep full frame rate in Low Power Mode", isOn: $fullMotionInLowPower)
+                        .toggleStyle(.checkbox)
                 }
                 categories
             }

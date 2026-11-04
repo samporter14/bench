@@ -22,6 +22,8 @@ private let log = Logger(subsystem: "local.sam.bench", category: "shelf-text")
 /// the model holds the one it searched and a read finishing meanwhile changes nothing under it.
 struct ShelfTexts: Sendable {
     fileprivate(set) var folded: [String: ContiguousArray<UInt8>] = [:]
+    /// Paths changed by this publication, including files whose text was removed.
+    fileprivate(set) var changedPaths: Set<String> = []
 
     static let none = ShelfTexts()
 
@@ -60,7 +62,7 @@ final class ShelfTextIndex: ObservableObject {
     /// is a disk that didn't answer: nothing is remembered, so the next look tries again.
     typealias Read = @MainActor (URL) async throws -> String?
 
-    /// What is read so far, published as each file finishes.
+    /// What is read so far, published in batches while a pass is running.
     @Published private(set) var texts = ShelfTexts.none
     /// The prose files on the shelf that have never been read and that the reading under way has not come to yet:
     /// empty when nothing is being read, and when a pass finds every file already read. A file read before and
@@ -76,6 +78,11 @@ final class ShelfTextIndex: ObservableObject {
     }
 
     private var entries: [String: Entry] = [:]
+    /// The unpublished working copy avoids publishing the whole dictionary for every file.
+    private var workingTexts = ShelfTexts.none
+    private var textChanged = false
+    private var changedPaths: Set<String> = []
+    private var textTrailing: Task<Void, Never>?
     private var task: Task<Void, Never>?
     private var wanted: [URL] = []
     private var wantedPaths: Set<String> = []
@@ -122,7 +129,13 @@ final class ShelfTextIndex: ObservableObject {
         // What is no longer on the shelf is let go at once.
         if entries.keys.contains(where: { !seen.contains($0) }) {
             entries = entries.filter { seen.contains($0.key) }
-            texts.folded = texts.folded.filter { seen.contains($0.key) }
+            let removed = workingTexts.folded.keys.filter { !seen.contains($0) }
+            workingTexts.folded = workingTexts.folded.filter { seen.contains($0.key) }
+            if !removed.isEmpty {
+                changedPaths.formUnion(removed)
+                textChanged = true
+                flushTexts()
+            }
         }
         // What this pass is going to read, that nothing has been read of yet.
         missing.formIntersection(seen)
@@ -139,6 +152,8 @@ final class ShelfTextIndex: ObservableObject {
                 await pass()
             } while again
             task = nil
+            // Deliver the last batch before announcing that there is nothing left to read.
+            flushTexts()
             // Reading is over, whatever became of each file: nothing is left to wait for.
             pending = []
             publishUnread()
@@ -148,6 +163,7 @@ final class ShelfTextIndex: ObservableObject {
     /// A file has been dealt with, read or not: it is no longer to come.
     private func settled(_ path: String) {
         guard pending.remove(path) != nil else { return }
+        if pending.isEmpty { flushTexts() }
         publishUnread()
     }
 
@@ -180,6 +196,31 @@ final class ShelfTextIndex: ObservableObject {
         if unread != pending { unread = pending }
     }
 
+    /// Publish at most once per interval while files arrive, and always flush at the end.
+    private func changedText(at path: String) {
+        textChanged = true
+        changedPaths.insert(path)
+        if publishEvery == .zero {
+            flushTexts()
+        } else if textTrailing == nil {
+            textTrailing = Task { [weak self, publishEvery] in
+                try? await Task.sleep(for: publishEvery)
+                guard !Task.isCancelled else { return }
+                self?.flushTexts()
+            }
+        }
+    }
+
+    private func flushTexts() {
+        textTrailing?.cancel()
+        textTrailing = nil
+        guard textChanged else { return }
+        textChanged = false
+        workingTexts.changedPaths = changedPaths
+        changedPaths.removeAll(keepingCapacity: true)
+        texts = workingTexts
+    }
+
     private func pass() async {
         let files = wanted
         var count = 0
@@ -198,7 +239,7 @@ final class ShelfTextIndex: ObservableObject {
             if facts.putAway {
                 // Put away in iCloud: no text, and none is fetched.
                 entries[path] = Entry(stamp: stamp)
-                texts.folded[path] = nil
+                if workingTexts.folded.removeValue(forKey: path) != nil { changedText(at: path) }
                 continue
             }
             let text: String?
@@ -211,14 +252,15 @@ final class ShelfTextIndex: ObservableObject {
             guard let text else {
                 // A file with no text to give (empty, or not text) is remembered as such.
                 entries[path] = Entry(stamp: stamp)
-                texts.folded[path] = nil
+                if workingTexts.folded.removeValue(forKey: path) != nil { changedText(at: path) }
                 continue
             }
             let folded = await Task.detached(priority: .utility) { Self.prepare(text) }.value
             // The folders were read again while this one was read, and it is no longer on the shelf.
             guard wantedPaths.contains(path) else { continue }
             entries[path] = Entry(stamp: stamp)
-            texts.folded[path] = folded
+            workingTexts.folded[path] = folded
+            changedText(at: path)
             count += 1
         }
         if count > 0 { log.info("Read \(count) text files for the Shelf's search") }
@@ -226,7 +268,7 @@ final class ShelfTextIndex: ObservableObject {
 
     private func drop(_ path: String) {
         entries[path] = nil
-        texts.folded[path] = nil
+        if workingTexts.folded.removeValue(forKey: path) != nil { changedText(at: path) }
     }
 
     /// The text as it is kept: its first 200,000 characters, folded, as UTF-8.

@@ -34,6 +34,8 @@ enum ArtifactRead: Hashable, Sendable {
     case text(version: String)
     /// `GET /api/artifacts/versions/<v>`, whole, up to 8 MB.
     case download(version: String)
+    /// A save larger than the preview cap, streamed to a private native file.
+    case fileDownload(version: String)
     /// `GET /api/artifacts/<artifact>/versions`: every version of one artifact,
     /// oldest first, projected (Keep). Ids here are 36-character UUIDs.
     case versions(artifact: String)
@@ -56,6 +58,7 @@ enum ArtifactRead: Hashable, Sendable {
         case .thumb(let version, let width): Self.arguments("thumb", version: version, width: width)
         case .text(let version): Self.arguments("text", version: version)
         case .download(let version): Self.arguments("download", version: version)
+        case .fileDownload(let version): Self.arguments("download", version: version)
         case .versions(let artifact): Self.arguments("versions", artifact: artifact)
         case .facts(let version): Self.arguments("facts", version: version)
         case .lineage(let version): Self.arguments("lineage", version: version)
@@ -79,7 +82,7 @@ enum ArtifactRead: Hashable, Sendable {
         case .thumb(let version, let width):
             guard PlanCheck.isVersionID(version), Self.widths.contains(width) else { return nil }
             path = "/api/artifacts/versions/\(version)?thumbnail=\(width)"
-        case .text(let version), .download(let version):
+        case .text(let version), .download(let version), .fileDownload(let version):
             guard PlanCheck.isVersionID(version) else { return nil }
             path = "/api/artifacts/versions/\(version)"
         case .versions(let artifact):
@@ -250,6 +253,7 @@ enum ArtifactReadOutcome: Equatable, Sendable {
     case lineage(ArtifactLineage)
     /// A thumbnail's or a download's bytes, within the cap.
     case bytes(Data)
+    case file(ArtifactFile)
     /// The text's first 256 KB, decoded; `truncated` when the file is longer.
     case text(String, truncated: Bool)
     /// A NUL in the first 8 KB: not text.
@@ -1097,12 +1101,20 @@ extension WebContainer {
     func readArtifact(_ read: ArtifactRead, nonce: String? = nil) async throws -> ArtifactReadOutcome {
         guard status == .ready else { throw WebAPIError.notReady }
         guard read.path != nil else { throw WebAPIError.notAllowed }
+        if case .fileDownload(let version) = read {
+            return await readArtifactFile(version: version, nonce: nonce ?? ArtifactReadAbort.makeNonce())
+        }
         var arguments = read.arguments
         arguments["nonce"] = nonce ?? NSNull()
         let value = try await webView.callAsyncJavaScript(ArtifactReaderScript.body, arguments: arguments,
                                                           in: nil, contentWorld: .defaultClient)
         guard let text = value as? String else { throw WebAPIError.badResponse }
-        let outcome = ArtifactReaderScript.outcome(of: Data(text.utf8), for: read)
+        // JSON and base64 decoding can take a frame or more for large artifacts.
+        // Only the WebKit call and the session state belong on the main actor.
+        let outcome = await Task.detached(priority: .userInitiated) {
+            ArtifactReaderScript.outcome(of: Data(text.utf8), for: read)
+        }.value
+        if Task.isCancelled { return .cancelled }
         // Refused: the page's session didn't take. Sign in again.
         if outcome == .lost { sessionLost() }
         return outcome
@@ -1111,6 +1123,8 @@ extension WebContainer {
     /// Aborts the page's fetch for the read made with `nonce`, in the reads'
     /// own content world, and nothing else. Only the results shelf calls it.
     func abortArtifactRead(_ nonce: String) async {
+        _ = try? await webView.callAsyncJavaScript(ArtifactFileScript.abort, arguments: ["nonce": nonce],
+                                                   in: nil, contentWorld: .defaultClient)
         _ = try? await webView.callAsyncJavaScript(ArtifactReaderScript.abort, arguments: ["nonce": nonce],
                                                    in: nil, contentWorld: .defaultClient)
     }

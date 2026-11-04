@@ -312,6 +312,8 @@ final class ResultsShelf: ObservableObject {
     /// Save All the window's closing left unwinding while the next one began.
     private var savingHolds: [String: Int] = [:]
     private var saveAllTasks: [String: Task<Void, Never>] = [:]
+    private var saveTasks: [String: Task<ShelfSaveOutcome, Never>] = [:]
+    private var finalizingSaves: Set<String> = []
     /// What closing the window left to finish: stopped tasks unwinding and
     /// the old run's folder being deleted. Each close adds to the chain.
     private var unwinding: Task<Void, Never>?
@@ -614,8 +616,8 @@ final class ResultsShelf: ObservableObject {
         return nil
     }
 
-    /// The one path every whole-file read takes (Quick Look, drag, Copy, Save,
-    /// Save All): the shared queue within the time limit, and the bytes
+    /// Small whole-file reads (Quick Look, drag, Copy, and small saves):
+    /// the shared queue within the time limit, and the bytes
     /// checked against the cap again, whatever the listing said.
     private func fetch(_ entry: ArtifactEntry, priority: ShelfTransfers.Priority,
                        keepsOnClose: Bool = false) async -> Fetched {
@@ -623,6 +625,35 @@ final class ResultsShelf: ObservableObject {
         case .answered(.bytes(let data)):
             guard case .success(let bytes) = ArtifactGate.downloadBytes(data) else { return .tooBig }
             return .bytes(bytes)
+        case .answered(.tooBig): return .tooBig
+        case .answered(.cancelled), .cancelled: return .cancelled
+        case .answered(let other): return .failed(ShelfFailure(other))
+        case .timedOut: return .failed(.timedOut)
+        case .notReady: return .failed(.notReady)
+        }
+    }
+
+    private enum SavedFetched: Sendable {
+        case bytes(Data), file(ArtifactFile), tooBig, failed(ShelfFailure), cancelled
+    }
+
+    /// Large saves use the same queue, with a private spool instead of a
+    /// whole-file base64 value. An unlisted size can fall back after the small
+    /// reader encounters its cap; previews never take this path.
+    private func fetchSaving(_ entry: ArtifactEntry, priority: ShelfTransfers.Priority,
+                             keepsOnClose: Bool = false) async -> SavedFetched {
+        guard !Task.isCancelled else { return .cancelled }
+        if entry.size > ArtifactFileLimits.maximum { return .tooBig }
+        if entry.size <= ArtifactReaderScript.Cap.download {
+            switch await fetch(entry, priority: priority, keepsOnClose: keepsOnClose) {
+            case .bytes(let data): return .bytes(data)
+            case .failed(let failure): return .failed(failure)
+            case .cancelled: return .cancelled
+            case .tooBig: break
+            }
+        }
+        switch await transfers.read(.fileDownload(version: entry.version), priority: priority, keepsOnClose: keepsOnClose) {
+        case .answered(.file(let file)): return .file(file)
         case .answered(.tooBig): return .tooBig
         case .answered(.cancelled), .cancelled: return .cancelled
         case .answered(let other): return .failed(ShelfFailure(other))
@@ -845,16 +876,19 @@ final class ResultsShelf: ObservableObject {
 
     // MARK: Saving
 
-    /// Save: the file's bytes, within 8 MB by its listing and again by its
+    /// Save: the file's content, within 512 MB by its listing and again by its
     /// bytes, written where the person chose (off the main actor). Only here,
     /// and in Save All, does a result's content reach the disk for keeps.
     /// Pass the file's project to remember the folder for the next save in it.
     /// It goes on if the window closes.
     @discardableResult
     func save(_ entry: ArtifactEntry, to url: URL, project: String? = nil) async -> ShelfSaveOutcome {
-        guard !saving.contains(entry.version) else { return .busy }
+        guard !saving.contains(entry.version), saveTasks[entry.version] == nil else { return .busy }
         fileProblems[entry.version] = nil
-        let outcome = await download(entry, to: url)
+        let task = Task { await download(entry, to: url) }
+        saveTasks[entry.version] = task
+        let outcome = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        saveTasks[entry.version] = nil
         switch outcome {
         case .saved(let url):
             saved[entry.version] = url
@@ -872,7 +906,18 @@ final class ResultsShelf: ObservableObject {
         return outcome
     }
 
-    private static let tooBigToSave = "Over 8 MB: open the session to download it there."
+    private static let tooBigToSave = "Over 512 MB: open the session to download it there."
+
+    func cancelSave(_ version: String) {
+        guard canCancelSave(version) else { return }
+        saveTasks[version]?.cancel()
+    }
+    func canCancelSave(_ version: String) -> Bool { saveTasks[version] != nil && !finalizingSaves.contains(version) }
+
+    func cancelSaveAll(_ sessionID: String) {
+        saveAllTasks[sessionID]?.cancel()
+        batches[sessionID] = nil
+    }
 
     /// A write that failed, on the row: what the system or the writer said.
     private static func couldntSave(_ error: any Error) -> String {
@@ -880,18 +925,26 @@ final class ResultsShelf: ObservableObject {
     }
 
     private func download(_ entry: ArtifactEntry, to url: URL) async -> ShelfSaveOutcome {
-        switch refusal(for: entry) {
-        case .tooBig?: return .tooBig
-        case .failed(let failure)?: return .failed(failure)
-        default: break
-        }
+        guard !Task.isCancelled else { return .cancelled }
+        guard dependencies.isReady() else { return .failed(.notReady) }
+        if entry.size > ArtifactFileLimits.maximum { return .tooBig }
         // A folder that stopped answering refuses at once: nothing is downloaded for it.
         if savedFiles.isHeldOff(url.deletingLastPathComponent()) {
             return .writeFailed(Self.couldntSave(ShelfSaveError.folderStillSilent))
         }
         beginSaving(entry.version)
         defer { endSaving(entry.version) }
-        switch await fetch(entry, priority: .foreground, keepsOnClose: true) {
+        let fetched = await fetchSaving(entry, priority: .foreground, keepsOnClose: true)
+        guard !Task.isCancelled else { return .cancelled }
+        objectWillChange.send()
+        finalizingSaves.insert(entry.version)
+        defer { finalizingSaves.remove(entry.version) }
+        switch fetched {
+        case .file(let file):
+            do {
+                try await savedFiles.write(file, to: url)
+                return .saved(url)
+            } catch { return .writeFailed(Self.couldntSave(error)) }
         case .bytes(let bytes):
             do {
                 try await savedFiles.write(bytes, to: url, using: dependencies.write)
@@ -949,7 +1002,7 @@ final class ResultsShelf: ObservableObject {
     /// Save All…: every file of a loaded session, saved into `folder`.
     /// Two of its downloads wait in the shared queue at a time (after what the
     /// person asked for, before lists and thumbnails), each within the time
-    /// limit and the 8 MB cap (one over it is skipped without a download).
+    /// limit and the 512 MB file cap (one over it is skipped without a download).
     /// A name already in the folder, or earlier in the batch, gets " 2",
     /// " 3"… before its extension: nothing is overwritten. The names are
     /// settled first from one listing of the folder, off the main actor
@@ -993,7 +1046,7 @@ final class ResultsShelf: ObservableObject {
         var wanted: [(entry: ArtifactEntry, name: String)] = []
         for entry in entries {
             fileProblems[entry.version] = nil
-            if ArtifactGate.download(size: entry.size) != nil {
+            if entry.size > ArtifactFileLimits.maximum {
                 summary.tooBig += 1
                 done += 1
                 fileProblems[entry.version] = Self.tooBigToSave
@@ -1033,7 +1086,7 @@ final class ResultsShelf: ObservableObject {
         }
         guard !Task.isCancelled, started == generation else { return }
 
-        await withTaskGroup(of: (Int, Fetched).self) { group in
+        await withTaskGroup(of: (Int, SavedFetched).self) { group in
             var next = 0
             var active = 0
             while true {
@@ -1056,7 +1109,7 @@ final class ResultsShelf: ObservableObject {
                     beginSaving(entry.version)
                     marked.insert(index)
                     group.addTask {
-                        let fetched = await self.fetch(entry, priority: .saveAll)
+                        let fetched = await self.fetchSaving(entry, priority: .saveAll)
                         return (index, fetched)
                     }
                 }
@@ -1070,6 +1123,16 @@ final class ResultsShelf: ObservableObject {
                 let entry = work[index].entry
                 done += 1
                 switch fetched {
+                case .file(let file):
+                    do {
+                        let url = try await writeUnused(file, planned: work[index], plan: plan)
+                        saved[entry.version] = url
+                        summary.saved += 1
+                        if !remembered { folders.remember(folder, for: project); remembered = true }
+                    } catch {
+                        summary.failed += 1
+                        fileProblems[entry.version] = Self.couldntSave(error)
+                    }
                 case .bytes(let bytes):
                     do {
                         let url = try await writeUnused(bytes, planned: work[index], plan: plan)
@@ -1123,6 +1186,22 @@ final class ResultsShelf: ObservableObject {
             let url = plan.url(name)
             do {
                 try await savedFiles.write(bytes, to: url, using: dependencies.write, unlessExists: dependencies.exists)
+                return url
+            } catch ShelfSaveError.nameTaken, ShelfSaveError.earlierSaveUnfinished {
+                plan.learnedTaken(name)
+                name = try await plan.claim(planned.wanted)
+            }
+        }
+        throw ShelfSaveError.nameTaken
+    }
+
+    private func writeUnused(_ file: ArtifactFile, planned: (entry: ArtifactEntry, wanted: String, name: String),
+                             plan: ShelfNamePlan) async throws -> URL {
+        var name = planned.name
+        for _ in 0..<Self.nameTries {
+            let url = plan.url(name)
+            do {
+                try await savedFiles.write(file, to: url, unlessExists: dependencies.exists)
                 return url
             } catch ShelfSaveError.nameTaken, ShelfSaveError.earlierSaveUnfinished {
                 plan.learnedTaken(name)

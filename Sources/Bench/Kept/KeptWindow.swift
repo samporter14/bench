@@ -29,6 +29,20 @@ final class KeptCommands: ObservableObject {
 /// The Kept window. It takes charge of the Quick Look panel for the files it shows.
 final class KeptWindow: NSWindow {
     var quickLook: KeptQuickLook?
+    weak var paperModel: PaperModel?
+    var showsPapers: (@MainActor () -> Bool)?
+
+    /// Keep ordinary text-field undo when an editor or sheet has focus.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if attachedSheet == nil, showsPapers?() == true,
+           (firstResponder as? NSTextView)?.isEditable != true,
+           event.charactersIgnoringModifiers?.lowercased() == "z" {
+            if flags == .command, paperModel?.canUndo == true { paperModel?.undo(); return true }
+            if flags == [.command, .shift], paperModel?.canRedo == true { paperModel?.redo(); return true }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
 
@@ -123,6 +137,8 @@ final class KeptWindowController: NSObject, NSWindowDelegate {
             window.isRestorable = false
             window.delegate = self
             window.quickLook = quickLook
+            window.paperModel = model.papers
+            window.showsPapers = { [weak model] in model?.showsPapers == true }
             window.toolbarStyle = .unified
             if !window.setFrameUsingName(Self.frameName) { window.center() }
             window.setFrameAutosaveName(Self.frameName)

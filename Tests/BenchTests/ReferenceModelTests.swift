@@ -8,6 +8,13 @@ import Foundation
 import Testing
 @testable import Bench
 
+private actor RenderLatch {
+    private var waiter: CheckedContinuation<Void, Never>?
+    var isWaiting: Bool { waiter != nil }
+    func wait() async { await withCheckedContinuation { waiter = $0 } }
+    func release() { waiter?.resume(); waiter = nil }
+}
+
 /// A session's made-up history and the reads the reader makes of it. The
 /// first read is the newest 50 rows, as the page's is; later ones are 25.
 @MainActor
@@ -82,7 +89,7 @@ final class FakeHistory {
             },
             open: { [self] in opened.append($0.id) },
             pasteboard: { [self] in copied.append($0); return true },
-            render: { ReferenceRules.plainText($0) },
+            render: { AnswerDocument(text: ReferenceRules.plainText($0), unsupported: []) },
             now: { Date(timeIntervalSince1970: 1_792_000_000) })
     }
 }
@@ -122,6 +129,33 @@ struct ReferenceModelTests {
 
     static func settle(_ model: ReferenceModel) async {
         for _ in 0..<400 where model.phase == .reading { await Task.yield() }
+    }
+
+    @Test func renderingAnOldAnswerDoesNotReplaceTheNewOne() async throws {
+        let rows = Self.history(30, you: [0: "First", 20: "Second"], claude: [5: "Older answer", 28: "Newest answer"])
+        let fake = FakeHistory(rows: rows)
+        let latch = RenderLatch()
+        var dependencies = fake.dependencies
+        dependencies.render = { text in
+            await latch.wait()
+            return AnswerDocument(text: NSAttributedString(string: text), unsupported: [])
+        }
+        let model = ReferenceModel(session: Self.session, dependencies: dependencies,
+                                   gate: ReadingGate(now: { Date() }, sleep: { _ in }))
+        model.open()
+        await Self.settle(model)
+        let old = try #require(model.current)
+        let task = Task { await model.prepare(old) }
+        for _ in 0..<1_000 {
+            if await latch.isWaiting { break }
+            await Task.yield()
+        }
+        model.earlier()
+        await Self.settle(model)
+        #expect(model.current?.id != old.id)
+        await latch.release()
+        await task.value
+        #expect(model.rendered(old) == nil)
     }
 
     @Test func openShowsTheNewestReplyWithItsQuestionFiguresAndWords() async throws {

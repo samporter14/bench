@@ -131,6 +131,16 @@ struct PaperView: View {
                 .fixedSize()
                 .accessibilityLabel("Paper, \(paper.paper.name)")
                 Spacer(minLength: 12)
+                Button { papers.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                    .buttonStyle(SolanumPillStyle(.medium))
+                    .disabled(!papers.canUndo)
+                    .help("Undo paper change (Command-Z)")
+                    .accessibilityLabel("Undo paper change")
+                Button { papers.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                    .buttonStyle(SolanumPillStyle(.medium))
+                    .disabled(!papers.canRedo)
+                    .help("Redo paper change (Shift-Command-Z)")
+                    .accessibilityLabel("Redo paper change")
                 Button(model.freshness.isChecking ? "Checking\u{2026}" : "Check") { model.freshness.checkAgain(held) }
                     .buttonStyle(SolanumPillStyle(.medium))
                     .disabled(held.isEmpty || model.freshness.isChecking)
@@ -459,7 +469,8 @@ struct PaperSlotView: View {
 /// offered; a label that holds a figure already is said before it is replaced.
 struct PaperAddSheet: View {
     @ObservedObject var model: PaperModel
-    let item: ShelfItem
+    let items: [ShelfItem]
+    var skippedCount = 0
     let dismiss: () -> Void
     let added: (KeptPaper) -> Void
 
@@ -473,10 +484,11 @@ struct PaperAddSheet: View {
     private var chosen: KeptPaper? { model.papers.first { $0.id == paperID } }
     private var parsed: PaperLabel? { PaperLabel(label) }
     private var making: Bool { paperID == Self.newPaper || model.papers.isEmpty }
+    private var labels: [PaperLabel]? { parsed.flatMap { PaperRules.batchLabels(start: $0, count: items.count) } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add \u{201C}\(item.title)\u{201D} to a Paper")
+            Text(items.count == 1 ? "Add \u{201C}\(items.first?.title ?? "")\u{201D} to a Paper" : "Add \(items.count) Items to a Paper")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Solanum.ink)
                 .lineLimit(2)
@@ -491,9 +503,28 @@ struct PaperAddSheet: View {
                 if making {
                     TextField("Name", text: $newName, prompt: Text("The paper\u{2019}s name"))
                 }
-                TextField("Panel", text: $label, prompt: Text("1A"))
+                TextField(items.count > 1 ? "Starting panel" : "Panel", text: $label, prompt: Text("1A"))
             }
             .formStyle(.columns)
+            if items.count > 1, let labels {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(zip(items, labels)), id: \.0.id) { item, label in
+                            Text("\(label.text)  \(item.title)")
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .font(.system(size: Solanum.captionSize))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 110)
+            }
+            if skippedCount > 0 {
+                Text("\(skippedCount) selection note\(skippedCount == 1 ? " is" : "s are") not added to papers.")
+                    .font(.system(size: Solanum.captionSize))
+                    .foregroundStyle(Solanum.muted)
+            }
             Text(note)
                 .font(.system(size: Solanum.captionSize))
                 .foregroundStyle(Solanum.muted)
@@ -520,14 +551,16 @@ struct PaperAddSheet: View {
     }
 
     private var canAdd: Bool {
-        guard !working, parsed != nil else { return false }
+        guard !working, labels != nil else { return false }
         return making ? !newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty : chosen != nil
     }
 
     private var note: String {
-        guard let parsed else { return "A label such as 2B, or S1A for the supplement." }
-        if let held = chosen?.paper.panels.first(where: { $0.label == parsed && $0.folder != nil }) {
-            return "\(parsed.title) holds \(held.file ?? PaperRules.lastComponent(of: held.folder ?? "")) now; this takes its place. Its kept folder stays as it is."
+        guard parsed != nil else { return "A label such as 2B, or S1A for the supplement." }
+        guard let labels else { return "Choose a starting panel with enough letters remaining in the figure." }
+        let occupied = chosen?.paper.panels.filter { labels.contains($0.label) && $0.folder != nil } ?? []
+        if !occupied.isEmpty {
+            return "This replaces \(occupied.map { $0.label.text }.joined(separator: ", ")). The kept folders stay as they are."
         }
         return "The paper names this kept folder; nothing is copied or moved."
     }
@@ -540,8 +573,9 @@ struct PaperAddSheet: View {
             let target: KeptPaper?
             if making { target = await model.create(named: newName) } else { target = chosen }
             guard let target else { return }
-            model.assign(item, to: parsed, in: target)
+            model.assign(items, startingAt: parsed, in: target)
             await model.settle()
+            guard model.problem == nil else { return }
             added(target)
             dismiss()
         }

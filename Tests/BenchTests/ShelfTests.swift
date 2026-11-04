@@ -446,8 +446,8 @@ struct ShelfFailureTests {
     @Test func aFileOverTheCapIsNotDownloaded() async throws {
         let rig = try Rig()
         defer { rig.tearDown() }
-        rig.science.factsSize = 9 * 1024 * 1024
-        #expect(failure(await rig.shelf.add(Made.source())) == "z_prime_by_plate.png is over 8 MB, which is more than the shelf takes.")
+        rig.science.factsSize = KeepRules.cap + 1
+        #expect(failure(await rig.shelf.add(Made.source())) == "z_prime_by_plate.png is over 512 MB, which is more than the shelf takes.")
         #expect(rig.science.downloads.isEmpty)
     }
 

@@ -240,7 +240,8 @@ final class ShelfTransfers {
         readers[ObjectIdentifier(operation)] = operation
         mostActive = max(mostActive, readers.count)
         let key = operation.key
-        let reader = reader, wait = wait, timeout = timeout
+        let reader = reader, wait = wait
+        let timeout = if case .fileDownload = key { max(timeout, ArtifactFileLimits.timeout) } else { timeout }
         operation.reader = Task { [weak self] in
             let outcome = await reader(key)
             self?.finished(operation, outcome)

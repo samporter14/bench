@@ -23,6 +23,7 @@ struct QuickOpenSheet: View {
     /// you choose must not move the highlight to another one. Nil, or one that
     /// has left the list, means the first.
     @State private var selectedID: String?
+    @State private var searchingAnswers = false
     @FocusState private var searching: Bool
 
     /// The sheet is about 560 wide and no more than about 420 tall: the field
@@ -69,6 +70,15 @@ struct QuickOpenSheet: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             Divider()
+            HStack {
+                Spacer()
+                Button("Search Answers\u{2026}") { searchingAnswers = true }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 6)
             if results.isEmpty {
                 nothingToShow
             } else {
@@ -81,6 +91,7 @@ struct QuickOpenSheet: View {
         .defaultFocus($searching, true)
         .onExitCommand { dismiss() }
         .onAppear { searching = true }
+        .sheet(isPresented: $searchingAnswers) { AnswerSearchView(query: query) }
         .onDisappear {
             search.cancel()
             files.cancel()

@@ -223,4 +223,47 @@ struct PaperModelTests {
         #expect(!index.results.contains { $0.collection == PaperFile.folderName })
         #expect(ShelfRules.items(from: index.results).count == rig.items.count)
     }
+
+    @Test func aBatchIsOneUndoableChangeAndRedoRestoresItsOrder() async throws {
+        let rig = await rig()
+        defer { clean(rig) }
+        let paper = try #require(await rig.papers.create(named: "Batch"))
+        let items = [try rig.item("z_prime_by_plate.png"), try rig.item("plate_7_heatmap.png")]
+        rig.papers.assign(items, startingAt: try label("2B"), in: paper)
+        await rig.papers.settle()
+        #expect(rig.papers.selected?.paper.panels.map(\.label.text) == ["2B", "2C"])
+        #expect(rig.papers.canUndo && !rig.papers.canRedo)
+        rig.papers.undo()
+        await rig.papers.settle()
+        #expect(rig.papers.selected?.paper.panels.isEmpty == true)
+        #expect(rig.papers.canRedo)
+        rig.papers.redo()
+        await rig.papers.settle()
+        #expect(rig.papers.selected?.paper.panels.compactMap(\.file) == items.map(\.fileName))
+        #expect(PaperFile.parse(try text(paper.folder.appending(path: "PAPER.md")))?.panels.map(\.label.text) == ["2B", "2C"])
+    }
+
+    @Test func undoDoesNotOverwriteAnExternalEdit() async throws {
+        let rig = await rig()
+        defer { clean(rig) }
+        let paper = try #require(await rig.papers.create(named: "Conflict"))
+        rig.papers.assign(try rig.item("z_prime_by_plate.png"), to: try label("1A"), in: paper)
+        await rig.papers.settle()
+        var outside = try #require(rig.papers.selected).paper
+        outside.panels.append(PaperPanel(label: try label("3B")))
+        let edited = PaperFile.render(outside)
+        let url = paper.folder.appending(path: "PAPER.md")
+        try Data(edited.utf8).write(to: url)
+        rig.papers.undo()
+        await rig.papers.settle()
+        #expect(try text(url) == edited)
+        #expect(rig.papers.problem == PaperModel.changedOutside)
+        #expect(!rig.papers.canUndo && !rig.papers.canRedo)
+    }
+
+    @Test func batchLabelsDoNotRunPastTheEndOfAFigure() throws {
+        #expect(PaperRules.batchLabels(start: try label("S2Y"), count: 2)?.map(\.text) == ["S2Y", "S2Z"])
+        #expect(PaperRules.batchLabels(start: try label("1Z"), count: 2) == nil)
+        #expect(PaperRules.batchLabels(start: try label("1"), count: 2) == nil)
+    }
 }

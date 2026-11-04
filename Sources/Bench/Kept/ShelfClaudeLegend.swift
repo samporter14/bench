@@ -604,8 +604,9 @@ final class ShelfClaudeLegend: ObservableObject {
         let kept = KeepItem(role: .legend, source: .download(version: candidate.file.v), artifact: candidate.file.a, version: candidate.file.v,
                             name: fileName, size: candidate.file.size, sha: nil)
         let bytes: Data
-        switch await d.keep.fetch(kept) {
+        switch await d.keep.fetch(kept, fileBacked: false) {
         case .bytes(let data, _): bytes = data
+        case .file: return .failed(Rules.notChanged(Rules.tooBig(name)))
         case .gone: return .failed(Rules.notChanged(Rules.gone(name)))
         case .tooBig: return .failed(Rules.notChanged(Rules.tooBig(name)))
         case .failed(let why): return .failed(Rules.notChanged("Couldn\u{2019}t get \(name). \(why)"))

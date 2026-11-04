@@ -147,23 +147,34 @@ struct KeepDependencies {
 enum KeepFetched {
     /// `expected`: the daemon's checksum, when the bytes don't match it.
     case bytes(Data, expected: String?), gone, tooBig, failed(String), cancelled
+    case file(ArtifactFile, expected: String?)
 }
 
 extension KeepDependencies {
     /// A file's bytes: the script from the text it is, the rest through the
-    /// shelf's queue and the 8 MB cap, checked against the daemon's checksum
+    /// shelf's queue and the 512 MB file cap, checked against the daemon's checksum
     /// when it has one. Bytes that don't match are kept all the same (a
     /// reference file's checksum can be stale, and Capsid can't tell one from a
     /// stored file), with the checksum they should have had, so the README and
     /// the sheet can say so. The Keep sheet and the Shelf both keep through it.
     @MainActor
-    func fetch(_ item: KeepItem) async -> KeepFetched {
+    func fetch(_ item: KeepItem, fileBacked: Bool = true) async -> KeepFetched {
         switch item.source {
         case .text(let text):
             return .bytes(Data(text.utf8), expected: nil)
         case .download(let version):
-            if let size = item.size, size > KeepRules.cap { return .tooBig }
-            switch await read(.download(version: version)) {
+            let cap = fileBacked ? KeepRules.cap : ArtifactReaderScript.Cap.download
+            if let size = item.size, size > cap { return .tooBig }
+            let large = fileBacked && (item.size ?? 0) > ArtifactReaderScript.Cap.download
+            var result = await read(large ? .fileDownload(version: version) : .download(version: version))
+            if !large, fileBacked, result == .answered(.tooBig) {
+                result = await read(.fileDownload(version: version))
+            }
+            switch result {
+            case .answered(.file(let file)):
+                guard fileBacked, file.bytes <= cap else { return .tooBig }
+                let expected = item.sha?.lowercased()
+                return .file(file, expected: expected == file.sha256 ? nil : expected)
             case .answered(.bytes(let data)):
                 guard case .success(let bytes) = ArtifactGate.downloadBytes(data) else { return .tooBig }
                 if let sha = item.sha?.lowercased(), sha != disk.sha256(of: bytes) {
@@ -206,6 +217,7 @@ enum KeptSettings {
 
 @MainActor
 final class KeepModel: ObservableObject, Identifiable {
+    @Published private(set) var transferringVersion: String?
     let id = UUID()
     let subject: KeepSubject
     private let dependencies: KeepDependencies
@@ -699,6 +711,23 @@ final class KeepModel: ObservableObject, Identifiable {
         for (index, item) in plan.all.enumerated() {
             if Task.isCancelled { await d.disk.abandon(destination); d.note("Keep: cancelled"); phase = .ready; return }
             switch await fetch(item) {
+            case .file(let file, let expected):
+                do {
+                    try await d.disk.write(file, to: item.relativePath, in: destination)
+                    copied.append(KeptFile(path: item.relativePath, role: item.role, artifact: item.artifact, version: item.version,
+                                           index: nil, of: nil, sha256: file.sha256, bytes: file.bytes, expectedSha256: expected))
+                    if item.role == .legend {
+                        if let data = try? await Task.detached(priority: .utility, operation: { try file.prefix(ArtifactReaderScript.Cap.text) }).value {
+                            legend = Self.legendText(data, file: item.name, figure: plan.figure.name) ?? ""
+                        }
+                    }
+                } catch where item.role == .figure {
+                    await d.disk.abandon(destination)
+                    phase = .failed(KeepRules.figureNotCopied(item.name, because: Self.reason(for: error)), retry: nil)
+                    return
+                } catch {
+                    missing.append(KeptMissing(role: item.role, name: item.name, reason: KeptDiskError.sentence(error)))
+                }
             case .bytes(let data, let expected):
                 do {
                     try await d.disk.write(data, to: item.relativePath, in: destination)
@@ -735,7 +764,7 @@ final class KeepModel: ObservableObject, Identifiable {
                 phase = .failed(KeepRules.figureTooBig(item.name), retry: nil)
                 return
             case .tooBig:
-                missing.append(KeptMissing(role: item.role, name: item.name, reason: "too big to keep here (over 8 MB)"))
+                missing.append(KeptMissing(role: item.role, name: item.name, reason: "too big to keep here (over 512 MB)"))
             case .failed(let sentence) where item.role == .figure:
                 await d.disk.abandon(destination)
                 d.note("Keep failed: the figure couldn't be read")
@@ -824,6 +853,20 @@ final class KeepModel: ObservableObject, Identifiable {
         copying: for item in wanted {
             if Task.isCancelled { break }
             switch await fetch(item) {
+            case .file(let file, let expected):
+                do {
+                    try await d.disk.writeInto(folder, file, relativePath: item.relativePath)
+                    landed.append(KeptFile(path: item.relativePath, role: item.role, artifact: item.artifact, version: item.version,
+                                           index: nil, of: nil, sha256: file.sha256, bytes: file.bytes, expectedSha256: expected))
+                    if item.role == .legend, let figure = keptPlan?.figure.name {
+                        if let data = try? await Task.detached(priority: .utility, operation: { try file.prefix(ArtifactReaderScript.Cap.text) }).value {
+                            legend = Self.legendText(data, file: item.name, figure: figure)
+                        }
+                    }
+                    missing.removeAll { $0.name == item.name && $0.role == item.role }
+                    kept += 1
+                    phase = .keeping(done: kept, total: outcome.total)
+                } catch { replaceReason(&missing, item, KeptDiskError.sentence(error)) }
             case .bytes(let data, let expected):
                 do {
                     try await d.disk.writeInto(folder, data, relativePath: item.relativePath)
@@ -838,7 +881,7 @@ final class KeepModel: ObservableObject, Identifiable {
                     replaceReason(&missing, item, KeptDiskError.sentence(error))
                 }
             case .gone: replaceReason(&missing, item, ShelfFailure.missing.sentence)
-            case .tooBig: replaceReason(&missing, item, "too big to keep here (over 8 MB)")
+            case .tooBig: replaceReason(&missing, item, "too big to keep here (over 512 MB)")
             case .failed(let sentence): replaceReason(&missing, item, sentence)
             case .cancelled: break copying
             }
@@ -905,7 +948,9 @@ final class KeepModel: ObservableObject, Identifiable {
 
     /// A file's bytes (`KeepDependencies.fetch`).
     private func fetch(_ item: KeepItem) async -> KeepFetched {
-        await dependencies.fetch(item)
+        transferringVersion = item.version
+        defer { transferringVersion = nil }
+        return await dependencies.fetch(item)
     }
 
     // MARK: The result

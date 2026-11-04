@@ -102,6 +102,7 @@ private final class Science {
     /// A download answered here first; nil goes on as usual.
     var onDownload: (@MainActor (String) -> ShelfTransferResult?)?
     private(set) var downloads: [String] = []
+    private(set) var fileDownloads: [String] = []
     /// The figure's file name now, and what the inputs are called.
     var figureName = "z_prime.png"
     var inputNames = Made.inputNames
@@ -220,6 +221,9 @@ private final class Science {
             if vanished.contains(v) { return .answered(.missing) }
             if let left = corrupt[v], left > 0 { corrupt[v] = left - 1; return .answered(.bytes(Data("not these bytes".utf8))) }
             return .answered(.bytes(Made.bytes(v)))
+        case .fileDownload(let v):
+            fileDownloads.append(v)
+            return onDownload?(v) ?? .answered(.unreadable)
         case .thumb, .text, .list:
             return .answered(.unreadable)
         }
@@ -911,7 +915,7 @@ struct KeepFigureFirstModelTests {
         model.open()
         try await until("the sheet is filled") { model.isReady }
         #expect(!model.canKeep)
-        #expect(model.versionSentence.hasSuffix("it\u{2019}s over the 8 MB Capsid can copy here, so this version can\u{2019}t be kept."))
+        #expect(model.versionSentence.hasSuffix("it\u{2019}s over the 512 MB Capsid can copy here, so this version can\u{2019}t be kept."))
         model.keep()
         #expect(model.phase == .ready)
         #expect(rig.science.downloads.isEmpty)
@@ -921,7 +925,7 @@ struct KeepFigureFirstModelTests {
         model.choose(Made.v3)
         try await until("version 3 is read") { model.settled }
         #expect(model.canKeep)
-        #expect(!model.versionSentence.contains("8 MB"))
+        #expect(!model.versionSentence.contains("512 MB"))
         model.keep()
         try await until("it is kept") { model.keptOutcome != nil }
         #expect(try #require(model.keptOutcome).isComplete)
@@ -931,7 +935,8 @@ struct KeepFigureFirstModelTests {
     @Test func aFigureTheDaemonCallsTooBigEndsTheKeepWithNothingMadeAndRetryHasNothingToDo() async throws {
         let rig = try Rig()
         defer { rig.tearDown() }
-        // Its listing didn't say how big it is; the read does.
+        // Its listing didn't say how big it is. Both the small reader and
+        // the file-backed fallback refuse it: it exceeds the save cap too.
         rig.science.onDownload = { v in v == Made.v4 ? .answered(.tooBig) : nil }
         let model = rig.model()
         model.open()
@@ -946,6 +951,7 @@ struct KeepFigureFirstModelTests {
         // Nothing was made: no folder, no hidden one, and the data and code were never fetched.
         #expect(names(rig.collection).isEmpty)
         #expect(rig.science.downloads == [Made.v4])
+        #expect(rig.science.fileDownloads == [Made.v4])
         #expect(try await rig.disk.scan().isEmpty)
 
         // Another version, then, as the sentence says.

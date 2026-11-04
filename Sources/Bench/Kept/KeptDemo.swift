@@ -132,7 +132,7 @@ enum KeptDemo {
                     }
                     if let index = versions.firstIndex(where: { $0.v == v }) { return .answered(.bytes(chart(variant: index))) }
                     return .answered(.missing)
-                case .thumb, .text, .list:
+                case .thumb, .text, .list, .fileDownload:
                     return .answered(.unreadable)
                 }
             },

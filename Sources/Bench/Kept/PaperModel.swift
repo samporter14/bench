@@ -84,12 +84,24 @@ final class PaperModel: ObservableObject {
     @Published private(set) var problem: String?
     /// An export under way.
     @Published private(set) var exporting = false
+    @Published private(set) var isWriting = false
 
     let disk: KeptDisk
     private let root: @MainActor () -> URL
     private var dependencies: Dependencies
     /// The one write at a time: each change waits for the one before.
     private var writing: Task<Void, Never>?
+    private var pendingWrites = 0
+    private struct HistoryEntry {
+        let before: Paper
+        let after: Paper
+    }
+    private var undoHistory: [String: [HistoryEntry]] = [:]
+    private var redoHistory: [String: [HistoryEntry]] = [:]
+    private let historyLimit = 50
+
+    var canUndo: Bool { !isWriting && selected.map { !(undoHistory[$0.id] ?? []).isEmpty } == true }
+    var canRedo: Bool { !isWriting && selected.map { !(redoHistory[$0.id] ?? []).isEmpty } == true }
 
     init(disk: KeptDisk, root: @escaping @MainActor () -> URL, dependencies: Dependencies? = nil) {
         self.disk = disk
@@ -199,6 +211,13 @@ final class PaperModel: ObservableObject {
         change(paper) { PaperRules.assigning(panel, in: $0) }
     }
 
+    /// A batch is one disk write and one undoable change, in the order the shelf shows its picks.
+    func assign(_ items: [ShelfItem], startingAt label: PaperLabel, in paper: KeptPaper) {
+        guard let labels = PaperRules.batchLabels(start: label, count: items.count) else { return }
+        let panels = zip(items, labels).map { panel(for: $0.0, label: $0.1) }
+        change(paper) { current in panels.reduce(current) { PaperRules.assigning($1, in: $0) } }
+    }
+
     /// Takes a panel off the paper, label and all. The kept folder is left as it is.
     func remove(_ label: PaperLabel, from paper: KeptPaper) {
         change(paper) { PaperRules.removing(label, from: $0) }
@@ -234,9 +253,12 @@ final class PaperModel: ObservableObject {
     /// changed in another app meanwhile is read again and the change is not made, with a sentence.
     private func change(_ kept: KeptPaper, _ transform: @escaping ([PaperPanel]) -> [PaperPanel]) {
         let previous = writing
+        pendingWrites += 1
+        isWriting = true
         writing = Task { @MainActor [weak self] in
             await previous?.value
             guard let self else { return }
+            defer { self.finishedWrite() }
             // What the last write left, not what the caller held: two quick changes both land.
             let current = papers.first { $0.id == kept.id } ?? kept
             var paper = current.paper
@@ -245,9 +267,62 @@ final class PaperModel: ObservableObject {
             do {
                 let written = try await disk.replacePaper(at: current.folder, with: paper, lastRead: current.markdown)
                 if let index = papers.firstIndex(where: { $0.id == written.id }) { papers[index] = written }
+                var history = undoHistory[current.id] ?? []
+                history.append(HistoryEntry(before: current.paper, after: written.paper))
+                if history.count > historyLimit { history.removeFirst(history.count - historyLimit) }
+                undoHistory[current.id] = history
+                redoHistory[current.id] = []
                 problem = nil
             } catch KeptDiskError.changedOutside {
+                undoHistory[current.id] = []
+                redoHistory[current.id] = []
                 problem = PaperModel.changedOutside
+                await refresh()
+            } catch {
+                problem = "Couldn\u{2019}t save the paper. \(KeptDiskError.sentence(error))"
+            }
+        }
+    }
+
+    private func finishedWrite() {
+        pendingWrites -= 1
+        isWriting = pendingWrites > 0
+    }
+
+    func undo() { restoreHistory(undoing: true) }
+    func redo() { restoreHistory(undoing: false) }
+
+    private func restoreHistory(undoing: Bool) {
+        guard !isWriting, let current = selected,
+              let entry = (undoing ? undoHistory[current.id] : redoHistory[current.id])?.last else { return }
+        let expected = undoing ? entry.after : entry.before
+        let replacement = undoing ? entry.before : entry.after
+        guard current.paper == expected else {
+            undoHistory[current.id] = []
+            redoHistory[current.id] = []
+            problem = Self.changedOutside
+            return
+        }
+        pendingWrites += 1
+        isWriting = true
+        writing = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.finishedWrite() }
+            do {
+                let written = try await disk.replacePaper(at: current.folder, with: replacement, lastRead: current.markdown)
+                if let index = papers.firstIndex(where: { $0.id == written.id }) { papers[index] = written }
+                if undoing {
+                    undoHistory[current.id]?.removeLast()
+                    redoHistory[current.id, default: []].append(entry)
+                } else {
+                    redoHistory[current.id]?.removeLast()
+                    undoHistory[current.id, default: []].append(entry)
+                }
+                problem = nil
+            } catch KeptDiskError.changedOutside {
+                undoHistory[current.id] = []
+                redoHistory[current.id] = []
+                problem = Self.changedOutside
                 await refresh()
             } catch {
                 problem = "Couldn\u{2019}t save the paper. \(KeptDiskError.sentence(error))"

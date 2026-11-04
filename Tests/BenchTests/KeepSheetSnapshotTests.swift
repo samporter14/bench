@@ -219,7 +219,7 @@ struct KeepSheetSnapshotTests {
                     if v == inputID { return .answered(.bytes(table)) }
                     if let index = versionIDs.firstIndex(of: v) { return .answered(.bytes(figures[index])) }
                     return .answered(.missing)
-                case .thumb, .text, .list:
+                case .thumb, .text, .list, .fileDownload:
                     return .answered(.unreadable)
                 }
             },

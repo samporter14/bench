@@ -229,6 +229,38 @@ struct ShelfTextCapsTests {
 
 @MainActor
 struct ShelfTextRereadTests {
+    @Test func incrementalMatchesAddRemoveAndPreserveShelfOrder() async throws {
+        let a = result("first.md", folder: "first"), b = result("second.md", folder: "second"), c = result("third.md", folder: "third")
+        let items = ShelfRules.items(from: [a, b, c])
+        let files = MadeFiles()
+        files.set(file(a, "first.md"), "needle")
+        files.set(file(b, "second.md"), "ordinary")
+        files.set(file(c, "third.md"), "needle")
+        let texts = index(files)
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        let before = Set(ShelfRules.matching(items, project: nil, query: "needle", texts: texts.texts).map(\.id))
+
+        files.set(file(a, "first.md"), "ordinary", modified: 2_000)
+        files.set(file(b, "second.md"), "needle", modified: 2_000)
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        #expect(texts.texts.changedPaths == [file(a, "first.md").path, file(b, "second.md").path])
+        let changed = try #require(ShelfRules.matchingCancellable(items, project: nil, query: "needle", texts: texts.texts,
+                                                                 previous: before, changedPaths: texts.texts.changedPaths))
+        #expect(changed == ShelfRules.matching(items, project: nil, query: "needle", texts: texts.texts))
+        #expect(Set(changed.map(\.id)) == [item(b).id, item(c).id])
+
+        // A removed file must also invalidate its old match; unchanged matches stay in shelf order.
+        files.remove(file(c, "third.md"))
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        #expect(texts.texts.changedPaths == [file(c, "third.md").path])
+        let removed = ShelfRules.matchingCancellable(items, project: nil, query: "needle", texts: texts.texts,
+                                                    previous: Set(changed.map(\.id)), changedPaths: texts.texts.changedPaths)
+        #expect(removed == [item(b)])
+    }
+
     @Test func anEditedFileIsReadAgainAndAnUnchangedOneIsNot() async {
         let made = result("qc_notes.md", folder: "qc_notes")
         let url = file(made, "qc_notes.md")
@@ -609,6 +641,27 @@ struct ShelfTextModelTests {
         #expect(!model.foundOnlyInText(item))
         model.search = "axolotl"
         #expect(model.shown.isEmpty)
+    }
+}
+
+@MainActor
+struct ShelfTextBatchPublicationTests {
+    @Test func manyFilesPublishOneFinalBatchWhenTheyFinishTogether() async {
+        let files = MadeFiles()
+        var results: [KeptResult] = []
+        for number in 0..<50 {
+            let made = result("note_\(number).md", folder: "batch_\(number)")
+            results.append(made)
+            files.set(file(made, "note_\(number).md"), "word \(number)")
+        }
+        let texts = ShelfTextIndex(inspect: { files.inspect($0) }, publishEvery: .seconds(30), read: { files.text($0) })
+        var publications = 0
+        let watch = texts.$texts.dropFirst().sink { _ in publications += 1 }
+        texts.update(for: ShelfRules.items(from: results))
+        await texts.waitUntilRead()
+        #expect(publications == 1)
+        #expect(found(ShelfRules.items(from: results), "word", texts).count == 50)
+        watch.cancel()
     }
 }
 
@@ -1118,5 +1171,82 @@ struct ShelfStillReadingModelTests {
         #expect(loud.model.shown.count == 1)
         #expect(found.count > before)
         #expect(found.count - before < 31, "\(found.count - before) redraws while 31 files were read")
+    }
+
+    @Test func aNewLargeSearchIsNotReplacedByAnOlderResult() async throws {
+        let notes = (0..<90).map { number in
+            (project: "Assay development", name: "item_\(number)",
+             text: number == 0 ? "first unique phrase" : number == 89 ? "second unique phrase" : "ordinary text")
+        }
+        let rig = try await rig(notes, publishEvery: .seconds(30))
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        rig.model.search = "first unique"
+        rig.steps.allow(90)
+        await rig.model.textIndex.waitUntilRead()
+        rig.model.search = "second unique"
+        try await waitFor("the newer query") { rig.model.shown.map(\.fileName) == ["item_89.md"] }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(rig.model.shown.map(\.fileName) == ["item_89.md"])
+    }
+
+    @Test func largeSearchKeepsAllMatchesAcrossCanceledTextBatches() async throws {
+        let notes = (0..<90).map { (project: "Assay development", name: "item_\($0)", text: "needle \($0)") }
+        let rig = try await rig(notes)
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        rig.model.search = "needle"
+        try await waitFor("initial search") { !rig.model.searchingShelf && rig.model.stillReadingFiles == 90 }
+        rig.steps.allow(90)
+        await rig.model.textIndex.waitUntilRead()
+        try await waitFor("all batches") { rig.model.shown.count == 90 && rig.model.stillReadingFiles == nil }
+        #expect(rig.model.shown.map(\.id) == rig.model.items.map(\.id))
+    }
+
+    @Test func largeSearchDoesNotRedrawForUnchangedMatches() async throws {
+        let notes = (0..<90).map { (project: "Assay development", name: "item_\($0)", text: "ordinary text") }
+        let rig = try await rig(notes, publishEvery: .seconds(30))
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        rig.model.search = "needle"
+        try await waitFor("initial search") { !rig.model.searchingShelf && rig.model.stillReadingFiles == 90 }
+        let redraws = Redraws()
+        redraws.watch = rig.model.objectWillChange.sink { [redraws] _ in MainActor.assumeIsolated { redraws.count += 1 } }
+        rig.steps.allow(90)
+        await rig.model.textIndex.waitUntilRead()
+        try await waitFor("reading finished") { rig.model.stillReadingFiles == nil }
+        #expect(rig.model.shown.isEmpty)
+        #expect(redraws.count == 1, "Only the reading status changed.")
+    }
+
+    @Test func largeSearchKeepsBodyMatchMultipicksUntilItsFinalResult() async throws {
+        let notes = (0..<90).map { number in
+            (project: "Assay development", name: "item_\(number)",
+             text: number < 2 ? "needle shared" : number == 2 ? "needle separate" : "ordinary text")
+        }
+        let rig = try await rig(notes, publishEvery: .seconds(30))
+        defer { try? FileManager.default.removeItem(at: rig.scratch) }
+        rig.model.search = "needle"
+        rig.steps.allow(90)
+        await rig.model.textIndex.waitUntilRead()
+        try await waitFor("initial body matches") { !rig.model.searchingShelf && rig.model.shown.count == 3 }
+        let first = try #require(rig.model.shown.first { $0.fileName == "item_0.md" })
+        let second = try #require(rig.model.shown.first { $0.fileName == "item_1.md" })
+        rig.model.pick(first.id, .only)
+        rig.model.pick(second.id, .toggle)
+        let picks: Set<String> = [first.id, second.id]
+
+        rig.model.search = "needle shared"
+        #expect(rig.model.selection == second.id && rig.model.picked == picks,
+                "Provisional metadata has neither body match but must not prune their picks.")
+        try await waitFor("narrowed body matches") { !rig.model.searchingShelf && rig.model.shown.count == 2 }
+        #expect(rig.model.selection == second.id && rig.model.picked == picks)
+
+        await rig.model.index.refreshAndWait()
+        try await waitFor("refreshed body matches") { !rig.model.searchingShelf && rig.model.shown.count == 2 }
+        #expect(rig.model.selection == second.id && rig.model.picked == picks,
+                "A disk refresh must preserve picks that still match.")
+
+        rig.model.search = "needle separate"
+        try await waitFor("different final matches") { !rig.model.searchingShelf && rig.model.shown.count == 1 }
+        #expect(rig.model.selected?.fileName == "item_2.md")
+        #expect(rig.model.picked == Set(rig.model.shown.map(\.id)), "The final result still prunes picks that no longer match.")
     }
 }

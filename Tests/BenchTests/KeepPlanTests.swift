@@ -200,11 +200,11 @@ struct KeepRowTests {
     @Test func anInputOverTheCapIsListedNotCopied() {
         var sources = Made.full
         sources.inputFacts[Made.input] = ArtifactFacts(v: Made.input, a: Made.inputArtifact, n: 1, name: "huge.csv", mime: "text/csv",
-                                                       size: 9 * 1024 * 1024, at: nil, sha: nil, isUpload: false, code: nil,
+                                                       size: KeepRules.cap + 1, at: nil, sha: nil, isUpload: false, code: nil,
                                                        codeCut: false, environment: nil)
         let data = KeepRules.rows(sources: sources).first { $0.kind == .data }!
         #expect(!data.available)
-        #expect(data.detail == "1 file · too big to keep here (over 8 MB).")
+        #expect(data.detail == "1 file · too big to keep here (over 512 MB).")
         let plan = KeepRules.plan(subject: Made.subject, sources: sources, choices: Made.choices)!
         #expect(!plan.files.contains { $0.role == .data })
     }
@@ -343,10 +343,10 @@ struct KeepPlanBuildTests {
         #expect(data.detail == "z_prime_by_plate.csv · 4 KB · listed in its provenance")
         // Twice over the cap is one file too big, once.
         sources.inputFacts[Made.input] = ArtifactFacts(v: Made.input, a: Made.inputArtifact, n: 1, name: "huge.csv", mime: "text/csv",
-                                                       size: 9 * 1024 * 1024, at: nil, sha: nil, isUpload: false, code: nil,
+                                                       size: KeepRules.cap + 1, at: nil, sha: nil, isUpload: false, code: nil,
                                                        codeCut: false, environment: nil)
         #expect(KeepRules.copyableInputs(sources).tooBig.count == 1)
-        #expect(KeepRules.rows(sources: sources).first { $0.kind == .data }!.detail == "1 file \u{00B7} too big to keep here (over 8 MB).")
+        #expect(KeepRules.rows(sources: sources).first { $0.kind == .data }!.detail == "1 file \u{00B7} too big to keep here (over 512 MB).")
     }
 
     @Test func theDefaultNameIsTheFileWithoutItsExtension() {
@@ -640,9 +640,9 @@ struct KeepFigureFirstTests {
         let tiles = KeepRules.tiles(versions: versions, showing: nil, gone: [])
         let sentence = KeepRules.versionSentence(tiles: tiles, chosen: Made.v2, showing: nil)
         #expect(sentence.hasPrefix("Version 2 of 4, from "))
-        #expect(sentence.hasSuffix("it\u{2019}s over the 8 MB Capsid can copy here, so this version can\u{2019}t be kept."))
+        #expect(sentence.hasSuffix("it\u{2019}s over the 512 MB Capsid can copy here, so this version can\u{2019}t be kept."))
         // The others read as they did, and a version at the cap exactly is fine.
-        #expect(!KeepRules.versionSentence(tiles: tiles, chosen: Made.v3, showing: nil).contains("8 MB"))
+        #expect(!KeepRules.versionSentence(tiles: tiles, chosen: Made.v3, showing: nil).contains("512 MB"))
         let exact = ArtifactVersion(v: Made.v2, n: 2, frame: nil, mime: nil, size: KeepRules.cap, at: nil, parent: nil)
         let atCap = KeepRules.tiles(versions: [exact], showing: nil, gone: [])
         #expect(KeepRules.versionSentence(tiles: atCap, chosen: Made.v2, showing: nil) == "This file has one version.")
@@ -656,7 +656,7 @@ struct KeepFigureFirstTests {
 
     @Test func theSentencesSayWhatHappenedAndThatNothingWasKept() {
         #expect(KeepRules.figureTooBig("z_prime.tif")
-            == "z_prime.tif is over 8 MB, which is more than Capsid can copy here, so nothing was kept. Choose another version, or Cancel.")
+            == "z_prime.tif is over 512 MB, which is more than Capsid can copy here, so nothing was kept. Choose another version, or Cancel.")
         #expect(KeepRules.figureNotCopied("z_prime.png", because: "There isn\u{2019}t room on this disk.")
             == "z_prime.png wasn\u{2019}t copied, so nothing was kept. There isn\u{2019}t room on this disk.")
         for sentence in [KeepRules.figureTooBig("a.png"), KeepRules.figureNotCopied("a.png", because: "x."), KeepRules.overCapSentence(size: 9_000_000)] {

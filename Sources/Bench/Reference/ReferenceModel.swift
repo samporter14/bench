@@ -101,7 +101,7 @@ struct ReferenceDependencies {
     /// Puts the copied text on the pasteboard; false when it couldn't.
     var pasteboard: @MainActor (String) -> Bool
     /// An answer's text as the window draws it.
-    var render: @MainActor (String) -> NSAttributedString
+    var render: @Sendable (String) async -> AnswerDocument
     var now: @Sendable () -> Date = { Date() }
     /// The shelf the figures and files are put on, and asked about for "On
     /// Shelf ✓" and the mark. Nil is the real one (`ShelfAccess.live`); tests
@@ -156,7 +156,9 @@ struct ReferenceDependencies {
                 pasteboard.clearContents()
                 return pasteboard.setString(text, forType: .string)
             },
-            render: { AnswerMarkdown.render($0, style: .reference).text },
+            render: { text in
+                await Task.detached(priority: .userInitiated) { AnswerMarkdown.render(text, style: .reference) }.value
+            },
             download: { version in
                 guard Demo.mode == nil else { return .failed(.notReady) }
                 return ReferenceDownload(await ReferenceWindowController.transfers.read(.download(version: version),
@@ -485,13 +487,20 @@ final class ReferenceModel: ObservableObject {
         return answer.cutRows.contains { restFailed.contains($0) }
     }
 
-    /// A reply's text as drawn, rendered once per text.
-    func rendered(_ answer: ReferenceAnswer) -> NSAttributedString {
+    /// A cached reply, or nil while its Markdown is being prepared.
+    func rendered(_ answer: ReferenceAnswer) -> NSAttributedString? {
+        guard let kept = drawn[answer.id], kept.text == answer.text else { return nil }
+        return kept.rendered
+    }
+
+    /// Render without blocking the reader. A navigation or updated answer discards an obsolete result.
+    func prepare(_ answer: ReferenceAnswer) async {
+        guard rendered(answer) == nil else { return }
         let text = answer.text
-        if let kept = drawn[answer.id], kept.text == text { return kept.rendered }
-        let rendered = dependencies.render(text)
-        drawn[answer.id] = (text, rendered)
-        return rendered
+        let document = await dependencies.render(text)
+        guard !Task.isCancelled, current?.id == answer.id, current?.text == text else { return }
+        objectWillChange.send()
+        drawn[answer.id] = (text, document.text)
     }
 
     // MARK: Moving

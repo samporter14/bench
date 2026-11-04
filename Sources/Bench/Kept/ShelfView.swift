@@ -86,6 +86,13 @@ struct ShelfView: View {
                         ShelfExportPDFButton(model: model)
                     }
                     .sharedBackgroundVisibility(.hidden)
+                    if let first = model.pickedItems.first(where: { !$0.isSelectionNote }) {
+                        ToolbarItem {
+                            Button("Add to Paper\u{2026}") { addingToPaper = first }
+                                .buttonStyle(SolanumPillStyle(.small))
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                    }
                 }
                 ToolbarItem {
                     ShelfSearchPill(search: $model.search, width: ShelfSearchPill.width(forWindow: size.width))
@@ -98,7 +105,10 @@ struct ShelfView: View {
                 KeepSheet(model: keep, dismiss: { keeping = nil }, width: max(360, min(KeepSheet.width, size.width)))
             }
             .sheet(item: $addingToPaper) { item in
-                PaperAddSheet(model: model.papers, item: item, dismiss: { addingToPaper = nil }) { paper in
+                let picked = model.picked.contains(item.id) ? model.pickedItems : [item]
+                let eligible = picked.filter { !$0.isSelectionNote }
+                PaperAddSheet(model: model.papers, items: eligible, skippedCount: picked.count - eligible.count,
+                              dismiss: { addingToPaper = nil }) { paper in
                     model.showsPapers = true
                     model.papers.selection = paper.id
                 }
@@ -126,6 +136,9 @@ struct ShelfView: View {
                     } else {
                         detail(selected)
                     }
+                } else if model.searchingShelf {
+                    ProgressView("Searching Shelf\u{2026}")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if model.finder.isWanted {
                     ShelfFindPage(model: model)
                 } else {

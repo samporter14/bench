@@ -35,6 +35,7 @@ final class SpecimenHold: ObservableObject {
     /// The specimens hold a still. Assigned after `heldAt`, so whoever is
     /// told reads where the hold began.
     @Published private(set) var holds = false
+    @Published private(set) var isLowPower: Bool
     /// When the hold began, on the rotation's clock
     /// (`Date.timeIntervalSinceReferenceDate`): the scene the rotation was
     /// in then is the one every copy of the specimen holds, and names.
@@ -65,6 +66,7 @@ final class SpecimenHold: ObservableObject {
         self.secondsSinceInput = secondsSinceInput
         self.limit = limit
         self.lowPower = lowPower
+        self.isLowPower = lowPower()
         self.now = now
         self.wait = wait
         self.center = center
@@ -88,6 +90,8 @@ final class SpecimenHold: ObservableObject {
     /// first input after it. Nothing is assigned when the answer stays the
     /// same, so a look that changes nothing wakes no view.
     func look() {
+        let power = lowPower()
+        if isLowPower != power { isLowPower = power }
         let idle = secondsSinceInput() >= idleSeconds
         guard idle != holds else { return }
         if idle { heldAt = now() }
