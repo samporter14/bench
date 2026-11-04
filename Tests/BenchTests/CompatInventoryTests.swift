@@ -209,7 +209,7 @@ struct CompatPageHookTests {
 
     @Test func noOtherFileRunsAScriptInThePage() {
         let known: Set<String> = [
-            "AskModel/ModelPickerMenu.swift", "Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/InsightReader.swift",
+            "AskModel/ModelPickerMenu.swift", "Remote/ArtifactFile.swift", "Remote/ArtifactReader.swift", "Remote/HistoryReader.swift", "Remote/InsightReader.swift",
             "Remote/RemoteLive.swift", "Remote/RemotePhotoUpload.swift", "Remote/SessionReader.swift", "Remote/SessionWriter.swift",
             "Shelf/ConversationMenu.swift", "Shelf/ShowSource.swift", "Web/HandoverWatch.swift", "Web/NotificationBridge.swift", "Web/PageTabs.swift",
             "Web/TabContextMenu.swift", "Web/WebAPI.swift", "Web/WebContainer.swift",
