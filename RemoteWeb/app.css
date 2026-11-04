@@ -422,11 +422,16 @@ dl.group.sec, ul.group.sec { margin: 0 0 26px; }
   inset: 0;
   z-index: 20;
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: center;
+  /* A sheet taller than the screen (landscape, enlarged text, the keyboard) scrolls inside the scrim, so its
+     actions stay reachable; the auto margin below sits it at the bottom when there is room. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 16px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   background: var(--scrim);
 }
+.scrim > .sheet { margin-top: auto; }
 .sheet { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 8px; }
 .sheet .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; text-align: center; }
 .sheet h2 { margin: 0 0 4px; font-size: 1rem; color: var(--ink); }
@@ -757,7 +762,9 @@ body:has(.tabbar) .pill { bottom: calc(72px + env(safe-area-inset-bottom)); }
 .fname { overflow-wrap: anywhere; word-break: break-word; }
 
 /* New session sheet */
-.scrim.top { align-items: flex-start; padding-top: calc(env(safe-area-inset-top) + 16px); }
+.scrim.top { padding-top: calc(env(safe-area-inset-top) + 16px); }
+.scrim.top > .sheet { margin-top: 0; }
+.sheet { flex-shrink: 0; }
 .sheet.wide { max-width: 520px; }
 .box.left { text-align: left; }
 .box.left .sec-h { margin: 0 0 8px; }
@@ -846,6 +853,7 @@ body:has(.tabbar) .pill { bottom: calc(72px + env(safe-area-inset-bottom)); }
 .tbl { min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: .88rem; }
 .tbl th, .tbl td { padding: 8px 12px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--soft); background: var(--card); }
 .tbl td { max-width: 260px; overflow: hidden; text-overflow: ellipsis; color: var(--body); }
+.tbl td.open, .tbl.wrap-cells td { white-space: normal; overflow-wrap: anywhere; min-width: 160px; user-select: text; }
 .tbl thead th { position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--line); font: 500 max(11px, .72rem) var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
 .tbl tbody th { position: sticky; left: 0; z-index: 1; border-right: 1px solid var(--line); font-weight: 600; color: var(--ink); }
 .tbl thead th:first-child { left: 0; z-index: 3; }
@@ -997,3 +1005,22 @@ h2.since-label { margin: 6px 0 -2px; font: 600 .765rem/1.2 -apple-system, BlinkM
 }
 .since-line.err { color: var(--clay-ink); }
 .since-more { margin: 0 4px; font-size: .765rem; color: var(--muted); }
+
+/* A session started from a sheet the person has already closed */
+.started-note {
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left));
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: .9rem;
+}
+.started-note span { flex: 1; }

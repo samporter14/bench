@@ -655,14 +655,38 @@ function enterRoute() {
   trimCaches();
 }
 
+// Where the person was reading in a conversation (the row at the top and its offset), kept for the
+// session while they look at one of its files, so Back lands on the same line, not the top.
+const convoAnchor = dict();
+let anchorHold = 0;
+for (const ev of ['touchstart', 'wheel', 'keydown', 'mousedown']) addEventListener(ev, () => { anchorHold++; }, { passive: true, capture: true });
+
+// Images and rows settle after the first paint, so the position is set again a few times, until the
+// person touches the page themselves.
+function holdAnchor(a) {
+  const touched = anchorHold;
+  const again = () => { if (anchorHold === touched && route().name === 'session') restoreAnchor(a); };
+  again();
+  requestAnimationFrame(again);
+  for (const ms of [120, 400, 1000, 2000]) setTimeout(again, ms);
+}
+
 addEventListener('hashchange', () => {
+  const left = S.rk.split('|');
+  if (left[0] === 'session' && left[2]) {
+    const a = captureAnchor();
+    if (a) convoAnchor[left[2]] = a; else delete convoAnchor[left[2]];
+  }
   if (!S.split) S.scroll[S.rk] = window.scrollY;
   S.navs++;
   S.prevKey = S.rk;
   S.rk = routeKey();
   if (S.view === 'app') enterRoute();
   render(true);
+  const r = route();
+  const back = r.name === 'session' && convoAnchor[r.id] && /^(file|artifacts)\|/.test(S.prevKey);
   if (!S.split) window.scrollTo(0, /^(now|projects?)\|/.test(S.rk) ? S.scroll[S.rk] || 0 : 0);
+  if (back) holdAnchor(convoAnchor[r.id]);
 });
 
 /* ---------- rendering ---------- */
@@ -1204,7 +1228,18 @@ function mdLines(lines) {
 
 function md(src, ctx) {
   mdImage = ctx && ctx.image ? ctx.image : null;
-  const lines = String(src == null ? '' : src).slice(0, 20000).replace(/\r\n?/g, '\n').split('\n');
+  // A reply or note in a list is cut at 20,000 UTF-16 units; a document the viewer shows (the server already
+  // caps it at 256 KiB and says so) passes `limit: Infinity` and is rendered whole. A cut never lands
+  // between the halves of a surrogate pair.
+  let text = String(src == null ? '' : src);
+  const limit = ctx && typeof ctx.limit === 'number' ? ctx.limit : 20000;
+  if (text.length > limit) {
+    let end = limit;
+    const c = text.charCodeAt(end - 1);
+    if (c >= 0xD800 && c <= 0xDBFF) end -= 1;
+    text = text.slice(0, end);
+  }
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const out = [];
   const bullet = /^(\s*)[-*+]\s+(.*)$/;
   const ordered = /^(\s*)(\d{1,3})[.)]\s+(.*)$/;
@@ -2312,10 +2347,28 @@ function projectContent(pid) {
 
 /* ----- starting a session ----- */
 
+// The sheet that holds the page's modal state right now. A request outlives its sheet (Cancel, then open it
+// again), so only the owner may release the page or move the person, and a late answer settles only the
+// words it carried, never what was typed since.
+let nsOwner = null;
+
+// "Started" for a session the person has moved on from: a link, not a jump.
+function startedNote(sid) {
+  document.querySelector('.started-note')?.remove();
+  const el = h('div', { class: 'started-note', role: 'status' },
+    h('span', { text: 'Your session started.' }),
+    h('a', { class: 'btn small', href: '#/session/' + sid, text: 'Open', onclick: () => el.remove() }),
+    h('button', { class: 'btn small', type: 'button', text: 'Dismiss', onclick: () => el.remove() }));
+  document.body.append(el);
+  setTimeout(() => el.remove(), 15000);
+}
+
 function newSessionSheet(pid) {
   const st = (S.newSess[pid] ||= { text: '', msg: null, plan: false, photo: null });
   const before = document.activeElement;
+  const me = {};
   let busy = false;
+  let closed = false;
   const ta = h('textarea', {
     class: 'ns-text', rows: '5', maxlength: '4000', placeholder: 'What should Claude work on?', 'aria-label': 'What should Claude work on?',
     autocapitalize: 'sentences', enterkeyhint: 'enter', 'data-key': 'ns-text',
@@ -2349,9 +2402,13 @@ function newSessionSheet(pid) {
   ta.addEventListener('input', () => { st.text = ta.value; start.disabled = !canStart(); });
   function key(e) { if (e.key === 'Escape') close(); }
   function close() {
+    if (closed) return;
+    closed = true;
     document.removeEventListener('keydown', key);
-    root.inert = false;
     scrim.remove();
+    if (nsOwner !== me) return;
+    nsOwner = null;
+    root.inert = false;
     if (before && before.isConnected) before.focus({ preventScroll: true });
   }
   async function go() {
@@ -2360,6 +2417,7 @@ function newSessionSheet(pid) {
     if ((!text && !photo) || busy || (st.photo && !photo)) return;
     // a retry of the same words (and photo) keeps its id
     if (!st.msg || st.msg.text !== text || st.msg.plan !== st.plan || st.msg.photo !== (photo ? photo.id : '')) st.msg = { id: photo && !st.msg ? photo.id : uuid(), text, plan: st.plan, photo: photo ? photo.id : '' };
+    const mine = st.msg;
     busy = true;
     start.disabled = true;
     start.textContent = photo ? 'Sending photo…' : 'Starting…';
@@ -2386,7 +2444,10 @@ function newSessionSheet(pid) {
     start.disabled = !canStart();
     const d = out.data;
     if (d && d.result === 'started' && typeof d.id === 'string' && RE.sid.test(d.id) && out.status < 300) {
-      Object.assign(st, { text: '', msg: null, plan: false, photo: null });
+      // Settle only what was sent: words typed or a photo chosen since stay as they are.
+      const sent = st.msg === mine && st.text.trim() === text && st.plan === mine.plan && (st.photo ? st.photo.id : '') === mine.photo;
+      if (sent) Object.assign(st, { text: '', msg: null, plan: false, photo: null });
+      if (closed) { startedNote(d.id); return; }
       close();
       location.hash = '#/session/' + d.id;
       return;
@@ -2399,6 +2460,7 @@ function newSessionSheet(pid) {
   }
   document.addEventListener('keydown', key);
   document.body.append(scrim);
+  nsOwner = me;
   root.inert = true;
   ta.focus();
 }
@@ -2588,6 +2650,7 @@ function imageFor(id, src) {
 }
 
 const mdFor = (id) => ({ image: (src) => imageFor(id, src) });
+const mdDocFor = (id) => ({ image: (src) => imageFor(id, src), limit: Infinity });
 
 function thumbTile(id, f) {
   const img = fileImg({ alt: '', width: '120', height: '120' }, '/api/files/' + f.v + '/thumb?w=120', (el) => el.replaceWith(icon('image', 'big')));
@@ -2673,10 +2736,27 @@ function tableViewer(d) {
   const cols = Array.isArray(d.columns) ? d.columns : [];
   const rows = Array.isArray(d.rows) ? d.rows : [];
   const cell = (v) => (v == null ? '' : String(v));
-  const table = h('table', { class: 'tbl' },
+  // A value wider than its cell is cut with an ellipsis: tapping it opens it in place (tap again to close),
+  // and "Wrap cells" opens every one, so any value can be read and copied here.
+  const open = (e) => {
+    const td = e.currentTarget;
+    if (td.classList.contains('open')) td.classList.remove('open');
+    else if (td.scrollWidth > td.clientWidth) td.classList.add('open');
+  };
+  const table = h('table', { class: 'tbl' + (S.wrapCells ? ' wrap-cells' : '') },
     h('thead', null, h('tr', null, cols.map((c) => h('th', { scope: 'col', text: cell(c) })))),
-    h('tbody', null, rows.map((r) => h('tr', null, cols.map((_, k) => (k === 0 ? h('th', { scope: 'row', text: cell(r[k]) }) : h('td', { text: cell(r[k]) })))))));
+    h('tbody', null, rows.map((r) => h('tr', null, cols.map((_, k) => (k === 0 ? h('th', { scope: 'row', text: cell(r[k]) }) : h('td', { text: cell(r[k]), onclick: open })))))));
+  const wrap = h('button', {
+    class: 'btn small', type: 'button', 'aria-pressed': S.wrapCells ? 'true' : 'false', text: 'Wrap cells',
+    onclick: (e) => {
+      S.wrapCells = !S.wrapCells;
+      table.classList.toggle('wrap-cells', S.wrapCells);
+      for (const td of table.querySelectorAll('td.open')) td.classList.remove('open');
+      e.currentTarget.setAttribute('aria-pressed', String(S.wrapCells));
+    },
+  });
   return [
+    h('div', { class: 'viewer-tools' }, wrap),
     h('div', { class: 'tbl-wrap', tabindex: '0', role: 'region', 'aria-label': 'Table' }, table),
     d.truncated ? h('p', { class: 'foot', text: `Showing the first ${rows.length} rows${cols.length >= 30 ? ' and 30 columns' : ''}. Download the file for the rest.` }) : null,
   ];
@@ -2691,7 +2771,7 @@ function textViewer(id, f) {
   const text = typeof d.text === 'string' ? d.text : '';
   const note = d.truncated ? h('p', { class: 'foot', text: 'Showing the first 256 KB. Download the file for the rest.' }) : null;
   if (f.kind === 'markdown' || d.kind === 'markdown') {
-    return [h('div', { class: 'card pad' }, h('div', { class: 'md' }, md(text, mdFor(id)))), note, downloadBlock(id, f, true)];
+    return [h('div', { class: 'card pad' }, h('div', { class: 'md' }, md(text, mdDocFor(id)))), note, downloadBlock(id, f, true)];
   }
   const pre = h('pre', { class: 'viewer-pre' + (S.wrap ? ' wrap' : ''), tabindex: '0' }, h('code', { text }));
   const wrap = h('button', {
