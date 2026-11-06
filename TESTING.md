@@ -323,6 +323,21 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-11-06, Capsid 1.1.5 (62): version bump, installed, not released
+
+A version bump alone, on top of main aeed558 (the phone review fixes) with f0c6e2f and a8e8f1d (Codex's search, reading,
+file transfer and paper work). A patch of 1.1, so What's New gets no entry (`WhatsNewGate` shows nothing for 1.1.x after
+1.1). No tag and no GitHub release.
+
+- ✅ `swift test --jobs 2`: 4,933 tests in 623 suites pass, first run, no retries. No test pins the version.
+- ✅ `Scripts/build-app.sh`: Capsid.app 1.1.5 (62), signed with Solanum Code Signing (CDHash ).
+- ✅ Installed in /Applications the install.sh way, by hand (build, not a download): the running copy quit with TERM,
+  the new copy swapped in and opened. Help's neighbour, Capsid → About Capsid, reads "Version 1.1.5 (62)".
+- A stale `/Applications/Capsid.app.previous` was there and went with the swap, unread: the hand-written check for it
+  was wrong (`ls` of two paths fails when one is missing), so the 1.1.4 copy moved inside it and `rm -rf` took both.
+  install.sh discards that slot too. The 1.1.4 copy can be rebuilt from f36abe8.
+- ⏳ **Live**: nothing new to try for the bump; the changes it carries were checked in their own commits.
+
 ## 2026-10-30, Papers (a figure map) and Out of date on the Shelf (main, not released)
 
 - ✅ `swift test`: 4,884 tests in 615 suites pass. New:
