@@ -19,7 +19,7 @@ enum RemoteWebApp {
     /// Served path -> short content hash of that file's embedded text. RemoteServer sends /app.js and
     /// /app.css with an immutable Cache-Control only when the request is `?v=<this hash>`; index.html names them.
     static let assetVersions: [String: String] = [
-        "/app.js": "ac6f1895e9e8",
+        "/app.js": "a813451fdddd",
         "/app.css": "2e39b87a87d2",
     ]
 
@@ -56,7 +56,7 @@ enum RemoteWebApp {
 <div id="pull" class="pull" aria-hidden="true" hidden></div>
 <div id="pill" class="pill" role="status" hidden></div>
 <noscript><p class="noscript">Capsid needs JavaScript to show your sessions.</p></noscript>
-<script type="module" src="/app.js?v=ac6f1895e9e8"></script>
+<script type="module" src="/app.js?v=a813451fdddd"></script>
 </body>
 </html>
 """#
@@ -1170,8 +1170,8 @@ out.push(h('p', null, mdLines(para)));
 }
 return out;
 }
-const LIVE_EVERY = 1500;
-const liveEvery = (same) => (same >= 6 ? 5000 : same >= 3 ? 3000 : LIVE_EVERY);
+const LIVE_EVERY = 3000;
+const liveEvery = (same) => (same >= 3 ? 5000 : LIVE_EVERY);
 const LIVE = { id: '', seq: 0, timer: 0, busy: false, shown: false, text: null, activity: null, same: 0, fails: 0, quiet: null, off: dict() };
 const snapSig = (id) => JSON.stringify(lookup(id));
 function liveWanted() {

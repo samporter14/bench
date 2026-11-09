@@ -329,8 +329,20 @@ final class PlayedGlyphView: NSView {
 
     /// Frames `from..<to` of a scene, drawn in one pass onto a sheet and cut
     /// apart. Each cell is a whole number of pixels, so the cuts are clean.
+    /// Rendering is the dear part and a scene's frames never change, so a
+    /// loop that starts again (a window reopening, the size or tint settling,
+    /// the rotation coming round) takes them from `PlayedFrameCache`.
     static func frames(of scene: LabScene, from: Int, to: Int, size: CGSize, scale: CGFloat, tint: Color,
                        fps: Double = PlayedGlyphView.fps) -> [CGImage] {
+        let key = PlayedFrameCache.Key(scene: scene, from: from, to: to, size: size, scale: scale, tint: tint, fps: fps)
+        if let cached = PlayedFrameCache.shared.frames(for: key) { return cached }
+        let rendered = render(scene, from: from, to: to, size: size, scale: scale, tint: tint, fps: fps)
+        PlayedFrameCache.shared.store(rendered, for: key)
+        return rendered
+    }
+
+    private static func render(_ scene: LabScene, from: Int, to: Int, size: CGSize, scale: CGFloat, tint: Color,
+                               fps: Double) -> [CGImage] {
         let count = to - from
         let pixels = CGSize(width: (size.width * scale).rounded(.up), height: (size.height * scale).rounded(.up))
         let cell = CGSize(width: pixels.width / scale, height: pixels.height / scale)
@@ -351,6 +363,87 @@ final class PlayedGlyphView: NSView {
         return (0..<count).compactMap { k in
             image.cropping(to: CGRect(x: (k % columns) * width, y: (k / columns) * height, width: width, height: height))
         }
+    }
+}
+
+// MARK: - Rendered frames
+
+/// Rendered scene frames kept for the next loop, least recently used out first
+/// once they would take more than the budget. Main actor, like ImageRenderer.
+@MainActor
+final class PlayedFrameCache {
+    /// Everything that changes what a render looks like. The tint is the
+    /// resolved colour, so light and dark appearance are different keys, and a
+    /// scene is told apart by name, theme and length (its drawing is fixed).
+    struct Key: Hashable {
+        let scene: String
+        let theme: Int
+        let duration: Double
+        let from: Int
+        let to: Int
+        let width: Double
+        let height: Double
+        let scale: Double
+        let tint: Color.Resolved
+        let fps: Double
+
+        init(scene: LabScene, from: Int, to: Int, size: CGSize, scale: CGFloat, tint: Color, fps: Double) {
+            self.scene = scene.name
+            theme = scene.theme.rawValue
+            duration = scene.duration
+            self.from = from
+            self.to = to
+            width = size.width
+            height = size.height
+            self.scale = scale
+            self.tint = tint.resolve(in: EnvironmentValues())
+            self.fps = fps
+        }
+    }
+
+    /// About 8 MB of pixels, four bytes each.
+    static let shared = PlayedFrameCache(budget: 8 * 1024 * 1024)
+
+    let budget: Int
+    private(set) var bytes = 0
+    private var entries: [Key: [CGImage]] = [:]
+    /// Keys from least to most recently used.
+    private var order: [Key] = []
+
+    init(budget: Int) { self.budget = budget }
+
+    var count: Int { entries.count }
+
+    static func cost(of frames: [CGImage]) -> Int { frames.reduce(0) { $0 + $1.width * $1.height * 4 } }
+
+    /// The frames kept for `key`, now the most recently used.
+    func frames(for key: Key) -> [CGImage]? {
+        guard let frames = entries[key] else { return nil }
+        touch(key)
+        return frames
+    }
+
+    /// Keeps `frames`, dropping the least recently used until they fit. Frames
+    /// that alone exceed the budget, or none at all, are not kept.
+    func store(_ frames: [CGImage], for key: Key) {
+        if let old = entries.removeValue(forKey: key) {
+            bytes -= Self.cost(of: old)
+            order.removeAll { $0 == key }
+        }
+        let cost = Self.cost(of: frames)
+        guard !frames.isEmpty, cost <= budget else { return }
+        while bytes + cost > budget, let oldest = order.first {
+            order.removeFirst()
+            if let dropped = entries.removeValue(forKey: oldest) { bytes -= Self.cost(of: dropped) }
+        }
+        entries[key] = frames
+        order.append(key)
+        bytes += cost
+    }
+
+    private func touch(_ key: Key) {
+        order.removeAll { $0 == key }
+        order.append(key)
     }
 }
 
