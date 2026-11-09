@@ -172,7 +172,9 @@ struct ResultsView: View {
         .onChange(of: shelf.focused) { _, focus in
             if focus != nil { search = "" }
         }
-        .onAppear { kept.refresh() }
+        // Opening Results reads every README again (a full scan); later
+        // takes use the cached one.
+        .onAppear { kept.refresh(force: true) }
         .onChange(of: shelf.takenAt) { kept.refresh() }
         .onDisappear { keptThumbnails.removeAll() }
         // The File menu's Keep with Data and Code… and Add to Shelf act on the selected file.
