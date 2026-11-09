@@ -1277,3 +1277,56 @@ struct KeptFileFactsBoundTests {
         #expect(held.count == 0)
     }
 }
+
+// MARK: The scan's cache
+
+@Suite(.serialized) @MainActor
+struct KeptScanCacheTests {
+    private func readmeURL(_ folder: URL) -> URL { folder.appending(path: "README.md", directoryHint: .notDirectory) }
+
+    /// Writes into the file itself (same inode), as an editor that saves in place would, and puts its date back.
+    private func rewrite(_ url: URL, _ text: String, modified: Date) throws {
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: Data(text.utf8))
+        try handle.close()
+        try files.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+    }
+
+    @Test func aReadmeWithTheSameStampIsNotReadAgainAndAChangedOneIs() async throws {
+        try await inScratch { _, _, disk in
+            let folder = try await keep(disk, legend: "alpha")
+            // A date of whole seconds, which survives the trip through a Date exactly.
+            let before = Date(timeIntervalSince1970: 1_700_000_000)
+            try files.setAttributes([.modificationDate: before], ofItemAtPath: readmeURL(folder).path)
+            #expect(try await disk.scan().first?.text.legend == "alpha")
+            #expect(disk.scanCache.count == 1)
+
+            // Rewritten in place with the same size, inode and date: the stamp is unchanged, so the cache answers.
+            let url = readmeURL(folder)
+            let original = try String(contentsOf: url, encoding: .utf8)
+            try rewrite(url, original.replacingOccurrences(of: "alpha", with: "omega"), modified: before)
+            #expect(try await disk.scan().first?.text.legend == "alpha", "served from the cache")
+            // A forced scan (a window opening, Refresh) reads it and brings the cache up to date.
+            #expect(try await disk.scan(force: true).first?.text.legend == "omega")
+            #expect(try await disk.scan().first?.text.legend == "omega")
+
+            // A new date is a different stamp: read again without being forced.
+            try rewrite(url, original.replacingOccurrences(of: "alpha", with: "sigma"), modified: before.addingTimeInterval(60))
+            #expect(try await disk.scan().first?.text.legend == "sigma")
+        }
+    }
+
+    @Test func aFolderThatIsGoneIsLetGoOfAndANewOneIsSeen() async throws {
+        try await inScratch { _, _, disk in
+            let first = try await keep(disk, name: "Fig 1")
+            #expect(try await disk.scan().count == 1)
+            try await keep(disk, name: "Fig 2")
+            #expect(try await disk.scan().count == 2)
+            #expect(disk.scanCache.count == 2)
+            try files.removeItem(at: first)
+            #expect(try await disk.scan().count == 1)
+            #expect(disk.scanCache.count == 1)
+        }
+    }
+}
