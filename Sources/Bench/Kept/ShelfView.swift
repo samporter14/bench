@@ -340,10 +340,10 @@ struct ShelfView: View {
         case .rootMissing:
             KeptEmpty(title: "The Shelf folder isn\u{2019}t there",
                       sentence: "\(KeepRules.abbreviated(index.rootURL)) was moved or deleted, or its disk isn\u{2019}t connected.",
-                      action: ("Choose Folder\u{2026}", { KeptFolderSection.chooseRoot { index.refresh() } }))
+                      action: ("Choose Folder\u{2026}", { KeptFolderSection.chooseRoot { index.refresh(force: true) } }))
         case .failed(let sentence):
             KeptEmpty(title: "The Shelf folder didn\u{2019}t respond", sentence: sentence,
-                      action: ("Try Again", { index.refresh() }))
+                      action: ("Try Again", { index.refresh(force: true) }))
         case .ready:
             KeptEmpty(title: ShelfRules.emptyTitle, sentence: ShelfRules.emptySentence, action: nil)
         }

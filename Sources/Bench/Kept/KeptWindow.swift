@@ -147,7 +147,9 @@ final class KeptWindowController: NSObject, NSWindowDelegate {
             self.thumbnails = thumbnails
             self.model = model
         }
-        shelf.index.refresh()
+        // Opening reads every README afresh, as it always has (Refresh and a window opening are never served from the cache).
+        shelf.index.refresh(force: true)
+        model?.windowOpened()
         if papers { model?.showsPapers = true }
         if let folder { model?.select(folder: folder) }
         Demo.activateUnlessQuiet()
@@ -159,6 +161,9 @@ final class KeptWindowController: NSObject, NSWindowDelegate {
         thumbnails?.removeAll()
         // What Claude Science said of the items' versions is let go: the next window asks again (Efficiency).
         model?.freshness.reset()
+        // And the words read from the prose files: closing the window releases them, and later reads of the
+        // folders (a keep landing) don't read them again until the window opens.
+        model?.windowClosed()
     }
 }
 
@@ -223,7 +228,7 @@ struct KeptFolderSection: View {
             guard response == .OK, let url = panel.url else { return }
             UserDefaults.standard.set(url.path, forKey: SettingsKey.keptRoot)
             Task { @MainActor in
-                KeptIndex.shared.refresh()
+                KeptIndex.shared.refresh(force: true)
                 done()
             }
         }

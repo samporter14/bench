@@ -150,7 +150,9 @@ final class ShelfTextIndex: ObservableObject {
             repeat {
                 again = false
                 await pass()
-            } while again
+            } while again && !Task.isCancelled
+            // Let go by `reset()` meanwhile: it has already cleared everything, and a pass started after it is not ours to end.
+            guard !Task.isCancelled else { return }
             task = nil
             // Deliver the last batch before announcing that there is nothing left to read.
             flushTexts()
@@ -158,6 +160,34 @@ final class ShelfTextIndex: ObservableObject {
             pending = []
             publishUnread()
         }
+    }
+
+    /// Lets everything go: the texts, what was read of each file, and the reading under way. Called when the Shelf's
+    /// window closes, so a closed window holds no prose and later reads of the folders do not refill it
+    /// (`isActive` is off until the next search, or `ShelfModel.windowOpened()`, asks again). What the model searched
+    /// is told the old paths changed, so its matches are worked out again from nothing.
+    func reset() {
+        task?.cancel()
+        task = nil
+        trailing?.cancel()
+        trailing = nil
+        textTrailing?.cancel()
+        textTrailing = nil
+        isActive = false
+        again = false
+        wanted = []
+        wantedPaths = []
+        entries = [:]
+        missing = []
+        pending = []
+        publishedAt = nil
+        textChanged = false
+        changedPaths = []
+        var cleared = ShelfTexts.none
+        cleared.changedPaths = Set(workingTexts.folded.keys)
+        workingTexts = .none
+        if !texts.isEmpty || !cleared.changedPaths.isEmpty { texts = cleared }
+        if !unread.isEmpty { unread = [] }
     }
 
     /// A file has been dealt with, read or not: it is no longer to come.
@@ -226,8 +256,9 @@ final class ShelfTextIndex: ObservableObject {
         var count = 0
         for url in files {
             let path = url.path
-            defer { settled(path) }
-            guard let facts = await inspect(url) else {
+            defer { if !Task.isCancelled { settled(path) } }
+            guard let facts = await inspect(url), !Task.isCancelled else {
+                if Task.isCancelled { return }
                 // Not there, or not to be looked at: nothing of it is held.
                 drop(path)
                 missing.insert(path)
@@ -245,6 +276,7 @@ final class ShelfTextIndex: ObservableObject {
             let text: String?
             do {
                 text = try await read(url)
+                if Task.isCancelled { return }
             } catch {
                 // The disk didn't answer: nothing is remembered, so the next pass tries again.
                 continue
@@ -256,6 +288,7 @@ final class ShelfTextIndex: ObservableObject {
                 continue
             }
             let folded = await Task.detached(priority: .utility) { Self.prepare(text) }.value
+            if Task.isCancelled { return }
             // The folders were read again while this one was read, and it is no longer on the shelf.
             guard wantedPaths.contains(path) else { continue }
             entries[path] = Entry(stamp: stamp)
