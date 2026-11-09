@@ -1305,13 +1305,13 @@ function md(src, ctx) {
 
 /* ---------- Live text: what Claude is writing now, while the open session works ---------- */
 
-// Asked every 1.5 s while the text is changing (less often once it stops), one request at a time, only while this session's screen is showing and it is
+// Asked every 3 s while the text is changing (less often once it stops), one request at a time, only while this session's screen is showing and it is
 // working. What comes back is the current model call's text, which Capsid starts over now and then, so
 // the card REPLACES what it shows each time and never adds to it.
-const LIVE_EVERY = 1500;
-// While the text and activity stay the same it is asked for less often: after 3 polls alike every 3 s, after 6 every 5 s, and every
-// 1.5 s again the moment either changes. `same` counts the polls in a row that came back alike.
-const liveEvery = (same) => (same >= 6 ? 5000 : same >= 3 ? 3000 : LIVE_EVERY);
+const LIVE_EVERY = 3000;
+// While the text and activity stay the same it is asked for less often: after 3 polls alike every 5 s, and every
+// 3 s again the moment either changes. `same` counts the polls in a row that came back alike.
+const liveEvery = (same) => (same >= 3 ? 5000 : LIVE_EVERY);
 const LIVE = { id: '', seq: 0, timer: 0, busy: false, shown: false, text: null, activity: null, same: 0, fails: 0, quiet: null, off: dict() };
 
 const snapSig = (id) => JSON.stringify(lookup(id));
