@@ -231,6 +231,15 @@ final class ShelfModel: ObservableObject {
         reconcile()
     }
 
+    /// The window closed: the text index is let go (its memory, its reading) until the window opens again.
+    func windowClosed() { textIndex.reset() }
+
+    /// The window opened (again): a search left in the box has its index built again; the folders are read
+    /// afresh by the caller, and `subscription` keeps it up to date from there.
+    func windowOpened() {
+        if !search.isEmpty, !textIndex.isActive { textIndex.update(for: items) }
+    }
+
     // MARK: The legend fields
 
     /// The editor for `item`'s legend: the one kept from before when it still holds a draft, a save under way or a

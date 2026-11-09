@@ -44,7 +44,8 @@ struct RetryBackoff: Equatable, Sendable {
 public final class DatabaseWatcher: @unchecked Sendable {
     private let log: URL
     private let folder: URL
-    private let interval: TimeInterval
+    /// The quickest the watcher reports: the pace while sessions change.
+    private let baseInterval: TimeInterval
     private let queue: DispatchQueue
     private let onChange: @Sendable () -> Void
     private let schedule: @Sendable (TimeInterval, @escaping @Sendable () -> Void) -> Void
@@ -60,10 +61,30 @@ public final class DatabaseWatcher: @unchecked Sendable {
     private var stopped = false
 
     // Touched only on `queue`.
+    private var interval: TimeInterval
     private var lastReport = Date.distantPast
     private var trailingScheduled = false
 
-    public convenience init(database: URL, interval: TimeInterval = 1, queue: DispatchQueue = .main,
+    /// Where events are handled by default: a serial utility queue, off the
+    /// main thread. `onChange` therefore runs there; a caller that touches
+    /// main-actor state hops itself (`LabModel` does).
+    public static let defaultQueue = DispatchQueue(label: "local.sam.bench.database-watcher", qos: .utility)
+
+    /// How long the watcher waits between reports: `base` while the last
+    /// read found a change, twice that while it found none (nothing is
+    /// lost; a change after a quiet read just waits up to one more second).
+    static func throttle(base: TimeInterval, lastReadChanged: Bool) -> TimeInterval {
+        lastReadChanged ? base : base * 2
+    }
+
+    /// Tells the watcher whether the read it prompted found a change, so the
+    /// next report waits accordingly. Safe from any thread.
+    public func readFinished(changed: Bool) {
+        let next = Self.throttle(base: baseInterval, lastReadChanged: changed)
+        queue.async { [weak self] in self?.interval = next }
+    }
+
+    public convenience init(database: URL, interval: TimeInterval = 1, queue: DispatchQueue = DatabaseWatcher.defaultQueue,
                             onChange: @escaping @Sendable () -> Void) {
         self.init(database: database, interval: interval, queue: queue, backoff: RetryBackoff(),
                   schedule: nil, onChange: onChange)
@@ -77,6 +98,7 @@ public final class DatabaseWatcher: @unchecked Sendable {
         log = URL(fileURLWithPath: database.path + "-wal")
         folder = log.deletingLastPathComponent()
         self.interval = interval
+        baseInterval = interval
         self.queue = queue
         self.backoff = backoff
         self.onChange = onChange

@@ -204,8 +204,42 @@ struct KeptFileFacts: Equatable, Sendable {
     var stamp: KeptFileStamp { KeptFileStamp(modified: modified, size: size, putAway: putAway) }
 }
 
+/// What a README looked like when it was last read: the file's identity (so a different file, or the same one
+/// written again, is not mistaken for it).
+struct KeptReadmeStamp: Hashable, Sendable {
+    var path: String
+    var modified: Date?
+    var size: Int
+    var inode: UInt64
+}
+
+/// The READMEs read by past scans, by folder, for `KeptDisk.scan`. A scan runs on the disk queue, one at a time
+/// (`takeTurn`), but the lock keeps the cache safe whatever calls it. Holds only what the folders on disk held at
+/// the last whole scan, so a folder that is gone is let go with it.
+final class KeptScanCache: @unchecked Sendable {
+    /// What was parsed from a folder's README: nil when it isn't one Capsid wrote (that is remembered too).
+    struct Entry: Sendable {
+        var stamp: KeptReadmeStamp
+        var parsed: (record: KeptRecord, text: KeptText)?
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    func entry(for stamp: KeptReadmeStamp) -> Entry? {
+        lock.withLock { entries[stamp.path].flatMap { $0.stamp == stamp ? $0 : nil } }
+    }
+
+    /// Keeps exactly what a whole scan found: the folders it didn't see are dropped.
+    func replace(with fresh: [String: Entry]) { lock.withLock { entries = fresh } }
+
+    var count: Int { lock.withLock { entries.count } }
+}
+
 @MainActor
 final class KeptDisk {
+    /// The READMEs read by past scans (`scan`).
+    let scanCache = KeptScanCache()
     typealias Work = @Sendable () -> Void
     /// Whether anyone still waits for the call's answer: a long look checks it
     /// as it goes, and stops early once its caller has been told or has left.
@@ -328,10 +362,16 @@ final class KeptDisk {
     /// Every `<Collection>/<Name>/README.md` with `capsid_kept: 1`, newest
     /// kept first. A folder starting with "." (a keep in progress), a folder
     /// whose README can't be read, and one without the marker are passed over.
-    func scan() async throws -> [KeptResult] {
+    ///
+    /// A README that is the one read last time (same path, date, size and inode) is not read or parsed again, so a
+    /// scan after a keep or a removal costs a look at each folder, not a read of each README. `force` reads every
+    /// README (a window opening, Refresh): it still fills the cache, which is how a README edited in place without
+    /// moving its date or size is caught up with.
+    func scan(force: Bool = false) async throws -> [KeptResult] {
         let root = rootURL()
+        let cache = scanCache
         return try await perform(.look, allowed: lookLimit) { wanted in
-            try KeptDiskWork.scan(root: root, wanted: wanted)
+            try KeptDiskWork.scan(root: root, wanted: wanted, cache: cache, force: force)
         }
     }
 
@@ -844,10 +884,19 @@ private enum KeptDiskWork {
 
     // MARK: Reading READMEs
 
+    /// A README's date, size and inode, for telling whether it is the file read last time. Throws when there is none.
+    fileprivate static func readmeStamp(in folder: URL) throws -> KeptReadmeStamp {
+        let url = folder.appending(path: KeptLayout.readmeName, directoryHint: .notDirectory)
+        let attributes = try files.attributesOfItem(atPath: url.path)
+        return KeptReadmeStamp(path: url.path, modified: attributes[.modificationDate] as? Date,
+                               size: (attributes[.size] as? NSNumber)?.intValue ?? 0,
+                               inode: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0)
+    }
+
     /// A README's bytes, unless there is none or it is too big to be ours.
     private static func readmeData(in folder: URL) throws -> Data {
         let url = folder.appending(path: KeptLayout.readmeName, directoryHint: .notDirectory)
-        let size = (try files.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+        let size = try readmeStamp(in: folder).size
         guard size <= readmeCap else { throw KeptDiskError.failed("README.md is too big to read.") }
         return try Data(contentsOf: url)
     }
@@ -868,13 +917,16 @@ private enum KeptDiskWork {
         return found
     }
 
-    static func scan(root: URL, wanted: KeptDisk.StillWanted) throws -> [KeptResult] {
+    static func scan(root: URL, wanted: KeptDisk.StillWanted, cache: KeptScanCache? = nil,
+                     force: Bool = false) throws -> [KeptResult] {
         switch try rootState(root) {
         case .missing: throw KeptDiskError.rootMissing
         case .absent: return []
         case .ready: break
         }
         var results: [KeptResult] = []
+        // What this scan found of each README, kept for the next one (only when the scan is whole).
+        var fresh: [String: KeptScanCache.Entry] = [:]
         for collection in try subfolders(of: root) {
             let collectionFolder = root.appending(path: collection, directoryHint: .isDirectory)
             // A collection that can't be listed has nothing to show.
@@ -882,10 +934,21 @@ private enum KeptDiskWork {
             for name in names {
                 guard wanted() else { return results }
                 let folder = collectionFolder.appending(path: name, directoryHint: .isDirectory)
-                guard let found = keptReadme(in: folder), listsOnlyItsOwnFiles(found.record, in: folder) else { continue }
+                // A README unchanged since the last scan is not read again. Where its links point is looked at every
+                // time: that depends on the folder's files, not on the README.
+                let stamp = try? readmeStamp(in: folder)
+                let entry: KeptScanCache.Entry?
+                if !force, let stamp, let held = cache?.entry(for: stamp) {
+                    entry = held
+                } else {
+                    entry = stamp.map { KeptScanCache.Entry(stamp: $0, parsed: keptReadme(in: folder).map { ($0.record, $0.text) }) }
+                }
+                if let entry { fresh[entry.stamp.path] = entry }
+                guard let found = entry?.parsed, listsOnlyItsOwnFiles(found.record, in: folder) else { continue }
                 results.append(KeptResult(folder: folder, collection: collection, record: found.record, text: found.text))
             }
         }
+        cache?.replace(with: fresh)
         return results.sorted { a, b in
             a.record.keptAt == b.record.keptAt ? a.folder.path < b.folder.path : a.record.keptAt > b.record.keptAt
         }

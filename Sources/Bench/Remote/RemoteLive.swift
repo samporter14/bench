@@ -318,7 +318,7 @@ extension RemoteAPI {
 
 /// The live route's own state: the activity line is worked out from the
 /// pending requests and the last messages, which is more than a poll every
-/// 1.5 s should read, so it is kept 4 seconds and the text alone is read in
+/// 3 s should read, so it is kept 4 seconds and the text alone is read in
 /// between. A daemon without the streaming route is left alone for 10 minutes.
 @MainActor
 final class RemoteLive {

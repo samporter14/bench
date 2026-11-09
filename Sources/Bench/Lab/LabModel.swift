@@ -612,6 +612,9 @@ final class LabModel: ObservableObject {
         watch(readout.database)
         watchDaemon(ScienceDaemonProcess.current)
         let snapshot = readout.snapshot
+        // Tell the watcher whether this read found anything new, so it paces
+        // itself (1 s while sessions change, slower while they don't).
+        watcher?.readFinished(changed: snapshot.readError != nil || reads.sessions != snapshot.sessions)
         // A read that failed outright says nothing about the sessions: keep
         // what was known, as the engine does. The exception is a daemon that
         // is not running, which says plainly that nothing works.

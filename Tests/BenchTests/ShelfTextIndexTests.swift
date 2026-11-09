@@ -1250,3 +1250,47 @@ struct ShelfStillReadingModelTests {
         #expect(rig.model.picked == Set(rig.model.shown.map(\.id)), "The final result still prunes picks that no longer match.")
     }
 }
+
+// MARK: Closing the window
+
+@MainActor
+struct ShelfTextResetTests {
+    @Test func resetLeavesTheIndexInactiveAndEmptyAndLaterReadsDoNotRefillIt() async {
+        let made = result("note.md", folder: "Plate 7 drifts")
+        let items = [item(made)]
+        let files = MadeFiles()
+        files.set(file(made, "note.md"), "The zebrafish plate drifts.")
+        let texts = index(files)
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        #expect(found(items, "zebrafish", texts).count == 1)
+
+        texts.reset()
+        #expect(!texts.isActive)
+        #expect(texts.texts.isEmpty)
+        #expect(texts.unread.isEmpty)
+        #expect(!texts.isReading)
+        #expect(found(items, "zebrafish", texts).isEmpty)
+
+        // Reopening asks again: the files are read afresh, not remembered.
+        let readsBefore = files.reads
+        texts.update(for: items)
+        await texts.waitUntilRead()
+        #expect(texts.isActive)
+        #expect(files.reads == readsBefore + 1)
+        #expect(found(items, "zebrafish", texts).count == 1)
+    }
+
+    @Test func resetDuringAReadStopsItFromFillingTheIndex() async {
+        let made = result("note.md", folder: "Plate 7 drifts")
+        let items = [item(made)]
+        let files = MadeFiles()
+        files.set(file(made, "note.md"), "The zebrafish plate drifts.")
+        let texts = index(files)
+        texts.update(for: items)
+        texts.reset()
+        await texts.waitUntilRead()
+        #expect(texts.texts.isEmpty)
+        #expect(!texts.isActive)
+    }
+}

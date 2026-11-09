@@ -32,6 +32,8 @@ final class KeptIndex: ObservableObject {
     private var task: Task<Void, Never>?
     /// Asked to read again while a read was under way.
     private var again = false
+    /// One of the asks that came meanwhile wanted every README read again.
+    private var againForced = false
 
     init(disk: KeptDisk, root: @escaping @MainActor () -> URL) {
         self.disk = disk
@@ -49,17 +51,24 @@ final class KeptIndex: ObservableObject {
     /// Reads the folders again. A read under way is followed by one more, so
     /// whatever changed since it began is seen; any number of asks in the
     /// meantime are that one.
-    func refresh() {
+    ///
+    /// A README unchanged since the last read is not read again, which is what a keep landing or an item taken off
+    /// needs. `force` reads them all: a window opening, Refresh, Try Again, a new folder.
+    func refresh(force: Bool = false) {
         guard task == nil else {
             again = true
+            if force { againForced = true }
             return
         }
         if results.isEmpty { state = .reading }
         task = Task { [weak self] in
             guard let self else { return }
+            var force = force
             repeat {
                 again = false
-                await read()
+                againForced = false
+                await read(force: force)
+                force = againForced
             } while again
             task = nil
         }
@@ -67,8 +76,8 @@ final class KeptIndex: ObservableObject {
 
     /// Reads the folders again and waits for the read that sees everything
     /// changed before this call: what the Shelf needs after it adds or removes.
-    func refreshAndWait() async {
-        refresh()
+    func refreshAndWait(force: Bool = false) async {
+        refresh(force: force)
         await task?.value
     }
 
@@ -76,9 +85,9 @@ final class KeptIndex: ObservableObject {
     /// "read it once, lazily".
     var hasRead: Bool { readAt != nil || task != nil || state != .idle }
 
-    private func read() async {
+    private func read(force: Bool) async {
         do {
-            let found = try await disk.scan()
+            let found = try await disk.scan(force: force)
             results = found
             state = .ready
             readAt = Date()

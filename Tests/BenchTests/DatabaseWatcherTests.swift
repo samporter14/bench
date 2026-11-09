@@ -249,3 +249,16 @@ struct DatabaseWatcherTests {
         #expect(retries.delays == [2])
     }
 }
+
+struct DatabaseWatcherThrottleTests {
+    @Test func oneSecondWhileChangingTwiceThatWhileQuiet() {
+        #expect(DatabaseWatcher.throttle(base: 1, lastReadChanged: true) == 1)
+        #expect(DatabaseWatcher.throttle(base: 1, lastReadChanged: false) == 2)
+    }
+
+    @Test func theDefaultQueueIsASerialUtilityQueueOffMain() {
+        let queue = DatabaseWatcher.defaultQueue
+        #expect(queue !== DispatchQueue.main)
+        #expect(queue.label == "local.sam.bench.database-watcher")
+    }
+}
