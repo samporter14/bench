@@ -155,10 +155,12 @@ final class KeptThumbnails: ObservableObject {
                 pending.remove(key)
                 return
             }
-            let image = await Task.detached(priority: .utility) { await generate(url, side, scale) }.value
+            // A page's thumbnail is mostly paper: a card shows what is on it. Cropped off the main actor too.
+            let shown = await Task.detached(priority: .utility) {
+                let image = await generate(url, side, scale)
+                return cropped ? (image?.croppedToContent() ?? image) : image
+            }.value
             guard self.epoch == epoch else { return }
-            // A page's thumbnail is mostly paper: a card shows what is on it.
-            let shown = cropped ? (image?.croppedToContent() ?? image) : image
             receive(shown, for: key, drawnFrom: facts?.stamp) {
                 // The file changed while it was drawn: draw the new one.
                 self.want(url, side: side, scale: scale, cropped: cropped)
