@@ -362,6 +362,27 @@ answer from the phone: it goes through after a few seconds' wake, and the page s
 Click the Dock icon: the session you were in, signed in. Turn the switch back on with the window closed: the page
 loads at once and stays.
 
+## 2026-11-14, Capsid 1.1.6 (63): code review fixes, installed, not released
+
+Fixes from a static code review (Codex) of main bfc98e3, each checked against main 1ef4f6e first and fixed in its own
+commit with tests: unpairing that fails closed (C1), a device removed mid-request (C2), unsaved Working Notes at quit
+(C3), Ask Another Model's send race (C4), the Shelf's thumbnails and search after closing (C5, C6, C7), "Open in
+Browser", and Compare's cap for an empty side. Notes for the release are in docs/release-notes/1.1.6.md. A patch of
+1.1, so What's New gets no entry. No tag and no GitHub release.
+
+- ✅ `swift test --jobs 2`: 4,998 tests in 630 suites. The first full run had one failure, a new test making its own
+  defaults suite (ScratchDefaultsTests), fixed. The second had one failure,
+  `CompareDiffTests.twoTextsWithNoLineInCommonStopQuicklyAsTooManyChanges` (took over its 1 s under the full run's
+  load); it passed in the first full run and three times out of three alone (0.14 s), and the empty-side change
+  doesn't reach it.
+- ✅ `Scripts/build-app.sh`: Capsid.app 1.1.6 (63), signed with Solanum Code Signing by Scripts/sign-app.sh
+  (CDHash a2cceb21d883a65726e3f35eac9f1c015bd7652d); `codesign --verify --strict --deep` passes.
+- ✅ Installed in /Applications the install.sh way, by hand: the running 1.1.5 quit with TERM, moved to
+  Capsid.app.previous (a leftover there was moved aside first, not deleted), the new copy put in and opened. The
+  running app reports version 1.1.6.
+- ⏳ **Live**: unpair from the phone and from Settings (and, if it can be arranged, with the devices file unwritable);
+  a phone photo cut off by removing its device; quitting with a Working Note that can't be saved.
+
 ## 2026-11-06, Capsid 1.1.5 (62): version bump, installed, not released
 
 A version bump alone, on top of main aeed558 (the phone review fixes) with f0c6e2f and a8e8f1d (Codex's search, reading,
