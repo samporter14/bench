@@ -683,7 +683,10 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// Waits while a wake is under way, up to `limit`.
     private func untilAwake(upTo limit: Duration) async {
         let deadline = ContinuousClock.now + limit
-        while status == .asleep || waking || status == .starting, ContinuousClock.now < deadline {
+        // A wake held back after a failure isn't coming: the action goes on
+        // and finds the page not ready, as it would have before.
+        while (status == .asleep && !sleeper.wakeHeldBack) || waking || status == .starting,
+              ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(200))
         }
     }
@@ -802,6 +805,9 @@ final class WebContainer: ObservableObject, WebPageWindow {
         waking = false
         // Whatever the attempt loaded goes with it.
         if webView.url != nil { replaceWebView() }
+        // Before the status, whose change asks the sleeper again: an action
+        // still holding the page must not start the same wake straight away.
+        sleeper.wakeFailed()
         status = .asleep
     }
 

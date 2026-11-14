@@ -321,6 +321,11 @@ calls added for it (`withPage`, `duringCall`) run their body at once.
   daemon is started if needed, never beside Claude Science's own app); for an
   action alone only a running daemon is signed in to, and a wake that fails
   with the window closed goes back to sleep instead of showing a failure.
+  It is then held back (`PageSleep.wakeHeldBack`): an action or a Results
+  window still holding the page doesn't start the same wake again straight
+  away. The next wake is a new action, the window opening, the switch turning
+  on, or a retry 60 s later while something still wants the page; an action
+  waiting on a held-back page goes on at once and finds it not ready.
 - **Two holds.** `withPage { }` is for an action the user or the phone asked
   for: it wakes a sleeping page, waits up to 30 s for it, holds it for the
   action and lets the grace start again after. `duringCall { }` wraps every call

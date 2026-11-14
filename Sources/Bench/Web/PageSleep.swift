@@ -80,6 +80,17 @@ final class PageSleep {
     /// when something changed ends without unloading.
     private var generation = 0
 
+    /// How long a wake that couldn't sign in (Claude Science not running, or
+    /// the sign-in failed) is held back before it is tried again on its own.
+    static let wakeRetry = Duration.seconds(60)
+    /// A background wake failed: the page stays asleep, however much it is
+    /// still wanted, until something changes (a new action, the window
+    /// opening, the switch turning on) or `wakeRetry` has passed. Without it a
+    /// held use (an open Results window) would try again back to back.
+    private(set) var wakeHeldBack = false
+    private var retryTask: Task<Void, Never>?
+    private var retryGeneration = 0
+
     /// The app's `WebContainer` makes one; tests make their own.
     init(keepLoaded: Bool, windowOpen: Bool,
          page: @escaping () -> PageSleepRule.Page,
@@ -103,12 +114,14 @@ final class PageSleep {
     func setKeepLoaded(_ value: Bool) {
         guard value != keepLoaded else { return }
         keepLoaded = value
+        if value { releaseHeldWake() }
         evaluate()
     }
 
     func setWindowOpen(_ value: Bool) {
         guard value != windowOpen else { return }
         windowOpen = value
+        if value { releaseHeldWake() }
         evaluate()
     }
 
@@ -119,12 +132,39 @@ final class PageSleep {
     /// it from sleeping until `endUse`.
     func beginUse() {
         uses += 1
+        releaseHeldWake()
         evaluate()
     }
 
     func endUse() {
         uses = max(0, uses - 1)
         evaluate()
+    }
+
+    /// A wake that nothing on screen asked for couldn't sign in and the page
+    /// went back to sleep: hold further wakes back (see `wakeHeldBack`).
+    func wakeFailed() {
+        wakeHeldBack = true
+        retryGeneration += 1
+        retryTask?.cancel()
+        let mine = retryGeneration
+        retryTask = Task { [weak self] in await self?.retryAfterBackoff(mine) }
+    }
+
+    private func retryAfterBackoff(_ mine: Int) async {
+        await wait(Self.wakeRetry)
+        guard retryGeneration == mine else { return }
+        retryTask = nil
+        wakeHeldBack = false
+        evaluate()
+    }
+
+    private func releaseHeldWake() {
+        guard wakeHeldBack else { return }
+        wakeHeldBack = false
+        retryGeneration += 1
+        retryTask?.cancel()
+        retryTask = nil
     }
 
     /// A call into the page starts (see `inFlight`).
@@ -136,11 +176,13 @@ final class PageSleep {
     }
 
     private func evaluate() {
+        if page() == .loaded { releaseHeldWake() }
         switch decision {
         case .keep:
             cancelGrace()
         case .wake:
             cancelGrace()
+            guard !wakeHeldBack else { return }
             wake()
         case .sleepAfterGrace:
             guard graceTask == nil else { return }

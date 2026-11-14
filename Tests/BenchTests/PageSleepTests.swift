@@ -19,6 +19,17 @@ private final class Scene {
     /// Grace waits are held until the test lets them go; drain polls only yield.
     var held: [CheckedContinuation<Void, Never>] = []
 
+    /// Retry waits after a failed wake, held until `releaseRetry`.
+    var heldRetries: [CheckedContinuation<Void, Never>] = []
+
+    func releaseRetry() {
+        let waiting = heldRetries
+        heldRetries = []
+        waiting.forEach { $0.resume() }
+    }
+
+    var retryWaits: Int { waits.filter { $0 == PageSleep.wakeRetry }.count }
+
     var graceWaits: Int { waits.filter { $0 == PageSleepRule.grace }.count }
     var drainPolls: Int { waits.filter { $0 == PageSleep.drainPoll }.count }
 
@@ -45,11 +56,34 @@ private func makeSleep(_ scene: Scene, keepLoaded: Bool, windowOpen: Bool) -> Pa
                   scene.waits.append(duration)
                   if duration == PageSleepRule.grace {
                       await withCheckedContinuation { scene.held.append($0) }
+                  } else if duration == PageSleep.wakeRetry {
+                      await withCheckedContinuation { scene.heldRetries.append($0) }
                   } else {
                       // Suspends, as a real wait does, so the loop shares the run loop.
                       await Task.yield()
                   }
               })
+}
+
+/// What `WebContainer.backToSleep` does when a background wake couldn't sign in.
+@MainActor
+private func wakeFails(_ sleep: PageSleep, _ scene: Scene) {
+    sleep.wakeFailed()
+    scene.page = .asleep
+    sleep.pageChanged()
+}
+
+/// A closed window, the setting off, the page asleep, and an action holding it
+/// whose wake has just failed.
+@MainActor
+private func heldUseAfterAFailedWake(_ scene: Scene) async -> PageSleep {
+    scene.page = .asleep
+    let sleep = makeSleep(scene, keepLoaded: false, windowOpen: false)
+    sleep.beginUse()
+    #expect(scene.wakes == 1)
+    wakeFails(sleep, scene)
+    await settle()
+    return sleep
 }
 
 /// Lets the sleeper's tasks run as far as they can.
@@ -421,5 +455,83 @@ struct PageSleepTests {
         #expect(PageSleepSetting.keepsLoaded(defaults))
         defaults.removeObject(forKey: SettingsKey.keepPageLoaded)
         #expect(PageSleepSetting.keepsLoaded(defaults))
+    }
+
+    // MARK: A wake that fails
+
+    @Test func aFailedWakeIsNotTriedAgainWhileTheSameUseIsHeld() async {
+        let scene = Scene()
+        let sleep = await heldUseAfterAFailedWake(scene)
+        #expect(scene.wakes == 1)
+        #expect(sleep.wakeHeldBack)
+        // The page's status changing again, with nothing else changing, is no reason.
+        sleep.pageChanged()
+        sleep.pageChanged()
+        await settle()
+        #expect(scene.wakes == 1)
+        #expect(scene.page == .asleep)
+    }
+
+    @Test func aNewActionTriesTheWakeAgain() async {
+        let scene = Scene()
+        let sleep = await heldUseAfterAFailedWake(scene)
+        sleep.beginUse()
+        #expect(scene.wakes == 2)
+        #expect(!sleep.wakeHeldBack)
+    }
+
+    @Test func theWindowOpeningTriesTheWakeAgain() async {
+        let scene = Scene()
+        let sleep = await heldUseAfterAFailedWake(scene)
+        sleep.setWindowOpen(true)
+        #expect(scene.wakes == 2)
+    }
+
+    @Test func theSwitchTurningOnTriesTheWakeAgain() async {
+        let scene = Scene()
+        let sleep = await heldUseAfterAFailedWake(scene)
+        sleep.setKeepLoaded(true)
+        #expect(scene.wakes == 2)
+    }
+
+    @Test func aHeldUseIsTriedAgainOnlyAfterTheSlowRetry() async {
+        let scene = Scene()
+        let sleep = await heldUseAfterAFailedWake(scene)
+        #expect(PageSleep.wakeRetry >= .seconds(30))
+        #expect(scene.retryWaits == 1)
+        scene.releaseRetry()
+        await settle()
+        #expect(scene.wakes == 2)
+        // Failing again waits the whole retry again, never back to back.
+        wakeFails(sleep, scene)
+        await settle()
+        #expect(scene.wakes == 2)
+        #expect(scene.retryWaits == 2)
+        scene.releaseRetry()
+        await settle()
+        #expect(scene.wakes == 3)
+    }
+
+    @Test func theRetryWakesNothingOnceTheUseHasEnded() async {
+        let scene = Scene()
+        let sleep = await heldUseAfterAFailedWake(scene)
+        sleep.endUse()
+        scene.releaseRetry()
+        await settle()
+        #expect(scene.wakes == 1)
+        #expect(!sleep.wakeHeldBack)
+        #expect(scene.page == .asleep)
+    }
+
+    @Test func aRetryOvertakenByANewActionDoesNotWakeTwice() async {
+        let scene = Scene()
+        let sleep = await heldUseAfterAFailedWake(scene)
+        sleep.beginUse()
+        #expect(scene.wakes == 2)
+        scene.page = .loaded
+        sleep.pageChanged()
+        scene.releaseRetry()
+        await settle()
+        #expect(scene.wakes == 2)
     }
 }
