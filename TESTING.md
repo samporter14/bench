@@ -374,11 +374,11 @@ Browser", and Compare's cap for an empty side. Notes for the release are in docs
   defaults suite (ScratchDefaultsTests), fixed. The second had one failure,
   `CompareDiffTests.twoTextsWithNoLineInCommonStopQuicklyAsTooManyChanges` (took over its 1 s under the full run's
   load); it passed in the first full run and three times out of three alone (0.14 s), and the empty-side change
-  doesn't reach it.
+  doesn't reach it. A third full run on the final tree passed: 4,998 tests in 630 suites, no failures.
 - ✅ `Scripts/build-app.sh`: Capsid.app 1.1.6 (63), signed with Solanum Code Signing by Scripts/sign-app.sh
   (CDHash a2cceb21d883a65726e3f35eac9f1c015bd7652d); `codesign --verify --strict --deep` passes.
 - ✅ Installed in /Applications the install.sh way, by hand: the running 1.1.5 quit with TERM, moved to
-  Capsid.app.previous (a leftover there was moved aside first, not deleted), the new copy put in and opened. The
+  Capsid.app.previous (there was no leftover there), the new copy put in and opened. The
   running app reports version 1.1.6.
 - ⏳ **Live**: unpair from the phone and from Settings (and, if it can be arranged, with the devices file unwritable);
   a phone photo cut off by removing its device; quitting with a Working Note that can't be saved.
