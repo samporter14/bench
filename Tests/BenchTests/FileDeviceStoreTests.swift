@@ -18,6 +18,23 @@ struct FileDeviceStoreTests {
         return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? -1
     }
 
+    @Test func removalsTheFileMissedAreKeptInThePreferencesPerFile() throws {
+        let suite = "bench-store-tests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let place = folder()
+        let store = FileDeviceStore(folder: place, defaults: defaults)
+        #expect(store.loadRevoked() == [])
+        store.saveRevoked(["a", "b"])
+        #expect(FileDeviceStore(folder: place, defaults: defaults).loadRevoked() == ["a", "b"])
+        #expect(FileDeviceStore(name: "other.json", folder: place, defaults: defaults).loadRevoked() == [])
+        store.saveRevoked([])
+        #expect(store.loadRevoked() == [])
+        #expect(defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix("remoteRevoked.") }.isEmpty)
+        // Nothing is written beside the file.
+        #expect(!FileManager.default.fileExists(atPath: place.path))
+    }
+
     @Test func nothingStoredReadsAsNothing() throws {
         let store = FileDeviceStore(folder: folder())
         #expect(try store.load() == nil)

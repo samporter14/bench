@@ -896,11 +896,15 @@ final class RemoteServer {
             let json = RemoteAPI.encode(RemoteAPI.Me(paired: true, device: device?.name ?? "", bench: backend.version))
             send(id, RemoteResponse.make(status: 200, contentType: RemoteResponse.json, body: json), route: route, closing: true)
         case .unpair:
+            // The token is refused from now on either way. When the list of
+            // devices couldn't be written, the phone is told so (`saved`):
+            // the removal holds all the same (RemovalOutcome.notStored).
+            var saved = true
             if let device {
-                auth.remove(device.id)
+                saved = auth.remove(device.id) != .notStored
                 closeStreams(of: device.id)
             }
-            let json = Data(#"{"paired":false}"#.utf8)
+            let json = Data((saved ? #"{"paired":false}"# : #"{"paired":false,"saved":false}"#).utf8)
             send(id, RemoteResponse.make(status: 200, contentType: RemoteResponse.json, body: json,
                                          headers: [RemoteResponse.clearedCookie(secure: secure)]),
                  route: route, closing: true)

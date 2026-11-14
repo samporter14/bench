@@ -142,6 +142,17 @@ protocol RemoteDeviceStore: AnyObject {
     func load() throws -> Data?
     func save(_ data: Data) throws
     func delete() throws
+    /// Devices removed while the blob couldn't be written: kept apart from
+    /// it, so that a removal the file missed still holds after a restart.
+    /// Device ids only, never a token or its hash.
+    func loadRevoked() -> [String]
+    func saveRevoked(_ ids: [String])
+}
+
+extension RemoteDeviceStore {
+    // The push key's and Ask Another Model's stores keep no devices.
+    func loadRevoked() -> [String] { [] }
+    func saveRevoked(_ ids: [String]) {}
 }
 
 /// The app's store: one JSON file in Bench's own Application Support folder,
@@ -161,6 +172,7 @@ final class FileDeviceStore: RemoteDeviceStore {
     }
 
     private let url: URL
+    private let defaults: UserDefaults
 
     /// `~/Library/Application Support/Bench`.
     nonisolated static var folder: URL {
@@ -169,8 +181,22 @@ final class FileDeviceStore: RemoteDeviceStore {
     }
 
     // Phase 2 push: the push key is a second file beside the devices.
-    init(name: String = "remote-devices.json", folder: URL = FileDeviceStore.folder) {
+    init(name: String = "remote-devices.json", folder: URL = FileDeviceStore.folder, defaults: UserDefaults = .standard) {
         url = folder.appendingPathComponent(name, isDirectory: false)
+        self.defaults = defaults
+    }
+
+    /// Removals the file missed live in the preferences, not beside the file:
+    /// whatever kept the file from being written would likely keep a second
+    /// file from it too.
+    private var revokedKey: String { "remoteRevoked." + url.lastPathComponent }
+
+    func loadRevoked() -> [String] {
+        defaults.stringArray(forKey: revokedKey) ?? []
+    }
+
+    func saveRevoked(_ ids: [String]) {
+        if ids.isEmpty { defaults.removeObject(forKey: revokedKey) } else { defaults.set(ids, forKey: revokedKey) }
     }
 
     func load() throws -> Data? {
@@ -211,8 +237,11 @@ final class FileDeviceStore: RemoteDeviceStore {
 @MainActor
 final class MemoryDeviceStore: RemoteDeviceStore {
     private(set) var data: Data?
-    /// Tests set it to make a save fail.
+    /// Tests set them to make a save or a delete fail.
     var failsToSave = false
+    var failsToDelete = false
+    /// Removals the blob missed (`saveRevoked`), kept as the preferences would.
+    private(set) var revoked: [String] = []
     /// Saves that worked, for tests.
     private(set) var saves = 0
 
@@ -228,7 +257,13 @@ final class MemoryDeviceStore: RemoteDeviceStore {
         saves += 1
     }
 
-    func delete() throws { data = nil }
+    func delete() throws {
+        if failsToDelete { throw FileDeviceStore.Failure(errno: EIO) }
+        data = nil
+    }
+
+    func loadRevoked() -> [String] { revoked }
+    func saveRevoked(_ ids: [String]) { revoked = ids }
 }
 
 // MARK: Pairing
@@ -258,6 +293,19 @@ enum PairingRefusal: Equatable, Sendable {
     case tooManyDevices
     /// The store couldn't save the new device.
     case storeFailed
+}
+
+/// How removing a device ended.
+enum RemovalOutcome: Equatable, Sendable {
+    /// Gone, and the store says so.
+    case removed
+    /// Gone all the same: its token stopped working at once, and the removal
+    /// is remembered apart from the store (`saveRevoked`) so a restart can't
+    /// bring the device back. But the store itself couldn't be written; it is
+    /// written again with the next change, and the note then goes.
+    case notStored
+    /// No such device.
+    case notFound
 }
 
 enum PairingResult: Equatable, Sendable {
@@ -300,6 +348,9 @@ final class RemoteAuth: ObservableObject {
     /// The last code was worn out by wrong tries: Settings says so, and
     /// shows another only when asked (New Code).
     @Published private(set) var wornOut = false
+    /// Devices removed whose removal the store hasn't taken yet (they are
+    /// refused all the same): Settings says so until a write works.
+    @Published private(set) var revoked: Set<String> = []
 
     private let store: any RemoteDeviceStore
     /// `--demo remote`'s fixed code: it never expires or wears out, though
@@ -331,10 +382,18 @@ final class RemoteAuth: ObservableObject {
     func load(now: Date = Date()) {
         guard !loaded else { return }
         loaded = true
+        revoked = Set(store.loadRevoked())
         do {
-            guard let data = try store.load() else { return }
-            devices = try Self.decoder.decode([RemoteDevice].self, from: data)
-            persistedSeen = Dictionary(devices.compactMap { d in d.lastSeen.map { (d.id, $0) } }, uniquingKeysWith: { a, _ in a })
+            if let data = try store.load() {
+                // A removal the store missed is still a removal.
+                devices = try Self.decoder.decode([RemoteDevice].self, from: data).filter { !revoked.contains($0.id) }
+                persistedSeen = Dictionary(devices.compactMap { d in d.lastSeen.map { (d.id, $0) } }, uniquingKeysWith: { a, _ in a })
+                // Try again to write the store without them.
+                if !revoked.isEmpty { _ = save(devices) }
+            } else {
+                // No store, so nothing in it to keep out.
+                clearRevoked()
+            }
         } catch {
             log.error("Couldn't read the paired devices")
         }
@@ -470,29 +529,63 @@ final class RemoteAuth: ObservableObject {
         }
     }
 
-    /// Unpair, from the phone or from Settings.
-    func remove(_ id: String) {
+    /// Whether this device is still paired: asked again, for a request let in
+    /// at its head, before its body is acted on (`RemoteRevocation`).
+    func isPaired(_ id: String, now: Date = Date()) -> Bool {
+        devices.contains { $0.id == id && !$0.isExpired(at: now) }
+    }
+
+    /// Unpair, from the phone or from Settings. The device's token stops
+    /// working at once, whether or not the store can be written: a removal
+    /// the store misses is remembered apart from it (`notStored`).
+    @discardableResult
+    func remove(_ id: String) -> RemovalOutcome {
         load()
-        guard devices.contains(where: { $0.id == id }) else { return }
-        if save(devices.filter { $0.id != id }) {
-            persistedSeen[id] = nil
-            ListedFiles.shared.forget(device: id)
+        guard devices.contains(where: { $0.id == id }) else { return .notFound }
+        let rest = devices.filter { $0.id != id }
+        persistedSeen[id] = nil
+        ListedFiles.shared.forget(device: id)
+        if save(rest) {
             log.notice("Removed a device")
+            return .removed
+        }
+        devices = rest
+        revoke([id])
+        log.error("Removed a device, but couldn't save the list")
+        return .notStored
+    }
+
+    /// "Remove All Devices": the file goes. As with `remove`, every token
+    /// stops working at once, whether or not the file could be deleted.
+    @discardableResult
+    func removeAll() -> RemovalOutcome {
+        load()
+        let ids = devices.map(\.id)
+        devices = []
+        persistedSeen = [:]
+        ListedFiles.shared.forgetAll()
+        do {
+            try store.delete()
+            clearRevoked()
+            log.notice("Removed all devices")
+            return .removed
+        } catch {
+            revoke(ids)
+            log.error("Removed all devices, but couldn't delete the list")
+            return .notStored
         }
     }
 
-    /// "Remove All Devices": the file goes.
-    func removeAll() {
-        load()
-        do {
-            try store.delete()
-            devices = []
-            persistedSeen = [:]
-            ListedFiles.shared.forgetAll()
-            log.notice("Removed all devices")
-        } catch {
-            log.error("Couldn't remove the paired devices")
-        }
+    /// Removals the store missed, remembered apart from it.
+    private func revoke(_ ids: [String]) {
+        revoked.formUnion(ids)
+        store.saveRevoked(revoked.sorted())
+    }
+
+    private func clearRevoked() {
+        guard !revoked.isEmpty else { return }
+        revoked = []
+        store.saveRevoked([])
     }
 
     /// The code goes: Remote was turned off.
@@ -507,6 +600,9 @@ final class RemoteAuth: ObservableObject {
             try store.save(Self.encoder.encode(next))
             devices = next
             pushUnsaved = false
+            // The list written holds no device removed before (none comes
+            // back once removed), so the removals it missed are in it now.
+            clearRevoked()
             return true
         } catch {
             log.error("Couldn't save the paired devices")

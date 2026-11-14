@@ -173,6 +173,81 @@ struct RemoteAuthTests {
         #expect(auth.device(forToken: token, now: start) == nil)
     }
 
+    @Test func removingSaysItWasStored() {
+        let store = MemoryDeviceStore()
+        let auth = auth(store: store)
+        let first = token(auth.pair(code: auth.issueCode(now: start).digits, name: "One", now: start))!
+        let one = auth.device(forToken: first, now: start)!
+        #expect(auth.remove(one.id) == .removed)
+        #expect(auth.remove(one.id) == .notFound)
+        #expect(auth.revoked.isEmpty)
+        #expect(store.revoked.isEmpty)
+    }
+
+    @Test func aRemovalTheStoreMissesStillEndsTheTokenNowAndAfterARestart() {
+        let store = MemoryDeviceStore()
+        let auth = auth(store: store)
+        let first = token(auth.pair(code: auth.issueCode(now: start).digits, name: "One", now: start))!
+        let second = token(auth.pair(code: auth.issueCode(now: start).digits, name: "Two", now: start))!
+        let one = auth.device(forToken: first, now: start)!
+        store.failsToSave = true
+        #expect(auth.remove(one.id) == .notStored)
+        // Refused at once, though the store still lists it.
+        #expect(auth.device(forToken: first, now: start) == nil)
+        #expect(!auth.isPaired(one.id, now: start))
+        #expect(auth.devices.map(\.name) == ["Two"])
+        #expect(auth.revoked == [one.id])
+        #expect(store.revoked == [one.id])
+        // A restart reads the old list, and still keeps the device out.
+        let restarted = RemoteAuth(store: store)
+        restarted.load(now: start)
+        #expect(restarted.device(forToken: first, now: start) == nil)
+        #expect(restarted.device(forToken: second, now: start)?.name == "Two")
+        #expect(restarted.revoked == [one.id])
+        // The next write that works takes the removal, and the note goes.
+        store.failsToSave = false
+        #expect(token(restarted.pair(code: restarted.issueCode(now: start).digits, name: "Three", now: start)) != nil)
+        #expect(restarted.revoked.isEmpty)
+        #expect(store.revoked.isEmpty)
+        let again = RemoteAuth(store: store)
+        again.load(now: start)
+        #expect(again.devices.map(\.name) == ["Two", "Three"])
+    }
+
+    @Test func aRestartWritesTheMissedRemovalWhenItCan() {
+        let store = MemoryDeviceStore()
+        let auth = auth(store: store)
+        let first = token(auth.pair(code: auth.issueCode(now: start).digits, name: "One", now: start))!
+        store.failsToSave = true
+        #expect(auth.remove(auth.device(forToken: first, now: start)!.id) == .notStored)
+        store.failsToSave = false
+        let restarted = RemoteAuth(store: store)
+        restarted.load(now: start)
+        #expect(restarted.devices.isEmpty)
+        #expect(restarted.revoked.isEmpty)
+        #expect(store.revoked.isEmpty)
+    }
+
+    @Test func removeAllThatCantDeleteStillEndsEveryToken() {
+        let store = MemoryDeviceStore()
+        let auth = auth(store: store)
+        let first = token(auth.pair(code: auth.issueCode(now: start).digits, name: "One", now: start))!
+        let second = token(auth.pair(code: auth.issueCode(now: start).digits, name: "Two", now: start))!
+        store.failsToDelete = true
+        store.failsToSave = true
+        #expect(auth.removeAll() == .notStored)
+        #expect(auth.devices.isEmpty)
+        #expect(auth.device(forToken: first, now: start) == nil)
+        #expect(auth.device(forToken: second, now: start) == nil)
+        #expect(store.data != nil)
+        #expect(store.revoked.count == 2)
+        let restarted = RemoteAuth(store: store)
+        restarted.load(now: start)
+        #expect(restarted.devices.isEmpty)
+        #expect(restarted.device(forToken: first, now: start) == nil)
+        #expect(restarted.device(forToken: second, now: start) == nil)
+    }
+
     @Test func aStoreThatFailsPairsNothing() {
         let store = MemoryDeviceStore()
         store.failsToSave = true

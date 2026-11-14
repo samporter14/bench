@@ -22,7 +22,8 @@ struct PhoneSettingsView: View {
 
     private var model: PhoneSetupModel {
         PhoneSetupModel(status: remote.status, enabled: remote.enabled, phoneSkipped: phoneSkipped,
-                        devices: auth.devices, code: auth.code, wornOut: auth.wornOut)
+                        devices: auth.devices, code: auth.code, wornOut: auth.wornOut,
+                        removalNotSaved: !auth.revoked.isEmpty)
     }
 
     private var isReady: Bool {
@@ -87,6 +88,8 @@ struct PhoneSetupModel {
     var devices: [RemoteDevice]
     var code: PairingCode?
     var wornOut = false
+    /// A device was removed but the list of devices couldn't be written.
+    var removalNotSaved = false
 
     func input(pairingAnotherFrom: Int? = nil) -> PhoneSetup.Input {
         PhoneSetup.Input(status: status, enabled: enabled, skippedPhone: phoneSkipped,
@@ -380,8 +383,11 @@ struct PhoneSetupPage: View {
 
     /// What Bench needs to say, when it applies.
     @ViewBuilder private var notes: some View {
-        if status.otherLogin || status.mappingLeft || sharesAddress {
+        if status.otherLogin || status.mappingLeft || sharesAddress || model.removalNotSaved {
             Section {
+                if model.removalNotSaved {
+                    Note(text: "Capsid couldn't save its list of paired devices. The devices you removed can't connect, and stay removed if Capsid restarts. Capsid tries saving the list again with the next change.")
+                }
                 if status.otherLogin {
                     Note(text: "Tailscale is signed in as someone else now, so your devices can't reach Capsid. To use this account, turn Capsid on your phone off and on again.")
                 }
