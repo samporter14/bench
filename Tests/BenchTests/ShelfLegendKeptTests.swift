@@ -328,7 +328,7 @@ struct ShelfLegendKeptTests {
     }
 
     /// The app's quit path asks the Shelf as well as the Working Notes, waits for the legends, and quits without an
-    /// unsaved one only when the person says so.
+    /// unsaved legend or note only when the person says so.
     @Test func quittingAsksTheShelfAndWaitsForItsLegends() throws {
         let app = FindRepo.source("App/BenchApp.swift")
         let start = try #require(app.range(of: "func applicationShouldTerminate("))
@@ -336,7 +336,8 @@ struct ShelfLegendKeptTests {
         let body = String(app[start.lowerBound..<end.lowerBound])
         #expect(body.contains("shelf?.hasPendingLegends == true"))
         #expect(body.contains("await shelf?.settleLegendsForQuit()"))
-        #expect(body.contains("unsaved.isEmpty || Self.quitWithoutLegends(unsaved)"))
+        #expect(body.contains("QuitSettlement.outcome(notes: store.unsavedProjectTitles(), legends: unsavedLegends)"))
+        #expect(body.contains("Self.quitWithoutUnsaved(ask)"))
         #expect(!body.contains("sender.reply(toApplicationShouldTerminate: true)"))
     }
 

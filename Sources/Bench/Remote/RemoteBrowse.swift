@@ -631,6 +631,7 @@ final class RemoteBrowser {
         guard let request = NewSessionRequest.parse(body) else { return RemoteActionRequest.refusal(body: body) }
         guard let projects = await listedProjects() else { return Self.unreadable }
         guard projects.contains(project) else { return .notFound }
+        guard RemoteRevocation.stillPaired() else { return .unpaired }
         switch await attempt(project, request: request) {
         case .started(let reply): return reply
         case .notStarted: return .ok(.unavailable)

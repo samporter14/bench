@@ -335,6 +335,9 @@ final class AskModel: ObservableObject {
     private var readTask: Task<Void, Never>?
     private var askTask: Task<Void, Never>?
     private var sendTask: Task<Void, Never>?
+    /// Which answer is on screen: a new ask makes a new one. A send that began for an
+    /// earlier answer hears nothing of `sending` once this has moved on.
+    private var answerGeneration = 0
     private var ledger = IntentLedger()
     /// Every word that has arrived; `answer` and `rendered` follow it, a tenth of a second apart.
     private var streamed = ""
@@ -428,6 +431,7 @@ final class AskModel: ObservableObject {
         let chat = AskRules.chat(question: text, conversation: turns)
         let model = modelName
         let started = dependencies.clock()
+        answerGeneration += 1
         phase = .asking
         thinking = false
         sending = .idle
@@ -575,18 +579,22 @@ final class AskModel: ObservableObject {
         guard let request = Self.message(text: text, intent: intent) else { return }
         sending = .sending
         let id = subject.sessionID
+        let generation = answerGeneration
         sendTask = Task { [weak self] in
             guard let self else { return }
-            let result = await dependencies.send(request, id) { [weak self] in self?.sending = .checking }
+            let result = await dependencies.send(request, id) { [weak self] in
+                guard let self, generation == answerGeneration else { return }
+                sending = .checking
+            }
             let outcome = AskRules.outcome(result)
-            if outcome.sent {
-                ledger.sent()
-                sending = .done(outcome.sentence)
-            } else {
-                sending = .failed(outcome.sentence)
+            // A message that went is spent whichever answer is on screen now.
+            if outcome.sent { ledger.sent() }
+            // Only the answer that was sent hears how it went.
+            if generation == answerGeneration {
+                sending = outcome.sent ? .done(outcome.sentence) : .failed(outcome.sentence)
+                sendTask = nil
             }
             dependencies.log("Another model: sent the answer to the session, \(AskRules.word(result))")
-            sendTask = nil
         }
     }
 

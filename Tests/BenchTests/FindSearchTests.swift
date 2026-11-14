@@ -284,6 +284,34 @@ struct ShelfFinderTests {
         #expect(finder.countText == "\(FindQuery.defaultLimit)+")
     }
 
+    /// Closing the Shelf stops its search (code review C6): an answer that comes after is dropped, the words stay,
+    /// and opening the window again searches afresh.
+    @Test func closingTheShelfStopsItsSearchAndOpeningSearchesAgain() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("shelf-find-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let disk = KeptDisk(root: { root })
+        let index = KeptIndex(disk: disk, root: { root })
+        await index.refreshAndWait()
+        let model = ShelfModel(shelf: KeptDemo.shelf(index: index, root: root), pdf: ShelfPDFMaker(dependencies: .declining))
+        let rig = FinderRig()
+        model.finder = rig.finder()
+        model.search = "volcano"
+        await rig.lookup.pauseElapses()
+        #expect(rig.lookup.lookups.count == 1)
+        // The window closes while the database is read.
+        model.windowClosed()
+        let file = madeFile("volcano.png", version: "v1")
+        await rig.lookup.answer(0, [file])
+        #expect(model.finder.visible.isEmpty)
+        #expect(!model.finder.isWanted)
+        #expect(model.search == "volcano")
+        model.windowOpened()
+        await rig.lookup.pauseElapses()
+        #expect(rig.lookup.lookups.count == 2)
+        await rig.lookup.answer(1, [file])
+        #expect(model.finder.visible.map(\.version) == ["v1"])
+    }
+
     @Test func theShelfsPillAndTheKindChipReachTheSearch() async {
         let rig = FinderRig()
         let finder = rig.finder()

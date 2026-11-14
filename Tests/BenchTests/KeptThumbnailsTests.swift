@@ -57,6 +57,29 @@ private func settle() async throws {
     try await Task.sleep(for: .milliseconds(60))
 }
 
+
+/// A Quick Look that waits to be let go: each ask is held until the test answers it.
+private final class GatedDraw: @unchecked Sendable {
+    private let lock = NSLock()
+    private var held: [CheckedContinuation<CGImage?, Never>] = []
+    private var asks = 0
+
+    var asked: Int { lock.withLock { asks } }
+    var waiting: Int { lock.withLock { held.count } }
+
+    func draw(_ url: URL, _ side: CGFloat, _ scale: CGFloat) async -> CGImage? {
+        await withCheckedContinuation { continuation in lock.withLock { asks += 1; held.append(continuation) } }
+    }
+
+    /// Lets the oldest held ask finish with a picture `width` pixels wide.
+    func release(width: Int) {
+        let next = lock.withLock { held.isEmpty ? nil : held.removeFirst() }
+        let context = CGContext(data: nil, width: width, height: 1, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        next?.resume(returning: context?.makeImage())
+    }
+}
+
 private let file = URL(fileURLWithPath: "/tmp/kept/Assay development/z_prime/z_prime.png")
 
 @MainActor
@@ -177,6 +200,50 @@ struct KeptThumbnailsTests {
         store.want(file, side: 160, scale: 2)
         try await until("the picture again") { store.image(for: file, side: 160) != nil }
         #expect(disk.pictures == 2)
+    }
+
+    @Test func aPictureFinishedAfterTheWindowClosedIsDroppedAndNotAskedForAgain() async throws {
+        let disk = MadeDisk()
+        let gate = GatedDraw()
+        let store = KeptThumbnails(inspect: { disk.inspect($0) }, generate: { await gate.draw($0, $1, $2) })
+        disk.set(file, modified: 1_000)
+        store.want(file, side: 160, scale: 2)
+        try await until("the ask is at Quick Look") { gate.waiting == 1 }
+
+        // The window closes while Quick Look is still drawing.
+        store.removeAll()
+        gate.release(width: 5)
+        try await settle()
+        #expect(store.image(for: file, side: 160) == nil)
+        // And nothing asks again for the closed window.
+        #expect(gate.asked == 1)
+
+        // The window opens again: the card asks afresh, and its picture is the one kept.
+        store.want(file, side: 160, scale: 2)
+        try await until("the new ask") { gate.waiting == 1 }
+        gate.release(width: 7)
+        try await until("the new picture") { store.image(for: file, side: 160) != nil }
+        #expect(store.image(for: file, side: 160)?.width == 7)
+        #expect(gate.asked == 2)
+    }
+
+    @Test func aPictureOfAClosedWindowDoesNotLandOnTheNextOnesAsk() async throws {
+        let disk = MadeDisk()
+        let gate = GatedDraw()
+        let store = KeptThumbnails(inspect: { disk.inspect($0) }, generate: { await gate.draw($0, $1, $2) })
+        disk.set(file, modified: 1_000)
+        store.want(file, side: 160, scale: 2)
+        try await until("the first ask") { gate.waiting == 1 }
+        store.removeAll()
+        store.want(file, side: 160, scale: 2)
+        try await until("the second ask") { gate.waiting == 2 }
+        // The old ask finishes first: its picture is not kept; the new one's is.
+        gate.release(width: 3)
+        try await settle()
+        #expect(store.image(for: file, side: 160) == nil)
+        gate.release(width: 9)
+        try await until("the new picture") { store.image(for: file, side: 160) != nil }
+        #expect(store.image(for: file, side: 160)?.width == 9)
     }
 }
 

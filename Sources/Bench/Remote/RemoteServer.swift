@@ -548,6 +548,18 @@ enum RemoteServerError: Error, Equatable {
     case noFreePort
 }
 
+/// Whether the device a phone request came from is still paired, for the work
+/// that answers it: the server sets `check` (`RemoteServer.answer`), and a write
+/// asks `stillPaired` at its last step before it begins, after any wait. Without
+/// a request around it (tests, the Mac's own calls) there is nothing to ask.
+enum RemoteRevocation {
+    @TaskLocal static var check: (@MainActor @Sendable () -> Bool)?
+
+    @MainActor static func stillPaired() -> Bool {
+        check?() ?? true
+    }
+}
+
 @MainActor
 final class RemoteServer {
     /// 47280, then the next free one up to 47290.
@@ -801,6 +813,11 @@ final class RemoteServer {
             if isComplete || failed { close(id) } else { receive(id) }
             return
         }
+        // Let in at its head, the device may have been removed while the body
+        // came (a photo's can take two minutes): asked again before anything is done.
+        if let device = admitted.device, !auth.isPaired(device.id, now: now()) {
+            return send(id, RemoteResponse.error(401), route: admitted.route, why: "device", closing: true)
+        }
         client.answered = true
         client.timer?.cancel()
         client.buffer = Data()
@@ -830,8 +847,19 @@ final class RemoteServer {
     }
 
     /// Starts the work that answers a request. A read's task is kept so that `hungUp` can drop it; a write's never is.
+    /// The work runs with `RemoteRevocation.check` set to whether its device is still paired, so a write that waits
+    /// (for the page to wake, for the session's other actions) asks again just before it begins.
     private func answer(_ id: Int, _ route: RemoteRoute, _ work: @escaping @MainActor () async -> Void) {
-        let task = Task { await work() }
+        let check = clients[id]?.admitted?.device.map { [auth, now] device in
+            { @MainActor @Sendable in auth.isPaired(device.id, now: now()) }
+        }
+        let task = Task { [weak self] in
+            if let check, !check() {
+                self?.send(id, RemoteResponse.error(401), route: route, why: "device", closing: true)
+                return
+            }
+            await RemoteRevocation.$check.withValue(check) { await work() }
+        }
         if route.isCancellableRead { clients[id]?.work = task }
     }
 
@@ -896,11 +924,15 @@ final class RemoteServer {
             let json = RemoteAPI.encode(RemoteAPI.Me(paired: true, device: device?.name ?? "", bench: backend.version))
             send(id, RemoteResponse.make(status: 200, contentType: RemoteResponse.json, body: json), route: route, closing: true)
         case .unpair:
+            // The token is refused from now on either way. When the list of
+            // devices couldn't be written, the phone is told so (`saved`):
+            // the removal holds all the same (RemovalOutcome.notStored).
+            var saved = true
             if let device {
-                auth.remove(device.id)
-                closeStreams(of: device.id)
+                saved = auth.remove(device.id) != .notStored
+                revoke(device: device.id)
             }
-            let json = Data(#"{"paired":false}"#.utf8)
+            let json = Data((saved ? #"{"paired":false}"# : #"{"paired":false,"saved":false}"#).utf8)
             send(id, RemoteResponse.make(status: 200, contentType: RemoteResponse.json, body: json,
                                          headers: [RemoteResponse.clearedCookie(secure: secure)]),
                  route: route, closing: true)
@@ -1002,14 +1034,20 @@ final class RemoteServer {
 
     var streamCount: Int { clients.values.filter { $0.streamDevice != nil }.count }
 
-    /// A device removed: its streams end.
-    func closeStreams(of device: String) {
-        for (id, client) in clients where client.streamDevice == device { close(id) }
+    /// A device removed: its streams end, and so do its requests not yet
+    /// acted on (a body still arriving) and its reads still under way. A
+    /// write already begun runs on: what it has sent can't be taken back.
+    func revoke(device: String) {
+        for (id, client) in clients where client.streamDevice == device || client.admitted?.device?.id == device {
+            if client.streamDevice != nil || !client.answered || client.work != nil { close(id) }
+        }
     }
 
     /// Every device removed.
-    func closeAllStreams() {
-        for (id, client) in clients where client.streamDevice != nil { close(id) }
+    func revokeAll() {
+        for (id, client) in clients where client.streamDevice != nil || client.admitted?.device != nil {
+            if client.streamDevice != nil || !client.answered || client.work != nil { close(id) }
+        }
     }
 
     // MARK: Writing

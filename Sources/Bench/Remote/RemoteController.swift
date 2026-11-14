@@ -365,14 +365,20 @@ final class RemoteController: ObservableObject {
         auth.issueCode()
     }
 
-    func remove(_ device: RemoteDevice) {
-        auth.remove(device.id)
-        server?.closeStreams(of: device.id)
+    /// Settings' Remove. When the list couldn't be written, Settings says so
+    /// from `auth.revoked`; the device is refused all the same.
+    @discardableResult
+    func remove(_ device: RemoteDevice) -> RemovalOutcome {
+        let outcome = auth.remove(device.id)
+        server?.revoke(device: device.id)
+        return outcome
     }
 
-    func removeAll() {
-        auth.removeAll()
-        server?.closeAllStreams()
+    @discardableResult
+    func removeAll() -> RemovalOutcome {
+        let outcome = auth.removeAll()
+        server?.revokeAll()
+        return outcome
     }
 
     // MARK: The server

@@ -518,7 +518,7 @@ Every link goes through one function. The rules:
 | Anything in a child/pop-up window (including OAuth to other sites) | Stays in that child window |
 | Iframes to a preview origin | Allowed |
 | New window or top-level nav to a preview origin | An in-app **Preview** window |
-| Any other http(s) (docs, GitHub, claude.ai, papers) | An in-app **Browser** window: a WKWebView with Back/Forward/Reload, the URL shown, and an "Open in Safari" button (the only way to reach Safari, and only on the user's click) |
+| Any other http(s) (docs, GitHub, claude.ai, papers) | An in-app **Browser** window: a WKWebView with Back/Forward/Reload, the URL shown, and an "Open in Browser" button (opens the default browser, the only way to reach it, and only on the user's click) |
 | `mailto:` / other schemes | `NSWorkspace.shared.open` |
 
 - `javaScriptCanOpenWindowsAutomatically = false`, as in Safari; the pop-ups
@@ -3017,7 +3017,7 @@ and "up to date" after a check that found none, without asking.
   Settings' **Install Update** asks first, with the same words.
 - **Release Notes** opens the page in the in-app Browser window, as any
   other link to a website does (Web routing policy: GitHub is "any other
-  http(s)"), where "Open in Safari" is one click away.
+  http(s)"), where "Open in Browser" is one click away.
 
 **Installing natively (App/UpdateInstall.swift, Resources/swap.sh, since
 1.0).** Until 0.9.7, Install ran the README's line, `curl … main/install.sh |

@@ -40,6 +40,9 @@ final class KeptThumbnails: ObservableObject {
     private var peeks: [String: ShelfPeek] = [:]
     private var peeking: Set<String> = []
     private var unreadable: Set<String> = []
+    /// Counts the times the window closed: work begun before a close is dropped
+    /// when it finishes, and starts nothing again.
+    private var epoch = 0
     /// What each path was when its pictures (or its text) were drawn.
     private var stamps: [String: Stamp] = [:]
     /// The first bytes of a kept text file; nil leaves the Shelf's text cards to Quick Look.
@@ -94,9 +97,10 @@ final class KeptThumbnails: ObservableObject {
         guard usesPeek(url), !peeking.contains(path), let peeker else { return }
         peeking.insert(path)
         let inspect = self.inspect
+        let epoch = self.epoch
         Task { [weak self] in
             let facts = await inspect(url)
-            guard let self else { return }
+            guard let self, self.epoch == epoch else { return }
             noteFile(path, facts)
             // Put away in iCloud: no text to read; the card goes to the kind's symbol.
             if facts?.putAway == true {
@@ -110,6 +114,8 @@ final class KeptThumbnails: ObservableObject {
                 return
             }
             let text = await peeker(url)
+            // The window closed while this was read: nothing is kept, and `removeAll` let the ask go.
+            guard self.epoch == epoch else { return }
             peeking.remove(path)
             // Another file came while this one was read: its own ask reads it.
             guard stamps[path] == facts?.stamp else { return }
@@ -133,9 +139,11 @@ final class KeptThumbnails: ObservableObject {
         guard !pending.contains(key) else { return }
         pending.insert(key)
         let inspect = self.inspect, generate = self.generate
+        let epoch = self.epoch
         Task { [weak self] in
             let facts = await inspect(url)
-            guard let self else { return }
+            // The window closed meanwhile: `removeAll` let this ask go, so it neither writes nor asks again.
+            guard let self, self.epoch == epoch else { return }
             noteFile(key.path, facts)
             if facts?.putAway == true {
                 pending.remove(key)
@@ -147,9 +155,12 @@ final class KeptThumbnails: ObservableObject {
                 pending.remove(key)
                 return
             }
-            let image = await Task.detached(priority: .utility) { await generate(url, side, scale) }.value
-            // A page's thumbnail is mostly paper: a card shows what is on it.
-            let shown = cropped ? (image?.croppedToContent() ?? image) : image
+            // A page's thumbnail is mostly paper: a card shows what is on it. Cropped off the main actor too.
+            let shown = await Task.detached(priority: .utility) {
+                let image = await generate(url, side, scale)
+                return cropped ? (image?.croppedToContent() ?? image) : image
+            }.value
+            guard self.epoch == epoch else { return }
             receive(shown, for: key, drawnFrom: facts?.stamp) {
                 // The file changed while it was drawn: draw the new one.
                 self.want(url, side: side, scale: scale, cropped: cropped)
@@ -199,6 +210,10 @@ final class KeptThumbnails: ObservableObject {
 
     /// The window closed: the pictures go.
     func removeAll() {
+        epoch += 1
+        // Asks in flight are let go (they drop their answers); a card shown at the next opening asks afresh.
+        pending = []
+        peeking = []
         peeks = [:]
         unreadable = []
         images = [:]

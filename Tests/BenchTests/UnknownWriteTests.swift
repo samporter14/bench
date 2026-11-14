@@ -693,6 +693,30 @@ struct SessionQueueDeadlineTests {
         let after = await sessions.runSerially(on: root, limit: .seconds(30)) { .ok(.unavailable) }
         guard case .finished = after else { Issue.record("not finished: \(after)"); return }
     }
+
+    /// A device removed while its turn waited (`RemoteRevocation`): the turn never begins, and says 401.
+    @Test func aTurnForADeviceRemovedMeanwhileNeverBegins() async {
+        let sessions = rig.sessions(turnLimit: .seconds(30))
+        var ran = false
+        let end = await RemoteRevocation.$check.withValue({ @MainActor @Sendable in false }) {
+            await sessions.runSerially(on: root, limit: .seconds(30)) {
+                ran = true
+                return .ok(.unavailable)
+            }
+        }
+        guard case .finished(let reply) = end else { Issue.record("not finished: \(end)"); return }
+        #expect(reply == .unpaired)
+        #expect(!ran)
+        // Still paired: it runs.
+        let paired = await RemoteRevocation.$check.withValue({ @MainActor @Sendable in true }) {
+            await sessions.runSerially(on: root, limit: .seconds(30)) {
+                ran = true
+                return .ok(.unavailable)
+            }
+        }
+        guard case .finished = paired else { Issue.record("not finished: \(paired)"); return }
+        #expect(ran)
+    }
 }
 
 // MARK: The phone
