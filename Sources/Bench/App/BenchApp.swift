@@ -145,9 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// A Working Note typed in the last moment (Workspace/) is written before Capsid goes: two seconds at most. A
-    /// Shelf legend typed in the last moment (Kept/ShelfLegend.swift) is written too, and its save waited for: one that
-    /// can't be saved keeps Capsid open unless the person chooses to quit without it
-    /// (`ShelfModel.settleLegendsForQuit`).
+    /// Shelf legend typed in the last moment (Kept/ShelfLegend.swift) is written too, and its save waited for. A note
+    /// or a legend that still isn't saved then (a disk that said no) keeps Capsid open unless the person chooses to
+    /// quit without it (`QuitSettlement`, `ShelfModel.settleLegendsForQuit`).
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard Demo.mode == nil else { return .terminateNow }
         let shelf = KeptWindowController.shared.model
@@ -157,25 +157,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // The legends' saves start now, beside the note's.
             let legends = Task { await shelf?.settleLegendsForQuit() ?? [] }
             Task { await store.flushAll() }
-            // A write that fails stays unsaved: that is two seconds, and then Capsid quits anyway.
+            // A write that fails stays unsaved: that is two seconds, and then the person is told.
             let deadline = ContinuousClock.now + .seconds(2)
             while store.hasUnsavedWork, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
-            let unsaved = await legends.value
-            sender.reply(toApplicationShouldTerminate: unsaved.isEmpty || Self.quitWithoutLegends(unsaved))
+            let unsavedLegends = await legends.value
+            let outcome = QuitSettlement.outcome(notes: store.unsavedProjectTitles(), legends: unsavedLegends)
+            let quit = switch outcome {
+            case .quit: true
+            case .ask(let ask): Self.quitWithoutUnsaved(ask)
+            }
+            sender.reply(toApplicationShouldTerminate: quit)
         }
         return .terminateLater
     }
 
-    /// Legends that couldn't be saved at quitting: Quit Anyway, or Cancel (the default) to stay with the text kept in
-    /// each field. True to quit.
-    private static func quitWithoutLegends(_ names: [String]) -> Bool {
+    /// Notes and legends that couldn't be saved at quitting: Quit Anyway, or Cancel (the default) to stay with the
+    /// text kept in each field. True to quit.
+    private static func quitWithoutUnsaved(_ ask: QuitSettlement.Ask) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = names.count == 1
-            ? "The legend for \u{201C}\(names[0])\u{201D} isn\u{2019}t saved"
-            : "\(names.count) legends on the Shelf aren\u{2019}t saved"
-        alert.informativeText = "Capsid couldn\u{2019}t write them to their README. Cancel to keep Capsid open and "
-            + "choose the item to see why; your text is kept there. If you quit, it is lost."
+        alert.messageText = ask.title
+        alert.informativeText = ask.detail
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Quit Anyway")
         alert.buttons.first?.keyEquivalent = "\r"

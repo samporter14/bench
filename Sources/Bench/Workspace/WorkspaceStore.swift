@@ -237,6 +237,13 @@ final class WorkspaceStore: ObservableObject {
     /// Any project with something not yet written: what quitting waits for.
     var hasUnsavedWork: Bool { records.keys.contains { hasUnsaved($0) } }
 
+    /// What each project with an unsaved note is called in a list (two of one name told apart), sorted: what quitting
+    /// names when the write still hasn't landed (a disk that said no). Empty when everything is written.
+    func unsavedProjectTitles() -> [String] {
+        let unsaved = records.values.filter { hasUnsaved($0.projectID) }
+        return WorkspaceRules.listTitles(unsaved.map { ($0.projectID, $0.projectName) }).sorted()
+    }
+
     /// The projects Return to Project offers, with what the menu calls each: those with a pin or a note, the one
     /// shown most recently first (then the one changed most recently), two of one name told apart.
     func returnable(recency: (String) -> Int?, limit: Int = 20) -> [(id: String, title: String)] {
