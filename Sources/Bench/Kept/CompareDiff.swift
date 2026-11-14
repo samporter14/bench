@@ -190,8 +190,9 @@ enum CompareDiff {
     /// kept for the way back), or nil past `editLimit` changes or `workLimit` steps.
     static func myers(_ a: [Int32], _ b: [Int32], editLimit: Int, workLimit: Int) throws -> [Kind]? {
         let n = a.count, m = b.count
-        if n == 0 { return Array(repeating: .added, count: m) }
-        if m == 0 { return Array(repeating: .removed, count: n) }
+        // All added or all removed: no search needed, but the same cap on how many.
+        if n == 0 { return m > editLimit ? nil : Array(repeating: .added, count: m) }
+        if m == 0 { return n > editLimit ? nil : Array(repeating: .removed, count: n) }
         let most = n + m
         guard most > 0 else { return [] }
         let limit = min(most, editLimit)

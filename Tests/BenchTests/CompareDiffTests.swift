@@ -21,6 +21,17 @@ struct CompareDiffTests {
         lines.map { switch $0.kind { case .same: "=" ; case .added: "+" ; case .removed: "-" } }.joined()
     }
 
+    @Test func allAddedOrAllRemovedHasTheSameCapAsAnyOtherChange() throws {
+        let three = (1...3).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        #expect(try CompareDiff.compare("", three, editLimit: 2) == .tooManyChanges(left: 0, right: 3))
+        #expect(try CompareDiff.compare(three, "", editLimit: 2) == .tooManyChanges(left: 3, right: 0))
+        guard case .changes(let lines) = try CompareDiff.compare("", three, editLimit: 3) else {
+            Issue.record("expected changes")
+            return
+        }
+        #expect(kinds(lines) == "+++")
+    }
+
     @Test func theSameTextHasNoChanges() throws {
         #expect(try CompareDiff.compare("a\nb\n", "a\nb\n") == .identical)
         #expect(try CompareDiff.compare("", "") == .identical)
