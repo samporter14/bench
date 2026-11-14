@@ -200,6 +200,8 @@ final class RemotePhotos {
         case .failure(let refusal): return refusal.reply
         case .success(let made): photo = made
         }
+        // The upload is the first thing written: not for a device removed meanwhile.
+        guard RemoteRevocation.stillPaired() else { return .unpaired }
         let attachment: PhotoAttachment
         switch await attach(photo, request: request, to: project) {
         case .placed(let placed, _): attachment = placed

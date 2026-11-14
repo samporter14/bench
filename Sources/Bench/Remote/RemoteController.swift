@@ -370,14 +370,14 @@ final class RemoteController: ObservableObject {
     @discardableResult
     func remove(_ device: RemoteDevice) -> RemovalOutcome {
         let outcome = auth.remove(device.id)
-        server?.closeStreams(of: device.id)
+        server?.revoke(device: device.id)
         return outcome
     }
 
     @discardableResult
     func removeAll() -> RemovalOutcome {
         let outcome = auth.removeAll()
-        server?.closeAllStreams()
+        server?.revokeAll()
         return outcome
     }
 

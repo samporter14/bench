@@ -68,6 +68,8 @@ struct RemoteActionReply: Equatable, Sendable {
     static let tooMany = RemoteActionReply(status: 429, body: encode(
         Refusal(error: "tooMany", result: .unavailable, sentence: "That's a lot at once. Try again in a minute.")))
     static let notFound = RemoteActionReply(status: 404, body: encode(Refusal(error: "Not Found", result: nil, sentence: nil)))
+    /// The device was removed while its request waited (`RemoteRevocation`): nothing was done.
+    static let unpaired = RemoteActionReply(status: 401, body: encode(Refusal(error: "Unauthorized", result: nil, sentence: nil)))
     static let badRequest = RemoteActionReply(status: 400, body: encode(Refusal(error: "Bad Request", result: nil, sentence: nil)))
 
     private struct Refusal: Encodable {
@@ -1020,6 +1022,12 @@ extension RemoteSessions {
             _ = await previous?.value
             guard !Task.isCancelled else {
                 turn.settle(.cancelled)
+                self?.forget(id)
+                return
+            }
+            // The device may have been removed while the turn waited: then it never begins.
+            guard RemoteRevocation.stillPaired() else {
+                turn.settle(.finished(.unpaired))
                 self?.forget(id)
                 return
             }
