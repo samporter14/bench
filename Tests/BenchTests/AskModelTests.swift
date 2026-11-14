@@ -168,6 +168,9 @@ private final class Rig {
     /// Holds the read, or the ask, until `release()`.
     var holdRead = false
     var holdAsk = false
+    /// Holds a send until `releaseSend()`.
+    var holdSend = false
+    private var heldSends: [CheckedContinuation<Void, Never>] = []
     private var held: [CheckedContinuation<Void, Never>] = []
     var now = ContinuousClock.now
     /// The bounded path itself, when a test wants it in place of `sendResult`.
@@ -205,6 +208,7 @@ private final class Rig {
             },
             send: { request, id, checking in
                 self.sent.append(request)
+                if self.holdSend { await withCheckedContinuation { self.heldSends.append($0) } }
                 if let sessions = self.sessions { return await sessions.respond(request, session: id, checking: checking) }
                 return self.sendResult
             },
@@ -212,6 +216,12 @@ private final class Rig {
             render: { NSAttributedString(string: $0) },
             clock: { self.now },
             log: { self.lines.append($0) })
+    }
+
+    func releaseSend() {
+        let waiting = heldSends
+        heldSends = []
+        waiting.forEach { $0.resume() }
     }
 
     func release() {
@@ -435,6 +445,28 @@ struct AskModelSendTests {
         // Sent: a second press sends nothing.
         model.sendToSession()
         #expect(rig.sent.count == 1)
+    }
+
+    @Test func aLateSendNeverMarksANewerAnswerSent() async {
+        let rig = Rig()
+        let model = await answered(rig)
+        rig.holdSend = true
+        model.sendToSession()
+        await settle { rig.sent.count == 1 }
+        #expect(model.sending == .sending)
+        // A new ask while A's send is out: B answers.
+        rig.holdSend = false
+        rig.answer = .success("Use PIPES instead.")
+        model.ask()
+        await settle { model.phase == .answered }
+        #expect(model.answer == "Use PIPES instead.")
+        #expect(model.sending == .idle)
+        // A's send comes back sent.
+        rig.releaseSend()
+        for _ in 0..<50 { await Task.yield() }
+        #expect(rig.lines.last == "Another model: sent the answer to the session, sent")
+        #expect(model.sending == .idle)
+        #expect(model.canSend)
     }
 
     @Test func aSecondPressWhileItGoesSendsNothing() async {
