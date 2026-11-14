@@ -1,6 +1,6 @@
 #!/bin/zsh
 # build-app.sh — build Capsid.app into ./build (release, this Mac's
-# architecture, ad-hoc signed). Usage: Scripts/build-app.sh [--open]
+# architecture, signed by Scripts/sign-app.sh). Usage: Scripts/build-app.sh [--open]
 # The Swift target is still named Bench; its product, Capsid, names the binary.
 set -euo pipefail
 ROOT="${0:A:h:h}"
@@ -46,17 +46,11 @@ cp "$ROOT"/Resources/Sounds/*.caf "$APP/Contents/Resources/Sounds/"
 # signing, which seals Resources.
 "$ROOT/Scripts/appintents-metadata.sh" "$APP"
 
-# Signed with "Solanum Code Signing" when this Mac has that certificate (a
-# self-signed one in the login keychain): the signature then names the
-# certificate rather than this exact build, so macOS keeps the permissions it
-# granted (microphone, browser control) across updates. Without it, ad-hoc,
-# as anyone building from source gets.
-IDENTITY=$(security find-certificate -c "Solanum Code Signing" -Z 2>/dev/null | awk '/SHA-1/ {print $3; exit}' || true)
-if [[ -n "$IDENTITY" ]]; then
-    codesign --force --sign "$IDENTITY" "$APP" >/dev/null
-else
-    codesign --force --sign - "$APP" >/dev/null
-fi
+# Signed inside-out by Scripts/sign-app.sh: with "Solanum Code Signing" when
+# this Mac has that certificate, so permissions and Capsid's own updater carry
+# over between releases, else ad-hoc. CAPSID_SIGN_IDENTITY overrides it ("-"
+# for ad-hoc, or a Developer ID later). See the script for why.
+"$ROOT/Scripts/sign-app.sh" "$APP"
 echo "Built $APP"
 [[ "${1:-}" == "--open" ]] && open "$APP"
 exit 0
