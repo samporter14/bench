@@ -231,13 +231,19 @@ final class ShelfModel: ObservableObject {
         reconcile()
     }
 
-    /// The window closed: the text index is let go (its memory, its reading) until the window opens again.
-    func windowClosed() { textIndex.reset() }
+    /// The window closed: the text index is let go (its memory, its reading) until the window opens again, and so is
+    /// the search of the sessions' files, which would otherwise answer into a closed window and show its old answer at
+    /// the next opening. The words stay in the box. Adds under way are their own tasks and finish.
+    func windowClosed() {
+        textIndex.reset()
+        finder.cancel()
+    }
 
-    /// The window opened (again): a search left in the box has its index built again; the folders are read
-    /// afresh by the caller, and `subscription` keeps it up to date from there.
+    /// The window opened (again): a search left in the box has its index built again, and the sessions' files are
+    /// searched afresh; the folders are read afresh by the caller, and `subscription` keeps it up to date from there.
     func windowOpened() {
         if !search.isEmpty, !textIndex.isActive { textIndex.update(for: items) }
+        if !search.isEmpty { findScopeChanged() }
     }
 
     // MARK: The legend fields
