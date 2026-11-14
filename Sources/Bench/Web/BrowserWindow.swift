@@ -1,7 +1,7 @@
 // BrowserWindow.swift — the in-app window for links that leave Claude Science
 // (DESIGN.md, Web routing policy): a plain web view with Back, Forward,
-// Reload, the address, and, for web links, "Open in Safari". The Preview
-// window is the same window with a fixed title and no Safari button. Find and
+// Reload, the address, and, for web links, "Open in Browser". The Preview
+// window is the same window with a fixed title and no browser button. Find and
 // zoom come from the menus, like the main window's (WebPageWindow).
 import AppKit
 import Combine
@@ -80,8 +80,8 @@ final class BrowserWindow: NSObject, NSWindowDelegate, ObservableObject, WebPage
         WebWindows.shared.forget(self)
     }
 
-    /// The only road to Safari, and only on the user's click.
-    fileprivate func openInSafari() {
+    /// The only road to the default browser, and only on the user's click.
+    fileprivate func openInDefaultBrowser() {
         guard let address else { return }
         NSWorkspace.shared.open(address)
     }
@@ -117,9 +117,9 @@ private struct BrowserWindowView: View {
                 }
                 if model.kind == .browser {
                     ToolbarItem(placement: .primaryAction) {
-                        Button { model.openInSafari() } label: { Label("Open in Safari", systemImage: "safari") }
+                        Button { model.openInDefaultBrowser() } label: { Label("Open in Browser", systemImage: "arrow.up.right.square") }
                             .disabled(model.address == nil)
-                            .help("Open in Safari")
+                            .help("Open in your default browser")
                     }
                 }
             }
