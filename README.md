@@ -381,15 +381,29 @@ release notes.
 2. Drag **Capsid** into your **Applications** folder, and open it from there
    rather than from Downloads. If Bench is there from before, quit it and
    move it to the Trash: Capsid replaces it.
-3. Open Capsid. The first time, macOS blocks it because it isn't from the App
-   Store or a registered developer. Click **Done**, then go to **System
-   Settings → Privacy & Security**, scroll down, and click **Open Anyway**
-   next to Capsid.
+3. Open Capsid. The first time, macOS blocks it: see [First launch](#first-launch).
 
 To update a downloaded copy, quit Capsid first with **⌘Q**. Closing its window
 isn't enough, because Capsid keeps running in the background to watch your
 sessions. Then replace it in Applications, open it, and click **Open Anyway**
 once more. **Capsid → About Capsid** shows which version is running.
+
+### First launch
+
+Capsid isn't notarized by Apple: it's signed with its own certificate (or
+ad-hoc, if you build it yourself), not a paid Developer ID. So the first time
+you open a copy downloaded through a browser, macOS blocks it:
+
+1. Open Capsid once. macOS says it can't verify it; click **Done**.
+2. Go to **System Settings → Privacy & Security** and scroll down to
+   **Security**.
+3. Click **Open Anyway** next to the message about Capsid, and confirm (with
+   your password or Touch ID if asked).
+
+On current macOS, right-clicking the app and choosing **Open** no longer gets
+past this; **Open Anyway** is the way. You only do it once per copy.
+[The one-line install](#easiest-one-line-in-terminal) and Capsid's own
+updates skip this step, because they don't download through a browser.
 
 ### If something's off
 
