@@ -252,6 +252,8 @@ final class QuickStartFlow: QuickStartSending {
         var turn: @MainActor ([Int]) -> Duration = { WriteDeadline.turn(uploadBytes: $0) }
         /// Waits out an upload's deadline; tests stand in for the clock.
         var wait: @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
+        /// Holds the page awake for the whole send, waking it if it sleeps (Web/PageSleep.swift).
+        var holdPage: PageHold = PageHolds.none
 
         static func live() -> Dependencies {
             Dependencies(
@@ -260,7 +262,8 @@ final class QuickStartFlow: QuickStartSending {
                     guard Demo.mode == nil else { return nil }
                     return await WebContainer.shared.uploadAnswer(project: project, file: file)
                 },
-                now: { Date() })
+                now: { Date() },
+                holdPage: PageHolds.live)
         }
     }
 
@@ -302,6 +305,12 @@ final class QuickStartFlow: QuickStartSending {
 
     func perform(_ request: Request, progress: @escaping @MainActor (Progress) -> Void) async -> Outcome {
         if let refusal = Self.check(request) { return .failed(sentence: refusal) }
+        var outcome = Outcome.failed(sentence: Sentence.notReady)
+        await dependencies.holdPage { outcome = await self.performHeld(request, progress: progress) }
+        return outcome
+    }
+
+    private func performHeld(_ request: Request, progress: @escaping @MainActor (Progress) -> Void) async -> Outcome {
         guard dependencies.ready() else { return .failed(sentence: Sentence.notReady) }
         guard !Task.isCancelled else { return .failed(sentence: Sentence.cancelled) }
         switch request.target {

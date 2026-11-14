@@ -250,54 +250,57 @@ private struct ArtifactFileReply: Decodable, Sendable {
 extension WebContainer {
     func readArtifactFile(version: String, nonce: String) async -> ArtifactReadOutcome {
         guard PlanCheck.isVersionID(version), status == .ready, let port else { return .unreadable }
-        let origin = "http://\(host):\(port)"
-        let writer = ArtifactFileWriter()
-        ArtifactFileProgress.shared.update(version, nonce: nonce, bytes: 0, total: nil)
-        defer { ArtifactFileProgress.shared.finish(version, nonce: nonce) }
-        do {
-            var first = true
-            while !Task.isCancelled {
-                let offset = await writer.bytes
-                let value = try await webView.callAsyncJavaScript(ArtifactFileScript.body,
-                    arguments: ["version": version, "nonce": nonce, "origin": origin, "offset": offset, "first": first],
-                    in: nil, contentWorld: .defaultClient)
-                first = false
-                guard let text = value as? String else { throw WebAPIError.badResponse }
-                let reply = try await Task.detached(priority: .userInitiated) {
-                    try JSONDecoder().decode(ArtifactFileReply.self, from: Data(text.utf8))
-                }.value
-                if Task.isCancelled { break }
-                let outcome = reply.outcome, total = reply.total
-                if let total, !(0...ArtifactFileLimits.maximum).contains(total) { throw WebAPIError.badResponse }
-                if outcome == "chunk", let base64 = reply.base64 {
-                    guard reply.offset == offset, let count = reply.count,
-                          (0...ArtifactFileLimits.chunk).contains(count) else { throw WebAPIError.badResponse }
-                    try await writer.append(base64: base64)
-                    guard await writer.bytes == offset + count else { throw WebAPIError.badResponse }
-                    ArtifactFileProgress.shared.update(version, nonce: nonce, bytes: await writer.bytes, total: total)
-                    continue
-                }
-                if outcome == "done" {
-                    guard reply.offset == offset else { throw WebAPIError.badResponse }
-                    let file = try await writer.finish(expected: total)
-                    return Task.isCancelled ? .cancelled : .file(file)
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return await duringCall {
+            let origin = "http://\(host):\(port)"
+            let writer = ArtifactFileWriter()
+            ArtifactFileProgress.shared.update(version, nonce: nonce, bytes: 0, total: nil)
+            defer { ArtifactFileProgress.shared.finish(version, nonce: nonce) }
+            do {
+                var first = true
+                while !Task.isCancelled {
+                    let offset = await writer.bytes
+                    let value = try await webView.callAsyncJavaScript(ArtifactFileScript.body,
+                        arguments: ["version": version, "nonce": nonce, "origin": origin, "offset": offset, "first": first],
+                        in: nil, contentWorld: .defaultClient)
+                    first = false
+                    guard let text = value as? String else { throw WebAPIError.badResponse }
+                    let reply = try await Task.detached(priority: .userInitiated) {
+                        try JSONDecoder().decode(ArtifactFileReply.self, from: Data(text.utf8))
+                    }.value
+                    if Task.isCancelled { break }
+                    let outcome = reply.outcome, total = reply.total
+                    if let total, !(0...ArtifactFileLimits.maximum).contains(total) { throw WebAPIError.badResponse }
+                    if outcome == "chunk", let base64 = reply.base64 {
+                        guard reply.offset == offset, let count = reply.count,
+                              (0...ArtifactFileLimits.chunk).contains(count) else { throw WebAPIError.badResponse }
+                        try await writer.append(base64: base64)
+                        guard await writer.bytes == offset + count else { throw WebAPIError.badResponse }
+                        ArtifactFileProgress.shared.update(version, nonce: nonce, bytes: await writer.bytes, total: total)
+                        continue
+                    }
+                    if outcome == "done" {
+                        guard reply.offset == offset else { throw WebAPIError.badResponse }
+                        let file = try await writer.finish(expected: total)
+                        return Task.isCancelled ? .cancelled : .file(file)
+                    }
+                    await writer.cancel()
+                    switch outcome {
+                    case "lost": sessionLost(); return .lost
+                    case "tooBig": return .tooBig
+                    case "missing": return .missing
+                    case "cancelled": return .cancelled
+                    default: return .unreadable
+                    }
                 }
                 await writer.cancel()
-                switch outcome {
-                case "lost": sessionLost(); return .lost
-                case "tooBig": return .tooBig
-                case "missing": return .missing
-                case "cancelled": return .cancelled
-                default: return .unreadable
-                }
+                await abortArtifactRead(nonce)
+                return .cancelled
+            } catch {
+                await writer.cancel()
+                await abortArtifactRead(nonce)
+                return error is ArtifactFileWriter.Failure && error as? ArtifactFileWriter.Failure == .tooBig ? .tooBig : .unreadable
             }
-            await writer.cancel()
-            await abortArtifactRead(nonce)
-            return .cancelled
-        } catch {
-            await writer.cancel()
-            await abortArtifactRead(nonce)
-            return error is ArtifactFileWriter.Failure && error as? ArtifactFileWriter.Failure == .tooBig ? .tooBig : .unreadable
         }
     }
 }

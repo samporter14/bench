@@ -347,7 +347,9 @@ private struct DiagnosticsView: View {
             let report = await Task.detached(priority: .userInitiated) { Diagnose.report() }.value
             // The first part is on screen while the page is looked at.
             lines = report
-            lines = report + Diagnose.windowLines(companion: WebContainer.shared.companion) + (await Diagnose.pageReport())
+            // A page that sleeps wakes to be looked at (Web/PageSleep.swift).
+            let page = await WebContainer.shared.withPage { await Diagnose.pageReport() }
+            lines = report + Diagnose.windowLines(companion: WebContainer.shared.companion) + page
             running = false
         }
     }

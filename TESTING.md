@@ -323,6 +323,45 @@ yet checked live: a real failed session, and a real notification close.
   'subsystem == "local.sam.bench" AND category == "app"'`; plain `log` is a
   zsh builtin).
 
+## 2026-11-13, Keep Claude Science loaded when its window is closed (`background-page-off-switch`, from main bfc98e3; not released)
+
+A switch in Settings → General, on by default (Capsid as before). Off, a closed window's page sleeps after 45 s:
+the web view is let go so its web content process ends, and it comes back where it was when the window opens, the
+switch is turned on, or an action needs it (DESIGN.md, The page asleep).
+
+- `swift test`: 4969 tests; the two that this change broke (a source check on the handover watch's install line, and a test of mine that made its own defaults suite) are fixed, and one timing test failed once and passed on the rerun, as on main. New: PageSleepTests (25), the rule and its timing with no web view and no real sleeps,
+  including that "on" never sleeps for any input.
+- Mechanism, measured first: a blank page in the same web view left its process at 153 MB, so it is not used.
+  Letting the web view go ended the process (the empty web view's own is 17 MB).
+
+| Window closed, settled | Capsid | WebContent | Networking | GPU |
+|---|---|---|---|---|
+| Installed 1.1.x, 36 h old, keep loaded (on) | 115 MB · 1287/min · 0.25 s | 1322 MB · 0/min · 0.00 s (0.84 s/min in an earlier 2-min window) | 11 MB · 12/min · 0.01 s | 24 MB · 41/min · 0.01 s |
+| This build, 5 min old, on | 55 MB · 359/min · 0.25 s | 396 MB · 57/min · 0.40 s | 9 MB · 41/min · 0.01 s | 21 MB · 415/min · 0.06 s |
+| This build, off, asleep | 52 MB · 35/min · 0.11 s | 17 MB · 18/min · 0.00 s (the page's own process exited; this is the empty web view's) | 8 MB · 5/min · 0.00 s | 15 MB · 21/min · 0.00 s |
+| Rejected: a blank page in the same web view | 53 MB · 49/min · 0.15 s | the page's process stayed, 153 MB · 13/min | 8 MB · 21/min | 16 MB · 30/min |
+
+Each cell: footprint (`proc_pid_rusage` `ri_phys_footprint`, which matches `footprint`), wakeups a minute
+(`ri_interrupt_wkups`; `ri_pkg_idle_wkups`, top's IDLEW, stayed 0 throughout) and CPU seconds a minute, over one
+3-minute window after 4 minutes settled (the first row's 1- and 2-minute windows). Reopening the window on a
+sleeping page: "Opening Claude Science…" at 1.0 s, the page's own "Loading…" at 1.65 s, the same session drawn,
+signed in, no Sign in card, by 2.4 s (screen captures every 0.65 s).
+
+**Checked on screen** (this build, run from the worktree in place of the installed app; the main window was closed
+with System Events for the baseline and each run): launch with the switch on restores the session, signed in; with
+it off, closing the window ends the page's process within the grace; reopening shows the same session, signed in,
+with no Sign in card, in about 2.4 s.
+
+**Not checked on screen yet:** Approve, a card reply, a Mac notification's answer, Quick Start, a phone action and
+Results/Shelf/Reference while the page sleeps (each wakes it through `withPage` or the reader-window hold); the
+Settings row itself; a `.web` card's Open after a sleep; a wake when Claude Science isn't running.
+
+**By hand:** Settings → General → turn off "Keep Claude Science loaded when its window is closed". Close the
+window; after a minute Activity Monitor shows Capsid's WebContent gone (or tiny). Approve a plan from a card, or
+answer from the phone: it goes through after a few seconds' wake, and the page sleeps again a minute later.
+Click the Dock icon: the session you were in, signed in. Turn the switch back on with the window closed: the page
+loads at once and stays.
+
 ## 2026-11-06, Capsid 1.1.5 (62): version bump, installed, not released
 
 A version bump alone, on top of main aeed558 (the phone review fixes) with f0c6e2f and a8e8f1d (Codex's search, reading,

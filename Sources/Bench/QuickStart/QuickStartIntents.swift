@@ -289,7 +289,10 @@ enum ShortcutsActions {
     static var sender: QuickStartSending = QuickStartFlow.shared
     /// Waits for the page to be ready, at most this long.
     static let readyWait: Duration = .seconds(20)
-    static var isReady: @MainActor () -> Bool = { Demo.mode == nil && WebContainer.shared.status == .ready }
+    /// A page that sleeps (Web/PageSleep.swift) counts: the send wakes it and waits for it.
+    static var isReady: @MainActor () -> Bool = {
+        Demo.mode == nil && [.ready, .asleep].contains(WebContainer.shared.status)
+    }
     static var sleep: @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
 
     /// Capsid was just launched by Shortcuts: the page takes a moment.

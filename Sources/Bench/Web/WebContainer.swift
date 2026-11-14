@@ -1,8 +1,11 @@
 // WebContainer.swift — the one web view on the Claude Science daemon
-// (DESIGN.md, Daemon and sign-in). It is made once and never recreated, so
-// Claude Science keeps its one document. The daemon, the routing, the windows
-// and the notification bridge live in the files beside this one; this owns the
-// web view and what the App's toolbar, menus and Router ask of it.
+// (DESIGN.md, Daemon and sign-in). It lives as long as Capsid does, so Claude
+// Science keeps its one document, unless "Keep Claude Science loaded when its
+// window is closed" is off: then a closed window's page sleeps, the web view is
+// let go so its process ends, and an identical one is made when the page is
+// wanted again (Web/PageSleep.swift). The daemon, the routing, the windows and
+// the notification bridge live in the files beside this one; this owns the web
+// view and what the App's toolbar, menus and Router ask of it.
 import Combine
 import os
 import SwiftUI
@@ -16,6 +19,10 @@ final class WebContainer: ObservableObject, WebPageWindow {
         case starting
         case ready
         case failed(String)
+        /// Unloaded on purpose while the main window is closed (Web/PageSleep.swift).
+        /// Not a failure: nothing shows an error or retries, and every feature
+        /// that waits for `.ready` is quietly off, as while starting.
+        case asleep
     }
 
     @Published private(set) var canGoBack = false
@@ -28,6 +35,17 @@ final class WebContainer: ObservableObject, WebPageWindow {
             if case .failed = status {} else {
                 retriesOnItsOwn = false
                 companion = .none
+            }
+            if status != oldValue {
+                if status != .starting, waking {
+                    waking = false
+                    // A link that came after the wake's sign-in chose its address.
+                    if status == .ready, let url = pendingURL {
+                        pendingURL = nil
+                        load(url)
+                    }
+                }
+                sleeper.pageChanged()
             }
         }
     }
@@ -59,10 +77,13 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// anywhere else: what the context ring is about.
     @Published private(set) var currentFrameID: String?
 
-    /// The one web view on the daemon. Created once, never recreated. It is a
-    /// `TabMenuWebView`, which adds the tab and Shelf items to its right-click menu.
-    let webView: WKWebView
-    let finder: PageFinder
+    /// The one web view on the daemon. It is a `TabMenuWebView`, which adds the
+    /// tab and Shelf items to its right-click menu. Made at launch and kept,
+    /// except while the page sleeps (Web/PageSleep.swift): then it is let go, so
+    /// its web content process ends, and `wake` makes an identical one. Read it
+    /// when it is needed, never keep it: a kept one may be the page that slept.
+    @Published private(set) var webView: WKWebView
+    @Published private(set) var finder: PageFinder
     /// Closes the page's artifact tabs, one sweep at a time (Web/PageTabs.swift).
     private(set) lazy var tabCloser = PageTabCloser { [unowned self] request in await self.closeTabs(request) }
     /// The daemon's port, once known.
@@ -81,6 +102,12 @@ final class WebContainer: ObservableObject, WebPageWindow {
     private let handoverWatch: HandoverWatch
     /// Ask Another Model… in the page's model menu; the controller holds its handler weakly.
     private let modelMenu: ModelPickerMenu
+    /// The right-click menu's tab items and Shelf items, given to each web view made.
+    private let tabMenu: TabContextMenu
+    private let shelfMenu: ConversationMenu
+    /// The web view's address and back/forward watches; cancelled with the web
+    /// view they watch, so nothing keeps a sleeping page alive.
+    private var pageWatches: Set<AnyCancellable> = []
 
     /// The start in progress, if any.
     private var startTask: Task<Void, Never>?
@@ -94,12 +121,35 @@ final class WebContainer: ObservableObject, WebPageWindow {
     private var signingIn = false
     /// Keeps the session on show for the next launch (Web/LastSession.swift).
     private let lastSession = LastSession()
-    private var addressWatch: AnyCancellable?
+    /// When the page last slept: its notifications from before are gone with it.
+    private var lastSlept: Date?
+    /// Where the page was when it went to sleep, to wake there.
+    private var sleptAt: URL?
+    /// A wake is under way: a link that comes now waits for the sign-in, which
+    /// would otherwise replace it with where the page slept.
+    @Published private(set) var waking = false
+    /// When the page sleeps and wakes (Web/PageSleep.swift). With the setting
+    /// on, the default, it never does either.
+    private(set) lazy var sleeper = PageSleep(
+        keepLoaded: PageSleepSetting.keepsLoaded(), windowOpen: true,
+        page: { [unowned self] in
+            switch status {
+            case .ready: return signingIn || startTask != nil ? .busy : .loaded
+            case .asleep: return .asleep
+            case .starting, .failed: return .busy
+            }
+        },
+        unload: { [unowned self] in sleep() },
+        wake: { [unowned self] in wake() })
 
     private static let signInRetryInterval = Duration.seconds(30)
     /// Tries again, quietly, after a failure that may pass by itself.
     private lazy var retry = StartRetry(stillFailed: { [unowned self] in waitingToRetry },
-                                        attach: { [unowned self] daemon in begin(found: daemon) })
+                                        attach: { [unowned self] daemon in
+                                            // A page that sleeps signs in when it wakes, not before.
+                                            guard status != .asleep else { return }
+                                            begin(found: daemon)
+                                        })
     /// The page said Claude Science now opens in its own window (Web/HandoverWatch.swift).
     private lazy var handover: Handover = Handover(
         stopRetries: { [unowned self] in retry.stop(resetting: true) },
@@ -119,25 +169,21 @@ final class WebContainer: ObservableObject, WebPageWindow {
         },
         attach: { [unowned self] daemon in
             handover.waitingForNewDaemon = false
+            guard status != .asleep else { return }
             begin(found: daemon)
         })
 
     private init() {
-        // A web view copies its configuration when it is made, so all of it is
-        // set first.
-        let configuration = WebSetup.makeConfiguration()
         let bridge = NotificationBridge(daemonPort: { WebContainer.shared.port })
-        bridge.install(on: configuration.userContentController)
         notifications = bridge
         // Hears the page's "now opens in its own window" dialog.
         let watch = HandoverWatch(daemonPort: { WebContainer.shared.port }, shown: { WebContainer.shared.handoverShown() })
-        watch.install(on: configuration.userContentController)
         handoverWatch = watch
         // Which tab a right-click was on, for the menu's tab items (Web/TabContextMenu.swift).
         let tabMenu = TabContextMenu(daemonPort: { WebContainer.shared.port }, run: { request in
             Task { await WebContainer.shared.tabCloser.close(request) }
         })
-        tabMenu.install(on: configuration.userContentController)
+        self.tabMenu = tabMenu
         // And which figure or file link, for Add to Shelf and its neighbours (Shelf/ConversationMenu.swift).
         let shelfMenu = ConversationMenu(
             daemonPort: { WebContainer.shared.port },
@@ -145,12 +191,31 @@ final class WebContainer: ObservableObject, WebPageWindow {
             shelveSelection: { Task { await ConversationShelf.shared.shelveSelection() } },
             runDocument: { action, name in Task { await ConversationShelf.shared.run(action, named: name) } },
             run: { action, pick in Task { await ConversationShelf.shared.run(action, on: pick) } })
-        shelfMenu.install(on: configuration.userContentController)
+        self.shelfMenu = shelfMenu
         // And Ask Another Model… at the end of the page's model menu, with the message box's draft (AskModel/ModelPickerMenu.swift).
         let modelMenu = ModelPickerMenu(daemonPort: { WebContainer.shared.port }, mayOffer: { ModelPickerMenu.isWanted() },
                                         run: { draft in AskModelWindowController.shared.askFromModelMenu(draft: draft) })
-        modelMenu.install(on: configuration.userContentController)
         self.modelMenu = modelMenu
+
+        let view = Self.makeWebView(notifications: bridge, handoverWatch: watch, tabMenu: tabMenu,
+                                    shelfMenu: shelfMenu, modelMenu: modelMenu)
+        webView = view
+        finder = PageFinder(webView: view)
+        self.watch(view)
+    }
+
+    /// A web view on the daemon, with everything the page needs from Capsid.
+    /// The one at launch and every one a wake makes come from here, so they
+    /// are the same. A web view copies its configuration when it is made, so
+    /// all of it is set first.
+    private static func makeWebView(notifications: NotificationBridge, handoverWatch: HandoverWatch, tabMenu: TabContextMenu,
+                                    shelfMenu: ConversationMenu, modelMenu: ModelPickerMenu) -> WKWebView {
+        let configuration = WebSetup.makeConfiguration()
+        notifications.install(on: configuration.userContentController)
+        handoverWatch.install(on: configuration.userContentController)
+        tabMenu.install(on: configuration.userContentController)
+        shelfMenu.install(on: configuration.userContentController)
+        modelMenu.install(on: configuration.userContentController)
 
         let view = TabMenuWebView(frame: .zero, configuration: configuration)
         view.tabMenu = tabMenu
@@ -158,30 +223,34 @@ final class WebContainer: ObservableObject, WebPageWindow {
         view.shelfMenu = shelfMenu
         shelfMenu.webView = view
         modelMenu.webView = view
-        webView = view
-        WebSetup.finish(webView)
-        finder = PageFinder(webView: webView)
+        WebSetup.finish(view)
+        view.pageZoom = storedZoom()
+        return view
+    }
 
+    /// Delegates and the watches on `view`'s back/forward and address.
+    private func watch(_ view: WKWebView) {
         navigationDelegate.container = self
-        webView.navigationDelegate = navigationDelegate
-        webView.uiDelegate = uiDelegate
-        webView.publisher(for: \.canGoBack).assign(to: &$canGoBack)
-        webView.publisher(for: \.canGoForward).assign(to: &$canGoForward)
-        webView.publisher(for: \.url)
+        view.navigationDelegate = navigationDelegate
+        view.uiDelegate = uiDelegate
+        pageWatches = []
+        view.publisher(for: \.canGoBack).sink { [unowned self] in canGoBack = $0 }.store(in: &pageWatches)
+        view.publisher(for: \.canGoForward).sink { [unowned self] in canGoForward = $0 }.store(in: &pageWatches)
+        view.publisher(for: \.url)
             .map { Self.frameID(in: $0) }
             .removeDuplicates()
-            .assign(to: &$currentFrameID)
-        webView.pageZoom = Self.storedZoom()
+            .sink { [unowned self] in currentFrameID = $0 }
+            .store(in: &pageWatches)
         // Where the user is, for "reopen where you were". Not `currentFrameID`:
         // it has the session but not its project.
-        addressWatch = webView.publisher(for: \.url).receive(on: DispatchQueue.main).sink { [weak self] url in
+        view.publisher(for: \.url).receive(on: DispatchQueue.main).sink { [weak self] url in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.lastSession.note(url: url, daemonPort: self.port)
                 // And each project's last conversation, for Return to Project (Workspace/WorkspaceVisits.swift).
                 WorkspaceCommands.shared.note(url: url, daemonPort: self.port)
             }
-        }
+        }.store(in: &pageWatches)
     }
 
     // MARK: Starting
@@ -191,6 +260,10 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// starts the automatic retries' waits over.
     func start() {
         Router.shared.navigate = { [weak self] url in self?.load(url) }
+        Router.shared.pageForgot = { [weak self] notification in
+            guard let slept = self?.lastSlept else { return false }
+            return notification.receivedAt < slept
+        }
         Router.shared.clickWebNotification = { [weak self] id in
             guard let self else { return }
             notifications.click(id, in: webView)
@@ -211,7 +284,11 @@ final class WebContainer: ObservableObject, WebPageWindow {
         status = .starting
         lastSignInRetry = nil
         startTask = Task {
-            defer { startTask = nil }
+            defer {
+                startTask = nil
+                // A page that came up while this was finishing may sleep now.
+                sleeper.pageChanged()
+            }
             do {
                 let daemon: CLIStatus
                 if let found {
@@ -234,6 +311,16 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// to answer) is retried on its own until it answers (Web/StartRetry.swift);
     /// any other waits for Try again.
     private func fail(_ sentence: String, temporary: Bool, companion: Companion = .none) {
+        // A wake that nothing on screen asked for (a phone request, a card's
+        // action) and that couldn't sign in goes back to sleep: no failure to
+        // show in a closed window, no tries in the background. The action that
+        // wanted the page finds it not ready, as it would have before.
+        if waking, !sleeper.wantsPageForItself {
+            Logger.web.notice("The page couldn't wake: \(sentence, privacy: .public)")
+            startTask?.cancel()
+            backToSleep()
+            return
+        }
         status = .failed(sentence)
         retriesOnItsOwn = temporary
         self.companion = companion
@@ -263,7 +350,10 @@ final class WebContainer: ObservableObject, WebPageWindow {
             return
         }
         signingIn = true
-        defer { signingIn = false }
+        defer {
+            signingIn = false
+            sleeper.pageChanged()
+        }
         self.port = port
         host = DaemonHost.name(for: daemon.urlHost)
         signedInDaemon = daemon
@@ -381,7 +471,9 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// Loads a daemon URL in the one web view. The navigation delegate still
     /// routes it, so a URL that isn't the daemon's ends up in a Browser window.
     func load(_ url: URL) {
-        guard port != nil, !signingIn else {
+        // Asleep or waking, the link waits for the sign-in like one at launch:
+        // it wins over where the page slept, and a window shown wakes the page.
+        guard port != nil, !signingIn, !waking, status != .asleep else {
             pendingURL = url
             return
         }
@@ -560,6 +652,157 @@ final class WebContainer: ObservableObject, WebPageWindow {
     /// whatever else listens there.
     static func canonical(_ url: URL, host: String = DaemonHost.usual) -> URL {
         DaemonHost.canonical(url, host: host)
+    }
+
+    // MARK: Sleeping (Web/PageSleep.swift)
+
+    /// For an action that needs the page: a write through it, a reply, a phone
+    /// request. The page is held awake for `body`. A page that sleeps is woken
+    /// first, and `body` waits up to `limit` for it to be ready (it finds the
+    /// page as it is then, and says not ready as it always has if it isn't). An
+    /// awake page, or one starting or failed for its own reasons, runs `body` at
+    /// once, exactly as before: with the setting on, the default, nothing here
+    /// waits or wakes.
+    func withPage<T>(waitingUpTo limit: Duration = .seconds(30), _ body: () async throws -> T) async rethrows -> T {
+        let wasAsleep = status == .asleep || waking
+        sleeper.beginUse()
+        defer { sleeper.endUse() }
+        if wasAsleep { await untilAwake(upTo: limit) }
+        return try await body()
+    }
+
+    /// For a call into the ready page (a read, a write, a file's chunks): the
+    /// page doesn't sleep under it. It neither wakes the page nor starts the
+    /// grace over, so reads made on a timer don't keep a closed window's page up.
+    func duringCall<T>(_ body: () async throws -> T) async rethrows -> T {
+        sleeper.beginCall()
+        defer { sleeper.endCall() }
+        return try await body()
+    }
+
+    /// Waits while a wake is under way, up to `limit`.
+    private func untilAwake(upTo limit: Duration) async {
+        let deadline = ContinuousClock.now + limit
+        while status == .asleep || waking || status == .starting, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    /// The main window opened or closed (`MainWindowController`).
+    func mainWindow(isOpen: Bool) {
+        guard Demo.mode == nil else { return }
+        startWatchingReaderWindows()
+        sleeper.setWindowOpen(isOpen)
+    }
+
+    /// Results, the Shelf, Compare, Reference and Ask Another Model read
+    /// through the page: while one is open the page is held awake, and wakes
+    /// if it slept (`PageReadingWindow`).
+    private var readerWindowsWatch: [NSObjectProtocol] = []
+    private var holdingForReaderWindows = false
+
+    private func startWatchingReaderWindows() {
+        guard readerWindowsWatch.isEmpty else { return }
+        let center = NotificationCenter.default
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification, NSWindow.willCloseNotification] {
+            readerWindowsWatch.append(center.addObserver(forName: name, object: nil, queue: .main) { note in
+                let closing = name == NSWindow.willCloseNotification ? note.object as? NSWindow : nil
+                MainActor.assumeIsolated { WebContainer.shared.readerWindowsChanged(closing: closing) }
+            })
+        }
+    }
+
+    private func readerWindowsChanged(closing: NSWindow?) {
+        let open = NSApp.windows.contains { $0 !== closing && $0.isVisible && $0.delegate is PageReadingWindow }
+        guard open != holdingForReaderWindows else { return }
+        holdingForReaderWindows = open
+        if open { sleeper.beginUse() } else { sleeper.endUse() }
+    }
+
+    /// The Settings switch changed.
+    func keepLoadedChanged() {
+        sleeper.setKeepLoaded(PageSleepSetting.keepsLoaded())
+    }
+
+    /// Unloads the page, as a quit leaves it: where it was is kept (the address
+    /// watch has already written it for the next launch, and the wake goes back
+    /// to it), the cookie stays in WebKit's store, and the web view is let go so
+    /// its web content process ends. An empty one, made the same way, takes its
+    /// place; nothing is loaded in it until the wake.
+    private func sleep() {
+        guard status == .ready, !signingIn, startTask == nil else { return }
+        let old = webView
+        if let url = old.url, WebRoute.classify(url, daemonPort: port) == .daemon, !SignInPlan.isSignInStep(url) {
+            sleptAt = url
+        }
+        Logger.web.notice("The window is closed: the page sleeps")
+        lastSlept = Date()
+        // Not a blank page in the same web view: measured on 2026-11-13, that
+        // left its process at 153 MB. Letting it go ends the process.
+        replaceWebView()
+        status = .asleep
+    }
+
+    /// Lets the web view go, so its web content process ends, and puts an
+    /// empty one, made the same way, in its place.
+    private func replaceWebView() {
+        let old = webView
+        pageWatches = []
+        old.stopLoading()
+        old.navigationDelegate = nil
+        old.uiDelegate = nil
+        old.configuration.userContentController.removeAllScriptMessageHandlers()
+        old.configuration.userContentController.removeAllUserScripts()
+        if let window = old.window, window.firstResponder === old { window.makeFirstResponder(nil) }
+        let fresh = Self.makeWebView(notifications: notifications, handoverWatch: handoverWatch, tabMenu: tabMenu,
+                                     shelfMenu: shelfMenu, modelMenu: modelMenu)
+        // SwiftUI lets the old one go when it next draws the window; a closed
+        // window may not draw, so it is taken out now.
+        old.removeFromSuperview()
+        webView = fresh
+        finder = PageFinder(webView: fresh)
+        watch(fresh)
+    }
+
+    /// Loads the page again where it slept, signed in the way a launch signs
+    /// in (a fresh code on the address, so no Sign in card), unless a link
+    /// asked for somewhere else meanwhile.
+    private func wake() {
+        guard status == .asleep else { return }
+        Logger.web.notice("The page wakes")
+        waking = true
+        if pendingURL == nil { pendingURL = sleptAt }
+        sleptAt = nil
+        // For the window or the switch, as Try again does: the daemon is started
+        // if it isn't running (never beside Claude Science's own app). For an
+        // action alone, only a daemon that is running is signed in to.
+        if sleeper.wantsPageForItself {
+            begin(found: nil)
+            return
+        }
+        status = .starting
+        Task {
+            let daemon = await DaemonController.runningStatus()
+            guard waking, status == .starting, startTask == nil else { return }
+            if let daemon {
+                begin(found: daemon)
+            } else if sleeper.wantsPageForItself {
+                begin(found: nil)
+            } else {
+                Logger.web.notice("The page stays asleep: Claude Science isn't running")
+                backToSleep()
+            }
+        }
+    }
+
+    /// A wake that didn't come up, with nothing on screen wanting the page.
+    private func backToSleep() {
+        if sleptAt == nil, let url = pendingURL, WebRoute.classify(url, daemonPort: port) == .daemon { sleptAt = url }
+        pendingURL = nil
+        waking = false
+        // Whatever the attempt loaded goes with it.
+        if webView.url != nil { replaceWebView() }
+        status = .asleep
     }
 
     // MARK: Zoom

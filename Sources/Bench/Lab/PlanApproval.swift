@@ -438,6 +438,8 @@ final class PlanApprover: ObservableObject {
         var wait: @MainActor (Duration) async -> Void = WriteDeadline.sleep
         /// The approval went through: a tap and the sent sound (Lab/SentFeedback.swift).
         var landed: @MainActor () -> Void = SentFeedback.landed
+        /// Holds the page awake for the approval, waking it if it sleeps (Web/PageSleep.swift).
+        var holdPage: PageHold = PageHolds.none
 
         static func live() -> Dependencies {
             Dependencies(
@@ -455,7 +457,8 @@ final class PlanApprover: ObservableObject {
                     guard Demo.mode == nil else { throw WebAPIError.notAllowed }
                     return try await WebContainer.shared.apiPOST(path)
                 },
-                approvedPause: .milliseconds(1500))
+                approvedPause: .milliseconds(1500),
+                holdPage: PageHolds.live)
         }
     }
 
@@ -592,9 +595,11 @@ final class PlanApprover: ObservableObject {
         model.holdPlanCard(id)
         tasks[id] = Task { [weak self] in
             guard let self else { return }
-            switch await self.send(id, preview) {
-            case .outcome(let outcome): self.finish(id, preview, outcome)
-            case .noAnswer: await self.settle(id, preview)
+            await self.dependencies.holdPage {
+                switch await self.send(id, preview) {
+                case .outcome(let outcome): self.finish(id, preview, outcome)
+                case .noAnswer: await self.settle(id, preview)
+                }
             }
         }
     }

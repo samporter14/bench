@@ -283,14 +283,17 @@ extension WebContainer {
     /// nothing in the page (`PhotoUploadScript.upload`).
     func uploadFile(project: String, file: UploadFile) async throws -> PhotoUploadReply {
         guard status == .ready else { throw WebAPIError.notReady }
-        let view = webView
-        let reply = try await PhotoUploadScript.upload(file) {
-            try await view.callAsyncJavaScript(PhotoUploadScript.body,
-                                               arguments: PhotoUploadScript.arguments(project: project, file: file),
-                                               in: nil, contentWorld: .defaultClient)
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            let view = webView
+            let reply = try await PhotoUploadScript.upload(file) {
+                try await view.callAsyncJavaScript(PhotoUploadScript.body,
+                                                   arguments: PhotoUploadScript.arguments(project: project, file: file),
+                                                   in: nil, contentWorld: .defaultClient)
+            }
+            if reply.status == 401 { sessionLost() }
+            return reply
         }
-        if reply.status == 401 { sessionLost() }
-        return reply
     }
 }
 

@@ -89,6 +89,9 @@ enum SettingsKey {
     /// (opaque ids, never a name), for the next launch to reopen
     /// (Web/LastSession.swift). Not registered: absent means none.
     static let lastSession = "lastSession"
+    /// Keep Claude Science's page loaded while the main window is closed
+    /// (Web/PageSleep.swift). On by default, which is Capsid as it always was.
+    static let keepPageLoaded = "keepPageLoadedWhenClosed"
     /// Check GitHub once a day for a newer Bench. On unless the user turns it
     /// off, in Settings or the welcome window (on by default since 0.9.7, so
     /// updates get seen): it's the one request Bench makes beyond this Mac that

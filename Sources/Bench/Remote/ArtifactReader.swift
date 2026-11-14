@@ -1100,24 +1100,27 @@ extension WebContainer {
     /// stop this read's fetch. The phone's routes pass none.
     func readArtifact(_ read: ArtifactRead, nonce: String? = nil) async throws -> ArtifactReadOutcome {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard read.path != nil else { throw WebAPIError.notAllowed }
-        if case .fileDownload(let version) = read {
-            return await readArtifactFile(version: version, nonce: nonce ?? ArtifactReadAbort.makeNonce())
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            guard read.path != nil else { throw WebAPIError.notAllowed }
+            if case .fileDownload(let version) = read {
+                return await readArtifactFile(version: version, nonce: nonce ?? ArtifactReadAbort.makeNonce())
+            }
+            var arguments = read.arguments
+            arguments["nonce"] = nonce ?? NSNull()
+            let value = try await webView.callAsyncJavaScript(ArtifactReaderScript.body, arguments: arguments,
+                                                              in: nil, contentWorld: .defaultClient)
+            guard let text = value as? String else { throw WebAPIError.badResponse }
+            // JSON and base64 decoding can take a frame or more for large artifacts.
+            // Only the WebKit call and the session state belong on the main actor.
+            let outcome = await Task.detached(priority: .userInitiated) {
+                ArtifactReaderScript.outcome(of: Data(text.utf8), for: read)
+            }.value
+            if Task.isCancelled { return .cancelled }
+            // Refused: the page's session didn't take. Sign in again.
+            if outcome == .lost { sessionLost() }
+            return outcome
         }
-        var arguments = read.arguments
-        arguments["nonce"] = nonce ?? NSNull()
-        let value = try await webView.callAsyncJavaScript(ArtifactReaderScript.body, arguments: arguments,
-                                                          in: nil, contentWorld: .defaultClient)
-        guard let text = value as? String else { throw WebAPIError.badResponse }
-        // JSON and base64 decoding can take a frame or more for large artifacts.
-        // Only the WebKit call and the session state belong on the main actor.
-        let outcome = await Task.detached(priority: .userInitiated) {
-            ArtifactReaderScript.outcome(of: Data(text.utf8), for: read)
-        }.value
-        if Task.isCancelled { return .cancelled }
-        // Refused: the page's session didn't take. Sign in again.
-        if outcome == .lost { sessionLost() }
-        return outcome
     }
 
     /// Aborts the page's fetch for the read made with `nonce`, in the reads'

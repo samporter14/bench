@@ -668,16 +668,19 @@ final class MacNotifications: NSObject, ObservableObject {
     /// session when even that can't be.
     fileprivate func answered(sessionID: String, link: URL?, ask: QuestionAsk, draft: ReplyDraft) async {
         let replier = QuestionReplier.shared
-        for _ in 0..<40 where !(WebContainer.shared.status == .ready && LabModel.shared.knows(sessionID)) {
-            try? await Task.sleep(for: .milliseconds(500))
-        }
-        switch await replier.answerFromNotification(sessionID, ask: ask, draft: draft) {
-        case .sent?, .closed?:
-            break
-        case nil:
-            opened(sessionID: sessionID, link: link)
-        default:
-            ReplyWindowController.shared.show(sessionID)
+        // A page that sleeps (Web/PageSleep.swift) wakes for the answer, and stays up until it is sent.
+        await WebContainer.shared.withPage(waitingUpTo: .seconds(20)) {
+            for _ in 0..<40 where !(WebContainer.shared.status == .ready && LabModel.shared.knows(sessionID)) {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            switch await replier.answerFromNotification(sessionID, ask: ask, draft: draft) {
+            case .sent?, .closed?:
+                break
+            case nil:
+                opened(sessionID: sessionID, link: link)
+            default:
+                ReplyWindowController.shared.show(sessionID)
+            }
         }
     }
 

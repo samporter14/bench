@@ -13,12 +13,14 @@ struct BrowserView: View {
         // The web view never moves in this tree: everything else is an overlay
         // on it, so SwiftUI has no reason to rebuild it.
         WebViewHost(webView: web.webView)
+            // A new web view after the page slept (Web/PageSleep.swift) is a new host.
+            .id(ObjectIdentifier(web.webView))
             .overlay(alignment: .top) {
                 FindOverlay(finder: web.finder)
             }
             .overlay {
-                StatusOverlay(status: web.status, retriesOnItsOwn: web.retriesOnItsOwn, companion: web.companion,
-                              retry: web.start, openScience: web.openScience)
+                StatusOverlay(status: web.status, waking: web.waking, retriesOnItsOwn: web.retriesOnItsOwn,
+                              companion: web.companion, retry: web.start, openScience: web.openScience)
             }
             // The toast after Add to Shelf (Shelf/ShelfToast.swift).
             .overlay { ShelfToastHost() }
@@ -42,6 +44,8 @@ struct WebViewHost: NSViewRepresentable {
 /// the web view's blank page never shows through.
 private struct StatusOverlay: View {
     let status: WebContainer.Status
+    /// The page is coming back after it slept: it is opening, not starting.
+    let waking: Bool
     let retriesOnItsOwn: Bool
     /// Beside Claude Science's own app (Web/DaemonPolicy.swift): the button
     /// that asks is Open Claude Science, with Try again beside it.
@@ -53,11 +57,11 @@ private struct StatusOverlay: View {
         switch status {
         case .ready:
             EmptyView()
-        case .starting:
+        case .starting, .asleep:
             VStack(spacing: 10) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Starting Claude Science…")
+                Text(waking || status == .asleep ? "Opening Claude Science…" : "Starting Claude Science…")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

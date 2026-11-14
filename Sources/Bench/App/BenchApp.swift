@@ -251,13 +251,22 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     func show() {
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        // A page that slept while the window was closed wakes (Web/PageSleep.swift).
+        WebContainer.shared.mainWindow(isOpen: true)
     }
 
     var isVisible: Bool { window.isVisible }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil)
+        // With "Keep Claude Science loaded" off, the page sleeps after a while.
+        WebContainer.shared.mainWindow(isOpen: false)
         return false
+    }
+
+    /// However the window came back (the Window menu as well as `show`), it is open.
+    func windowDidBecomeKey(_ notification: Notification) {
+        WebContainer.shared.mainWindow(isOpen: true)
     }
 }
 

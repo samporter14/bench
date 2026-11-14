@@ -1465,28 +1465,31 @@ extension WebContainer {
     func readHistory(_ frameID: String, before: Int?, knownTotal: Int? = nil, rows: Int = HistoryReaderScript.pageRows,
                      nonce: String? = nil) async throws -> RemoteBrowser.HistoryRead {
         guard status == .ready else { throw WebAPIError.notReady }
-        try HistoryReaderScript.check(frameID: frameID, before: before, rows: rows, nonce: nonce)
-        let arguments: [String: Any] = [
-            "frameId": frameID, "before": before.map { $0 as Any } ?? NSNull(),
-            "knownTotal": knownTotal.map { $0 as Any } ?? NSNull(), "rows": rows, "nonce": nonce ?? NSNull(),
-        ]
-        let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
-            let value = try await self.webView.callAsyncJavaScript(
-                HistoryReaderScript.pageBody, arguments: arguments, in: nil, contentWorld: .defaultClient)
-            guard let text = value as? String else { throw WebAPIError.badResponse }
-            return text
-        }
-        switch HistoryReaderScript.outcome(of: Data(text.utf8)) {
-        case .read(let page, let timing):
-            if let timing { readingLog.notice("\(timing.line, privacy: .public)") }
-            return .page(page)
-        case .same(let total): return .same(total: total)
-        case .tooBig: return .tooBig
-        case .cancelled: throw CancellationError()
-        case .lost:
-            sessionLost()
-            return .unreadable
-        case .turn, .none, .unreadable: return .unreadable
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            try HistoryReaderScript.check(frameID: frameID, before: before, rows: rows, nonce: nonce)
+            let arguments: [String: Any] = [
+                "frameId": frameID, "before": before.map { $0 as Any } ?? NSNull(),
+                "knownTotal": knownTotal.map { $0 as Any } ?? NSNull(), "rows": rows, "nonce": nonce ?? NSNull(),
+            ]
+            let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
+                let value = try await self.webView.callAsyncJavaScript(
+                    HistoryReaderScript.pageBody, arguments: arguments, in: nil, contentWorld: .defaultClient)
+                guard let text = value as? String else { throw WebAPIError.badResponse }
+                return text
+            }
+            switch HistoryReaderScript.outcome(of: Data(text.utf8)) {
+            case .read(let page, let timing):
+                if let timing { readingLog.notice("\(timing.line, privacy: .public)") }
+                return .page(page)
+            case .same(let total): return .same(total: total)
+            case .tooBig: return .tooBig
+            case .cancelled: throw CancellationError()
+            case .lost:
+                sessionLost()
+                return .unreadable
+            case .turn, .none, .unreadable: return .unreadable
+            }
         }
     }
 
@@ -1496,19 +1499,22 @@ extension WebContainer {
     /// `CancellationError`, and a malformed one throws `notAllowed`.
     func readTurn(_ frameID: String, index: Int, nonce: String? = nil) async throws -> HistoryReaderScript.Outcome {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard (0...HistoryReaderScript.maxIndex).contains(index) else { throw WebAPIError.notAllowed }
-        try HistoryReaderScript.check(frameID: frameID, nonce: nonce)
-        let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
-            let value = try await self.webView.callAsyncJavaScript(
-                HistoryReaderScript.turnBody, arguments: ["frameId": frameID, "index": index, "nonce": nonce ?? NSNull()],
-                in: nil, contentWorld: .defaultClient)
-            guard let text = value as? String else { throw WebAPIError.badResponse }
-            return text
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            guard (0...HistoryReaderScript.maxIndex).contains(index) else { throw WebAPIError.notAllowed }
+            try HistoryReaderScript.check(frameID: frameID, nonce: nonce)
+            let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
+                let value = try await self.webView.callAsyncJavaScript(
+                    HistoryReaderScript.turnBody, arguments: ["frameId": frameID, "index": index, "nonce": nonce ?? NSNull()],
+                    in: nil, contentWorld: .defaultClient)
+                guard let text = value as? String else { throw WebAPIError.badResponse }
+                return text
+            }
+            let outcome = HistoryReaderScript.outcome(of: Data(text.utf8))
+            if outcome == .cancelled { throw CancellationError() }
+            if outcome == .lost { sessionLost() }
+            return outcome
         }
-        let outcome = HistoryReaderScript.outcome(of: Data(text.utf8))
-        if outcome == .cancelled { throw CancellationError() }
-        if outcome == .lost { sessionLost() }
-        return outcome
     }
 
     /// Keep's read: the newest assistant message of the session that shows any
@@ -1524,24 +1530,27 @@ extension WebContainer {
     func readShowing(frameID: String, versions: [String], near: Date?, nonce: String,
                      pages: Int = HistoryShowing.pages) async throws -> ShowingRead {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard PlanCheck.isFrameID(frameID), HistoryShowing.isNonce(nonce),
-              (1...HistoryShowing.maxVersions).contains(versions.count),
-              versions.allSatisfy(PlanCheck.isVersionID),
-              (1...HistoryShowing.maxPages).contains(pages) else { throw WebAPIError.notAllowed }
-        return try await withTaskCancellationHandler {
-            try await HistoryShowing.walk(near: near, pages: pages) { before in
-                let value = try await self.webView.callAsyncJavaScript(
-                    HistoryReaderScript.showingBody,
-                    arguments: ["frameId": frameID, "before": before.map { $0 as Any } ?? NSNull(),
-                                "versionIds": versions, "nonce": nonce],
-                    in: nil, contentWorld: .defaultClient)
-                guard let text = value as? String else { throw WebAPIError.badResponse }
-                let page = HistoryReaderScript.showingOutcome(of: Data(text.utf8), versions: versions)
-                if page == .lost { self.sessionLost() }
-                return page
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            guard PlanCheck.isFrameID(frameID), HistoryShowing.isNonce(nonce),
+                  (1...HistoryShowing.maxVersions).contains(versions.count),
+                  versions.allSatisfy(PlanCheck.isVersionID),
+                  (1...HistoryShowing.maxPages).contains(pages) else { throw WebAPIError.notAllowed }
+            return try await withTaskCancellationHandler {
+                try await HistoryShowing.walk(near: near, pages: pages) { before in
+                    let value = try await self.webView.callAsyncJavaScript(
+                        HistoryReaderScript.showingBody,
+                        arguments: ["frameId": frameID, "before": before.map { $0 as Any } ?? NSNull(),
+                                    "versionIds": versions, "nonce": nonce],
+                        in: nil, contentWorld: .defaultClient)
+                    guard let text = value as? String else { throw WebAPIError.badResponse }
+                    let page = HistoryReaderScript.showingOutcome(of: Data(text.utf8), versions: versions)
+                    if page == .lost { self.sessionLost() }
+                    return page
+                }
+            } onCancel: {
+                Task { @MainActor in await self.abortArtifactRead(nonce) }
             }
-        } onCancel: {
-            Task { @MainActor in await self.abortArtifactRead(nonce) }
         }
     }
 }

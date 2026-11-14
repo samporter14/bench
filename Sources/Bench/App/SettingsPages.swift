@@ -44,6 +44,7 @@ struct GeneralSettingsView: View {
     @AppStorage(SettingsKey.appIcon) private var appIcon = AppIconChoice.standard.rawValue
     @AppStorage(SettingsKey.shareTaskWithNidus) private var shareTaskWithNidus = false
     @AppStorage(SettingsKey.showMenuBarHome) private var menuBarHome = true
+    @AppStorage(SettingsKey.keepPageLoaded) private var keepPageLoaded = true
     @ObservedObject private var lab = LabModel.shared
 
     private var version: String {
@@ -111,6 +112,14 @@ struct GeneralSettingsView: View {
                 }
             }
 
+            Section("When the window is closed") {
+                Toggle(isOn: $keepPageLoaded) {
+                    Text("Keep Claude Science loaded when its window is closed")
+                    Text("Off saves memory and battery: the page unloads a minute after you close the window and reopens where you were. Cards from your sessions keep coming, but the page's own notifications and the live usage and context readouts wait until it's open.")
+                }
+                .onChange(of: keepPageLoaded) { WebContainer.shared.keepLoadedChanged() }
+            }
+
             UpdatesSection()
 
             KeptFolderSection()
@@ -140,7 +149,7 @@ struct GeneralSettingsView: View {
                 }
             }
         }
-        .settingsPage(height: 1190)
+        .settingsPage(height: 1290)
         .onChange(of: appearance) { BenchAppearance.apply() }
         .onChange(of: appIcon) { AppIconDock.shared.apply() }
     }
