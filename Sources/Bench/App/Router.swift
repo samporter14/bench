@@ -69,9 +69,18 @@ final class Router {
 
     func open(_ notification: WebNotification) {
         if let openInScience { return openInScience() }
+        // A page that slept since it showed the notification has forgotten it
+        // (Web/PageSleep.swift): its session's address opens instead.
+        if pageForgot(notification), let frame = notification.frameID, PlanCheck.isFrameID(frame),
+           LabModel.shared.open(sessionID: frame) {
+            return
+        }
         showWindow()
         clickWebNotification(notification.id)
     }
+
+    /// Whether the page has slept since it showed this notification. Set by the web layer.
+    var pageForgot: (WebNotification) -> Bool = { _ in false }
 
     /// `bench://open?url=…` and `bench://session?project=…&frame=…`.
     func handle(benchURL url: URL, port: Int?) {

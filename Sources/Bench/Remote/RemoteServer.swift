@@ -171,6 +171,16 @@ enum RemoteRoute: Equatable, Sendable {
     /// `GET /api/sessions/<id>/live`: the working session's text so far. // Phase 4 live
     case live(String)
 
+    /// A browse route that needs the page and is asked for on purpose (a
+    /// session's history, one turn, a new session), so it wakes a page that
+    /// sleeps (Web/PageSleep.swift). The project lists come from the database.
+    static func wakesPage(_ route: RemoteRoute) -> Bool {
+        switch route {
+        case .history, .turn, .newSession: return true
+        default: return false
+        }
+    }
+
     enum Match: Equatable {
         case found(RemoteRoute)
         /// The path is in the table, under another method.

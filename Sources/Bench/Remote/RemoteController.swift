@@ -388,10 +388,26 @@ final class RemoteController: ObservableObject {
                 return true
             },
             version: RemoteAPI.benchVersion,
-            act: { await RemoteSessions.shared.act($0, session: $1, device: $2, body: $3) }, // Phase 2 actions
-            files: { await RemoteArtifacts.shared.respond($0, target: $1, device: $2).response }, // Phase 3 files
-            browse: { await RemoteBrowser.shared.respond($0, target: $1, device: $2, body: $3) }, // Phase 3 browse
-            photo: { await RemotePhotos.shared.respond($0, device: $1, body: $2) }, // Phase 4 photos
+            // A request the phone made on purpose wakes a page that sleeps and holds it for the answer
+            // (Web/PageSleep.swift). What the phone polls (state, a session, live text) never does: it
+            // answers from the database, or with less, while the page sleeps.
+            act: { action, id, device, body in
+                await WebContainer.shared.withPage { await RemoteSessions.shared.act(action, session: id, device: device, body: body) }
+            }, // Phase 2 actions
+            files: { route, target, device in
+                await WebContainer.shared.withPage { await RemoteArtifacts.shared.respond(route, target: target, device: device).response }
+            }, // Phase 3 files
+            browse: { route, target, device, body in
+                guard RemoteRoute.wakesPage(route) else {
+                    return await RemoteBrowser.shared.respond(route, target: target, device: device, body: body)
+                }
+                return await WebContainer.shared.withPage {
+                    await RemoteBrowser.shared.respond(route, target: target, device: device, body: body)
+                }
+            }, // Phase 3 browse
+            photo: { route, device, body in
+                await WebContainer.shared.withPage { await RemotePhotos.shared.respond(route, device: device, body: body) }
+            }, // Phase 4 photos
             live: { await RemoteSessions.shared.liveJSON($0) })) // Phase 4 live
     }
 

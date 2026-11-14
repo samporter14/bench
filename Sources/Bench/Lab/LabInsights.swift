@@ -224,6 +224,10 @@ final class LabInsights: ObservableObject {
         var readHistory: @MainActor @Sendable (String, Int?, String) async throws -> RemoteBrowser.HistoryRead
         /// Where an answer that isn't what Capsid reads is noted.
         var breadcrumbs: CompatBreadcrumbs = .shared
+        /// The page sleeps on purpose (Web/PageSleep.swift): not looked at again
+        /// every few seconds, since it won't come up by itself. The panel's
+        /// next change after it wakes reads again.
+        var isAsleep: @MainActor @Sendable () -> Bool = { false }
 
         static func live() -> Dependencies {
             Dependencies(
@@ -234,7 +238,8 @@ final class LabInsights: ObservableObject {
                 sleep: { try? await Task.sleep(for: $0) },
                 readProgress: { try await WebContainer.shared.readPlanProgress($0, nonce: $1) },
                 readReviewers: { try await WebContainer.shared.readReviewerCounts($0, nonce: $1) },
-                readHistory: { try await WebContainer.shared.readHistory($0, before: nil, knownTotal: $1, nonce: $2) })
+                readHistory: { try await WebContainer.shared.readHistory($0, before: nil, knownTotal: $1, nonce: $2) },
+                isAsleep: { WebContainer.shared.status == .asleep })
         }
     }
 
@@ -373,7 +378,7 @@ final class LabInsights: ObservableObject {
         guard inFlight == nil else { return }
         let now = dependencies.now()
         guard dependencies.isReady() else {
-            if !onScreen.isEmpty || !reviewerQueue.isEmpty { arm(at: now.addingTimeInterval(Self.notReadyRetry), now: now) }
+            if !dependencies.isAsleep(), !onScreen.isEmpty || !reviewerQueue.isEmpty { arm(at: now.addingTimeInterval(Self.notReadyRetry), now: now) }
             return
         }
         forgetOldReads(before: now)

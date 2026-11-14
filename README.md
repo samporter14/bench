@@ -19,7 +19,14 @@ Or [download Bench.zip](https://github.com/samporter14/bench/releases/latest/dow
 - **Small and light.** An 18 MB download, most of it the six app icons, with
   no Electron and no bundled browser. It uses the WebKit already built into
   macOS. In the recorded idle check, Capsid itself used 0% CPU and about
-  50 MB of memory; the page runs in WebKit like a Safari tab.
+  50 MB of memory; the page runs in WebKit like a Safari tab. Close the
+  window and the page keeps running, so its cards and readouts stay live; to
+  free its memory instead, turn off **Settings → General → Keep Claude Science
+  loaded when its window is closed**. The page then unloads a minute after the
+  window closes and reopens where you were. Session cards keep coming from
+  your sessions' database; the page's own notifications and the live usage
+  and context readouts wait until it is open again, and an action that needs
+  the page (Approve, a reply, a phone request) brings it back by itself.
 - **Truly Mac native.** Written in Swift with SwiftUI and AppKit: Liquid
   Glass, a real toolbar, menus, keyboard shortcuts, Settings (⌘,) and Find
   (⌘F).

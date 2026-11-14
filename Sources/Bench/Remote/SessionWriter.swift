@@ -432,16 +432,19 @@ extension WebContainer {
     /// `WebAPIError.timedOut`: it may have been made.
     func writeSession(_ write: RemoteWrite) async throws -> RemoteWriteResult {
         guard status == .ready else { throw WebAPIError.notReady }
-        let view = webView, kind = write
-        let text: String? = try await WriteDeadline.bridge(WriteDeadline.small + WriteDeadline.grace) {
-            try await view.callAsyncJavaScript(SessionWriterScript.body, arguments: kind.arguments,
-                                               in: nil, contentWorld: .defaultClient) as? String
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            let view = webView, kind = write
+            let text: String? = try await WriteDeadline.bridge(WriteDeadline.small + WriteDeadline.grace) {
+                try await view.callAsyncJavaScript(SessionWriterScript.body, arguments: kind.arguments,
+                                                   in: nil, contentWorld: .defaultClient) as? String
+            }
+            guard let text else { throw WebAPIError.badResponse }
+            let result = try SessionWriterScript.result(of: Data(text.utf8))
+            // Refused: the page's session didn't take. Sign in again.
+            if result.status == 401 { sessionLost() }
+            return result
         }
-        guard let text else { throw WebAPIError.badResponse }
-        let result = try SessionWriterScript.result(of: Data(text.utf8))
-        // Refused: the page's session didn't take. Sign in again.
-        if result.status == 401 { sessionLost() }
-        return result
     }
 }
 

@@ -416,20 +416,23 @@ extension WebContainer {
     /// isn't a full frame id.
     func readLive(_ frameID: String, activity: Bool, text: Bool, mayWait: Bool) async throws -> LiveRead? {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard PlanCheck.isFrameID(frameID) else { throw WebAPIError.notAllowed }
-        let value = try await webView.callAsyncJavaScript(
-            LiveScript.body, arguments: ["frameId": frameID, "wantActivity": activity, "wantText": text, "mayWait": mayWait],
-            in: nil, contentWorld: .defaultClient)
-        guard let reply = value as? String else { throw WebAPIError.badResponse }
-        switch LiveScript.outcome(of: Data(reply.utf8)) {
-        case .read(let read):
-            return read
-        case .unreadable:
-            return nil
-        case .lost:
-            // Refused: the page's session didn't take. Sign in again.
-            sessionLost()
-            return nil
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            guard PlanCheck.isFrameID(frameID) else { throw WebAPIError.notAllowed }
+            let value = try await webView.callAsyncJavaScript(
+                LiveScript.body, arguments: ["frameId": frameID, "wantActivity": activity, "wantText": text, "mayWait": mayWait],
+                in: nil, contentWorld: .defaultClient)
+            guard let reply = value as? String else { throw WebAPIError.badResponse }
+            switch LiveScript.outcome(of: Data(reply.utf8)) {
+            case .read(let read):
+                return read
+            case .unreadable:
+                return nil
+            case .lost:
+                // Refused: the page's session didn't take. Sign in again.
+                sessionLost()
+                return nil
+            }
         }
     }
 }

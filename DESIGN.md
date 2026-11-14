@@ -19,8 +19,11 @@ third-party dependencies.
    its UI. The one exception is the notification bridge (below), which adds
    an API WebKit lacks.
 4. **One Claude Science document, ever.** Claude Science works in one tab at a
-   time. Capsid holds exactly one web view on the daemon's address, created
-   once and never recreated.
+   time. Capsid holds exactly one web view on the daemon's address. It is made
+   at launch and kept, except while the page sleeps with the window closed
+   ("Keep Claude Science loaded when its window is closed" off; The page
+   asleep, below): then it is let go and an identical one takes its place, so
+   there is still never more than one.
 
 ## Look
 
@@ -155,7 +158,9 @@ clay-text (Look).
     - "Choose scenes…", which opens Settings on the Scenes tab.
   - The title is hidden, because the page has its own header.
 - The web view sits below the toolbar, not under it.
-- Closing the window hides it (the web view and its state survive). Clicking
+- Closing the window hides it (the web view and its state survive, unless
+  "Keep Claude Science loaded when its window is closed" is off: then the page
+  sleeps after 45 s and reopens where it was; The page asleep, below). Clicking
   the Dock icon brings it back. ⌘Q quits Capsid but never stops the daemon.
 - Menus:
   - File: Open Session… ⌘⇧O (Quick Open, below), Next Waiting Session ⌥⌘↓
@@ -275,6 +280,98 @@ clay-text (Look).
 - **The launch address** is a link that came with the launch (`bench://`), else
   the session you were in, else the home page (Reopen where you were, below).
   The sign-in code is added to whichever it is.
+
+### The page asleep (Web/PageSleep.swift, Settings → General)
+
+**Why.** On 2026-11-09 Capsid's web content process measured 573 wakeups a
+minute and 733 to 864 MB (peak 1.5 GB) with the main window closed; on
+2026-11-13 a 36-hour-old one was 1.3 GB. Closing the window only ordered it
+out, so the page kept running.
+
+**The switch.** General → When the window is closed → "Keep Claude Science
+loaded when its window is closed" (`keepPageLoadedWhenClosed`, on by default).
+On is Capsid as it always was: nothing below ever unloads anything, and the
+calls added for it (`withPage`, `duringCall`) run their body at once.
+
+**Off.** `PageSleepRule.decide` (tested exhaustively in PageSleepTests):
+
+- The page sleeps only when it is up (`.ready`), the main window is closed (not
+  minimised), the switch is off and no action holds it, after a 45 s grace that
+  anything changing cancels. Never while starting, signing in, waking or
+  failed, and never under a call into the page: the grace waits for calls in
+  flight to finish (each has its own deadline).
+- It wakes at once when the window opens (`show`, the Dock, a link, a card's
+  Open, the Window menu: `windowDidBecomeKey`), when the switch is turned on, or
+  when an action needs it.
+- **Asleep is its own status, `.asleep`**: not `.failed`, so nothing shows an
+  error, nothing retries (the quiet tries' attach and the handover watch skip a
+  sleeping page), and every feature that waits for `.ready` is quietly off, as
+  in the read-only companion mode. `LabInsights` does not look again every 5 s
+  while asleep.
+- **Unloading** (`WebContainer.sleep`): where the page is goes into `sleptAt`
+  (`LastSession` already has it for the next launch), the old web view's
+  watches, delegates, scripts and handlers are taken off, it is taken out of
+  the window, and a new one is made by the same `makeWebView` the launch uses
+  (configuration, user scripts, delegates, finder, tab/Shelf/model menus, KVO
+  watches, zoom). Nothing is loaded in it until the wake. Cookies stay in
+  WebKit's store (the Networking process lives on). No private WebKit API.
+- **Waking** (`WebContainer.wake`) signs in as a launch does: a fresh code on
+  `sleptAt`'s address (or a `bench://` link that came meanwhile, which wins), so
+  no Sign in card. For the window or the switch it starts like Try again (the
+  daemon is started if needed, never beside Claude Science's own app); for an
+  action alone only a running daemon is signed in to, and a wake that fails
+  with the window closed goes back to sleep instead of showing a failure.
+  It is then held back (`PageSleep.wakeHeldBack`): an action or a Results
+  window still holding the page doesn't start the same wake again straight
+  away. The next wake is a new action, the window opening, the switch turning
+  on, or a retry 60 s later while something still wants the page; an action
+  waiting on a held-back page goes on at once and finds it not ready.
+- **Two holds.** `withPage { }` is for an action the user or the phone asked
+  for: it wakes a sleeping page, waits up to 30 s for it, holds it for the
+  action and lets the grace start again after. `duringCall { }` wraps every call
+  into the page (`apiGET`, `apiPOST`, the phone's readers and writers, file
+  chunks, photo upload, plan progress and reviewer reads): it neither wakes nor
+  starts the grace over, so timed reads don't keep a closed window's page up,
+  but the page never sleeps under one.
+
+**What wakes the page:** Approve on a plan card, a reply from a card, the reply
+window or a Mac notification's answer, Quick Start and the Shortcuts actions,
+Diagnostics, a phone action, history, one turn, files, a photo or a new session,
+and any of Results, the Shelf, Compare, Reference or Ask Another Model while its
+window is open (`PageReadingWindow`). Open on a card, Next Waiting, Quick Open,
+`bench://` links and the Open intent show the window, which wakes it.
+
+**What doesn't, and shows its quiet look instead:** the usage readout and
+context ring (they keep their last values and read again when the page is up),
+plan text and Approve (the card offers Open), question text and Reply, failure
+reasons, plan progress, reviewer counts and mid-run notes, finished cards' files
+and pictures, Since You Left's answers, and what the phone polls: `/api/state`,
+a session's detail (the database's card plan) and live text.
+
+**Cards while asleep.** From the database alone, as ever: needs input (with its
+kind), failed, finished, the working and waiting lists, the Dock badge, Mac
+notifications, Quick Open, Next Waiting, Since You Left's rows, the phone's state
+and push. From the page only, and so not while it sleeps: the page's own
+notifications (`.web` cards; one about a session is covered by that session's
+database card), and the page reads above. A `.web` card from before the page
+slept no longer has a page to click it in, so its Open opens its session.
+
+**Measured** (2026-11-13, Sam's Mac, a session open on the page, Claude Science's own window not involved):
+
+| Window closed, settled | Capsid | WebContent | Networking | GPU |
+|---|---|---|---|---|
+| Installed 1.1.x, 36 h old, keep loaded (on) | 115 MB · 1287/min · 0.25 s | 1322 MB · 0/min · 0.00 s (0.84 s/min in an earlier 2-min window) | 11 MB · 12/min · 0.01 s | 24 MB · 41/min · 0.01 s |
+| This build, 5 min old, on | 55 MB · 359/min · 0.25 s | 396 MB · 57/min · 0.40 s | 9 MB · 41/min · 0.01 s | 21 MB · 415/min · 0.06 s |
+| This build, off, asleep | 52 MB · 35/min · 0.11 s | 17 MB · 18/min · 0.00 s (the page's own process exited; this is the empty web view's) | 8 MB · 5/min · 0.00 s | 15 MB · 21/min · 0.00 s |
+| Rejected: a blank page in the same web view | 53 MB · 49/min · 0.15 s | the page's process stayed, 153 MB · 13/min | 8 MB · 21/min | 16 MB · 30/min |
+
+Each cell: footprint (`proc_pid_rusage` `ri_phys_footprint`, which matches `footprint`), wakeups a minute
+(`ri_interrupt_wkups`; `ri_pkg_idle_wkups`, top's IDLEW, stayed 0 throughout) and CPU seconds a minute, over one
+3-minute window after 4 minutes settled (the first row's 1- and 2-minute windows). Reopening the window on a
+sleeping page: "Opening Claude Science…" at 1.0 s, the page's own "Loading…" at 1.65 s, the same session drawn,
+signed in, no Sign in card, by 2.4 s (screen captures every 0.65 s).
+
+The 573 wakeups a minute of 2026-11-09 was not reproduced: the page's process woke 0 to 57 times a minute in these windows. The win measured is memory (1.3 GB, or 396 MB fresh, down to 17 MB) and Capsid's own reads of the page (359 to 1287 wakeups a minute down to 35). One window per state, on a Mac doing other work.
 
 ### Reopen where you were (Web/LastSession.swift, since 0.9.0)
 

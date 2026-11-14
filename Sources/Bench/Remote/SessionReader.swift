@@ -597,20 +597,23 @@ extension WebContainer {
     /// id isn't a full frame id.
     func readSession(_ frameID: String, turns: Bool) async throws -> SessionProjection? {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard PlanCheck.isFrameID(frameID) else { throw WebAPIError.notAllowed }
-        let value = try await webView.callAsyncJavaScript(
-            SessionReaderScript.body, arguments: ["frameId": frameID, "withTurns": turns],
-            in: nil, contentWorld: .defaultClient)
-        guard let text = value as? String else { throw WebAPIError.badResponse }
-        switch SessionReaderScript.outcome(of: Data(text.utf8)) {
-        case .read(let projection):
-            return projection
-        case .unreadable:
-            return nil
-        case .lost:
-            // Refused: the page's session didn't take. Sign in again.
-            sessionLost()
-            return nil
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            guard PlanCheck.isFrameID(frameID) else { throw WebAPIError.notAllowed }
+            let value = try await webView.callAsyncJavaScript(
+                SessionReaderScript.body, arguments: ["frameId": frameID, "withTurns": turns],
+                in: nil, contentWorld: .defaultClient)
+            guard let text = value as? String else { throw WebAPIError.badResponse }
+            switch SessionReaderScript.outcome(of: Data(text.utf8)) {
+            case .read(let projection):
+                return projection
+            case .unreadable:
+                return nil
+            case .lost:
+                // Refused: the page's session didn't take. Sign in again.
+                sessionLost()
+                return nil
+            }
         }
     }
 }

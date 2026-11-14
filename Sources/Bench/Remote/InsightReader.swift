@@ -521,35 +521,41 @@ extension WebContainer {
     /// cancelling the task ends the fetch and the read throws `CancellationError`.
     func readPlanProgress(_ frameID: String, nonce: String? = nil) async throws -> PlanProgressRead {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard PlanCheck.isFrameID(frameID), nonce.map(HistoryShowing.isNonce) ?? true else { throw WebAPIError.notAllowed }
-        let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
-            let value = try await self.webView.callAsyncJavaScript(
-                InsightReaderScript.progressBody, arguments: ["frameId": frameID, "nonce": nonce ?? NSNull()],
-                in: nil, contentWorld: .defaultClient)
-            guard let text = value as? String else { throw WebAPIError.badResponse }
-            return text
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            guard PlanCheck.isFrameID(frameID), nonce.map(HistoryShowing.isNonce) ?? true else { throw WebAPIError.notAllowed }
+            let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
+                let value = try await self.webView.callAsyncJavaScript(
+                    InsightReaderScript.progressBody, arguments: ["frameId": frameID, "nonce": nonce ?? NSNull()],
+                    in: nil, contentWorld: .defaultClient)
+                guard let text = value as? String else { throw WebAPIError.badResponse }
+                return text
+            }
+            let outcome = InsightReaderScript.progressOutcome(of: Data(text.utf8))
+            if outcome == .cancelled { throw CancellationError() }
+            if outcome == .lost { sessionLost() }
+            return outcome
         }
-        let outcome = InsightReaderScript.progressOutcome(of: Data(text.utf8))
-        if outcome == .cancelled { throw CancellationError() }
-        if outcome == .lost { sessionLost() }
-        return outcome
     }
 
     /// What the reviewer found in a session, as four counts
     /// (`InsightReaderScript.reviewerBody`). Throws as `readPlanProgress` does.
     func readReviewerCounts(_ frameID: String, nonce: String? = nil) async throws -> ReviewerRead {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard PlanCheck.isFrameID(frameID), nonce.map(HistoryShowing.isNonce) ?? true else { throw WebAPIError.notAllowed }
-        let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
-            let value = try await self.webView.callAsyncJavaScript(
-                InsightReaderScript.reviewerBody, arguments: ["frameId": frameID, "nonce": nonce ?? NSNull()],
-                in: nil, contentWorld: .defaultClient)
-            guard let text = value as? String else { throw WebAPIError.badResponse }
-            return text
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            guard PlanCheck.isFrameID(frameID), nonce.map(HistoryShowing.isNonce) ?? true else { throw WebAPIError.notAllowed }
+            let text = try await HistoryReadAbort.run(nonce: nonce, abort: { await self.abortArtifactRead($0) }) {
+                let value = try await self.webView.callAsyncJavaScript(
+                    InsightReaderScript.reviewerBody, arguments: ["frameId": frameID, "nonce": nonce ?? NSNull()],
+                    in: nil, contentWorld: .defaultClient)
+                guard let text = value as? String else { throw WebAPIError.badResponse }
+                return text
+            }
+            let outcome = InsightReaderScript.reviewerOutcome(of: Data(text.utf8))
+            if outcome == .cancelled { throw CancellationError() }
+            if outcome == .lost { sessionLost() }
+            return outcome
         }
-        let outcome = InsightReaderScript.reviewerOutcome(of: Data(text.utf8))
-        if outcome == .cancelled { throw CancellationError() }
-        if outcome == .lost { sessionLost() }
-        return outcome
     }
 }

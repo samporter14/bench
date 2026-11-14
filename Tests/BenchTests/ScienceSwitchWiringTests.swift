@@ -161,7 +161,8 @@ struct ScienceSwitchWiringTests {
 
     @Test func theHandoverWatchIsInstalledOnTheMainViewAndKept() {
         let container = Source.text("Web/WebContainer.swift")
-        #expect(container.contains("watch.install(on: configuration.userContentController)"))
+        // On every web view made, the one at launch and each after the page slept (Web/PageSleep.swift).
+        #expect(container.contains("handoverWatch.install(on: configuration.userContentController)"))
         // The controller holds its handler weakly, so the container holds the watch.
         #expect(container.contains("handoverWatch = watch"))
         #expect(Source.text("Web/HandoverWatch.swift").contains("injectionTime: .atDocumentEnd, forMainFrameOnly: true"))

@@ -276,7 +276,10 @@ final class QuestionReplier: ObservableObject {
                 },
                 isReady: { WebContainer.shared.status == .ready },
                 read: { await RemoteSessions.shared.readFrame($0, full: true) },
-                respond: { await RemoteSessions.shared.respond($0, session: $1, checking: $2) },
+                // An answer wakes a page that sleeps and holds it until it is settled (Web/PageSleep.swift).
+                respond: { request, session, checking in
+                    await WebContainer.shared.withPage { await RemoteSessions.shared.respond(request, session: session, checking: checking) }
+                },
                 plan: { PlanApprover.shared.state(for: $0)?.revisable })
         }
     }

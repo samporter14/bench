@@ -263,30 +263,33 @@ extension WebContainer {
     /// GETs `/api<path>` from the page, within one 15-second / 8 MiB budget.
     func apiGET(_ path: String) async throws -> Data {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard Self.isReadablePath(path) else { throw WebAPIError.notAllowed }
-        return try await WebAPIReadAbort.run { nonce in
-            let result: Any?
-            do {
-                result = try await webView.callAsyncJavaScript(WebAPIReadScript.body,
-                    arguments: ["path": "/api" + path, "nonce": nonce,
-                                "timeoutMS": WebAPIReadScript.timeoutMilliseconds, "maxBytes": WebAPIReadScript.maxBytes],
-                    in: nil, contentWorld: .defaultClient)
-            } catch {
-                try Task.checkCancellation()
-                let message = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String
-                if message?.contains("CAPSID_API_TIMEOUT") == true { throw WebAPIError.timedOut }
-                if message?.contains("CAPSID_API_TOO_LARGE") == true { throw WebAPIError.responseTooLarge }
-                if message?.contains("CAPSID_API_CANCELLED") == true { throw CancellationError() }
-                // Refused: the page's session didn't take. Sign in again.
-                if message?.contains("HTTP 401") == true { sessionLost() }
-                throw error
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            guard Self.isReadablePath(path) else { throw WebAPIError.notAllowed }
+            return try await WebAPIReadAbort.run { nonce in
+                let result: Any?
+                do {
+                    result = try await webView.callAsyncJavaScript(WebAPIReadScript.body,
+                        arguments: ["path": "/api" + path, "nonce": nonce,
+                                    "timeoutMS": WebAPIReadScript.timeoutMilliseconds, "maxBytes": WebAPIReadScript.maxBytes],
+                        in: nil, contentWorld: .defaultClient)
+                } catch {
+                    try Task.checkCancellation()
+                    let message = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String
+                    if message?.contains("CAPSID_API_TIMEOUT") == true { throw WebAPIError.timedOut }
+                    if message?.contains("CAPSID_API_TOO_LARGE") == true { throw WebAPIError.responseTooLarge }
+                    if message?.contains("CAPSID_API_CANCELLED") == true { throw CancellationError() }
+                    // Refused: the page's session didn't take. Sign in again.
+                    if message?.contains("HTTP 401") == true { sessionLost() }
+                    throw error
+                }
+                guard let text = result as? String else { throw WebAPIError.badResponse }
+                return Data(text.utf8)
+            } abort: { [weak self] nonce in
+                guard let self else { return }
+                _ = try? await webView.callAsyncJavaScript(WebAPIReadScript.abort, arguments: ["nonce": nonce],
+                                                           in: nil, contentWorld: .defaultClient)
             }
-            guard let text = result as? String else { throw WebAPIError.badResponse }
-            return Data(text.utf8)
-        } abort: { [weak self] nonce in
-            guard let self else { return }
-            _ = try? await webView.callAsyncJavaScript(WebAPIReadScript.abort, arguments: ["nonce": nonce],
-                                                       in: nil, contentWorld: .defaultClient)
         }
     }
 
@@ -310,17 +313,20 @@ extension WebContainer {
     /// made. A refresh that ran out of time after a 403 is that 403.
     func apiPOST(_ path: String) async throws -> APIWriteResult {
         guard status == .ready else { throw WebAPIError.notReady }
-        guard Self.isWritablePath(path) else { throw WebAPIError.notAllowed }
-        let view = webView, target = "/api" + path, milliseconds = WriteDeadline.milliseconds(WriteDeadline.small)
-        let text: String? = try await WriteDeadline.bridge(WriteDeadline.small + WriteDeadline.grace) {
-            try await view.callAsyncJavaScript(WebAPIWriteScript.body, arguments: ["path": target, "timeoutMS": milliseconds],
-                                               in: nil, contentWorld: .defaultClient) as? String
+        // The page doesn’t sleep under this (Web/PageSleep.swift).
+        return try await duringCall {
+            guard Self.isWritablePath(path) else { throw WebAPIError.notAllowed }
+            let view = webView, target = "/api" + path, milliseconds = WriteDeadline.milliseconds(WriteDeadline.small)
+            let text: String? = try await WriteDeadline.bridge(WriteDeadline.small + WriteDeadline.grace) {
+                try await view.callAsyncJavaScript(WebAPIWriteScript.body, arguments: ["path": target, "timeoutMS": milliseconds],
+                                                   in: nil, contentWorld: .defaultClient) as? String
+            }
+            guard let text else { throw WebAPIError.badResponse }
+            let result = try WebAPIWriteScript.result(of: Data(text.utf8))
+            // Refused: the page's session didn't take. Sign in again.
+            if result.status == 401 { sessionLost() }
+            return result
         }
-        guard let text else { throw WebAPIError.badResponse }
-        let result = try WebAPIWriteScript.result(of: Data(text.utf8))
-        // Refused: the page's session didn't take. Sign in again.
-        if result.status == 401 { sessionLost() }
-        return result
     }
 
     /// The one path `apiPOST` may write to, `^/frames/[0-9a-f-]{36}/approve-plan$`,
