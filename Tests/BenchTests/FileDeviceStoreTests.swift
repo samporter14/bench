@@ -19,9 +19,9 @@ struct FileDeviceStoreTests {
     }
 
     @Test func removalsTheFileMissedAreKeptInThePreferencesPerFile() throws {
-        let suite = "bench-store-tests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let scratch = ScratchDefaults.make(prefix: "device-store")
+        defer { scratch.discard() }
+        let defaults = scratch.defaults
         let place = folder()
         let store = FileDeviceStore(folder: place, defaults: defaults)
         #expect(store.loadRevoked() == [])
