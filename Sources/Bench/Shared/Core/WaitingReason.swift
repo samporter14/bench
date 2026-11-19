@@ -6,8 +6,10 @@ import Foundation
 /// Why a session is waiting on the user, in the daemon's own vocabulary: its
 /// two `awaiting_*` statuses, or the `kind` of the first pending input
 /// request (Claude Science 0.1.53 parses `ask`, `network`, `host`,
-/// `host_delete`, `mcp_tool` and `skill_license`). That one word is all that
-/// is read: never what was asked, nor what it wants to reach.
+/// `host_delete`, `mcp_tool` and `skill_license`; 0.1.73 adds `share_save`).
+/// That one word is all that is read: never what was asked, nor what it wants
+/// to reach. One flag stands in for the kind: a request held by the saved-key
+/// check (`key_check_held`, 0.1.73) reads as `key_check_held`.
 public enum WaitingReason: String, Sendable, Equatable, Codable, CaseIterable {
     case plan
     case question
@@ -16,6 +18,15 @@ public enum WaitingReason: String, Sendable, Equatable, Codable, CaseIterable {
     case delete
     case tool
     case license
+    /// `local_exec`: code to run.
+    case code
+    /// `credential_access`: a saved key handed to Claude's code.
+    case credentials
+    /// Any request the saved-key check holds (Claude Science 0.1.73): denied
+    /// by the daemon after 10 minutes with nobody looking.
+    case keyCheck
+    /// `share_save` (0.1.73): a file or folder saved into a Read & write folder.
+    case saveFile
     case other
 
     /// `signal` is what the session query reports for a waiting session: an
@@ -29,6 +40,10 @@ public enum WaitingReason: String, Sendable, Equatable, Codable, CaseIterable {
         case "host_delete": self = .delete
         case "mcp_tool": self = .tool
         case "skill_license": self = .license
+        case "local_exec": self = .code
+        case "credential_access": self = .credentials
+        case "key_check_held": self = .keyCheck
+        case "share_save": self = .saveFile
         default: self = .other
         }
     }
@@ -43,6 +58,10 @@ public enum WaitingReason: String, Sendable, Equatable, Codable, CaseIterable {
         case .delete: return "Delete files"
         case .tool: return "Tool access"
         case .license: return "License"
+        case .code: return "Run code"
+        case .credentials: return "Saved key"
+        case .keyCheck: return "Safety check"
+        case .saveFile: return "Save file"
         case .other: return "Needs you"
         }
     }
@@ -57,6 +76,10 @@ public enum WaitingReason: String, Sendable, Equatable, Codable, CaseIterable {
         case .delete: return "Wants to delete files"
         case .tool: return "Wants to use a connector tool"
         case .license: return "Needs a skill license accepted"
+        case .code: return "Wants to run code"
+        case .credentials: return "Wants to use a saved key"
+        case .keyCheck: return "Wants your OK to use a saved key. Skipped after 10 minutes"
+        case .saveFile: return "Wants to save a file into your folder"
         case .other: return "Waiting for you"
         }
     }
@@ -66,7 +89,7 @@ public enum WaitingReason: String, Sendable, Equatable, Codable, CaseIterable {
         switch self {
         case .plan: return .plan
         case .question, .other: return .question
-        case .web, .files, .delete, .tool, .license: return .permission
+        case .web, .files, .delete, .tool, .license, .code, .credentials, .keyCheck, .saveFile: return .permission
         }
     }
 
@@ -75,7 +98,7 @@ public enum WaitingReason: String, Sendable, Equatable, Codable, CaseIterable {
         switch self {
         case .plan: return "checklist"
         case .question, .other: return "questionmark.bubble.fill"
-        case .web, .files, .delete, .tool, .license: return "lock.fill"
+        case .web, .files, .delete, .tool, .license, .code, .credentials, .keyCheck, .saveFile: return "lock.fill"
         }
     }
 }

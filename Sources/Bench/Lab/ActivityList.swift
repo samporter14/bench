@@ -456,7 +456,7 @@ struct ActivityList: View {
         case .needsInput(let reason):
             switch reason ?? .other {
             case .plan: "Had a plan for you to review"
-            case .web, .files, .delete, .tool, .license: "Asked for your permission"
+            case .web, .files, .delete, .tool, .license, .code, .credentials, .keyCheck, .saveFile: "Asked for your permission"
             default: "Asked you a question"
             }
         case .failed: "Stopped with an error"

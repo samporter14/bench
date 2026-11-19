@@ -1270,7 +1270,10 @@ struct ShelfSaveAllTests {
         shelf.saveAll(madeUpID(1), into: out)
         await shelf.settled()
         #expect(fake.written.allSatisfy { $0.deletingLastPathComponent().path == "/made-up/Out" })
-        #expect(shelf.saved["v-2"]?.lastPathComponent == "hidden.md")
+        // A leading dot is kept behind "_" (since 1.1.7): no hidden file, and a
+        // name no program in the folder picks up by itself.
+        #expect(shelf.saved["v-2"]?.lastPathComponent == "_.hidden.md")
+        #expect(shelf.saved["v-1"]?.lastPathComponent == "_.._.._etc_passwd")
     }
 
     // MARK: The batch
@@ -1639,5 +1642,67 @@ struct ShelfFocusTests {
         #expect(!shelf.disclosure.isOpen(madeUpID(1), hasResults: true, searching: false))
         shelf.setExpanded(madeUpID(1), open: true)
         #expect(shelf.disclosure.isOpen(madeUpID(1), hasResults: false, searching: false))
+    }
+}
+
+// MARK: Save All's names for files programs pick up by themselves (1.1.7)
+
+@MainActor
+struct ShelfSaveAllRenamedTests {
+    private let fake = FakeShelf()
+
+    private func shelf(with files: [ArtifactEntry]) async -> ResultsShelf {
+        fake.recent = [made(1)]
+        fake.lists[madeUpID(1)] = .list(files)
+        for file in files { fake.files[.download(version: file.version)] = .bytes(Data(file.name.utf8)) }
+        let shelf = fake.shelf()
+        shelf.open()
+        await shelf.settled()
+        return shelf
+    }
+
+    private func summary(_ shelf: ResultsShelf) -> ShelfSaveAllSummary? {
+        if case .finished(let summary)? = shelf.batches[madeUpID(1)] { summary } else { nil }
+    }
+
+    @Test func aFileAProgramWouldPickUpGetsAnUnderscoreAndTheNoteListsIt() async throws {
+        fake.existing = ["/made-up/Out/_CLAUDE.md"]
+        let shelf = await shelf(with: [entry(".Rprofile", version: "v-r"), entry("CLAUDE.md", version: "v-c"),
+                                       entry("nextflow.config", version: "v-n"), entry("report.md", version: "v-md")])
+        shelf.saveAll(madeUpID(1), into: out)
+        await shelf.settled()
+        #expect(shelf.saved["v-r"]?.lastPathComponent == "_.Rprofile")
+        #expect(shelf.saved["v-c"]?.lastPathComponent == "_CLAUDE 2.md", "numbered like any other name")
+        #expect(shelf.saved["v-n"]?.lastPathComponent == "_nextflow.config")
+        #expect(shelf.saved["v-md"]?.lastPathComponent == "report.md")
+        let index = try #require(fake.written.firstIndex { $0.lastPathComponent == "renamed_files.txt" })
+        #expect(fake.written[index].deletingLastPathComponent().path == "/made-up/Out")
+        let note = String(decoding: fake.writtenBytes[index], as: UTF8.self)
+        #expect(note.contains(".Rprofile → _.Rprofile"))
+        #expect(note.contains("CLAUDE.md → _CLAUDE 2.md"))
+        #expect(note.contains("nextflow.config → _nextflow.config"))
+        #expect(!note.contains("report.md"))
+        let done = try #require(summary(shelf))
+        #expect(done.saved == 4, "the note is not one of the files")
+        #expect(done.renamed == 3)
+        #expect(done.line == "Saved 4 files. 3 got new names, listed in renamed_files.txt.")
+    }
+
+    @Test func nothingRenamedWritesNoNote() async throws {
+        let shelf = await shelf(with: [entry("report.md", version: "v-md"), entry("figure.png", version: "v-1")])
+        shelf.saveAll(madeUpID(1), into: out)
+        await shelf.settled()
+        #expect(!fake.written.contains { $0.lastPathComponent.hasPrefix("renamed_files") })
+        #expect(try #require(summary(shelf)).line == "Saved 2 files.")
+    }
+
+    @Test func aNoteAlreadyInTheFolderIsNotOverwritten() async throws {
+        fake.existing = ["/made-up/Out/renamed_files.txt"]
+        let shelf = await shelf(with: [entry("AGENTS.md", version: "v-a")])
+        shelf.saveAll(madeUpID(1), into: out)
+        await shelf.settled()
+        #expect(shelf.saved["v-a"]?.lastPathComponent == "_AGENTS.md")
+        #expect(fake.written.contains { $0.lastPathComponent == "renamed_files 2.txt" })
+        #expect(try #require(summary(shelf)).line == "Saved 1 file. 1 got a new name, listed in renamed_files 2.txt.")
     }
 }

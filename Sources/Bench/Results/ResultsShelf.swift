@@ -1044,6 +1044,11 @@ final class ResultsShelf: ObservableObject {
         var marked: Set<Int> = []
         // The files that need a name, in the session's order.
         var wanted: [(entry: ArtifactEntry, name: String)] = []
+        // The files whose names a program in the folder could pick up by itself,
+        // by version: they get "_" in front, and the note lists them once saved.
+        var renamed: [String: String] = [:]
+        // What this run wrote, by version: the name each file was saved as.
+        var written: [String: String] = [:]
         for entry in entries {
             fileProblems[entry.version] = nil
             if entry.size > ArtifactFileLimits.maximum {
@@ -1052,7 +1057,9 @@ final class ResultsShelf: ObservableObject {
                 fileProblems[entry.version] = Self.tooBigToSave
                 continue
             }
-            wanted.append((entry, ShelfFileName.sanitized(entry.name)))
+            let named = ShelfFileName.forFolder(entry.name)
+            if named.renamed { renamed[entry.version] = entry.name }
+            wanted.append((entry, named.name))
         }
         batches[sessionID] = .saving(done: done, total: entries.count)
         // Everything was over the cap: no names to settle, so the folder is not asked about.
@@ -1127,6 +1134,7 @@ final class ResultsShelf: ObservableObject {
                     do {
                         let url = try await writeUnused(file, planned: work[index], plan: plan)
                         saved[entry.version] = url
+                        written[entry.version] = url.lastPathComponent
                         summary.saved += 1
                         if !remembered { folders.remember(folder, for: project); remembered = true }
                     } catch {
@@ -1138,6 +1146,7 @@ final class ResultsShelf: ObservableObject {
                         let url = try await writeUnused(bytes, planned: work[index], plan: plan)
                         // Written whole: saved, even if the window closed meanwhile.
                         saved[entry.version] = url
+                        written[entry.version] = url.lastPathComponent
                         summary.saved += 1
                         if !remembered {
                             folders.remember(folder, for: project)
@@ -1167,7 +1176,45 @@ final class ResultsShelf: ObservableObject {
         }
         for index in marked { endSaving(work[index].entry.version) }
         guard !Task.isCancelled, started == generation else { return }
+        // The renamed files this run saved, under the names they were saved as.
+        let listed = work.compactMap { item -> (original: String, saved: String)? in
+            guard let original = renamed[item.entry.version], let name = written[item.entry.version] else { return nil }
+            return (Self.oneLine(original), name)
+        }
+        if !listed.isEmpty, let note = await writeRenamedNote(listed, plan: plan) {
+            summary.renamed = listed.count
+            summary.note = note
+        }
+        guard !Task.isCancelled, started == generation else { return }
         batches[sessionID] = .finished(summary)
+    }
+
+    /// A name as one line for the note: control characters become "_".
+    private static func oneLine(_ name: String) -> String {
+        String(String.UnicodeScalarView(name.unicodeScalars.map { $0.value < 0x20 || $0.value == 0x7F ? "_" : $0 }))
+    }
+
+    /// Writes `renamed_files.txt` into the Save All's folder, never over a
+    /// file already there (the next free name, " 2"…, as for the files), off
+    /// the main actor. The name it was written under, or nil; it is not one of
+    /// the files the summary counts.
+    private func writeRenamedNote(_ files: [(original: String, saved: String)], plan: ShelfNamePlan) async -> String? {
+        let data = Data(ShelfFileName.renamedNoteText(files).utf8)
+        guard var name = try? await plan.claim(ShelfFileName.renamedNote) else { return nil }
+        for _ in 0..<Self.nameTries {
+            do {
+                try await savedFiles.write(data, to: plan.url(name), using: dependencies.write,
+                                           unlessExists: dependencies.exists)
+                return name
+            } catch ShelfSaveError.nameTaken, ShelfSaveError.earlierSaveUnfinished {
+                plan.learnedTaken(name)
+                guard let next = try? await plan.claim(ShelfFileName.renamedNote) else { return nil }
+                name = next
+            } catch {
+                return nil
+            }
+        }
+        return nil
     }
 
     /// Most names a Save All file tries when something keeps taking them.

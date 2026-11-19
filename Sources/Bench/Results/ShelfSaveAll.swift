@@ -33,12 +33,20 @@ struct ShelfSaveAllSummary: Equatable, Sendable {
     var tooBig = 0
     /// Couldn't be read or written.
     var failed = 0
+    /// Saved under a new name a program in the folder won't pick up by itself,
+    /// and listed in the note, written under `note` (`renamed_files.txt`, or
+    /// " 2"… when the folder had one).
+    var renamed = 0
+    var note: String?
 
     /// "Saved 6 files. 1 was too big to save here."
     var line: String {
         var parts = [saved == 0 ? "Nothing was saved." : "Saved \(saved) file\(saved == 1 ? "" : "s")."]
         if tooBig > 0 { parts.append(tooBig == 1 ? "1 was too big to save here." : "\(tooBig) were too big to save here.") }
         if failed > 0 { parts.append(failed == 1 ? "1 couldn't be saved." : "\(failed) couldn't be saved.") }
+        if renamed > 0, let note {
+            parts.append(renamed == 1 ? "1 got a new name, listed in \(note)." : "\(renamed) got new names, listed in \(note).")
+        }
         return parts.joined(separator: " ")
     }
 }
