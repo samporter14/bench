@@ -362,6 +362,25 @@ answer from the phone: it goes through after a few seconds' wake, and the page s
 Click the Dock icon: the session you were in, signed in. Turn the switch back on with the window closed: the page
 loads at once and stays.
 
+## 2026-11-19, Capsid 1.1.7 (64): Claude Science 0.1.73's cards, installed, not released
+
+What Claude Science 0.1.73 added to `pending_input_requests` was read from the daemon binary and its web bundle
+(docs/science-0.1.73-kinds.md): one new kind, `share_save`, and the `key_check_held` flag. The inventory was walked
+against 0.1.73 (DESIGN.md, The 0.1.73 walk) and `checkedWith` moved. Notes in docs/release-notes/1.1.7.md. No tag and no
+GitHub release.
+
+- ✅ `swift test`: 5,022 tests in 635 suites. Four issues in the full run, all in two tests whose expectations this
+  change moved on purpose (`CompatWatchTests` still named 0.1.70; a Save All test expected `.hidden.md` to be saved as
+  `hidden.md`, now `_.hidden.md`); both updated, and they and the new suites pass (68 tests).
+- ✅ `Scripts/build-app.sh`: Capsid.app 1.1.7 (64), signed with Solanum Code Signing by Scripts/sign-app.sh
+  (CDHash 4235a4f93f86137ebf6e21804ca0988b1671be32); `codesign --verify --strict --deep` passes.
+- ✅ Installed the install.sh way, by hand: the running 1.1.6 quit with TERM, the 1.1.5 leftover at
+  Capsid.app.previous moved to the Trash (not deleted), 1.1.6 moved to Capsid.app.previous, the new copy put in and
+  opened. It runs as 1.1.7; its binary names 0.1.73 as checked-with, and `claude-science status` reports 0.1.73.
+- ⏳ **Diagnostics on screen**: not looked at (no screen access in this session).
+- ⏳ **Live**: a real `share_save` card, a real saved-key check (and its 10-minute denial) and code auto mode holds,
+  on the phone and on a card; a Save All of a session with `.Rprofile` or `CLAUDE.md`.
+
 ## 2026-11-14, Capsid 1.1.6 (63): code review fixes, installed, not released
 
 Fixes from a static code review (Codex) of main bfc98e3, each checked against main 1ef4f6e first and fixed in its own
