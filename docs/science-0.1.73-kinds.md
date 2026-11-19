@@ -85,9 +85,9 @@ config sets both `denyUnwatchedHeldSteps` and `pauseAfterBlocks`.
 
 | What | Capsid's waiting reason | Phone and Mac card |
 |---|---|---|
-| `share_save` | Save to folder: "Wants to save a file into your folder" | Open on Mac (no `tool_id`, and an allow needs `shown`) |
-| `key_check_held` on any request (first in the queue) | Saved-key check: "Auto mode's check wants your OK. Skipped after 10 minutes" | Deny only, never Allow |
-| `credential_access` | Credentials: "Wants to use a saved key" | Deny (as before) |
+| `share_save` | Save file: "Wants to save a file into your folder" | Open on Mac (no `tool_id`, and an allow needs `shown`) |
+| `key_check_held` on any request (first in the queue) | Safety check: "Wants your OK to use a saved key. Skipped after 10 minutes" | Deny only, never Allow |
+| `credential_access` | Saved key: "Wants to use a saved key" | Deny (as before) |
 | `local_exec` | Run code: "Wants to run code" | as before, but Deny only (never Allow) when auto mode held it (`auto_mode_reason` a string, or `auto_mode_paused` true) |
 
 Only booleans and plain fields are read: never `key_check_reason`,
