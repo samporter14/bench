@@ -47,17 +47,22 @@ enum PermissionKind: String, CaseIterable, Sendable {
     case setGoal = "set_goal"
     case grantScan = "grant_scan"
     case providerDiscovery = "provider_discovery"
+    /// Claude Science 0.1.73: a file (or a folder) Claude's code asks to save
+    /// into a Read & write folder.
+    case shareSave = "share_save"
 
     /// Whether a plain "no" is all a deny is. The rest are Open on Mac: a
     /// license or a usage checkpoint records its answer another way, an email
-    /// or a password is typed, a goal or a scan changes what Claude may do.
+    /// or a password is typed, a goal or a scan changes what Claude may do. A
+    /// save into a folder carries no `tool_id`, which the one body the phone
+    /// writes needs, and its allow must name what the card showed.
     var canBeDenied: Bool {
         switch self {
         case .network, .host, .hostDelete, .artifactDelete, .mcpTool, .localExec, .remoteExec, .remoteRead,
              .byocSubmit, .byocKernel, .inferSubmit, .customizeMutation, .managedEndpointRegister, .credentialAccess:
             true
         case .skillLicense, .contactEmail, .credentialRequest, .sshPassword, .usageCheckpoint, .setGoal,
-             .grantScan, .providerDiscovery:
+             .grantScan, .providerDiscovery, .shareSave:
             false
         }
     }
@@ -214,7 +219,7 @@ enum PermissionScript {
                        "remote_read", "byoc_submit", "byoc_kernel", "infer_submit", "customize_mutation",
                        "managed_endpoint_register", "credential_access", "skill_license", "contact_email",
                        "credential_request", "ssh_password", "usage_checkpoint", "set_goal", "grant_scan",
-                       "provider_discovery"];
+                       "provider_discovery", "share_save"];
         const CODE_LIMIT = 4000;
         // What the phone can show whole: a line of at most 160 characters, and 60 lines.
         const LINE_LIMIT = 160, LINES_LIMIT = 60;
@@ -239,7 +244,14 @@ enum PermissionScript {
         const requestId = ident(request.requestId), toolId = ident(request.tool_id);
         const mode = request.mode === "live" || request.mode === "parked" ? request.mode : null;
         const out = { target: null, access: null, count: null, tool: null, server: null, source: null,
-                      provider: null, name: null };
+                      provider: null, name: null, save: null };
+        // A card a check holds for the person (Claude Science 0.1.73): "key" when
+        // the saved-key check holds it (`key_check_held` exactly true, on any
+        // kind), "auto" when auto mode held code for review. Only the flags are
+        // read, never the check's reason or cell, nor auto mode's reason.
+        const held = request.key_check_held === true ? "key"
+            : request.kind === "local_exec" && (typeof request.auto_mode_reason === "string"
+                                                || request.auto_mode_paused === true) ? "auto" : null;
         let readOnly = false, sharedEnv = false, code = null, codeProblem = null;
         // The shape the daemon validates for each kind (the research's gate).
         let shape = KINDS.indexOf(kind) >= 0 && mode !== null && head.at !== null
@@ -314,6 +326,18 @@ enum PermissionScript {
         case "ssh_password":
             out.target = line(request.host, 200);
             break;
+        case "share_save": {
+            // Which card: a folder to make, the once-per-session offer for source
+            // files in a repo or a folder, a file that replaces one, or a file.
+            // Never the file's text, its earlier text, the reasons or what it opens with.
+            const later = benchIsObject(request.later) && typeof request.later.path === "string" ? request.later : null;
+            out.save = request.what === "folder" ? "folder"
+                : later !== null ? (later.what === "repo" ? "repo" : "source")
+                : benchIsObject(request.replaces) ? "replace" : "file";
+            out.target = line(request.path, 400);
+            if (out.target === null) { shape = false; }
+            break;
+        }
         default:
             break;
         }
@@ -325,7 +349,7 @@ enum PermissionScript {
             requestId: requestId, toolId: toolId, mode: mode, kind: kind, frame: head.frame.id, chain: head.frame.chain,
             toolIdShared: toolIdShared, shape: shape, target: out.target, access: out.access, count: out.count,
             tool: out.tool, server: out.server, source: out.source, provider: out.provider, name: out.name,
-            readOnly: readOnly, sharedEnv: sharedEnv, code: code, codeProblem: codeProblem,
+            readOnly: readOnly, sharedEnv: sharedEnv, code: code, codeProblem: codeProblem, held: held, save: out.save,
         };
     }
     """#
@@ -475,11 +499,38 @@ struct PermissionRequest: Equatable, Sendable {
     let sharedEnv: Bool
     let code: String?
     let codeProblem: CodeProblem?
+    /// A check holds it for the person: the saved-key check (on any kind) or
+    /// auto mode's review of code. Never answered "allow" from here.
+    let held: Held?
+    /// Which `share_save` card it is.
+    let save: Save?
+
+    enum Held: String, Sendable {
+        /// `key_check_held`: the code would use a saved key (Claude Science
+        /// 0.1.73); the daemon denies it after 10 minutes with nobody looking.
+        case key
+        /// Auto mode held code for review, or auto mode is paused.
+        case auto
+    }
+
+    enum Save: String, Sendable {
+        /// Make a folder.
+        case folder
+        /// Allow source files in this repo for the session.
+        case repo
+        /// Allow source files in this folder for the session.
+        case source
+        /// Replace a file.
+        case replace
+        /// Save a new file.
+        case file
+    }
 
     init(requestID: String?, toolID: String?, mode: String? = "live", kind: String, frame: String, chain: [String]? = nil,
          toolIdShared: Bool = false, shape: Bool = true, target: String? = nil, access: String? = nil, count: Int? = nil,
          tool: String? = nil, server: String? = nil, source: String? = nil, provider: String? = nil, name: String? = nil,
-         readOnly: Bool = false, sharedEnv: Bool = false, code: String? = nil, codeProblem: CodeProblem? = nil) {
+         readOnly: Bool = false, sharedEnv: Bool = false, code: String? = nil, codeProblem: CodeProblem? = nil,
+         held: Held? = nil, save: Save? = nil) {
         self.requestID = requestID
         self.toolID = toolID
         self.mode = mode
@@ -500,6 +551,8 @@ struct PermissionRequest: Equatable, Sendable {
         self.sharedEnv = sharedEnv
         self.code = code
         self.codeProblem = codeProblem
+        self.held = held
+        self.save = save
     }
 
     /// A sub-agent holds it.
@@ -535,7 +588,9 @@ struct PermissionRequest: Equatable, Sendable {
               let name = Pick.optionalText(root["name"], limit: Limit.name),
               let readOnly = Pick.bool(root["readOnly"]), let sharedEnv = Pick.bool(root["sharedEnv"]),
               let code = Pick.optionalText(root["code"], limit: Limit.code),
-              let problem = Self.optionalProblem(root["codeProblem"]) else { return nil }
+              let problem = Self.optionalProblem(root["codeProblem"]),
+              let held = Self.optionalWord(root["held"], as: Held.self),
+              let save = Self.optionalWord(root["save"], as: Save.self) else { return nil }
         var chain: [String] = []
         for raw in rawChain {
             guard let id = Pick.string(raw), PlanCheck.isFrameID(id), !chain.contains(id) else { return nil }
@@ -552,7 +607,8 @@ struct PermissionRequest: Equatable, Sendable {
         self.init(requestID: requestID.value, toolID: toolID.value, mode: mode.value, kind: kind, frame: frame, chain: chain,
                   toolIdShared: toolIdShared, shape: shape, target: target.value, access: access.value, count: count.value,
                   tool: tool.value, server: server.value, source: source.value, provider: provider.value, name: name.value,
-                  readOnly: readOnly, sharedEnv: sharedEnv, code: shownCode, codeProblem: shownProblem)
+                  readOnly: readOnly, sharedEnv: sharedEnv, code: shownCode, codeProblem: shownProblem,
+                  held: held.value, save: save.value)
     }
 
     /// An id sent back whole: printable ASCII without spaces, 1…200, or null.
@@ -577,6 +633,14 @@ struct PermissionRequest: Equatable, Sendable {
         if Pick.isNull(value) { return Pick.Maybe(value: nil) }
         guard let number = Pick.int(value), (0...Limit.count).contains(number) else { return nil }
         return Pick.Maybe(value: number)
+    }
+
+    /// One of `T`'s words, or null (absent too); nil for anything else.
+    private static func optionalWord<T: RawRepresentable>(_ value: Any?, as: T.Type) -> Pick.Maybe<T>?
+        where T.RawValue == String {
+        if Pick.isNull(value) { return Pick.Maybe(value: nil) }
+        guard let word = Pick.string(value), let found = T(rawValue: word) else { return nil }
+        return Pick.Maybe(value: found)
     }
 
     private static func optionalProblem(_ value: Any?) -> Pick.Maybe<CodeProblem>? {
@@ -642,6 +706,12 @@ enum RemotePermission {
         static let noCode = "Capsid can't see the code to run. Open it on your Mac."
         static let notReadOnly = "This tool isn't marked as read-only. Open it on your Mac."
         static let source = "Allowing this from your phone would give lasting access. Open it on your Mac."
+        /// The saved-key check holds it: its reason and the code are on the Mac.
+        static let keyCheck = "This would use a saved key. Look at it on your Mac to allow it."
+        /// Auto mode held the code: why is on the Mac.
+        static let autoHeld = "Auto mode's check held this code. See why on your Mac."
+        /// A save into a folder: the file is read on the Mac.
+        static let saveFile = "Look at the file on your Mac before it's saved there."
     }
 
     /// The `permission` object for a request: title, detail, code and what
@@ -675,6 +745,13 @@ enum RemotePermission {
             return Decision(canAllow: false, canDeny: false, why: Why.unreadable)
         }
         let canDeny = kind.canBeDenied
+        // A card a check holds is never allowed from here, whatever its kind:
+        // the check's reason and what it found are only on the Mac. Deny stays.
+        switch request.held {
+        case .key?: return Decision(canAllow: false, canDeny: canDeny, why: Why.keyCheck)
+        case .auto?: return Decision(canAllow: false, canDeny: canDeny, why: Why.autoHeld)
+        case nil: break
+        }
         switch kind {
         case .localExec:
             let why: String? = if !PermissionKind.languages.contains(request.tool ?? "") {
@@ -706,6 +783,8 @@ enum RemotePermission {
                 nil
             }
             return Decision(canAllow: why == nil, canDeny: canDeny, why: why)
+        case .shareSave:
+            return Decision(canAllow: false, canDeny: false, why: Why.saveFile)
         default:
             return Decision(canAllow: false, canDeny: canDeny, why: canDeny ? Why.lasting : Why.onMac)
         }
@@ -728,7 +807,11 @@ enum RemotePermission {
             case "powershell": "PowerShell"
             default: some(request.tool, "code")
             }
-            return ("Run \(language) code", "Claude wants to run this code on your Mac.")
+            switch request.held {
+            case .key?: return ("Run \(language) code that uses a saved key", "Skipped after 10 minutes with no answer.")
+            case .auto?: return ("Run \(language) code", "Auto mode's check held it for your review.")
+            case nil: return ("Run \(language) code", "Claude wants to run this code on your Mac.")
+            }
         case .mcpTool:
             return ("Use \(some(request.tool, "a tool")) from \(some(request.server, "a connector"))",
                     request.readOnly ? "The tool says it only reads." : "Claude wants to use a connector's tool.")
@@ -768,7 +851,8 @@ enum RemotePermission {
             return ("Wants to add the endpoint \(some(request.name, "a new one"))", "It runs scripts on your Mac.")
         case .credentialAccess:
             return ("Wants to use the saved credential \(some(request.name, "a credential"))",
-                    "It would be handed to Claude.")
+                    request.held == .key ? "It would be handed to Claude's code. Skipped after 10 minutes with no answer."
+                        : "It would be handed to Claude.")
         case .skillLicense:
             return ("Wants a license accepted for \(some(request.name, "a skill"))", "Read it on your Mac first.")
         case .contactEmail:
@@ -785,6 +869,15 @@ enum RemotePermission {
             return ("Wants access to more files", "Look at it on your Mac.")
         case .providerDiscovery:
             return ("Wants to choose a provider", "Answer it on your Mac.")
+        case .shareSave:
+            let target = some(request.target, "a file")
+            return switch request.save {
+            case .folder?: ("Wants to make the folder \(target)", "In a folder you let Claude write to.")
+            case .repo?: ("Wants to save source files in this repo", "For the rest of the session. Starting with \(target).")
+            case .source?: ("Wants to save source files in this folder", "For the rest of the session. Starting with \(target).")
+            case .replace?: ("Wants to replace \(target)", "A file in a folder you let Claude write to.")
+            case .file?, nil: ("Wants to save \(target)", "Into a folder you let Claude write to.")
+            }
         }
     }
 }
@@ -818,6 +911,9 @@ extension RemotePermission {
         case Why.helperAsked: "A helper agent asked a question. Answer it in Capsid."
         case Why.noCode: "Capsid can't see the code to run. Open it in Capsid."
         case Why.notReadOnly: "This tool isn't marked as read-only. Open it in Capsid to see what it would do."
+        case Why.keyCheck: "This would use a saved key. Open it in Capsid to allow it."
+        case Why.autoHeld: "Auto mode's check held this code. Open it in Capsid to see why."
+        case Why.saveFile: "Look at the file in Capsid before it's saved there."
         case RemoteActionResult.unavailable.sentence: "Couldn't do that from here. Open it in Capsid."
         default: sentence
         }

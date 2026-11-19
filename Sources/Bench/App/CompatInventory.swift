@@ -18,9 +18,11 @@ import Foundation
 enum CompatInventory {
     /// The Claude Science version Capsid was last checked with: the one whose
     /// web bundle the page markup was read from (DESIGN.md, Main window, and
-    /// TESTING.md). Walked again on 2026-10-22 against the 0.1.70 bundle, by
-    /// reading its files only. Move it only after walking `all` again.
-    static let checkedWith = "0.1.70"
+    /// TESTING.md). Walked again on 2026-11-19 against 0.1.73 (its web bundle,
+    /// the daemon's strings, `status`, `--help` and a read-only look at the
+    /// database's columns); 2026-10-22 against 0.1.70 before. Move it only
+    /// after walking `all` again.
+    static let checkedWith = "0.1.73"
 }
 
 // MARK: The kinds
@@ -491,6 +493,14 @@ extension CompatInventory {
         stored("projects.id (concierge prefix)", "the concierge's own project starts proj_concierge_sys_", .browse),
         stored("frame_blobs.kind (output)", "a frame's output is read from the row of this kind when the frame holds none", .sessions),
         stored("output_data.pending_input_requests", "a list of pending requests, each with a kind", .sessions),
+        stored("output_data.pending_input_requests[].key_check_held",
+               "true when the saved-key check holds a request for the person (0.1.73): only the boolean is read", .sessions),
+        stored("output_data.pending_input_requests[].kind share_save",
+               "a file or folder Claude's code asks to save into a Read & write folder (0.1.73); path, what, later.what and whether replaces is there are read, never the file's text", .phone,
+               file: "Remote/RemotePermissions.swift"),
+        stored("output_data.pending_input_requests[].auto_mode_reason, auto_mode_paused",
+               "auto mode held a local_exec for review: only whether they are there is read", .phone,
+               file: "Remote/RemotePermissions.swift"),
         stored("msg_json._ts, role, _intent_id, _tokens", "when, who, the intent id, and input and output tokens of a message", .activity),
         stored("input_data._intent_id", "finds the session a lost reply made", .browse),
         stored("artifacts.priority (user_hidden)", "a file the user hid in Claude Science's list is hidden from Find too", .find),

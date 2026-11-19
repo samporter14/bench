@@ -498,12 +498,16 @@ private func pendingInputSQL(_ alias: String) -> String {
 
 /// The `kind` of `alias`'s first pending input request, or NULL: one word
 /// from the daemon's fixed vocabulary, which `WaitingReason` maps and never
-/// shows as is. Nothing else of the request leaves the database.
+/// shows as is. A request the saved-key check holds (`key_check_held` exactly
+/// true, Claude Science 0.1.73) reads as `key_check_held`, whatever its kind:
+/// only that boolean is looked at, never the check's reason or cell. Nothing
+/// else of the request leaves the database.
 private func pendingKindSQL(_ alias: String) -> String {
     let output = outputSQL(alias)
     return """
-        json_extract(CASE WHEN json_valid(\(output)) THEN \(output) END, \
-        '$.pending_input_requests[0].kind')
+        (SELECT CASE WHEN json_type(o.j, '$.pending_input_requests[0].key_check_held') = 'true' \
+        THEN 'key_check_held' ELSE json_extract(o.j, '$.pending_input_requests[0].kind') END \
+        FROM (SELECT CASE WHEN json_valid(\(output)) THEN \(output) END AS j) o)
         """
 }
 

@@ -220,6 +220,10 @@ enum PushRules {
         case .delete: "permission to delete files"
         case .tool: "permission to use a connector tool"
         case .license: "a skill license to accept"
+        case .code: "permission to run code"
+        case .credentials: "permission to use a saved key"
+        case .keyCheck: "an OK to use a saved key, skipped after 10 minutes"
+        case .saveFile: "permission to save a file into a folder"
         case .other: nil
         }
         return what.map { "A session needs you: \($0)" } ?? "A session needs you"

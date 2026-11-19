@@ -203,7 +203,7 @@ clay-text (Look).
     each press waits up to 300 ms for the tab to leave, and the sweep stops at the first tab
     that is still there. That tab and the ones after it stay, and are counted as such; the
     user answers the page and asks again. Only one sweep runs at a time.
-  - **Selectors relied on (Claude Science 0.1.70; first read from 0.1.63):** one `[data-testid="right-tab-strip"]`
+  - **Selectors relied on (Claude Science 0.1.73; first read from 0.1.63):** one `[data-testid="right-tab-strip"]`
     holding `[role="toolbar"][aria-label="Open panels"]`; in it each tab is
     `[data-tab-id]`, with `[data-tab-btn]` (`aria-current="true"` on the shown tab, or
     `data-shown` on the tab) and `button[data-tab-close]`. Tabs are looked for only inside
@@ -1644,6 +1644,18 @@ The poster, `MacNotifications`, is thin: it speaks to the system only through
 - **Never** for a page's own notification (`LabCard.web`), a saved file or
   a notice (but for the one below); on the first read after launch (as `chime` is not played);
   in a `--demo` mode; or in tests.
+- **The reason sentence** is the waiting reason's, from one word the poll
+  reads (an `awaiting_*` status or the first pending request's kind): "Plan
+  ready for your review", "Asked you a question", "Wants to reach the web"…
+  Since 1.1.7 also "Wants to run code" (`local_exec`), "Wants to use a saved
+  key" (`credential_access`), "Wants to save a file into your folder"
+  (`share_save`, Claude Science 0.1.73) and, when the first request has
+  `key_check_held` exactly true (whatever its kind), "Wants your OK to use a
+  saved key. Skipped after 10 minutes": Claude Science denies such a card
+  after 10 minutes with nobody looking at it, so the sentence says so. Only
+  the flag is read, never the check's reason. It is a needs-input card like
+  any other: a change of reason is a new phone push (its key holds the
+  reason), and Quiet while presenting holds it like every card.
 - **While Capsid is quiet for a presentation** (Quiet while presenting),
   nothing is sent at all; see that section for what comes after.
 - **A finish held for a Nidus focus session** is not sent then: its card
@@ -3370,8 +3382,8 @@ that couldn't be told).
 2. **The version line.** "Claude Science 0.1.71; Capsid was last checked with 0.1.70". The running version is
    `status.version` from the same `claude-science status` the app already runs to find the daemon (a CLI
    that omits it reads "unknown", and the line says Claude Science didn't say). No page or API read is used
-   for it. `CompatInventory.checkedWith` is the version Capsid was last checked with: 0.1.70 (since the 1.0
-   safety batch; 0.1.63 before), the one whose web bundle the page, read and write entries were walked
+   for it. `CompatInventory.checkedWith` is the version Capsid was last checked with: 0.1.73 (since 1.1.7;
+   0.1.70 from the 1.0 safety batch, 0.1.63 before), the one whose web bundle the page, read and write entries were walked
    against, by reading its files only (the command line and the database entries rest on Diagnostics' live
    steps and the 1.0 spikes, and were not re-derived). The versions are compared as numbers
    (`ScienceVersion`: 0.1.9 is older than 0.1.63; a suffix like "-rc1" can't be ordered and reads as
@@ -3394,6 +3406,15 @@ that couldn't be told).
    turns itself off (no feature has an off switch: they keep trying and may quietly do nothing), so the card
    says "may not work". The window adds "Claude Science version Capsid last saw: …" and a ✓ or ✗ line when a
    look happened this run. Nothing is asked or kept in a demo.
+
+   **The 0.1.73 walk** (2026-11-19, for 1.1.7). The install's app bundle was still 0.1.70; the daemon and
+   its web bundle, in `~/.claude-science/runtime/0.1.73-release`, were 0.1.73. Every page hook's selector,
+   attribute and test id is in the web bundle (`right-tab-strip`, `restarting-dialog`, `sign-in-again-banner`
+   among them); every read and write path is in the bundle or among the daemon's routes; `claude-science
+   status` still has each key the parser takes and `serve --help` still lists `--no-browser` and `--detached`;
+   a read-only look at the database's columns found all 40 the queries read, and both named indexes. Nothing
+   is gone. New in it: the `share_save` request kind and the `key_check_held` flag
+   (docs/science-0.1.73-kinds.md), now in the inventory.
 
    **The 0.1.70 walk** (2026-10-22, the web bundle's files only). None of the 94 entries is gone. Reworded to
    what the bundle shows: the only exact "Sign in" buttons are the `sign-in-again-banner` (a stale account
@@ -4224,7 +4245,19 @@ or a Save of the same name, took it since the plan, nothing is written, the
 name is learned as taken, and the file takes the next free one, numbered from
 the name it asked for, up to 8 tries. That is the final protection against
 overwriting, and it costs no extra turn or limit, since the look and the write
-are one call. (A Save… leaves it out: the save panel already asked whether to
+are one call. **Names programs pick up** (since 1.1.7, `ShelfFolderNames.swift`,
+as Claude Science 0.1.73 names a zip's files): a name that starts with a dot,
+or is one of Claude Science's 116 names that programs read or run by
+themselves in the folder they start in (`CLAUDE.md`, `AGENTS.md`,
+`nextflow.config`, `latexmkrc`, `matplotlibrc`, `activate`, `compose.y*ml`,
+`*.bazelrc`…, compared without case after the same normalising, `*` any run),
+gets "_" in front and keeps its dots (`.Rprofile` → `_.Rprofile`, where a
+single Save still writes `Rprofile`), and ".txt" after if that is still such a
+name. When any was saved, a `renamed_files.txt` (numbered like any name if the
+folder has one) says why and lists each as it was named and as it was saved;
+it is not counted as a file, and the summary adds "3 got new names, listed in
+renamed_files.txt.". Only Save All: Save…, a drag and the temporary copies keep
+their names. (A Save… leaves it out: the save panel already asked whether to
 replace.) Each file saved is recorded like a single Save, so
 Open and Reveal in Finder work for it, with no Saved card per file. The row
 says "Saving 3 of 7…", then "Saved 6 files. 1 was too big to save here."
@@ -5404,6 +5437,8 @@ from the phone, because only their allow is truly once:
 |---|---|---|
 | `local_exec` (python, r, bash, powershell; not a shared environment; no other pending request has its `tool_id`) | yes | "Run Python code" (etc.) and the code, ≤ 4 KB, ≤ 60 lines of ≤ 160 characters, monospace |
 | `mcp_tool` with `read_only: true` and source `directory`, `bundled` or `antmcp` | yes | "Use <tool> from <server>" |
+| any request held by a check (since 1.1.7): `key_check_held: true` (the saved-key check, Claude Science 0.1.73, on `local_exec` or `credential_access`), or a `local_exec` auto mode held (`auto_mode_reason`, `auto_mode_paused`) | no, Deny or Open on Mac | "Run Python code that uses a saved key" / "Skipped after 10 minutes with no answer."; "Auto mode's check held it for your review." |
+| `share_save` (Claude Science 0.1.73, since 1.1.7): a file or folder saved into a Read & write folder | no, Open on Mac only | "Wants to save <path>", "Wants to replace <path>", "Wants to make the folder <path>", "Wants to save source files in this repo/folder" |
 | every other known kind (`network`, `host`, `host_delete`, `skill_license`, credential kinds, `byoc_*`, `infer_submit`, `remote_*`, `usage_checkpoint`, `customize_mutation`, `managed_endpoint_register`, `artifact_delete`, …) | no, Deny or Open on Mac | a plain line from its own fields ("Wants to reach <host>", "Wants to read <path>"…) |
 | unknown kinds | nothing but Open on Mac | "Wants your permission" |
 
@@ -5514,7 +5549,19 @@ The shared files only gained hooks marked `// Phase 4 permissions` and
   `byoc_submit`, `byoc_kernel`, `infer_submit`, `customize_mutation`,
   `managed_endpoint_register`, `credential_access`. Open on Mac only:
   `skill_license`, `contact_email`, `credential_request`, `ssh_password`,
-  `usage_checkpoint`, `set_goal`, `grant_scan`, `provider_discovery`. Both
+  `usage_checkpoint`, `set_goal`, `grant_scan`, `provider_discovery`,
+  `share_save` (it carries no `tool_id`, and Claude Science's own allow must
+  name the path and hash the card showed). **Held** (since 1.1.7): a request
+  the saved-key check holds (`key_check_held` exactly `true`, any kind) or a
+  `local_exec` auto mode held (`auto_mode_reason` a string, or
+  `auto_mode_paused` true) is never allowed from here, whatever the rules
+  above say: the check's reason and the cell it found are only on the Mac.
+  Deny stays where the kind has one ("This would use a saved key. Look at it
+  on your Mac to allow it.", "Auto mode's check held this code. See why on
+  your Mac."). The page projects only `held` ("key" or "auto") and, for
+  `share_save`, `save` (folder, repo, source, replace or file) and the path:
+  never `key_check_reason`, `key_check_cell`, `auto_mode_reason`, `text`,
+  `previous_text`, `reasons`, `unshown` or the hashes. Both
   ids (`requestId` and `tool_id`) must be there for either. Actions off:
   neither, and `why` says so. `why` for a kind that gives lasting access is
   the spec's sentence; for the others (a shared environment, code too long to

@@ -188,18 +188,19 @@ struct PermissionKindTests {
             case .artifactDelete: fields = ["items": [1]]
             case .mcpTool: fields = ["server_id": "s", "server_name": "n", "tool_name": "t", "server_source": "directory"]
             case .localExec: fields = ["tool": "python", "code": "1"]
+            case .shareSave: fields = ["path": "/p"]
             default: fields = [:]
             }
             #expect(alone(request(kind.rawValue, fields))?.shape == true, "\(kind.rawValue)")
         }
-        #expect(PermissionKind.allCases.count == 22)
+        #expect(PermissionKind.allCases.count == 23)
         #expect(alone(request("teleport"))?.shape == false)
         #expect(alone(request("teleport"))?.known == nil)
     }
 
     @Test func denyIsOnlyForKindsWhoseNoIsAPlainNo() {
         let open: Set<PermissionKind> = [.skillLicense, .contactEmail, .credentialRequest, .sshPassword, .usageCheckpoint,
-                                         .setGoal, .grantScan, .providerDiscovery]
+                                         .setGoal, .grantScan, .providerDiscovery, .shareSave]
         for kind in PermissionKind.allCases { #expect(kind.canBeDenied == !open.contains(kind), "\(kind.rawValue)") }
     }
 

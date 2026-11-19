@@ -143,7 +143,7 @@ struct CompanionNeedRow: Identifiable, Equatable {
         switch reason ?? .other {
         case .plan: return .plan
         case .question: return .question
-        case .web, .files, .delete, .tool, .license: return .request
+        case .web, .files, .delete, .tool, .license, .code, .credentials, .keyCheck, .saveFile: return .request
         case .other:
             guard let offer else { return .question }
             if offer.hasDeny { return .request }
