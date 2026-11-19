@@ -541,11 +541,11 @@ private enum Repo {
 // MARK: The inventory, walked against 0.1.70
 
 struct CompatWalkTests {
-    @Test func theInventoryWasWalkedAgainst0170() {
-        #expect(CompatInventory.checkedWith == "0.1.70")
-        #expect(ScienceVersion.relation(running: "0.1.70") == .same)
-        #expect(ScienceVersion.relation(running: "0.1.71") == .newer)
-        #expect(ScienceVersion.relation(running: "0.1.63") == .older)
+    @Test func theInventoryWasWalkedAgainst0173() {
+        #expect(CompatInventory.checkedWith == "0.1.73")
+        #expect(ScienceVersion.relation(running: "0.1.73") == .same)
+        #expect(ScienceVersion.relation(running: "0.1.74") == .newer)
+        #expect(ScienceVersion.relation(running: "0.1.70") == .older)
     }
 
     @Test func theRestartingDialogEntrySaysItIsForEveryRestart() {

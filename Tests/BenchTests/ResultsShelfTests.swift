@@ -1270,7 +1270,10 @@ struct ShelfSaveAllTests {
         shelf.saveAll(madeUpID(1), into: out)
         await shelf.settled()
         #expect(fake.written.allSatisfy { $0.deletingLastPathComponent().path == "/made-up/Out" })
-        #expect(shelf.saved["v-2"]?.lastPathComponent == "hidden.md")
+        // A leading dot is kept behind "_" (since 1.1.7): no hidden file, and a
+        // name no program in the folder picks up by itself.
+        #expect(shelf.saved["v-2"]?.lastPathComponent == "_.hidden.md")
+        #expect(shelf.saved["v-1"]?.lastPathComponent == "_.._.._etc_passwd")
     }
 
     // MARK: The batch
